@@ -147,6 +147,12 @@ def main():
             assert control.freq_target() == (0, 0)
             control.settings["mode"] = "auto"
             assert control.freq_target() == (2750, 2750)
+            # Frequency caps follow this CPU: 0x2F = 4.7 GHz turbo -> nothing at or above it is offered.
+            assert power.max_turbo_mhz({"turboRatios": "2E2E2E2E2E2E2E2F"}) == 4700
+            assert power.max_turbo_mhz({}) is None
+            assert power.freq_offered(4700) == [0, 1500, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 4000, 4500]
+            assert power.freq_offered(4700, [5000, 2750])[-1] == 5000, "a saved older cap stays selectable"
+            assert power.freq_offered(0)[-1] == 4500
             # E-core switch: "pending" means the registry differs from what this boot started with.
             state = {"on": True, "boot": 1000.0}
             power.small_cores_enabled, power.boot_time = (lambda: state["on"]), (lambda: state["boot"])

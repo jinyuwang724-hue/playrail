@@ -23,7 +23,27 @@ TDP_MIN, TDP_MAX = 8, 35
 BOOST_MAX = 15
 TICK = 1.0
 TARGETS = (0, 30, 40, 45, 60, 90, 120)
-FREQ_CHOICES = (0, 1500, 2000, 2250, 2500, 2750, 3000, 3500, 4000, 4500, 5000)
+# Every cap a saved setting may hold (older versions offered up to 5 GHz).
+FREQ_CHOICES = (0, 1500, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000)
+# Offered in the panel: fine steps where handheld power limits actually land, only below this
+# CPU's own maximum turbo (read from MSR 0x1AD; 0 = no cap is the maximum itself).
+FREQ_OFFERED = (1500, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 4000, 4500)
+
+
+def freq_offered(cpu_max, selected=()):
+    """Choices for this CPU: below its max turbo, plus any value already saved."""
+    offered = [f for f in FREQ_OFFERED if not cpu_max or f < cpu_max]
+    return [0] + sorted(set(offered) | {f for f in selected if f})
+
+
+def max_turbo_mhz(cpu):
+    """Highest single-core turbo from MSR 0x1AD (one ratio per byte, 100 MHz each)."""
+    try:
+        ratios = bytes.fromhex(cpu["turboRatios"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    top = max(ratios, default=0)
+    return top * 100 if 10 <= top <= 80 else None
 DEFAULTS = {
     "enabled": False, "mode": "smart", "boost": 1, "quick": [15, 20, 30],
     "ac": {"tdp": 35, "freq": 2750}, "dc": {"tdp": 25, "freq": 2750}, "manual": {"tdp": 20, "freq": 0},
@@ -571,6 +591,7 @@ class PowerControl:
         self.fan_written = None  # flat duty last written to the EC tables
         self.fan_backup_path = self.data / "fan-backup.json"
         self.ecore_path = self.data / "ecore.json"
+        self.cpu_max = None  # MHz, read once from the CPU
         self.stats = {}
         self.cpu = LightStats()
         self.last_frames = None
@@ -621,6 +642,8 @@ class PowerControl:
                 return reply.get("fan") or {}
             if command in ("thermal", "osd", "stats", "osd_zoom", "osd_height", "osd_font", "rtss_app", "gpu"):
                 return reply.get(command) or {}
+            if command == "cpu_info":
+                return reply.get("cpu") or {}
             if command == "ecore_set":
                 return reply.get("ecore") or {}
             if command == "frames":
@@ -988,7 +1011,8 @@ class PowerControl:
                 "osd": {"rtss": self.osd.get("rtss"), "text": self.osd_text, "error": self.osd.get("error")},
                 "ecore": self.ecore_view(),
                 "error": self.error, "limits": {"tdpMin": TDP_MIN, "tdpMax": TDP_MAX, "boostMax": BOOST_MAX,
-                                                 "freq": list(FREQ_CHOICES)}}
+                                                 "freq": freq_offered(self.cpu_max, [self.settings[k]["freq"] for k in ("ac", "dc", "manual")]),
+                                                 "cpuMax": self.cpu_max or None}}
 
     async def publish(self):
         try:
@@ -1003,6 +1027,12 @@ class PowerControl:
         # Not managing power: keep no elevated helper or driver handle around at all.
         if not self.settings["enabled"]:
             return self.view()
+        if self.cpu_max is None:
+            try:
+                self.cpu_max = max_turbo_mhz(await self._call("cpu_info")) or 0
+            except Exception as e:
+                logging.warning("CPU frequency range: %s", e)
+                self.cpu_max = 0
         try:
             await self._call("read", sample=bool(sample))
         except Exception as e:

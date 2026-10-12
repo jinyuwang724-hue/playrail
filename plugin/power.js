@@ -111,7 +111,8 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
     const view = state.view, draft = state.draft;
     if (!view || !draft) return h(ui.PanelSection, null, h(StatusText, null, state.message || "正在读取功耗状态…"));
     const limits = view.limits, actual = view.actual;
-    const freqOptions = limits.freq.map(v => ({ label: freqLabel(v), data: v }));
+    // "No cap" runs up to the CPU's own maximum turbo, so show that instead of a vague "unlimited".
+    const freqOptions = limits.freq.map(v => ({ label: v || !limits.cpuMax ? freqLabel(v) : `最高 ${freqLabel(limits.cpuMax)}`, data: v }));
     const slider = (key, label, profile) => row(key, h(ui.SliderField, {
       label, min: limits.tdpMin, max: limits.tdpMax, step: 1, validValues: "steps", minimumDpadGranularity: 1,
       notchTicksVisible: false, showValue: true, valueSuffix: " W", value: draft[profile].tdp,

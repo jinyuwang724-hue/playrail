@@ -172,6 +172,7 @@ class Executor : IDisposable {
             else if (command == "fan_read") reply["fan"] = MsiFan.Read();
             else if (command == "fan_curve") reply["fan"] = MsiFan.Apply(Ints(request, "cpu"), Ints(request, "gpu"), true.Equals(request.ContainsKey("full") ? request["full"] : false));
             else if (command == "fan_restore") reply["fan"] = MsiFan.Restore(request.ContainsKey("cpu") ? Ints(request, "cpu") : null, request.ContainsKey("gpu") ? Ints(request, "gpu") : null);
+            else if (command == "cpu_info") reply["cpu"] = CpuInfo();
             else if (command == "ecore_set") reply["ecore"] = SmallCores.Set(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
             else throw new ArgumentException("未知命令");
             reply["ok"] = true;
@@ -303,6 +304,33 @@ class Executor : IDisposable {
 
     // Package temperature: TjMax (MSR 0x1A2 bits 16-23) minus the digital readout of
     // IA32_PACKAGE_THERM_STATUS (0x1B1 bits 16-22). Read only.
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentThread();
+    [DllImport("kernel32.dll")] static extern UIntPtr SetThreadAffinityMask(IntPtr thread, UIntPtr mask);
+
+    // Frequency limits from the CPU itself, so the frequency cap choices match this processor.
+    // 0xCE: base and minimum ratio. 0x771 (HWP capabilities) per logical processor: its highest
+    // performance level; on hybrid parts P- and E-cores report different levels.
+    Dictionary<string, object> CpuInfo() {
+        ulong platform = ReadMsr(0xCE);
+        var highest = new List<object>();
+        Thread.BeginThreadAffinity();
+        try {
+            for (int cpu = 0; cpu < Math.Min(Environment.ProcessorCount, 64); cpu++) {
+                SetThreadAffinityMask(GetCurrentThread(), (UIntPtr)(1UL << cpu));
+                Thread.Sleep(0);
+                try { highest.Add((int)(ReadMsr(0x771) & 0xFF)); } catch (InvalidOperationException) { highest.Add(null); }
+            }
+        } finally {
+            SetThreadAffinityMask(GetCurrentThread(), (UIntPtr)((1UL << Math.Min(Environment.ProcessorCount, 63)) - 1));
+            Thread.EndThreadAffinity();
+        }
+        ulong turbo = 0;
+        try { turbo = ReadMsr(0x1AD); } catch (InvalidOperationException) { }
+        return new Dictionary<string, object> {
+            { "baseRatio", (int)((platform >> 8) & 0xFF) }, { "minRatio", (int)((platform >> 40) & 0xFF) },
+            { "turboRatios", turbo.ToString("X16") }, { "hwpHighest", highest } };
+    }
+
     Dictionary<string, object> Thermal() {
         ulong target = ReadMsr(0x1A2), status = ReadMsr(0x1B1);
         int tjMax = (int)((target >> 16) & 0xFF);
