@@ -242,7 +242,7 @@ export function Content() {
       metrics: [
         { label: "功耗", value: managed ? round(view?.actual?.package, 1) : null, unit: "W" },
         { label: "CPU", value: round(live.cpuTemp), unit: "°C" },
-        { label: "帧率", value: fps, tone: fps != null && target && fps >= target ? "good" : "" },
+        { label: "帧率", value: fps },
         { label: "电量", value: live.battery ?? null, unit: "%" },
       ],
       banner: managed && view?.otherTool ? "体感助手也在调功耗，两边会互相改写。请在体感助手里关掉“自动设置 TDP”，或退出体感助手。" : null,
@@ -250,7 +250,7 @@ export function Content() {
         { id: "magpie", label: "超分铺满", icon: "magpie", on: !!magpieValue.enabled, steps: 1, filled: magpieValue.enabled ? 1 : 0,
           value: magpieValue.enabled ? (magpieValue.active ? "铺满中" : "已开启") : "关", disabled: !!magpieValue.busy, onPress: toggleMagpie },
         ...otherTiles].filter(Boolean),
-      states, onOpen: open,
+      onOpen: open,
     });
   }
   return h("div", { className: "claw-toolbox-ui" }, h("style", null, toolboxStyles), body);

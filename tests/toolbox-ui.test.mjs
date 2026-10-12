@@ -24,14 +24,13 @@ test('the toolbox opens on the home page', () => {
   assert.equal(createModuleSelection().value, null);
 });
 
-test('home lists groups in order, shows module states and opens a module', () => {
+test('home lists groups in order, rows carry no state text and open a module', () => {
   const opened = [];
-  const tree = Home({ states: { fan: { text: '固件自动', off: true } }, onOpen: id => opened.push(id) });
+  const tree = Home({ onOpen: id => opened.push(id) });
   // Group titles use Steam's own PanelSection title.
   const titles = nodes(tree).filter(n => n.type === 'PanelSection' && n.props.title).map(n => n.props.title);
   assert.deepEqual(titles, toolboxGroups.map(group => group.title));
-  const state = nodes(tree).find(n => String(n.props.className).startsWith('claw-state'));
-  assert.equal(state.props.className, 'claw-state off');
+  assert.equal(nodes(tree).filter(n => String(n.props.className).startsWith('claw-state')).length, 0);
   const rows = nodes(tree).filter(n => n.props.className === 'claw-row');
   assert.equal(rows.length, toolboxModules.length);
   rows[3].props.onClick();
