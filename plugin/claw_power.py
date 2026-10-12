@@ -479,6 +479,8 @@ class PowerControl:
         self.written = None
         self.temperature = None
         self.temperature_at = 0.0
+        self.package_at = 0.0
+        self.frames_at = 0.0
         self.fan_state = {}
         self.gpu_state = {}
         self.battery_rate = BatteryRate()
@@ -538,11 +540,19 @@ class PowerControl:
                 if frames.get("msrError"):
                     raise RuntimeError(frames["msrError"])
                 self.actual = {**(self.actual or {}), **{k: frames[k] for k in ("pl1", "pl2", "package") if k in frames}}
+                if "package" in frames:
+                    self.package_at = time.monotonic()
                 self.last_frames = frames
+                self.frames_at = time.monotonic()
                 return frames
             power = reply.get("power") or {}
             if power.get("msrError"):
                 raise RuntimeError(power["msrError"])
+            if "package" in power:
+                self.package_at = time.monotonic()
+            elif (self.actual or {}).get("package") is not None and time.monotonic() - self.package_at < 10:
+                # A read without sampling has no package power; keep the last recent one.
+                power = {**power, "package": self.actual["package"]}
             self.actual = power
             return power
 
@@ -806,6 +816,12 @@ class PowerControl:
         if self.task is None:
             self.task = asyncio.create_task(self._loop())
 
+    def _live_fps(self):
+        if time.monotonic() - self.frames_at > 5:
+            return None
+        chains = [c for c in (self.last_frames or {}).get("swapChains") or [] if c.get("presentedFps", 0) > 0]
+        return max(chains, key=lambda c: c.get("presentedFps", 0)).get("appFps") if chains else None
+
     def view(self):
         pl1, pl2 = self.target()
         a = self.actual or {}
@@ -816,7 +832,9 @@ class PowerControl:
                 "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS},
                 # Read-only readings for the toolbox home; a temperature older than 15 s is not shown.
                 "live": {"battery": battery_percent(),
-                         "cpuTemp": self.temperature if time.monotonic() - self.temperature_at < 15 else None},
+                         "cpuTemp": self.temperature if time.monotonic() - self.temperature_at < 15 else None,
+                         # Real rendered frame rate from the OSD or smart tick, in any mode.
+                         "fps": self._live_fps()},
                 "osd": {"rtss": self.osd.get("rtss"), "text": self.osd_text, "error": self.osd.get("error")},
                 "error": self.error, "limits": {"tdpMin": TDP_MIN, "tdpMax": TDP_MAX, "boostMax": BOOST_MAX,
                                                  "freq": list(FREQ_CHOICES)}}

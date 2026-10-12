@@ -132,7 +132,8 @@ export function Content() {
   // Live readings on the home page; module pages keep their own refresh.
   R.useEffect(() => {
     if (activeModule !== null) return undefined;
-    const poll = setInterval(() => power.refresh(false), 3000);
+    // Sampled reads: an unsampled read carries no package power.
+    const poll = setInterval(() => power.refresh(true), 3000);
     return () => clearInterval(poll);
   }, [activeModule]);
   const proxyAction = async (action, choice) => {
@@ -236,7 +237,7 @@ export function Content() {
     const view = powerValue.view, draft = powerValue.draft, live = view?.live ?? {}, smart = view?.smart;
     const managed = !!draft?.enabled;
     const round = (v, digits = 0) => typeof v === "number" ? Math.round(v * 10 ** digits) / 10 ** digits : null;
-    const fps = managed ? round(smart?.fps) : null, target = managed ? smart?.target : null;
+    const fps = round(smart?.fps ?? live.fps), target = managed ? smart?.target : null;
     const toggleMagpie = async () => {
       if (magpieValue.busy) return;
       const result = await magpie.toggle();

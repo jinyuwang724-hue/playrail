@@ -130,16 +130,11 @@ export function createToolboxUI(React, ui) {
     const sets = [...groups, { id: "other", title: "其他" }]
       .map(group => ({ group, items: modules.filter(module => group.id === "other" ? !known.has(module.group) : module.group === group.id) }))
       .filter(set => set.items.length);
+    // Order: quick tiles, then the live readings (and any conflict notice), then the module list.
     return h(ui.Focusable, { className: "claw-home", "flow-children": "column" },
-      h(ui.PanelSection, null,
-        (game || source) && h("div", { className: "claw-game" },
-          game && h("b", null, game.name), game?.detail && h("span", null, `· ${game.detail}`),
-          source && h("span", { className: "claw-source" }, source.text)),
-        metrics.length > 0 && h("div", { className: "claw-strip", role: "group", "aria-label": "实时读数" }, metrics.map(metric =>
-          h("div", { key: metric.label, className: "claw-metric" },
-            h("strong", { className: metric.value == null ? "na" : "" }, metric.value ?? "—", metric.value != null && metric.unit && h("small", null, metric.unit)),
-            h("span", null, metric.label)))),
-        banner && h("div", { className: "claw-banner", role: "status" }, h(Icon, { name: "warn" }), h("span", null, banner))),
+      (game || source) && h(ui.PanelSection, null, h("div", { className: "claw-game" },
+        game && h("b", null, game.name), game?.detail && h("span", null, `· ${game.detail}`),
+        source && h("span", { className: "claw-source" }, source.text))),
       tiles.length > 0 && h(ui.PanelSection, { title: "快捷切换" },
         h(ui.Focusable, { className: "claw-tiles", "flow-children": "grid" }, tiles.map(tile =>
           h(ui.DialogButton, { key: tile.id, className: tile.on ? "claw-tile on" : "claw-tile", onClick: tile.onPress, disabled: tile.disabled, "aria-label": `${tile.label}：${tile.value}` },
@@ -147,6 +142,12 @@ export function createToolboxUI(React, ui) {
             h("span", { className: "claw-tile-value" }, tile.value),
             tile.steps > 0 && h("span", { className: "claw-dots", "aria-hidden": true },
               Array.from({ length: tile.steps }, (_, i) => h("i", { key: i, className: i < tile.filled ? "f" : "" }))))))),
+      (metrics.length > 0 || banner) && h(ui.PanelSection, null,
+        metrics.length > 0 && h("div", { className: "claw-strip", role: "group", "aria-label": "实时读数" }, metrics.map(metric =>
+          h("div", { key: metric.label, className: "claw-metric" },
+            h("strong", { className: metric.value == null ? "na" : "" }, metric.value ?? "—", metric.value != null && metric.unit && h("small", null, metric.unit)),
+            h("span", null, metric.label)))),
+        banner && h("div", { className: "claw-banner", role: "status" }, h(Icon, { name: "warn" }), h("span", null, banner))),
       sets.map(({ group, items }) => h(ui.PanelSection, { key: group.id, title: group.title },
         h(ui.Focusable, { className: "claw-nav", "flow-children": "column" }, items.map(module => h(ui.Focusable, {
           key: module.id, className: `claw-nav-item ${nav.PagedSettingsDialog_PageListItem ?? ""}`, role: "button",
