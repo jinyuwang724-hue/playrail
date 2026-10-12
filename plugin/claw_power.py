@@ -34,15 +34,16 @@ DEFAULTS = {
 # The toolbox drives the fan itself from the CPU package temperature: each mode is a curve of
 # (°C, duty %) points, interpolated in between. Measured on the Claw 8 EX (2026-10-12):
 # 20-40 % all sit at the ~2800 rpm floor, 50 % ~3060, 60 % ~3680, 70 % ~4300, 80 % ~4930,
-# 100 % ~6100 rpm. The user wants it no louder than 4700 rpm, which is 76 %; only the
-# full-speed switch goes past it.
+# 100 % ~6100 rpm. The user wants 静音 and 均衡 no louder than 4700 rpm, which is 76 %;
+# 性能 may go past it.
 FAN_CAP = 76
+FAN_CAPS = {"quiet": FAN_CAP, "balanced": FAN_CAP, "performance": 100}
 # Six duty points (%) per mode at FAN_TEMPS °C, linear in between. 均衡 is the user's curve
-# (20 % ≤50 °C, 30 % 60 °C, 50 % 70 °C, 76 % ≥85 °C); 静音 is it 5 °C later, 性能 5 °C earlier.
-# The user can edit every mode's points; these are the defaults.
+# (20 % ≤50 °C, 30 % 60 °C, 50 % 70 °C, 76 % ≥80 °C); 静音 is it 5 °C later; 性能 is more
+# aggressive and reaches full speed at 90 °C. The user can edit every mode's points.
 FAN_TEMPS = (50, 60, 70, 75, 80, 90)
-FAN_PRESETS = {"quiet": [20, 25, 40, 50, 59, 76], "balanced": [20, 30, 50, 59, 67, 76],
-               "performance": [25, 40, 59, 67, 76, 76]}
+FAN_PRESETS = {"quiet": [20, 25, 40, 50, 63, 76], "balanced": [20, 30, 50, 63, 76, 76],
+               "performance": [30, 45, 63, 76, 88, 100]}
 # Hysteresis: speed up only after the curve has asked for more for FAN_RISE s straight, slow
 # down only after it has asked for less for FAN_FALL s, so a short spike (loading screen,
 # shader compile) does not make the fan surge and drop again. At FAN_HOT °C it reacts at once.
@@ -100,7 +101,7 @@ def _fan(value):
             or any(not isinstance(c, list) or len(c) != 6 or any(type(d) is not int or not 0 <= d <= 100 for d in c)
                    for c in curves.values())):
         raise ValueError("风扇设置格式错误")
-    return {"mode": fan["mode"], "curves": {m: [min(d, FAN_CAP) for d in curves[m]] for m in FAN_PRESETS},
+    return {"mode": fan["mode"], "curves": {m: [min(d, FAN_CAPS[m]) for d in curves[m]] for m in FAN_PRESETS},
             "full": fan["full"]}
 
 
@@ -887,7 +888,7 @@ class PowerControl:
         try:
             axis = (self.fan_state or {}).get("cpuTemps") or [47, 50, 57, 64, 71, 78]
             duties = [fan_duty_at(fan_points(fan), t) for t in axis]
-            duties[-1] = max(duties[-1], FAN_CAP)
+            duties[-1] = max(duties[-1], FAN_CAPS[fan["mode"]])
             await self._call("fan_curve", cpu=duties, gpu=duties, full=False)
         except RuntimeError as e:
             logging.warning("Fan fallback curve: %s", e)
@@ -918,7 +919,7 @@ class PowerControl:
                 "actual": {k: a.get(k) for k in ("pl1", "pl2", "package", "locked", "tdpBase", "freq")} if a else None,
                 "backup": self.backup_path.exists(), "otherTool": self.other_tool, "reapplied": self.reapplied,
                 "smart": self.smart if self.settings["mode"] == "smart" else None, "targets": list(TARGETS),
-                "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS, "cap": FAN_CAP,
+                "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS, "caps": FAN_CAPS,
                         "axis": list(FAN_TEMPS), "target": self.fan_governor.duty},
                 # Read-only readings for the toolbox home; a temperature older than 15 s is not shown.
                 "live": {"battery": battery_percent(),

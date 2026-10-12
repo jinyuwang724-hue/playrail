@@ -105,9 +105,10 @@ def main():
     edited = power.validate({**base, "fan": {"mode": "quiet", "curves": {"quiet": [20, 30, 50, 70, 90, 100]}, "full": False}})["fan"]
     assert edited["curves"]["quiet"] == [20, 30, 50, 70, 76, 76] and edited["curves"]["balanced"] == power.FAN_PRESETS["balanced"]
     assert power.fan_points(edited)[0] == [50, 20]
-    assert all(max(c) <= power.FAN_CAP for c in power.FAN_PRESETS.values()), "presets stay under 4700 rpm"
+    assert max(power.FAN_PRESETS["quiet"] + power.FAN_PRESETS["balanced"]) <= power.FAN_CAP < max(power.FAN_PRESETS["performance"]), "静音/均衡 stay under 4700 rpm"
+    assert power.validate({**base, "fan": {"mode": "performance", "curves": {"performance": [30, 45, 63, 76, 88, 100], "balanced": [20, 30, 50, 63, 90, 100]}, "full": False}})["fan"]["curves"]["balanced"][-1] == power.FAN_CAP
     curve = power.fan_points({"mode": "balanced", "curves": power.FAN_PRESETS})
-    assert power.fan_duty_at(curve, 30) == 20 and power.fan_duty_at(curve, 65) == 40 and power.fan_duty_at(curve, 99) == power.FAN_CAP
+    assert power.fan_duty_at(curve, 30) == 20 and power.fan_duty_at(curve, 65) == 40 and power.fan_duty_at(curve, 80) == power.FAN_CAP
     fan = power.FanGovernor(); assert fan.update(curve, 50, 0) == 20
     for t in range(1, 4): assert fan.update(curve, 80, t) == 20, "a 3 s spike does not speed the fan up"
     for t in range(4, 20): assert fan.update(curve, 50, t) == 20

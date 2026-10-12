@@ -150,7 +150,7 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
           { label: "性能", data: "performance" }],
         onChange: o => controller.edit({ fan: { ...draft.fan, mode: o.data } }, 0) })),
       fanCurve && h(React.Fragment, null, ...fanCurve.map((duty, i) => row(`fan-${i}`, h(ui.SliderField, {
-        label: `${view.fan?.axis?.[i] ?? [50, 60, 70, 75, 80, 90][i]} °C`, min: 0, max: view.fan?.cap ?? 76, step: 1, validValues: "steps",
+        label: `${view.fan?.axis?.[i] ?? [50, 60, 70, 75, 80, 90][i]} °C`, min: 0, max: view.fan?.caps?.[fanMode] ?? 76, step: 1, validValues: "steps",
         minimumDpadGranularity: 1, showValue: true, valueSuffix: "%", value: duty,
         onChange: v => editCurve(fanCurve.map((d, j) => j === i ? Math.round(v) : d)),
       })))),
