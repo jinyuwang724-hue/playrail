@@ -139,20 +139,20 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       state.message && row("message", h("div", { className: "claw-hint" }, state.message)));
     if (section === "fan") return h(ui.PanelSection, null,
       row("fan-state", h("div", { className: "claw-hint" }, view.fan?.error ? view.fan.error
-        : view.fan?.rpm1 ? `${view.fan.rpm1} 转 · 占空比 ${view.fan.duty1}% · ${view.fan.software ? "工具箱曲线" : "固件控制"}${view.fan.fullSpeed ? " · 全速" : ""}`
+        : view.fan?.rpm1 ? `${view.fan.rpm1} 转 · 占空比 ${view.fan.duty1}%${typeof view.live?.cpuTemp === "number" ? ` · CPU ${view.live.cpuTemp} °C` : ""} · ${view.fan.software ? "工具箱曲线" : "固件控制"}${view.fan.fullSpeed ? " · 全速" : ""}`
         : draft.fan.mode === "firmware" ? "固件自动控制。选其他模式后会显示转速。" : "正在读取风扇状态…")),
       row("fan-mode", h(ui.DropdownItem, { label: "风扇模式", selectedOption: draft.fan.mode,
         rgOptions: [{ label: "固件自动（默认）", data: "firmware" }, { label: "静音", data: "quiet" }, { label: "均衡", data: "balanced" },
           { label: "性能", data: "performance" }, { label: "自定义 6 点曲线", data: "custom" }],
         onChange: o => controller.edit({ fan: { ...draft.fan, mode: o.data } }, 0) })),
       draft.fan.mode === "custom" && h(React.Fragment, null, ...draft.fan.custom.map((duty, i) => row(`fan-${i}`, h(ui.SliderField, {
-        label: `${view.fan?.cpuTemps?.[i] ?? [47, 50, 57, 64, 71, 78][i]} °C 时`, min: 0, max: 100, step: 1, validValues: "steps",
+        label: `${view.fan?.axis?.[i] ?? [50, 60, 70, 75, 80, 90][i]} °C 时`, min: 0, max: view.fan?.cap ?? 76, step: 1, validValues: "steps",
         minimumDpadGranularity: 1, showValue: true, valueSuffix: "%", value: duty,
         onChange: v => controller.edit({ fan: { ...draft.fan, custom: draft.fan.custom.map((d, j) => j === i ? Math.round(v) : d) } }),
       })))),
       draft.fan.mode !== "firmware" && row("fan-full", h(ui.ToggleField, { label: "风扇全速", description: "临时让风扇满转，关闭后回到所选曲线。",
         checked: draft.fan.full, onChange: full => controller.edit({ fan: { ...draft.fan, full } }, 0) })),
-      row("fan-hint", h("div", { className: "claw-hint" }, "曲线用的是固件自己的 6 个温度点。第一次切换前会备份原曲线，选回“固件自动”时恢复并交还固件。")),
+      row("fan-hint", h("div", { className: "claw-hint" }, "工具箱按 CPU 温度调速，最高约 4700 转。升温持续 6 秒才加速，降温持续 10 秒才减速，短暂的温度尖峰不会让风扇忽响忽静。第一次切换前会备份原曲线，选回“固件自动”时恢复。")),
       state.message && row("message", h("div", { className: "claw-hint" }, state.message)));
     return h(ui.PanelSection, null,
       h(StatusText, null, phase),

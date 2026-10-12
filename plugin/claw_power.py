@@ -29,12 +29,23 @@ DEFAULTS = {
     "smart": {"target": 60, "acMax": 35, "dcMax": 25, "floor": 8},
     # The OSD also keeps games such as 鸣潮 3.7 from crashing under RTSS (see ClawPower.cs Osd).
     "osd": {"enabled": True, "level": 2, "size": "medium", "rows": 1, "smallUnits": False},
-    "fan": {"mode": "firmware", "custom": [60, 64, 68, 74, 80, 84], "full": False},
+    "fan": {"mode": "firmware", "custom": [20, 30, 50, 59, 67, 76], "full": False},
 }
-# Six duty points (%) on the firmware's own temperature axis (47/50/57/64/71/78 °C on the
-# Claw 8 EX). "firmware" hands control back to the EC's curve.
-FAN_PRESETS = {"quiet": [30, 35, 45, 55, 70, 84], "balanced": [45, 50, 58, 68, 78, 88],
-               "performance": [60, 68, 76, 85, 95, 100]}
+# The toolbox drives the fan itself from the CPU package temperature: each mode is a curve of
+# (°C, duty %) points, interpolated in between. Measured on the Claw 8 EX (2026-10-12):
+# 20-40 % all sit at the ~2800 rpm floor, 50 % ~3060, 60 % ~3680, 70 % ~4300, 80 % ~4930,
+# 100 % ~6100 rpm. The user wants it no louder than 4700 rpm, which is 76 %; only the
+# full-speed switch goes past it.
+FAN_CAP = 76
+FAN_PRESETS = {"quiet": [[55, 20], [65, 30], [75, 50], [90, FAN_CAP]],
+               "balanced": [[50, 20], [60, 30], [70, 50], [85, FAN_CAP]],
+               "performance": [[45, 30], [55, 50], [65, 65], [75, FAN_CAP]]}
+# Temperatures of the six custom points.
+FAN_CUSTOM_TEMPS = (50, 60, 70, 75, 80, 90)
+# Hysteresis: speed up only after the curve has asked for more for FAN_RISE s straight, slow
+# down only after it has asked for less for FAN_FALL s, so a short spike (loading screen,
+# shader compile) does not make the fan surge and drop again. At FAN_HOT °C it reacts at once.
+FAN_RISE, FAN_FALL, FAN_HOT = 6.0, 10.0, 95
 FAN_MODES = ("firmware", "custom") + tuple(FAN_PRESETS)
 
 
@@ -83,11 +94,48 @@ def _fan(value):
     if (fan["mode"] not in FAN_MODES or type(fan["full"]) is not bool or not isinstance(custom, list) or len(custom) != 6
             or any(type(d) is not int or not 0 <= d <= 100 for d in custom)):
         raise ValueError("风扇设置格式错误")
-    return {"mode": fan["mode"], "custom": list(custom), "full": fan["full"]}
+    return {"mode": fan["mode"], "custom": [min(d, FAN_CAP) for d in custom], "full": fan["full"]}
 
 
-def fan_duties(fan):
-    return fan["custom"] if fan["mode"] == "custom" else FAN_PRESETS.get(fan["mode"])
+def fan_points(fan):
+    if fan["mode"] == "custom":
+        return [[t, d] for t, d in zip(FAN_CUSTOM_TEMPS, fan["custom"])]
+    return FAN_PRESETS.get(fan["mode"])
+
+
+def fan_duty_at(points, temp):
+    """Duty on a (°C, %) curve, linear between points and flat beyond the ends."""
+    if temp <= points[0][0]:
+        return points[0][1]
+    for (t0, d0), (t1, d1) in zip(points, points[1:]):
+        if temp <= t1:
+            return round(d0 + (d1 - d0) * (temp - t0) / (t1 - t0))
+    return points[-1][1]
+
+
+class FanGovernor:
+    def __init__(self):
+        self.history = []  # (time, duty the curve asks for)
+        self.duty = None
+
+    def reset(self):
+        self.history, self.duty = [], None
+
+    def update(self, points, temp, now):
+        want = fan_duty_at(points, temp)
+        self.history = [(t, w) for t, w in self.history if now - t < FAN_FALL] + [(now, want)]
+        if self.duty is None or temp >= FAN_HOT:
+            self.duty = max(want, self.duty or 0) if temp >= FAN_HOT else want
+            return self.duty
+        span = now - self.history[0][0]
+        rise = min(w for t, w in self.history if now - t < FAN_RISE)
+        if rise > self.duty and span >= FAN_RISE - 1:
+            self.duty = rise
+        elif span >= FAN_FALL - 1:
+            fall = max(w for _, w in self.history)
+            if fall < self.duty:
+                self.duty = fall
+        return self.duty
 
 
 class PowerStatus(ctypes.Structure):
@@ -485,6 +533,8 @@ class PowerControl:
         self.gpu_state = {}
         self.battery_rate = BatteryRate()
         self.fan_error = ""
+        self.fan_governor = FanGovernor()
+        self.fan_written = None  # flat duty last written to the EC tables
         self.fan_backup_path = self.data / "fan-backup.json"
         self.stats = {}
         self.cpu = LightStats()
@@ -683,8 +733,9 @@ class PowerControl:
         chain = max(chains, key=lambda c: c.get("presentedFps", 0)) if chains else {}
         if tick % 2 == 1 or self.temperature is None:
             try:
-                self.temperature = (await self._call("thermal")).get("package")
-                self.temperature_at = time.monotonic()
+                if time.monotonic() - self.temperature_at > 0.9:  # else the fan tick just read it
+                    self.temperature = (await self._call("thermal")).get("package")
+                    self.temperature_at = time.monotonic()
             except RuntimeError:
                 self.temperature = None
             if osd["level"] >= 2:  # level 2 shows the battery time too
@@ -763,23 +814,30 @@ class PowerControl:
             self.osd = {**self.osd, "error": f"字号设置失败：{e}"}
 
     async def _fan_tick(self, tick):
-        """Keeps a chosen curve in place (the EC can be reset by sleep or MSI tools) and
-        reads fan speed for the OSD. Firmware mode with a short OSD needs no helper."""
+        """Runs the toolbox curve once a second with hysteresis, keeps it in place (the EC can
+        be reset by sleep or MSI tools) and reads fan speed for the OSD. Firmware mode with a
+        short OSD needs no helper."""
         fan = self.settings["fan"]
         managed = fan["mode"] != "firmware"
         wants_rpm = self.settings["osd"]["enabled"] and self.settings["osd"]["level"] >= 3
         if not managed and not wants_rpm:
             return
-        if tick % 3 and self.fan_state:
-            return
         try:
-            state = await self._call("fan_read")
-            self.fan_state = state
-            if managed and tick % 9 == 0:
-                duties = fan_duties(fan)
-                if (not state.get("software") or state.get("cpu") != duties or state.get("gpu") != duties
-                        or state.get("fullSpeed") != fan["full"]):
-                    await self._apply_fan()
+            if managed and not fan["full"]:
+                self.temperature = (await self._call("thermal")).get("package")
+                self.temperature_at = time.monotonic()
+                if self.temperature is not None:
+                    duty = self.fan_governor.update(fan_points(fan), self.temperature, time.monotonic())
+                    if duty != self.fan_written:
+                        await self._apply_fan()
+            if tick % 3 == 0 or not self.fan_state:
+                state = await self._call("fan_read")
+                self.fan_state = state
+                if managed and tick % 9 == 0:
+                    duties = [100] * 6 if fan["full"] else [self.fan_written] * 6
+                    if (not state.get("software") or state.get("cpu") != duties or state.get("gpu") != duties
+                            or state.get("fullSpeed") != fan["full"]):
+                        await self._apply_fan()
             self.fan_error = ""
         except RuntimeError as e:
             self.fan_error = str(e)
@@ -787,6 +845,8 @@ class PowerControl:
     async def _apply_fan(self):
         fan = self.settings["fan"]
         if fan["mode"] == "firmware":
+            self.fan_governor.reset()
+            self.fan_written = None
             backup = None
             if self.fan_backup_path.exists():
                 backup = json.loads(self.fan_backup_path.read_text(encoding="utf-8"))
@@ -800,8 +860,32 @@ class PowerControl:
             temp.write_text(json.dumps({"cpu": state["cpu"], "gpu": state["gpu"], "cpuTemps": state.get("cpuTemps"),
                                         "savedAt": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False), encoding="utf-8")
             os.replace(temp, self.fan_backup_path)
-        duties = fan_duties(fan)
+        if fan["full"]:
+            duties = [100] * 6
+        else:
+            if self.fan_governor.duty is None:
+                if self.temperature is None or time.monotonic() - self.temperature_at > 5:
+                    self.temperature = (await self._call("thermal")).get("package")
+                    self.temperature_at = time.monotonic()
+                self.fan_governor.update(fan_points(fan), self.temperature or 0, time.monotonic())
+            # One flat duty on all six EC points: the toolbox, not the EC, follows the temperature.
+            duties = [self.fan_governor.duty] * 6
         self.fan_state = await self._call("fan_curve", cpu=duties, gpu=duties, full=fan["full"])
+        self.fan_written = duties[0] if not fan["full"] else None
+
+    async def _fan_fallback(self):
+        """When the toolbox stops, leave the EC its own curve built from the chosen mode (capped
+        the same way) so the fan still follows the temperature without the toolbox."""
+        fan = self.settings["fan"]
+        if fan["mode"] == "firmware" or fan["full"] or not self.process or self.process.returncode is not None:
+            return
+        try:
+            axis = (self.fan_state or {}).get("cpuTemps") or [47, 50, 57, 64, 71, 78]
+            duties = [fan_duty_at(fan_points(fan), t) for t in axis]
+            duties[-1] = max(duties[-1], FAN_CAP)
+            await self._call("fan_curve", cpu=duties, gpu=duties, full=False)
+        except RuntimeError as e:
+            logging.warning("Fan fallback curve: %s", e)
 
     async def _osd_off(self):
         if self.process and self.process.returncode is None:
@@ -829,7 +913,8 @@ class PowerControl:
                 "actual": {k: a.get(k) for k in ("pl1", "pl2", "package", "locked", "tdpBase", "freq")} if a else None,
                 "backup": self.backup_path.exists(), "otherTool": self.other_tool, "reapplied": self.reapplied,
                 "smart": self.smart if self.settings["mode"] == "smart" else None, "targets": list(TARGETS),
-                "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS},
+                "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS, "cap": FAN_CAP,
+                        "axis": list(FAN_CUSTOM_TEMPS), "target": self.fan_governor.duty},
                 # Read-only readings for the toolbox home; a temperature older than 15 s is not shown.
                 "live": {"battery": battery_percent(),
                          "cpuTemp": self.temperature if time.monotonic() - self.temperature_at < 15 else None,
@@ -881,6 +966,7 @@ class PowerControl:
             self.error = ""
             self.smart = {}
         if next_settings["fan"] != previous["fan"]:
+            self.fan_governor.reset()
             try:
                 await self._apply_fan()
                 self.fan_error = ""
@@ -919,4 +1005,5 @@ class PowerControl:
                 await self.task
             except asyncio.CancelledError:
                 pass
+        await self._fan_fallback()
         await self._stop()
