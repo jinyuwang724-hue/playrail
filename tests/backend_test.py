@@ -7,8 +7,7 @@ import unittest
 import re
 import time
 
-sys.modules["decky"] = types.ModuleType("decky")
-spec = importlib.util.spec_from_file_location("claw_plugin", Path(__file__).parents[1] / "plugin" / "main.py")
+spec = importlib.util.spec_from_file_location("claw_service", Path(__file__).parents[1] / "plugin" / "claw_service.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
@@ -39,7 +38,7 @@ class SettingsTests(unittest.TestCase):
 
 class LifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_new_frontend_resets_steam_report_and_stale_unload_cannot_release_it(self):
-        plugin = module.Plugin.__new__(module.Plugin)
+        plugin = module.Service.__new__(module.Service)
         plugin._frontend_id, plugin._ready = 'old', True
         plugin._steam_context_revision = 50
         plugin._settings = {'hapticsEnabled': False}
@@ -59,7 +58,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         reader = asyncio.StreamReader()
         reader.feed_data(b'{"type":"status","configured":true,"enabled":false}\n')
         reader.feed_eof()
-        plugin = module.Plugin.__new__(module.Plugin)
+        plugin = module.Service.__new__(module.Service)
         plugin._process = types.SimpleNamespace(stdout=reader)
         plugin._settings = {"enabled": True}
         plugin._ready = True
@@ -67,7 +66,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
         plugin._save = lambda: None
         async def emit(*args):
             pass
-        module.decky.emit = emit
+        plugin._emit = emit
         await plugin._read_output()
         return plugin._settings["enabled"]
 
@@ -80,7 +79,7 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 class ResultTests(unittest.IsolatedAsyncioTestCase):
     async def test_steam_context_ignores_old_frontend_and_out_of_order_reports(self):
-        plugin = module.Plugin.__new__(module.Plugin)
+        plugin = module.Service.__new__(module.Service)
         plugin._frontend_id, plugin._ready, plugin._stopping = 'current', True, False
         plugin._steam_context_revision = -1
         messages = []
@@ -97,7 +96,7 @@ class ResultTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(ValueError): await plugin.set_steam_context('current', revision, active)
 
     async def test_result_drops_nonfinite_or_command_timings(self):
-        plugin = module.Plugin.__new__(module.Plugin)
+        plugin = module.Service.__new__(module.Service)
         messages = []
         async def send(command):
             messages.append(command)
@@ -126,7 +125,7 @@ class HapticTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(matched, 17)
 
     async def test_expired_and_disabled_requests_never_reach_output(self):
-        plugin = module.Plugin.__new__(module.Plugin)
+        plugin = module.Service.__new__(module.Service)
         plugin._stopping = False
         plugin._ready = True
         plugin._settings = {"hapticsEnabled": True}
@@ -144,7 +143,7 @@ class HapticTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(calls)
 
     async def test_feedback_switch_is_independent_of_button_mapping(self):
-        plugin = module.Plugin.__new__(module.Plugin)
+        plugin = module.Service.__new__(module.Service)
         plugin._settings = dict(enabled=True, msiAction="QuickAccess", qamAction="MainMenu", hapticsEnabled=True)
         stopped = []
         plugin._haptics = types.SimpleNamespace(stop=lambda: stopped.append(True))
@@ -159,7 +158,7 @@ class HapticTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stopped, [True])
 
     async def test_exit_blocks_queued_pulses_and_stale_contexts_cannot_reenable(self):
-        plugin = module.Plugin.__new__(module.Plugin)
+        plugin = module.Service.__new__(module.Service)
         plugin._stopping = False
         plugin._ready = True
         plugin._frontend_id = "current"
@@ -180,7 +179,7 @@ class HapticTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stopped, [True, "recover"])
 
     async def test_stop_still_works_when_disabled_or_frontend_is_unloaded(self):
-        plugin = module.Plugin.__new__(module.Plugin)
+        plugin = module.Service.__new__(module.Service)
         plugin._stopping = True
         plugin._ready = False
         plugin._settings = {"hapticsEnabled": False}

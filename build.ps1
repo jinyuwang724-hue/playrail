@@ -1,6 +1,14 @@
-param([switch]$FrontendOnly, [switch]$RouterOnly)
+param([switch]$FrontendOnly, [switch]$RouterOnly, [string]$Python = $env:CLAW_PYTHON)
 $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
+# The agent's private Python runtime (the device has no system Python). Built once from a local
+# Python 3.12; pass -Python or set CLAW_PYTHON to rebuild it.
+$taskRuntime = Join-Path $taskRoot 'plugin\runtime\python'
+if ($Python -or -not (Test-Path -LiteralPath (Join-Path $taskRuntime 'runtime.json'))) {
+    if (-not $Python) { throw 'Agent runtime missing: run build.ps1 -Python <path to python.exe 3.12>.' }
+    & $Python (Join-Path $taskRoot 'tools\Build-AgentRuntime.py') $taskRuntime
+    if ($LASTEXITCODE -ne 0) { throw 'Agent runtime build failed.' }
+}
 if (-not $FrontendOnly) {
 $taskCompiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path -LiteralPath $taskCompiler)) { throw 'Windows .NET Framework 4.x compiler is required.' }

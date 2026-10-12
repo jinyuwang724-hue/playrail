@@ -35,3 +35,6 @@ desktop.ini
 
 # 本机设置备份
 /tools/*-before.json
+
+# Agent Python runtime (build.ps1 rebuilds it from a local Python 3.12)
+/plugin/runtime/
