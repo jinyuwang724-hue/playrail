@@ -10,4 +10,4 @@ $principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -Ru
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances Parallel -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskPath '\ClawToolbox\' -TaskName 'Agent' -Action $action -Trigger $trigger -Principal $principal `
-    -Settings $settings -Description 'Claw 掌机工具箱后台：功耗、风扇、OSD、震动和按键，不依赖 Steam。' -Force | Out-Null
+    -Settings $settings -Description 'Claw handheld toolbox agent: power, fan, OSD, rumble and buttons without Steam.' -Force | Out-Null
