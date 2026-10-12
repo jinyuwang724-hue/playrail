@@ -61,6 +61,11 @@ def governor_checks():
     # Uncapped target: climbs while fps still grows.
     h, _ = simulate(aaa, 0, 35)
     assert h[-1] >= 34, h[-10:]
+    # Steam's home screen (no game): the draw follows the limit, which must not ratchet up.
+    clock = Clock(); g = power.SmartGovernor(clock)
+    for _ in range(120):
+        g.update(None, None, g.limit - 0.5, 60, 8, 25); clock.now += 1
+    assert g.limit == 12, g.limit
 
 
 def main():

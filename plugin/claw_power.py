@@ -425,6 +425,11 @@ class SmartGovernor:
     """
     STEP_EVERY = 2.0
     HOLD = 60.0
+    # Steam's own UI and the desktop. There are no game frames to judge there, and the
+    # chip spends whatever limit it is given: the Big Picture home screen drew ~10 W at a
+    # 12 W limit and 15-20 W at 25 W (same screen, CPU 2.5 -> 3.2 GHz). Following that
+    # draw upward ratchets the limit to the cap, so menus get a fixed low limit instead.
+    MENU = 12
 
     def __init__(self, clock=time.monotonic):
         self.clock = clock
@@ -449,6 +454,10 @@ class SmartGovernor:
             self.fps = app_fps if self.fps is None else self.fps + alpha * (app_fps - self.fps)
         if draw is not None:
             self.draw = draw if self.draw is None else self.draw + alpha * (draw - self.draw)
+        if game is None:
+            self.limit = max(floor, min(cap, self.MENU))
+            self.reason = f"不在游戏中，固定 {self.limit} W"
+            return self.limit
         self.limit = max(floor, min(cap, self.limit))
         if now - self.last_step < self.STEP_EVERY or self.draw is None:
             return self.limit
@@ -551,6 +560,7 @@ class PowerControl:
         self.osd = {}
         self.osd_text = ""
         self.governor = SmartGovernor()
+        self.last_game = None
         self.smart = {}
 
     # ---- helper -------------------------------------------------------------
@@ -675,6 +685,10 @@ class PowerControl:
         s = self.settings["smart"]
         cap = s["acMax"] if self.charger else s["dcMax"]
         game = await asyncio.to_thread(foreground_game)
+        last = self.last_game
+        if game is None and last and (await asyncio.to_thread(process_names)).get(last[0]) == last[1]:
+            game = last     # Steam's menu over a running game: keep governing the game
+        self.last_game = game
         frames = await self._call("frames", pid=game[0] if game else 0)
         chains = [c for c in frames.get("swapChains") or [] if c.get("presentedFps", 0) > 0]
         # The game's main swap chain is the one presenting the most frames.
