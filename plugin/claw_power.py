@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import subprocess
 import time
+import winreg
 
 # Intel rates the Arc G3 Extreme for 8-35 W.
 TDP_MIN, TDP_MAX = 8, 35
@@ -154,6 +155,24 @@ def on_charger():
     if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status)):
         return True
     return status.ac != 0  # 1 online, 255 unknown counts as charger like Windows does
+
+
+SMALL_CORES_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\kernel\Kgroups\00"
+
+
+def small_cores_enabled():
+    """体感助手's 模拟全核心E核: SmallProcessorMask present means every core is scheduled as an E-core."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, SMALL_CORES_KEY, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
+            winreg.QueryValueEx(key, "SmallProcessorMask")
+            return True
+    except FileNotFoundError:
+        return False
+
+
+def boot_time():
+    ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_uint64
+    return time.time() - ctypes.windll.kernel32.GetTickCount64() / 1000
 
 
 def battery_percent():
@@ -551,6 +570,7 @@ class PowerControl:
         self.fan_governor = FanGovernor()
         self.fan_written = None  # flat duty last written to the EC tables
         self.fan_backup_path = self.data / "fan-backup.json"
+        self.ecore_path = self.data / "ecore.json"
         self.stats = {}
         self.cpu = LightStats()
         self.last_frames = None
@@ -601,6 +621,8 @@ class PowerControl:
                 return reply.get("fan") or {}
             if command in ("thermal", "osd", "stats", "osd_zoom", "osd_height", "osd_font", "rtss_app", "gpu"):
                 return reply.get(command) or {}
+            if command == "ecore_set":
+                return reply.get("ecore") or {}
             if command == "frames":
                 frames = reply.get("frames") or {}
                 if frames.get("msrError"):
@@ -926,6 +948,29 @@ class PowerControl:
         chains = [c for c in (self.last_frames or {}).get("swapChains") or [] if c.get("presentedFps", 0) > 0]
         return max(chains, key=lambda c: c.get("presentedFps", 0)).get("appFps") if chains else None
 
+    def ecore_view(self):
+        """Registry state and whether it differs from what Windows booted with (applies after restart)."""
+        enabled = small_cores_enabled()
+        boot = boot_time()
+        try:
+            record = json.loads(self.ecore_path.read_text(encoding="utf-8"))
+            if abs(record["boot"] - boot) > 120:
+                raise ValueError("new boot")
+        except (OSError, ValueError, KeyError, TypeError):
+            record = {"boot": boot, "atBoot": enabled}
+            try:
+                self.ecore_path.write_text(json.dumps(record), encoding="utf-8")
+            except OSError:
+                pass
+        return {"enabled": enabled, "pending": enabled != record["atBoot"]}
+
+    async def set_ecore(self, enabled):
+        if type(enabled) is not bool:
+            raise ValueError("开关格式错误")
+        self.ecore_view()  # records the boot state before the first change
+        await self._call("ecore_set", enabled=enabled)
+        return self.view()
+
     def view(self):
         pl1, pl2 = self.target()
         a = self.actual or {}
@@ -941,6 +986,7 @@ class PowerControl:
                          # Real rendered frame rate from the OSD or smart tick, in any mode.
                          "fps": self._live_fps()},
                 "osd": {"rtss": self.osd.get("rtss"), "text": self.osd_text, "error": self.osd.get("error")},
+                "ecore": self.ecore_view(),
                 "error": self.error, "limits": {"tdpMin": TDP_MIN, "tdpMax": TDP_MAX, "boostMax": BOOST_MAX,
                                                  "freq": list(FREQ_CHOICES)}}
 

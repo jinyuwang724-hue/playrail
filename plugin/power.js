@@ -36,6 +36,12 @@ export function createPowerController(api) {
       catch (error) { set({ message: String(error) }); }
       finally { set({ busy: false }); }
     },
+    async setEcore(enabled) {
+      set({ busy: true });
+      try { accept(await api.call("set_ecore", enabled)); set({ message: "" }); }
+      catch (error) { set({ message: String(error) }); }
+      finally { set({ busy: false }); }
+    },
     dispose() { clearTimeout(timer); listeners.clear(); },
   };
 }
@@ -199,6 +205,9 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       row("boost", h(ui.SliderField, { label: "短时功耗加成", description: "短时功耗（PL2）＝功耗上限＋加成。体感助手原来用 1 W。",
         min: 0, max: limits.boostMax, step: 1, validValues: "steps", minimumDpadGranularity: 1, showValue: true, valueSuffix: " W",
         value: draft.boost, onChange: v => controller.edit({ boost: Math.round(v) }) })),
+      view.ecore && row("ecore", h(ui.ToggleField, { label: "全部核心按 E 核调度",
+        description: view.ecore.pending ? "已更改，重启掌机后生效。" : "和体感助手的“模拟全核心 E 核”相同，切换后重启生效。",
+        checked: view.ecore.enabled, disabled: state.busy, onChange: enabled => controller.setEcore(enabled) })),
       actual?.freq && row("freq-actual", h("div", { className: "claw-hint" },
         `电源方案当前频率上限：插电 ${freqLabel(actual.freq.ac)}，电池 ${freqLabel(actual.freq.dc)}`)),
       row("restore", h(ui.ButtonItem, { layout: "below", disabled: state.busy || !view.backup, onClick: () => controller.restore() },

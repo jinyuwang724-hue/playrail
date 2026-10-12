@@ -27,7 +27,7 @@ _subscription_module = _load("claw_toolbox_subscriptions", "claw_subscriptions.p
 FORWARDED = (
     "get_state", "refresh", "save_settings", "frontend_ready", "set_steam_context", "action_result",
     "manage_compatibility",
-    "get_power_state", "save_power", "restore_power",
+    "get_power_state", "save_power", "restore_power", "set_ecore",
     "get_rumble_state", "set_rumble_strength", "restore_rumble", "test_rumble",
     "get_magpie_state", "get_magpie_targets", "get_magpie_catalog", "apply_magpie", "stop_magpie",
     "set_magpie_plain", "toggle_magpie", "magpie_auto_start", "set_magpie_pause",

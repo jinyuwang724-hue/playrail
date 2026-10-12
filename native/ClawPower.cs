@@ -172,6 +172,7 @@ class Executor : IDisposable {
             else if (command == "fan_read") reply["fan"] = MsiFan.Read();
             else if (command == "fan_curve") reply["fan"] = MsiFan.Apply(Ints(request, "cpu"), Ints(request, "gpu"), true.Equals(request.ContainsKey("full") ? request["full"] : false));
             else if (command == "fan_restore") reply["fan"] = MsiFan.Restore(request.ContainsKey("cpu") ? Ints(request, "cpu") : null, request.ContainsKey("gpu") ? Ints(request, "gpu") : null);
+            else if (command == "ecore_set") reply["ecore"] = SmallCores.Set(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
             else throw new ArgumentException("未知命令");
             reply["ok"] = true;
         } catch (Exception error) {
@@ -567,6 +568,27 @@ static class Osd {
 //   Get_AP(1)[0] bit 7  software curve in control (Set_Data 0xD4); clear = firmware's own curve
 //   Get_Data(0x98) bit 7 full speed
 // Every Get_* reply starts with a status byte (1 = ok) that is stripped here.
+// "All cores as E-cores" (体感助手's 模拟全核心E核): SmallProcessorMask marks every logical
+// processor of group 0 as a small core, so the scheduler stops preferring P-cores. Windows reads
+// it at boot only. Writing the same value 体感助手 writes keeps the two interchangeable.
+static class SmallCores {
+    const string Key = @"SYSTEM\CurrentControlSet\Control\Session Manager\kernel\Kgroups\00";
+    const string Name = "SmallProcessorMask";
+
+    public static Dictionary<string, object> Set(bool enabled) {
+        using (var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(Key)) {
+            if (key == null) throw new InvalidOperationException("无法打开处理器分组注册表项");
+            if (enabled) {
+                int threads = Math.Min(Environment.ProcessorCount, 64);
+                ulong mask = threads == 64 ? ulong.MaxValue : (1UL << threads) - 1;
+                if (mask <= uint.MaxValue) key.SetValue(Name, unchecked((int)(uint)mask), Microsoft.Win32.RegistryValueKind.DWord);
+                else key.SetValue(Name, unchecked((long)mask), Microsoft.Win32.RegistryValueKind.QWord);
+            } else key.DeleteValue(Name, false);
+            return new Dictionary<string, object> { { "enabled", key.GetValue(Name) != null } };
+        }
+    }
+}
+
 static class MsiFan {
     const string Instance = @"MSI_ACPI.InstanceName='ACPI\PNP0C14\0_0'";
 

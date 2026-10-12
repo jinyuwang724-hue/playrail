@@ -147,6 +147,21 @@ def main():
             assert control.freq_target() == (0, 0)
             control.settings["mode"] = "auto"
             assert control.freq_target() == (2750, 2750)
+            # E-core switch: "pending" means the registry differs from what this boot started with.
+            state = {"on": True, "boot": 1000.0}
+            power.small_cores_enabled, power.boot_time = (lambda: state["on"]), (lambda: state["boot"])
+            assert control.ecore_view() == {"enabled": True, "pending": False}
+            state["on"] = False
+            assert control.ecore_view() == {"enabled": False, "pending": True}
+            state["boot"] = 5000.0  # restarted: the new state is what Windows uses now
+            assert control.ecore_view() == {"enabled": False, "pending": False}
+            state["on"] = True
+            assert control.ecore_view()["pending"]
+            try:
+                await control.set_ecore("on")
+                raise AssertionError("accepted a non-boolean switch")
+            except ValueError:
+                pass
             if "--live" in sys.argv:
                 view = await control.get(sample=True)
                 print(json.dumps(view["actual"], ensure_ascii=False))
