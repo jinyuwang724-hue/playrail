@@ -42,10 +42,25 @@ export function createPowerController(api) {
 
 const freqLabel = mhz => mhz ? `${mhz} MHz` : "不限制";
 const watts = v => typeof v === "number" ? `${Math.round(v * 10) / 10} W` : "—";
+const fanModes = { firmware: "固件自动", quiet: "静音", balanced: "均衡", performance: "性能", custom: "自定义曲线" };
 
+// One-line summaries for the collapsed module headings (power, osd, fan).
+export function powerSummaries(value) {
+  const view = value?.view, draft = value?.draft;
+  if (!view || !draft) return {};
+  const mode = draft.mode === "manual" ? `手动 ${draft.manual.tdp} W` : draft.mode === "smart" ? `智能${view.smart?.limit ? ` ${view.smart.limit} W` : ""}`
+    : `预设 ${(view.charger ? draft.ac : draft.dc).tdp} W`;
+  return {
+    power: draft.enabled ? { text: mode } : { text: "未接管", off: true },
+    osd: draft.osd?.enabled ? { text: `第 ${draft.osd.level} 档` } : { text: "关", off: true },
+    fan: { text: `${fanModes[draft.fan?.mode] ?? "—"}${draft.fan?.full && draft.fan.mode !== "firmware" ? " · 全速" : ""}`, off: draft.fan?.mode === "firmware" },
+  };
+}
+
+// The power controller backs three toolbox modules: `section` picks power, osd or fan.
 export function createPowerPanel(React, ui, controller, StatusText, SectionLabel) {
   const h = React.createElement;
-  return function PowerPanel() {
+  return function PowerPanel({ section = "power" }) {
     const [state, setState] = React.useState(() => controller.value);
     React.useEffect(() => {
       const remove = controller.subscribe(setState);
@@ -81,6 +96,32 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       onChange: v => controller.edit({ smart: { ...draft.smart, [field]: Math.round(v) } }),
     }));
     const fpsText = live?.fps != null ? `真实 ${Math.round(live.fps)} 帧${live.presentedFps && live.presentedFps > live.fps * 1.3 ? `（含插帧显示 ${Math.round(live.presentedFps)} 帧）` : ""}` : "";
+    if (section === "osd") return h(ui.PanelSection, null,
+      row("osd", h(ui.ToggleField, { label: "显示性能信息",
+        checked: draft.osd.enabled, onChange: enabled => controller.edit({ osd: { ...draft.osd, enabled } }, 0) })),
+      draft.osd.enabled && row("osd-level", h(ui.SliderField, { label: "显示详细程度", min: 1, max: 4, step: 1, validValues: "steps",
+        minimumDpadGranularity: 1, notchCount: 4, notchTicksVisible: true, showValue: true, value: draft.osd.level,
+        onChange: v => controller.edit({ osd: { ...draft.osd, level: Math.round(v) } }) })),
+      draft.osd.enabled && (view.osd?.error || view.osd?.rtss === false) && row("osd-state", h("div", { className: "claw-hint" },
+        view.osd?.error || "RTSS 没有运行，OSD 暂不显示。")),
+      state.message && row("message", h("div", { className: "claw-hint" }, state.message)));
+    if (section === "fan") return h(ui.PanelSection, null,
+      row("fan-state", h("div", { className: "claw-hint" }, view.fan?.error ? view.fan.error
+        : view.fan?.rpm1 ? `${view.fan.rpm1} 转 · 占空比 ${view.fan.duty1}% · ${view.fan.software ? "工具箱曲线" : "固件控制"}${view.fan.fullSpeed ? " · 全速" : ""}`
+        : draft.fan.mode === "firmware" ? "固件自动控制。选其他模式后会显示转速。" : "正在读取风扇状态…")),
+      row("fan-mode", h(ui.DropdownItem, { label: "风扇模式", selectedOption: draft.fan.mode,
+        rgOptions: [{ label: "固件自动（默认）", data: "firmware" }, { label: "静音", data: "quiet" }, { label: "均衡", data: "balanced" },
+          { label: "性能", data: "performance" }, { label: "自定义 6 点曲线", data: "custom" }],
+        onChange: o => controller.edit({ fan: { ...draft.fan, mode: o.data } }, 0) })),
+      draft.fan.mode === "custom" && h(React.Fragment, null, ...draft.fan.custom.map((duty, i) => row(`fan-${i}`, h(ui.SliderField, {
+        label: `${view.fan?.cpuTemps?.[i] ?? [47, 50, 57, 64, 71, 78][i]} °C 时`, min: 0, max: 100, step: 1, validValues: "steps",
+        minimumDpadGranularity: 1, showValue: true, valueSuffix: "%", value: duty,
+        onChange: v => controller.edit({ fan: { ...draft.fan, custom: draft.fan.custom.map((d, j) => j === i ? Math.round(v) : d) } }),
+      })))),
+      draft.fan.mode !== "firmware" && row("fan-full", h(ui.ToggleField, { label: "风扇全速", description: "临时让风扇满转，关闭后回到所选曲线。",
+        checked: draft.fan.full, onChange: full => controller.edit({ fan: { ...draft.fan, full } }, 0) })),
+      row("fan-hint", h("div", { className: "claw-hint" }, "曲线用的是固件自己的 6 个温度点。第一次切换前会备份原曲线，选回“固件自动”时恢复并交还固件。")),
+      state.message && row("message", h("div", { className: "claw-hint" }, state.message)));
     return h(ui.PanelSection, null,
       h(StatusText, null, phase),
       draft.enabled && view.otherTool && row("other", h("div", { className: "claw-hint" },
@@ -117,30 +158,6 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
         ...draft.quick.map(q => h(ui.ButtonItem, { key: q, layout: "below",
           onClick: () => controller.edit({ mode: "manual", manual: { ...draft.manual, tdp: q } }, 0) }, `${q} W`)))),
       row("quick-hint", h("div", { className: "claw-hint" }, "点快捷档位会切到手动并使用该功耗。")),
-      h(SectionLabel, null, "游戏内显示（OSD）"),
-      row("osd", h(ui.ToggleField, { label: "显示性能信息",
-        checked: draft.osd.enabled, onChange: enabled => controller.edit({ osd: { ...draft.osd, enabled } }, 0) })),
-      draft.osd.enabled && row("osd-level", h(ui.SliderField, { label: "显示详细程度", min: 1, max: 4, step: 1, validValues: "steps",
-        minimumDpadGranularity: 1, notchCount: 4, notchTicksVisible: true, showValue: true, value: draft.osd.level,
-        onChange: v => controller.edit({ osd: { ...draft.osd, level: Math.round(v) } }) })),
-      draft.osd.enabled && (view.osd?.error || view.osd?.rtss === false) && row("osd-state", h("div", { className: "claw-hint" },
-        view.osd?.error || "RTSS 没有运行，OSD 暂不显示。")),
-      h(SectionLabel, null, "风扇"),
-      row("fan-state", h("div", { className: "claw-hint" }, view.fan?.error ? view.fan.error
-        : view.fan?.rpm1 ? `${view.fan.rpm1} 转 · 占空比 ${view.fan.duty1}% · ${view.fan.software ? "工具箱曲线" : "固件控制"}${view.fan.fullSpeed ? " · 全速" : ""}`
-        : draft.fan.mode === "firmware" ? "固件自动控制。选其他模式后会显示转速。" : "正在读取风扇状态…")),
-      row("fan-mode", h(ui.DropdownItem, { label: "风扇模式", selectedOption: draft.fan.mode,
-        rgOptions: [{ label: "固件自动（默认）", data: "firmware" }, { label: "静音", data: "quiet" }, { label: "均衡", data: "balanced" },
-          { label: "性能", data: "performance" }, { label: "自定义 6 点曲线", data: "custom" }],
-        onChange: o => controller.edit({ fan: { ...draft.fan, mode: o.data } }, 0) })),
-      draft.fan.mode === "custom" && h(React.Fragment, null, ...draft.fan.custom.map((duty, i) => row(`fan-${i}`, h(ui.SliderField, {
-        label: `${view.fan?.cpuTemps?.[i] ?? [47, 50, 57, 64, 71, 78][i]} °C 时`, min: 0, max: 100, step: 1, validValues: "steps",
-        minimumDpadGranularity: 1, showValue: true, valueSuffix: "%", value: duty,
-        onChange: v => controller.edit({ fan: { ...draft.fan, custom: draft.fan.custom.map((d, j) => j === i ? Math.round(v) : d) } }),
-      })))),
-      draft.fan.mode !== "firmware" && row("fan-full", h(ui.ToggleField, { label: "风扇全速", description: "临时让风扇满转，关闭后回到所选曲线。",
-        checked: draft.fan.full, onChange: full => controller.edit({ fan: { ...draft.fan, full } }, 0) })),
-      row("fan-hint", h("div", { className: "claw-hint" }, "曲线用的是固件自己的 6 个温度点。第一次切换前会备份原曲线，选回“固件自动”时恢复并交还固件。")),
       h(SectionLabel, null, "高级"),
       row("boost", h(ui.SliderField, { label: "短时功耗加成", description: "短时功耗（PL2）＝功耗上限＋加成。体感助手原来用 1 W。",
         min: 0, max: limits.boostMax, step: 1, validValues: "steps", minimumDpadGranularity: 1, showValue: true, valueSuffix: " W",

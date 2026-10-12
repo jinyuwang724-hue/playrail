@@ -6,7 +6,7 @@ import { createModuleSelection, createToolboxUI, toolboxStyles } from "./toolbox
 import { createMagpieController, createMagpiePanel } from "./magpie.js";
 import { syncOverlayInset, syncQuickAccessSize } from "./magpie.js";
 import { installSteamContext } from "./steam-context.js";
-import { createPowerController, createPowerPanel } from "./power.js";
+import { createPowerController, createPowerPanel, powerSummaries } from "./power.js";
 const manifest = { name: "Claw 掌机工具箱" };
 const connection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 if (!connection) throw new Error("Decky 接口不可用");
@@ -102,6 +102,9 @@ export function Content() {
   const [busy, setBusy] = R.useState(false);
   const [message, setMessage] = R.useState("");
   const [proxy, setProxy] = R.useState(() => proxyState);
+  // Heading summaries need power and picture state even while those modules are collapsed.
+  const [powerValue, setPowerValue] = R.useState(() => power.value);
+  const [magpieValue, setMagpieValue] = R.useState(() => magpie.value);
   const { clash, busy: proxyBusy, message: proxyMessage, operation: proxyOperation, link: subscriptionLink } = proxy;
   R.useEffect(() => {
     let mounted = true;
@@ -109,11 +112,15 @@ export function Content() {
     subscribers.add(setValue);
     proxySubscribers.add(setProxy);
     setProxy(proxyState);
+    const removePower = power.subscribe(setPowerValue), removeMagpie = magpie.subscribe(setMagpieValue);
+    // Read-only: neither read applies a setting.
+    if (!power.value.view) power.refresh(false);
+    api.call("get_magpie_state").then(value => { if (mounted) magpie.accept(value); }).catch(() => {});
     refresh().catch(e => { if (mounted) setMessage(String(e)); });
     if (!proxyState.busy) refreshProxy().catch(() => {
       updateProxy({ message: "暂时无法读取 Clash Verge 状态，请确认它正在运行" });
     });
-    return () => { mounted = false; unsubscribeModule(); subscribers.delete(setValue); proxySubscribers.delete(setProxy); };
+    return () => { mounted = false; unsubscribeModule(); subscribers.delete(setValue); proxySubscribers.delete(setProxy); removePower(); removeMagpie(); };
   }, []);
   const proxyAction = async (action, choice) => {
     if (proxyState.busy || proxyChoiceUnchanged(action, choice, clash)) return;
@@ -151,7 +158,9 @@ export function Content() {
   const compatibility = value.compatibility ?? { enabled: {}, items: {}, busy: true, phase: "正在读取修复状态" };
   const contents = {
     magpie: h(MagpiePanel, { key: "magpie" }),
-    power: h(PowerPanel, { key: "power" }),
+    power: h(PowerPanel, { key: "power", section: "power" }),
+    osd: h(PowerPanel, { key: "osd", section: "osd" }),
+    fan: h(PowerPanel, { key: "fan", section: "fan" }),
     compatibility: h(UI.PanelSection, { key: "compatibility" },
       h(StatusText, null, compatibility.phase),
       h(UI.PanelSectionRow, null, h(UI.ToggleField, { label: "Steam 启动修复", description: "避免重启后普通权限 Steam 抢先启动，保持游戏运行监控。关闭时恢复原设置。", checked: !!compatibility.enabled?.steam, disabled: compatibility.busy || compatibilityBusy, onChange: enabled => compatibilityAction("set", "steam", enabled) })),
@@ -197,9 +206,18 @@ export function Content() {
         subscriptionItem.updated && h("div", { style: { fontSize: "12px", opacity: .75 } }, `更新时间：${new Date(subscriptionItem.updated * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })}`))),
       proxyMessage && field("提示", proxyMessage)),
   };
+  const proxyModeLabel = proxyModes.find(item => item.data === clash.mode)?.label;
+  const states = {
+    ...powerSummaries(powerValue),
+    magpie: magpieValue.enabled ? { text: magpieValue.active ? "运行中" : "已开启" } : { text: "关", off: true },
+    mapping: value.settings.enabled ? { text: "接管中" } : { text: "关", off: true },
+    haptics: value.settings.hapticsEnabled ? { text: "开" } : { text: "关", off: true },
+    proxy: !clash.available ? { text: "未运行", off: true } : proxyModeLabel ? { text: proxyModeLabel } : undefined,
+    compatibility: compatibility.enabled?.steam || compatibility.enabled?.gamebar ? { text: "已启用" } : undefined,
+  };
   return h("div", { className: "claw-toolbox-ui" },
     h("style", null, toolboxStyles),
-    h(ModuleStack, { active: activeModule, onSelect: id => moduleSelection.select(id), contents }));
+    h(ModuleStack, { active: activeModule, onSelect: id => moduleSelection.select(id), contents, states }));
 }
 export default function plugin() {
   let disposed = false;

@@ -9,6 +9,8 @@ global.window = { __DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_decky
     if (method === 'get_state') return healthy;
     if (method === 'get_clash_state') return { available: false, subscriptions: {} };
     if (method === 'set_scaling_pause') return {};
+    // Heading summaries read power and picture state; reads never apply anything.
+    if (method === 'get_power_state' || method === 'get_magpie_state') return {};
     calls.push([method, ...args]);
     return new Promise(resolve => { pending = resolve; });
   } })
