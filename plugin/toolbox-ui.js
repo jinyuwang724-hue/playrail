@@ -50,8 +50,9 @@ export function createModuleSelection(initial = null) {
 }
 
 // SteamOS colours only (read from Steam's GamepadUI stylesheet): text #dcdedf / #b8bcbf /
-// #8b929a, white with #0e141b text for controller focus. Tiles that are on use Steam's
-// "Play" green (#8bc53f, the start of its GreenPlay gradient); --claw-accent swaps it.
+// #8b929a, white with #0e141b text for controller focus. Tiles that are on use the
+// theme's toggle colour (CSS Loader "colored toggles" gradient), else Steam blue.
+// The module list reuses the classes of Steam's own settings sidebar.
 // No background colour of our own: the page sits on whatever the side panel (and any
 // CSS Loader theme) paints. Rows and section titles are Steam's own Field and PanelSection.
 export const toolboxStyles = `
@@ -59,7 +60,7 @@ export const toolboxStyles = `
 .claw-title b { font-size:18px; line-height:24px; font-weight:600; letter-spacing:.3px; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .claw-title span { font-size:13px; line-height:18px; color:#8b929a; white-space:nowrap; }
 .claw-title .claw-title-end { margin-left:auto; }
-.claw-toolbox-ui { --claw-fg:#dcdedf; --claw-fg-2:#b8bcbf; --claw-fg-3:#8b929a; --claw-off:#67707b; --claw-blue:#1a9fff; --claw-accent:#8bc53f; --claw-sep:rgba(255,255,255,.1); --claw-warn:#ffc82c; color:var(--claw-fg); padding-bottom:8px; }
+.claw-toolbox-ui { --claw-fg:#dcdedf; --claw-fg-2:#b8bcbf; --claw-fg-3:#8b929a; --claw-off:#67707b; --claw-blue:#1a9fff; --claw-accent:var(--colored-toggles-main-color, #1a9fff); --claw-accent-solid:var(--colored-toggles-static-color, #1a9fff); --claw-sep:rgba(255,255,255,.1); --claw-warn:#ffc82c; color:var(--claw-fg); padding-bottom:8px; }
 .claw-toolbox-ui .claw-game { display:flex; align-items:baseline; gap:6px; min-width:0; padding-bottom:10px; font-size:12px; line-height:16px; color:var(--claw-fg-3); }
 .claw-toolbox-ui .claw-game b { color:var(--claw-fg); font-weight:500; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .claw-toolbox-ui .claw-game .claw-source { margin-left:auto; white-space:nowrap; letter-spacing:.5px; }
@@ -79,7 +80,7 @@ export const toolboxStyles = `
 .claw-toolbox-ui .claw-dots { display:flex; gap:4px; margin-top:6px; }
 .claw-toolbox-ui .claw-dots i { flex:1; max-width:18px; height:3px; border-radius:2px; background:rgba(255,255,255,.12); }
 .claw-toolbox-ui .claw-dots i.f { background:var(--claw-fg-2); }
-.claw-toolbox-ui .claw-tile.on .claw-tile-label svg { color:var(--claw-accent); }
+.claw-toolbox-ui .claw-tile.on .claw-tile-label svg { color:var(--claw-accent-solid); }
 .claw-toolbox-ui .claw-tile.on .claw-tile-value { color:#fff; }
 .claw-toolbox-ui .claw-tile.on .claw-dots i.f { background:var(--claw-accent); }
 .claw-toolbox-ui .claw-tile.on:after { content:""; position:absolute; left:0; right:0; bottom:0; height:3px; background:var(--claw-accent); }
@@ -88,12 +89,13 @@ export const toolboxStyles = `
 .claw-toolbox-ui .claw-tile.gpfocus .claw-tile-value { color:#0e141b; }
 .claw-toolbox-ui .claw-tile.gpfocus .claw-dots i { background:rgba(14,20,27,.15); }
 .claw-toolbox-ui .claw-tile.gpfocus .claw-dots i.f { background:#0e141b; }
-.claw-toolbox-ui .claw-tile.on.gpfocus .claw-dots i.f { background:#5f9a1f; }
-.claw-toolbox-ui .claw-tile.on.gpfocus .claw-tile-label svg { color:#5f9a1f; }
-.claw-toolbox-ui .claw-row-icon { display:flex; width:20px; height:20px; color:var(--claw-fg-2); }
-.claw-toolbox-ui .claw-row-icon svg { width:20px; height:20px; }
-.claw-toolbox-ui .claw-chev { display:flex; align-items:center; height:20px; color:var(--claw-fg-3); }
-.claw-toolbox-ui .claw-chev svg { width:14px; height:14px; }
+.claw-toolbox-ui .claw-tile.on.gpfocus .claw-dots i.f { background:var(--claw-accent); }
+.claw-toolbox-ui .claw-nav { display:flex; flex-direction:column; margin:0 -16px; }
+.claw-toolbox-ui .claw-nav-item { display:flex; align-items:center; min-width:0; padding:13px 16px; font-size:16px; line-height:20px; color:var(--claw-fg-2); cursor:pointer; }
+.claw-toolbox-ui .claw-nav-icon { display:flex; width:20px; height:20px; flex-shrink:0; margin-inline-end:14px; }
+.claw-toolbox-ui .claw-nav-icon svg { width:20px; height:20px; }
+.claw-toolbox-ui .claw-nav-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.claw-toolbox-ui .claw-nav-item.claw-nav-active { background:#3d4450; color:#fff; }
 .claw-toolbox-ui .claw-state { max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; color:var(--claw-fg-3); }
 .claw-toolbox-ui .claw-sub-head { display:flex; align-items:center; gap:10px; margin:0 16px 12px; min-width:0; }
 .claw-toolbox-ui button.DialogButton.claw-back.claw-back { display:flex; align-items:center; justify-content:center; width:32px; min-width:0 !important; height:32px; flex-shrink:0; margin:0; padding:0; border:0; border-radius:4px; box-shadow:none; background:rgba(0,0,0,.22); color:var(--claw-fg); }
@@ -116,6 +118,8 @@ export const toolboxStyles = `
 
 export function createToolboxUI(React, ui) {
   const h = React.createElement;
+  // Steam's settings sidebar classes (list item, icon, title, focused item), when found.
+  const nav = (typeof ui.findModule === "function" && ui.findModule(m => m && typeof m === "object" && m.PagedSettingsDialog_PageListItem && m.ResponsivePageList)) || {};
   const Icon = ({ name }) => h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8,
     strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true, dangerouslySetInnerHTML: { __html: iconPaths[name] ?? "" } });
 
@@ -143,11 +147,12 @@ export function createToolboxUI(React, ui) {
             h("span", { className: "claw-tile-value" }, tile.value),
             tile.steps > 0 && h("span", { className: "claw-dots", "aria-hidden": true },
               Array.from({ length: tile.steps }, (_, i) => h("i", { key: i, className: i < tile.filled ? "f" : "" }))))))),
-      sets.map(({ group, items }) => h(ui.PanelSection, { key: group.id, title: group.title }, items.map(module =>
-        h(ui.PanelSectionRow, { key: module.id }, h(ui.Field, {
-          className: "claw-row", label: module.title, icon: h("span", { className: "claw-row-icon" }, h(Icon, { name: module.icon })),
-          onClick: () => onOpen(module.id), bottomSeparator: "none", transparentBackground: true,
-        }, h("span", { className: "claw-chev", "aria-hidden": true }, h(Icon, { name: "chevron" }))))))));
+      sets.map(({ group, items }) => h(ui.PanelSection, { key: group.id, title: group.title },
+        h(ui.Focusable, { className: "claw-nav", "flow-children": "column" }, items.map(module => h(ui.Focusable, {
+          key: module.id, className: `claw-nav-item ${nav.PagedSettingsDialog_PageListItem ?? ""}`, role: "button",
+          focusClassName: `claw-nav-active ${nav.Active ?? ""}`, onActivate: () => onOpen(module.id), onClick: () => onOpen(module.id),
+        }, h("div", { className: `claw-nav-icon ${nav.PageListItem_Icon ?? ""}` }, h(Icon, { name: module.icon })),
+          h("div", { className: `claw-nav-title ${nav.PageListItem_Title ?? ""}` }, module.title)))))));
   }
   // Side-panel title: the running game when known, otherwise the toolbox name; power source on the right.
   function TitleBar({ game, source }) {

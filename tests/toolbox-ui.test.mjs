@@ -31,9 +31,11 @@ test('home lists groups in order, rows carry no state text and open a module', (
   const titles = nodes(tree).filter(n => n.type === 'PanelSection' && n.props.title).map(n => n.props.title);
   assert.deepEqual(titles, toolboxGroups.map(group => group.title));
   assert.equal(nodes(tree).filter(n => String(n.props.className).startsWith('claw-state')).length, 0);
-  const rows = nodes(tree).filter(n => n.props.className === 'claw-row');
+  // Rows are Steam settings-sidebar items: icon and title only, opened with A or a tap.
+  const rows = nodes(tree).filter(n => String(n.props.className).startsWith('claw-nav-item'));
   assert.equal(rows.length, toolboxModules.length);
-  rows[3].props.onClick();
+  rows[3].props.onActivate();
+  assert.equal(nodes(rows[3]).some(n => n.props.className === 'claw-chev'), false);
   assert.deepEqual(opened, [toolboxModules[3].id]);
 });
 
@@ -48,7 +50,7 @@ test('missing readings show a dash instead of a number', () => {
 test('a module with an unlisted group still shows under a trailing group', () => {
   const tree = Home({ onOpen: () => {}, modules: [{ id: 'vibe', group: 'future', title: '振动强度', icon: 'haptics' }] });
   assert.ok(nodes(tree).some(n => n.type === 'PanelSection' && n.props.title === '其他'));
-  assert.ok(nodes(tree).some(n => n.type === 'Field' && n.props.label === '振动强度'));
+  assert.ok(text(tree).includes('振动强度'));
 });
 
 test('module page goes back from its button and from B', () => {
