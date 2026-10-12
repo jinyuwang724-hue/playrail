@@ -16,7 +16,14 @@ catch { api = connection.connect(1, manifest.name); }
 const R = SP_REACT, UI = DFL, h = R.createElement;
 const GameAdder = createGameAdder(window, UI, api, R);
 const moduleSelection = createModuleSelection();
-const { Home, SubPage, SectionLabel, StatusText } = createToolboxUI(R, UI);
+const { Home, SubPage, TitleBar, SectionLabel, StatusText } = createToolboxUI(R, UI);
+// Side-panel title: the game the power governor sees, or the toolbox name.
+function Title() {
+  const [value, setValue] = R.useState(() => power.value);
+  R.useEffect(() => power.subscribe(setValue), []);
+  const smart = value.draft?.enabled ? value.view?.smart : null;
+  return h(TitleBar, { game: smart?.game ? { name: smart.game, detail: smart.target ? `目标 ${smart.target} 帧` : "智能调节" } : null });
+}
 const magpie = createMagpieController(api);
 const MagpiePanel = createMagpiePanel(R, UI, magpie, StatusText);
 const power = createPowerController(api);
@@ -237,13 +244,11 @@ export function Content() {
     };
     const [powerTile, ...otherTiles] = powerTiles(powerValue, power, open);
     body = h(Home, {
-      game: managed && smart?.game ? { name: smart.game, detail: target ? `智能目标 ${target} 帧` : "智能调节" } : null,
-      source: view ? (view.charger ? { icon: "plug", text: "插电" } : { text: "电池" }) : null,
       metrics: [
         { label: "功耗", value: managed ? round(view?.actual?.package, 1) : null, unit: "W" },
         { label: "CPU", value: round(live.cpuTemp), unit: "°C" },
         { label: "帧率", value: fps },
-        { label: "电量", value: live.battery ?? null, unit: "%" },
+        { label: view ? (view.charger ? "插电" : "电池") : "电量", value: live.battery ?? null, unit: "%" },
       ],
       banner: managed && view?.otherTool ? "体感助手也在调功耗，两边会互相改写。请在体感助手里关掉“自动设置 TDP”，或退出体感助手。" : null,
       tiles: [powerTile,
@@ -303,7 +308,7 @@ export default function plugin() {
     onError: error => console.warn("[Claw] Steam context unavailable", error) });
   frontendReady.then(value => { update(value); void haptics.sync(); }).catch(error => update({ ...state, status: { ...state.status, error: String(error) } }));
   return {
-    name: manifest.name, title: h("div", null, manifest.name), content: h(Content),
+    name: manifest.name, title: h(Title), content: h(Content),
     icon: UI.IconsModule?.Controller ? h(UI.IconsModule.Controller, { width: 20, height: 20, style: { width: 20, height: 20 } }) : null,
     onDismount() { disposed = true; clearInterval(plainTimer); removeInset(); syncOverlayInset(window, null); syncQuickAccessSize(window, null); steamContext.dispose(); disposePanel(); haptics.dispose(); routers.get(window)?.dispose(); routers.delete(window); magpie.dispose(); power.dispose(); api.removeEventListener("power_status", powerListener); api.removeEventListener("magpie_status", magpieListener); api.removeEventListener("router_event", listener); api.removeEventListener("haptic_status", hapticListener); api.call("frontend_ready", false, frontendId).catch(() => {}); },
   };

@@ -50,43 +50,49 @@ export function createModuleSelection(initial = null) {
 }
 
 // SteamOS colours only (read from Steam's GamepadUI stylesheet): text #dcdedf / #b8bcbf /
-// #8b929a, Steam blue #1a9fff for "on", white with #0e141b text for controller focus.
+// #8b929a, white with #0e141b text for controller focus. Tiles that are on use Steam's
+// "Play" green (#8bc53f, the start of its GreenPlay gradient); --claw-accent swaps it.
 // No background colour of our own: the page sits on whatever the side panel (and any
 // CSS Loader theme) paints. Rows and section titles are Steam's own Field and PanelSection.
 export const toolboxStyles = `
-.claw-toolbox-ui { --claw-fg:#dcdedf; --claw-fg-2:#b8bcbf; --claw-fg-3:#8b929a; --claw-off:#67707b; --claw-blue:#1a9fff; --claw-sep:rgba(255,255,255,.1); --claw-warn:#ffc82c; color:var(--claw-fg); padding-bottom:8px; }
+.claw-title { display:flex; align-items:baseline; gap:8px; width:100%; min-width:0; padding:4px 16px 6px; box-sizing:border-box; color:#dcdedf; }
+.claw-title b { font-size:18px; line-height:24px; font-weight:600; letter-spacing:.3px; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.claw-title span { font-size:13px; line-height:18px; color:#8b929a; white-space:nowrap; }
+.claw-title .claw-title-end { margin-left:auto; }
+.claw-toolbox-ui { --claw-fg:#dcdedf; --claw-fg-2:#b8bcbf; --claw-fg-3:#8b929a; --claw-off:#67707b; --claw-blue:#1a9fff; --claw-accent:#8bc53f; --claw-sep:rgba(255,255,255,.1); --claw-warn:#ffc82c; color:var(--claw-fg); padding-bottom:8px; }
 .claw-toolbox-ui .claw-game { display:flex; align-items:baseline; gap:6px; min-width:0; padding-bottom:10px; font-size:12px; line-height:16px; color:var(--claw-fg-3); }
 .claw-toolbox-ui .claw-game b { color:var(--claw-fg); font-weight:500; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .claw-toolbox-ui .claw-game .claw-source { margin-left:auto; white-space:nowrap; letter-spacing:.5px; }
-.claw-toolbox-ui .claw-strip { display:grid; grid-template-columns:repeat(4,1fr); padding:2px 0 12px; border-bottom:1px solid var(--claw-sep); }
-.claw-toolbox-ui .claw-metric { display:flex; flex-direction:column; gap:2px; min-width:0; }
-.claw-toolbox-ui .claw-metric strong { font-size:20px; line-height:24px; font-weight:400; color:#fff; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.claw-toolbox-ui .claw-strip { display:grid; grid-template-columns:repeat(4,1fr); padding:10px 0 4px; }
+.claw-toolbox-ui .claw-metric { display:flex; flex-direction:column; align-items:center; gap:4px; min-width:0; text-align:center; }
+.claw-toolbox-ui .claw-metric strong { display:flex; align-items:baseline; justify-content:center; height:26px; font-size:22px; line-height:26px; font-weight:400; color:#fff; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .claw-toolbox-ui .claw-metric strong small { font-size:12px; color:var(--claw-fg-3); margin-left:2px; }
 .claw-toolbox-ui .claw-metric strong.na { color:var(--claw-off); }
 .claw-toolbox-ui .claw-metric span { font-size:11px; line-height:14px; color:var(--claw-fg-3); letter-spacing:.5px; }
-.claw-toolbox-ui .claw-banner { display:flex; align-items:flex-start; gap:8px; margin-top:10px; font-size:12px; line-height:16px; color:var(--claw-fg-2); overflow-wrap:anywhere; }
+.claw-toolbox-ui .claw-banner { display:flex; align-items:flex-start; gap:8px; margin-top:14px; font-size:12px; line-height:16px; color:var(--claw-fg-2); overflow-wrap:anywhere; }
 .claw-toolbox-ui .claw-banner svg { width:14px; height:14px; flex-shrink:0; margin-top:1px; color:var(--claw-warn); }
-.claw-toolbox-ui .claw-tiles { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.claw-toolbox-ui .claw-tiles button.DialogButton.claw-tile.claw-tile { display:flex; flex-direction:column; align-items:stretch; gap:3px; width:100%; min-width:0 !important; min-height:74px; margin:0; padding:10px 12px; border:0; border-radius:4px; box-shadow:none; background:rgba(0,0,0,.22); color:var(--claw-fg); text-align:left; position:relative; overflow:hidden; }
+.claw-toolbox-ui .claw-tiles { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.claw-toolbox-ui .claw-tiles button.DialogButton.claw-tile.claw-tile { display:flex; flex-direction:column; align-items:stretch; gap:5px; width:100%; min-width:0 !important; min-height:92px; margin:0; padding:14px 14px 13px; border:0; border-radius:4px; box-shadow:none; background:rgba(0,0,0,.22); color:var(--claw-fg); text-align:left; position:relative; overflow:hidden; }
 .claw-toolbox-ui .claw-tile-label { display:flex; align-items:center; gap:6px; font-size:12px; line-height:16px; color:var(--claw-fg-3); }
 .claw-toolbox-ui .claw-tile-label svg { width:15px; height:15px; flex-shrink:0; }
 .claw-toolbox-ui .claw-tile-value { font-size:17px; line-height:22px; font-weight:500; color:var(--claw-fg-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.claw-toolbox-ui .claw-dots { display:flex; gap:3px; margin-top:4px; }
+.claw-toolbox-ui .claw-dots { display:flex; gap:4px; margin-top:6px; }
 .claw-toolbox-ui .claw-dots i { flex:1; max-width:18px; height:3px; border-radius:2px; background:rgba(255,255,255,.12); }
 .claw-toolbox-ui .claw-dots i.f { background:var(--claw-fg-2); }
-.claw-toolbox-ui .claw-tile.on .claw-tile-label svg { color:var(--claw-blue); }
+.claw-toolbox-ui .claw-tile.on .claw-tile-label svg { color:var(--claw-accent); }
 .claw-toolbox-ui .claw-tile.on .claw-tile-value { color:#fff; }
-.claw-toolbox-ui .claw-tile.on .claw-dots i.f { background:var(--claw-blue); }
-.claw-toolbox-ui .claw-tile.on:after { content:""; position:absolute; left:0; right:0; bottom:0; height:3px; background:var(--claw-blue); }
+.claw-toolbox-ui .claw-tile.on .claw-dots i.f { background:var(--claw-accent); }
+.claw-toolbox-ui .claw-tile.on:after { content:""; position:absolute; left:0; right:0; bottom:0; height:3px; background:var(--claw-accent); }
 .claw-toolbox-ui .claw-tiles button.DialogButton.claw-tile.claw-tile.gpfocus { background:#fff; box-shadow:0 4px 4px rgba(0,0,0,.25); }
 .claw-toolbox-ui .claw-tile.gpfocus .claw-tile-label { color:#3d4450; }
 .claw-toolbox-ui .claw-tile.gpfocus .claw-tile-value { color:#0e141b; }
 .claw-toolbox-ui .claw-tile.gpfocus .claw-dots i { background:rgba(14,20,27,.15); }
 .claw-toolbox-ui .claw-tile.gpfocus .claw-dots i.f { background:#0e141b; }
-.claw-toolbox-ui .claw-tile.on.gpfocus .claw-dots i.f { background:var(--claw-blue); }
+.claw-toolbox-ui .claw-tile.on.gpfocus .claw-dots i.f { background:#5f9a1f; }
+.claw-toolbox-ui .claw-tile.on.gpfocus .claw-tile-label svg { color:#5f9a1f; }
 .claw-toolbox-ui .claw-row-icon { display:flex; width:20px; height:20px; color:var(--claw-fg-2); }
 .claw-toolbox-ui .claw-row-icon svg { width:20px; height:20px; }
-.claw-toolbox-ui .claw-chev { display:flex; color:var(--claw-fg-3); }
+.claw-toolbox-ui .claw-chev { display:flex; align-items:center; height:20px; color:var(--claw-fg-3); }
 .claw-toolbox-ui .claw-chev svg { width:14px; height:14px; }
 .claw-toolbox-ui .claw-state { max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; color:var(--claw-fg-3); }
 .claw-toolbox-ui .claw-sub-head { display:flex; align-items:center; gap:10px; margin:0 16px 12px; min-width:0; }
@@ -140,8 +146,14 @@ export function createToolboxUI(React, ui) {
       sets.map(({ group, items }) => h(ui.PanelSection, { key: group.id, title: group.title }, items.map(module =>
         h(ui.PanelSectionRow, { key: module.id }, h(ui.Field, {
           className: "claw-row", label: module.title, icon: h("span", { className: "claw-row-icon" }, h(Icon, { name: module.icon })),
-          onClick: () => onOpen(module.id), bottomSeparator: "standard",
+          onClick: () => onOpen(module.id), bottomSeparator: "none", transparentBackground: true,
         }, h("span", { className: "claw-chev", "aria-hidden": true }, h(Icon, { name: "chevron" }))))))));
+  }
+  // Side-panel title: the running game when known, otherwise the toolbox name; power source on the right.
+  function TitleBar({ game, source }) {
+    return h("div", { className: "claw-title" },
+      h("b", null, game?.name ?? "Claw 掌机工具箱"), game?.detail && h("span", null, game.detail),
+      source && h("span", { className: "claw-title-end" }, source));
   }
   // A module's full settings, on its own page; B (cancel) or the back button returns home.
   function SubPage({ module, state, onBack, children }) {
@@ -158,5 +170,5 @@ export function createToolboxUI(React, ui) {
   function StatusText({ children }) {
     return h(ui.PanelSectionRow, null, h("p", { className: "claw-module-status", role: "status" }, children));
   }
-  return { Home, SubPage, SectionLabel, StatusText };
+  return { Home, SubPage, TitleBar, SectionLabel, StatusText };
 }
