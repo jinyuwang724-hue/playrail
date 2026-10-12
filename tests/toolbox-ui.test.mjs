@@ -4,7 +4,7 @@ import { createToolboxUI, toolboxGroups, toolboxModules, createModuleSelection }
 import { powerSummaries, powerTiles } from '../plugin/power.js';
 
 const React = { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }), Fragment: 'Fragment' };
-const ui = { Focusable: 'Focusable', DialogButton: 'DialogButton', PanelSectionRow: 'PanelSectionRow' };
+const ui = { Focusable: 'Focusable', DialogButton: 'DialogButton', PanelSection: 'PanelSection', PanelSectionRow: 'PanelSectionRow', Field: 'Field' };
 // Expand function components so the whole tree can be searched.
 function nodes(node) {
   if (!node || typeof node !== 'object') return [];
@@ -27,8 +27,9 @@ test('the toolbox opens on the home page', () => {
 test('home lists groups in order, shows module states and opens a module', () => {
   const opened = [];
   const tree = Home({ states: { fan: { text: '固件自动', off: true } }, onOpen: id => opened.push(id) });
-  const words = text(tree);
-  assert.ok(words.indexOf('游戏与硬件') < words.indexOf('系统与工具'));
+  // Group titles use Steam's own PanelSection title.
+  const titles = nodes(tree).filter(n => n.type === 'PanelSection' && n.props.title).map(n => n.props.title);
+  assert.deepEqual(titles, toolboxGroups.map(group => group.title));
   const state = nodes(tree).find(n => String(n.props.className).startsWith('claw-state'));
   assert.equal(state.props.className, 'claw-state off');
   const rows = nodes(tree).filter(n => n.props.className === 'claw-row');
@@ -47,8 +48,8 @@ test('missing readings show a dash instead of a number', () => {
 
 test('a module with an unlisted group still shows under a trailing group', () => {
   const tree = Home({ onOpen: () => {}, modules: [{ id: 'vibe', group: 'future', title: '振动强度', icon: 'haptics' }] });
-  assert.ok(text(tree).includes('其他'));
-  assert.ok(text(tree).includes('振动强度'));
+  assert.ok(nodes(tree).some(n => n.type === 'PanelSection' && n.props.title === '其他'));
+  assert.ok(nodes(tree).some(n => n.type === 'Field' && n.props.label === '振动强度'));
 });
 
 test('module page goes back from its button and from B', () => {

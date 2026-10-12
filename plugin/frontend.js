@@ -238,7 +238,7 @@ export function Content() {
     const [powerTile, ...otherTiles] = powerTiles(powerValue, power, open);
     body = h(Home, {
       game: managed && smart?.game ? { name: smart.game, detail: target ? `智能目标 ${target} 帧` : "智能调节" } : null,
-      chip: view ? (view.charger ? { icon: "plug", text: "插电" } : { text: "电池" }) : null,
+      source: view ? (view.charger ? { icon: "plug", text: "插电" } : { text: "电池" }) : null,
       metrics: [
         { label: "功耗", value: managed ? round(view?.actual?.package, 1) : null, unit: "W" },
         { label: "CPU", value: round(live.cpuTemp), unit: "°C" },
