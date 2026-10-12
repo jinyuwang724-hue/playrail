@@ -41,10 +41,10 @@ $taskFrontend = $taskFrontend.Replace('import { createMenuRouter } from "./menu-
 $taskFrontend = $taskFrontend.Replace('import { installNavigationHaptics } from "./navigation-haptics.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { createGameAdder } from "./game-add.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { syncPluginPanel } from "./panel-lifecycle.js";', '')
-$taskFrontend = $taskFrontend.Replace('import { createModuleSelection, createToolboxUI, toolboxStyles } from "./toolbox-ui.js";', '')
+$taskFrontend = $taskFrontend.Replace('import { createModuleSelection, createToolboxUI, toolboxModules, toolboxStyles } from "./toolbox-ui.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { createMagpieController, createMagpiePanel } from "./magpie.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { syncOverlayInset, syncQuickAccessSize } from "./magpie.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { installSteamContext } from "./steam-context.js";', '')
-$taskFrontend = $taskFrontend.Replace('import { createPowerController, createPowerPanel, powerSummaries } from "./power.js";', '')
+$taskFrontend = $taskFrontend.Replace('import { createPowerController, createPowerPanel, powerSummaries, powerTiles } from "./power.js";', '')
 [IO.File]::WriteAllText((Join-Path $taskRoot 'plugin\dist\index.js'),($taskRouter + [Environment]::NewLine + $taskHaptics + [Environment]::NewLine + $taskGameAdder + [Environment]::NewLine + $taskPanelLifecycle + [Environment]::NewLine + $taskToolboxUI + [Environment]::NewLine + $taskMagpie + [Environment]::NewLine + $taskPower + [Environment]::NewLine + $taskSteamContext + [Environment]::NewLine + $taskFrontend),(New-Object Text.UTF8Encoding($false)))
 Write-Output 'Build complete.'

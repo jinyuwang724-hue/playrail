@@ -57,6 +57,38 @@ export function powerSummaries(value) {
   };
 }
 
+// Home quick tiles. Each press steps to the next level; edits wait 800 ms, so a
+// run of presses writes only the level it stops on. Power is not taken over from
+// a tile: while it is off, its tile opens the power page instead.
+const fanCycle = ["firmware", "quiet", "balanced", "performance"];
+export function powerTiles(value, controller, open) {
+  const view = value?.view, draft = value?.draft;
+  if (!view || !draft) return [];
+  const quick = draft.quick ?? [];
+  const powerIndex = draft.mode === "smart" ? 0 : draft.mode === "manual" ? quick.indexOf(draft.manual.tdp) + 1 : -1;
+  const powerValue = draft.mode === "smart" ? `智能${view.smart?.limit ? ` ${view.smart.limit} W` : ""}`
+    : draft.mode === "manual" ? `${draft.manual.tdp} W` : `预设 ${(view.charger ? draft.ac : draft.dc).tdp} W`;
+  const level = draft.osd.enabled ? draft.osd.level : 0;
+  const fanIndex = fanCycle.indexOf(draft.fan.mode);
+  return [
+    { id: "power", label: "功耗", icon: "power", on: draft.enabled, steps: quick.length + 1, filled: draft.enabled ? powerIndex + 1 : 0,
+      value: draft.enabled ? powerValue : "未接管",
+      onPress: () => {
+        if (!draft.enabled) return open("power");
+        const next = (powerIndex + 1) % (quick.length + 1);
+        controller.edit(next === 0 ? { mode: "smart" } : { mode: "manual", manual: { ...draft.manual, tdp: quick[next - 1] } }, 800);
+      } },
+    { id: "osd", label: "性能显示", icon: "osd", on: level > 0, steps: 4, filled: level, value: level ? `第 ${level} 档` : "关",
+      onPress: () => {
+        const next = (level + 1) % 5;
+        controller.edit({ osd: { ...draft.osd, enabled: next > 0, level: next || draft.osd.level } }, 800);
+      } },
+    { id: "fan", label: "风扇", icon: "fan", on: draft.fan.mode !== "firmware", steps: 3, filled: Math.max(0, fanIndex),
+      value: `${fanModes[draft.fan.mode] ?? "—"}${draft.fan.full && draft.fan.mode !== "firmware" ? " · 全速" : ""}`,
+      onPress: () => controller.edit({ fan: { ...draft.fan, mode: fanCycle[(fanIndex + 1) % fanCycle.length] } }, 800) },
+  ];
+}
+
 // The power controller backs three toolbox modules: `section` picks power, osd or fan.
 export function createPowerPanel(React, ui, controller, StatusText, SectionLabel) {
   const h = React.createElement;

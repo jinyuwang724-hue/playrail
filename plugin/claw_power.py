@@ -478,6 +478,7 @@ class PowerControl:
         self.closing = False
         self.written = None
         self.temperature = None
+        self.temperature_at = 0.0
         self.fan_state = {}
         self.gpu_state = {}
         self.battery_rate = BatteryRate()
@@ -673,6 +674,7 @@ class PowerControl:
         if tick % 2 == 1 or self.temperature is None:
             try:
                 self.temperature = (await self._call("thermal")).get("package")
+                self.temperature_at = time.monotonic()
             except RuntimeError:
                 self.temperature = None
             if osd["level"] >= 2:  # level 2 shows the battery time too
@@ -812,6 +814,9 @@ class PowerControl:
                 "backup": self.backup_path.exists(), "otherTool": self.other_tool, "reapplied": self.reapplied,
                 "smart": self.smart if self.settings["mode"] == "smart" else None, "targets": list(TARGETS),
                 "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS},
+                # Read-only readings for the toolbox home; a temperature older than 15 s is not shown.
+                "live": {"battery": battery_percent(),
+                         "cpuTemp": self.temperature if time.monotonic() - self.temperature_at < 15 else None},
                 "osd": {"rtss": self.osd.get("rtss"), "text": self.osd_text, "error": self.osd.get("error")},
                 "error": self.error, "limits": {"tdpMin": TDP_MIN, "tdpMax": TDP_MAX, "boostMax": BOOST_MAX,
                                                  "freq": list(FREQ_CHOICES)}}
@@ -833,6 +838,11 @@ class PowerControl:
             await self._call("read", sample=bool(sample))
         except Exception as e:
             self.error = str(e)
+        try:
+            self.temperature = (await self._call("thermal")).get("package")
+            self.temperature_at = time.monotonic()
+        except Exception:
+            pass  # The toolbox home then shows no temperature.
         return self.view()
 
     async def save(self, value):

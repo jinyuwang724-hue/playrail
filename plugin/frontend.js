@@ -2,11 +2,11 @@ import { createMenuRouter } from "./menu-router.js";
 import { installNavigationHaptics } from "./navigation-haptics.js";
 import { createGameAdder } from "./game-add.js";
 import { syncPluginPanel } from "./panel-lifecycle.js";
-import { createModuleSelection, createToolboxUI, toolboxStyles } from "./toolbox-ui.js";
+import { createModuleSelection, createToolboxUI, toolboxModules, toolboxStyles } from "./toolbox-ui.js";
 import { createMagpieController, createMagpiePanel } from "./magpie.js";
 import { syncOverlayInset, syncQuickAccessSize } from "./magpie.js";
 import { installSteamContext } from "./steam-context.js";
-import { createPowerController, createPowerPanel, powerSummaries } from "./power.js";
+import { createPowerController, createPowerPanel, powerSummaries, powerTiles } from "./power.js";
 const manifest = { name: "Claw 掌机工具箱" };
 const connection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 if (!connection) throw new Error("Decky 接口不可用");
@@ -16,7 +16,7 @@ catch { api = connection.connect(1, manifest.name); }
 const R = SP_REACT, UI = DFL, h = R.createElement;
 const GameAdder = createGameAdder(window, UI, api, R);
 const moduleSelection = createModuleSelection();
-const { ModuleStack, SectionLabel, StatusText } = createToolboxUI(R, UI);
+const { Home, SubPage, SectionLabel, StatusText } = createToolboxUI(R, UI);
 const magpie = createMagpieController(api);
 const MagpiePanel = createMagpiePanel(R, UI, magpie, StatusText);
 const power = createPowerController(api);
@@ -102,7 +102,7 @@ export function Content() {
   const [busy, setBusy] = R.useState(false);
   const [message, setMessage] = R.useState("");
   const [proxy, setProxy] = R.useState(() => proxyState);
-  // Heading summaries need power and picture state even while those modules are collapsed.
+  // The home page shows power and picture state without opening those modules.
   const [powerValue, setPowerValue] = R.useState(() => power.value);
   const [magpieValue, setMagpieValue] = R.useState(() => magpie.value);
   const { clash, busy: proxyBusy, message: proxyMessage, operation: proxyOperation, link: subscriptionLink } = proxy;
@@ -122,6 +122,12 @@ export function Content() {
     });
     return () => { mounted = false; unsubscribeModule(); subscribers.delete(setValue); proxySubscribers.delete(setProxy); removePower(); removeMagpie(); };
   }, []);
+  // Live readings on the home page; module pages keep their own refresh.
+  R.useEffect(() => {
+    if (activeModule !== null) return undefined;
+    const poll = setInterval(() => power.refresh(false), 3000);
+    return () => clearInterval(poll);
+  }, [activeModule]);
   const proxyAction = async (action, choice) => {
     if (proxyState.busy || proxyChoiceUnchanged(action, choice, clash)) return;
     if (proxyRead) { try { await proxyRead; } catch {} }
@@ -209,15 +215,45 @@ export function Content() {
   const proxyModeLabel = proxyModes.find(item => item.data === clash.mode)?.label;
   const states = {
     ...powerSummaries(powerValue),
-    magpie: magpieValue.enabled ? { text: magpieValue.active ? "运行中" : "已开启" } : { text: "关", off: true },
+    magpie: magpieValue.enabled ? { text: magpieValue.active ? "铺满中" : "已开启" } : { text: "关", off: true },
     mapping: value.settings.enabled ? { text: "接管中" } : { text: "关", off: true },
     haptics: value.settings.hapticsEnabled ? { text: "开" } : { text: "关", off: true },
     proxy: !clash.available ? { text: "未运行", off: true } : proxyModeLabel ? { text: proxyModeLabel } : undefined,
     compatibility: compatibility.enabled?.steam || compatibility.enabled?.gamebar ? { text: "已启用" } : undefined,
   };
-  return h("div", { className: "claw-toolbox-ui" },
-    h("style", null, toolboxStyles),
-    h(ModuleStack, { active: activeModule, onSelect: id => moduleSelection.select(id), contents, states }));
+  const open = id => moduleSelection.select(id);
+  const page = toolboxModules.find(module => module.id === activeModule);
+  let body;
+  if (page) body = h(SubPage, { module: page, state: states[page.id], onBack: () => open(null) }, contents[page.id]);
+  else {
+    const view = powerValue.view, draft = powerValue.draft, live = view?.live ?? {}, smart = view?.smart;
+    const managed = !!draft?.enabled;
+    const round = (v, digits = 0) => typeof v === "number" ? Math.round(v * 10 ** digits) / 10 ** digits : null;
+    const fps = managed ? round(smart?.fps) : null, target = managed ? smart?.target : null;
+    const toggleMagpie = async () => {
+      if (magpieValue.busy) return;
+      const result = await magpie.toggle();
+      api.toaster?.toast?.({ title: "超分铺满", body: result.ok ? result.message : result.reason });
+    };
+    const [powerTile, ...otherTiles] = powerTiles(powerValue, power, open);
+    body = h(Home, {
+      game: managed && smart?.game ? { name: smart.game, detail: target ? `智能目标 ${target} 帧` : "智能调节" } : null,
+      chip: view ? (view.charger ? { icon: "plug", text: "插电" } : { text: "电池" }) : null,
+      metrics: [
+        { label: "功耗", value: managed ? round(view?.actual?.package, 1) : null, unit: "W" },
+        { label: "CPU", value: round(live.cpuTemp), unit: "°C" },
+        { label: "帧率", value: fps, tone: fps != null && target && fps >= target ? "good" : "" },
+        { label: "电量", value: live.battery ?? null, unit: "%" },
+      ],
+      banner: managed && view?.otherTool ? "体感助手也在调功耗，两边会互相改写。请在体感助手里关掉“自动设置 TDP”，或退出体感助手。" : null,
+      tiles: [powerTile,
+        { id: "magpie", label: "超分铺满", icon: "magpie", on: !!magpieValue.enabled, steps: 1, filled: magpieValue.enabled ? 1 : 0,
+          value: magpieValue.enabled ? (magpieValue.active ? "铺满中" : "已开启") : "关", disabled: !!magpieValue.busy, onPress: toggleMagpie },
+        ...otherTiles].filter(Boolean),
+      states, onOpen: open,
+    });
+  }
+  return h("div", { className: "claw-toolbox-ui" }, h("style", null, toolboxStyles), body);
 }
 export default function plugin() {
   let disposed = false;
