@@ -104,3 +104,28 @@ test('power summaries describe power, OSD and fan for the module list', () => {
   assert.deepEqual(powerSummaries({ view: { charger: true }, draft: d }), {
     power: { text: '手动 12 W' }, osd: { text: '第 2 档' }, fan: { text: '静音 · 全速', off: false } });
 });
+
+test('power page: only the switch while not managed, no explanatory text when managed', async () => {
+  const { createPowerPanel } = await import('../plugin/power.js');
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() });
+  const React = { createElement: h, Fragment: 'Fragment', useState: init => [typeof init === 'function' ? init() : init, () => {}], useEffect: () => {} };
+  const ui = new Proxy({}, { get: (_, name) => name });
+  const render = value => {
+    const Panel = createPowerPanel(React, ui, { value, subscribe: () => () => {}, refresh() {} }, 'StatusText', 'SectionLabel');
+    const nodes = [];
+    const walk = node => { if (!node || typeof node !== 'object') return; nodes.push(node); node.children.forEach(walk); };
+    walk(Panel({ section: 'power' }));
+    return nodes;
+  };
+  const limits = { tdpMin: 5, tdpMax: 35, boostMax: 5, freq: [0, 2750] };
+  const settings = { enabled: false, mode: 'smart', boost: 1, quick: [8, 15], manual: { tdp: 15, freq: 0 }, ac: { tdp: 35, freq: 0 },
+    dc: { tdp: 25, freq: 0 }, smart: { target: 60, acMax: 30, dcMax: 20, floor: 8 }, osd: {}, fan: {} };
+  const view = { settings, charger: true, limits, actual: { pl1: 12, package: 11.6 }, ecore: { enabled: true, pending: false }, backup: true };
+  const off = render({ view, draft: settings });
+  assert.deepEqual(off.filter(n => n.type === 'SliderField' || n.type === 'DropdownItem'), []);
+  assert.ok(off.some(n => n.props.label === '全部核心按 E 核调度'));
+  const on = render({ view, draft: { ...settings, enabled: true } });
+  assert.ok(on.some(n => n.type === 'SliderField'));
+  assert.deepEqual(on.filter(n => n.props.description), [], 'no row carries an explanation');
+  assert.ok(!on.some(n => n.type === 'SectionLabel'), 'no lone section headers');
+});
