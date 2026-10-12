@@ -1,0 +1,37 @@
+# 构建产物与打包输出（约 7 GB，由 build.ps1 / package.ps1 重新生成）
+/artifacts/
+/plugin/bin/
+/plugin/dist/
+/native/Scaling/bin/
+/native/Scaling/obj/
+
+# Magpie 上游的编译中间文件与 NuGet 包（源码保留；子目录自带 .gitignore）
+/native/upstream/Magpie-0.12.1/obj/
+/native/upstream/Magpie-0.12.1/packages/
+/native/upstream/Magpie-0.12.1/build-claw.log
+*.pfx
+
+# 本机诊断记录、日志、崩溃转储、设置与电源/睡眠备份
+/diagnostics/
+
+# 第三方程序的修补副本（Playhub 前端/后端、ClawTweaks 二进制补丁），不随仓库分发
+/repairs/playhub-haptics/
+/plugin/resources/clawtweaks-home.patch.gz
+
+# 本机工具依赖
+/tools/.clash-runtime/
+node_modules/
+
+# Python / 编辑器 / 系统
+__pycache__/
+*.pyc
+*.log
+*.dmp
+*.lnk
+.vs/
+.vscode/
+Thumbs.db
+desktop.ini
+
+# 本机设置备份
+/tools/*-before.json

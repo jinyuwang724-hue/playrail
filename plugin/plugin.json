@@ -1,0 +1,15 @@
+{
+  "name": "Claw 掌机工具箱",
+  "version": "0.16.9",
+  "author": "Local",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": [
+      "windows",
+      "msi-claw",
+      "playhub"
+    ],
+    "description": "Claw 等比铺满与 Magpie 锐化、按键、导航反馈、添加非 Steam 游戏、Clash Verge 及兼容性修复。"
+  }
+}
