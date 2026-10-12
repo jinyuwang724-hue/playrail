@@ -7,6 +7,7 @@ import { createMagpieController, createMagpiePanel } from "./magpie.js";
 import { syncOverlayInset, syncQuickAccessSize } from "./magpie.js";
 import { installSteamContext } from "./steam-context.js";
 import { createPowerController, createPowerPanel, powerSummaries, powerTiles } from "./power.js";
+import { createRumbleController, createRumbleRows } from "./rumble.js";
 const manifest = { name: "Claw 掌机工具箱" };
 const connection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 if (!connection) throw new Error("Decky 接口不可用");
@@ -28,6 +29,8 @@ const magpie = createMagpieController(api);
 const MagpiePanel = createMagpiePanel(R, UI, magpie, StatusText);
 const power = createPowerController(api);
 const PowerPanel = createPowerPanel(R, UI, power, StatusText, SectionLabel);
+const rumble = createRumbleController(api);
+const RumbleRows = createRumbleRows(R, UI, rumble, StatusText);
 // While Steam's side menus are open, keep the quick access panel at its on-screen
 // size (Steam rebuilds it on its own). The menus go through Magpie's effect chain
 // with the game. Runs only while an overlay is visible.
@@ -191,8 +194,10 @@ export function Content() {
       h(UI.PanelSectionRow, { key: "mapping-xbox" }, h(UI.DropdownItem, { label: "Xbox 键", rgOptions: actions, selectedOption: value.settings.qamAction, disabled: busy, onChange: option => save({ qamAction: option.data }) })),
       (value.status.error || message) && field("提示", value.status.error || message)),
     haptics: h(UI.PanelSection, { key: "haptics" },
+      h(RumbleRows, { key: "rumble" }),
+      h(SectionLabel, null, "界面导航震动"),
       h(StatusText, null, value.haptics?.phase ?? "等待导航"),
-      h(UI.PanelSectionRow, { key: "haptics-enabled" }, h(UI.ToggleField, { label: "手柄反馈修复", description: "开启后自动生效。", checked: value.settings.hapticsEnabled, disabled: busy, onChange: hapticsEnabled => save({ hapticsEnabled }) }))),
+      h(UI.PanelSectionRow, { key: "haptics-enabled" }, h(UI.ToggleField, { label: "手柄反馈修复", checked: value.settings.hapticsEnabled, disabled: busy, onChange: hapticsEnabled => save({ hapticsEnabled }) }))),
     games: h(GameAdder, { key: "game-add", embedded: true }),
     proxy: h(UI.PanelSection, { key: "proxy" },
       h(StatusText, null, proxyBusy ? proxyOperation : clash.phase),
@@ -311,6 +316,6 @@ export default function plugin() {
   return {
     name: manifest.name, title: h(Title), content: h(Content),
     icon: UI.IconsModule?.Controller ? h(UI.IconsModule.Controller, { width: 20, height: 20, style: { width: 20, height: 20 } }) : null,
-    onDismount() { disposed = true; clearInterval(plainTimer); removeInset(); syncOverlayInset(window, null); syncQuickAccessSize(window, null); steamContext.dispose(); disposePanel(); haptics.dispose(); routers.get(window)?.dispose(); routers.delete(window); magpie.dispose(); power.dispose(); api.removeEventListener("power_status", powerListener); api.removeEventListener("magpie_status", magpieListener); api.removeEventListener("router_event", listener); api.removeEventListener("haptic_status", hapticListener); api.call("frontend_ready", false, frontendId).catch(() => {}); },
+    onDismount() { disposed = true; clearInterval(plainTimer); removeInset(); syncOverlayInset(window, null); syncQuickAccessSize(window, null); steamContext.dispose(); disposePanel(); haptics.dispose(); routers.get(window)?.dispose(); routers.delete(window); magpie.dispose(); power.dispose(); rumble.dispose(); api.removeEventListener("power_status", powerListener); api.removeEventListener("magpie_status", magpieListener); api.removeEventListener("router_event", listener); api.removeEventListener("haptic_status", hapticListener); api.call("frontend_ready", false, frontendId).catch(() => {}); },
   };
 }

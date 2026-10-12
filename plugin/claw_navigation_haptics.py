@@ -191,6 +191,13 @@ class ClawNavigationHaptics:
                     self._stop()
                     return
 
+    def test_pulse(self, duration=250):
+        """One full-strength pulse so the firmware strength can be felt."""
+        with self._lock:
+            request_id = self._request_id + 1
+        return self.request({"requestId": request_id, "vendorId": _HARDWARE[0], "productId": _HARDWARE[1],
+                             "durationMs": duration, "side": 2, "magnitude": 1})
+
     def close(self):
         with self._lock:
             self._closed = True

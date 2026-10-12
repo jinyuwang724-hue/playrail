@@ -38,6 +38,9 @@ _frames_spec.loader.exec_module(_frames_module)
 _power_spec = importlib.util.spec_from_file_location("claw_toolbox_power", PLUGIN_ROOT / "claw_power.py")
 _power_module = importlib.util.module_from_spec(_power_spec)
 _power_spec.loader.exec_module(_power_module)
+_rumble_spec = importlib.util.spec_from_file_location("claw_toolbox_rumble", PLUGIN_ROOT / "claw_rumble.py")
+_rumble_module = importlib.util.module_from_spec(_rumble_spec)
+_rumble_spec.loader.exec_module(_rumble_module)
 
 # ControllerHapticsService.PlayPattern in Playhub 2.1.0 executes the first step.
 HAPTIC_PATTERNS = {
@@ -100,6 +103,7 @@ class Plugin:
         self._magpie = _magpie_module.Magpie(PLUGIN_ROOT, self._data, self._emit_magpie)
         self._overlay_frames = _frames_module.OverlayFrames()
         self._power = _power_module.PowerControl(PLUGIN_ROOT, self._data, self._emit_power)
+        self._rumble = _rumble_module.RumbleControl(self._data, log=logging.info)
         self._clash = _clash_module.ClashControl(PLUGIN_ROOT, self._data)
         self._subscriptions = _subscription_module.VergeSubscriptions(self._clash, self._data)
         self._settings_path = self._data / "settings.json"
@@ -131,6 +135,7 @@ class Plugin:
         self._task = asyncio.create_task(self._read_errors())
         self._schedule_compatibility()
         self._power.start()
+        self._rumble.start()
 
     def _schedule_compatibility(self):
         if self._stopping or (self._compatibility_task and not self._compatibility_task.done()):
@@ -252,6 +257,24 @@ class Plugin:
         if self._stopping:
             raise RuntimeError("插件正在重载，请稍候")
         return await self._power.restore()
+
+    async def get_rumble_state(self):
+        return await self._rumble.refresh()
+
+    async def set_rumble_strength(self, strength):
+        if self._stopping:
+            raise RuntimeError("插件正在重载，请稍候")
+        return await self._rumble.set_strength(strength)
+
+    async def restore_rumble(self):
+        if self._stopping:
+            raise RuntimeError("插件正在重载，请稍候")
+        return await self._rumble.restore()
+
+    async def test_rumble(self):
+        if self._stopping:
+            raise RuntimeError("插件正在重载，请稍候")
+        return await asyncio.get_running_loop().run_in_executor(None, self._haptics.test_pulse)
 
     async def get_magpie_state(self):
         return await self._magpie.get()
@@ -486,6 +509,7 @@ class Plugin:
         self._stopping = True
         self._overlay_frames.close()
         await self._power.close()
+        await self._rumble.close()
         await self._magpie.close()
         if self._compatibility_task:
             await self._compatibility_task

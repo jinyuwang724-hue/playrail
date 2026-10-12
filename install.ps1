@@ -5,7 +5,7 @@ $taskAllowed = [IO.Path]::GetFullPath($PluginRoot).TrimEnd('\') + '\'
 if (-not $taskTarget.StartsWith($taskAllowed,[StringComparison]::OrdinalIgnoreCase)) { throw 'Target is outside plugin root.' }
 $taskSource = Join-Path $PSScriptRoot 'plugin'
 $taskVersion = (Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $taskSource 'plugin.json') | ConvertFrom-Json).version
-$taskFiles = @(('bin\ClawRouter-'+$taskVersion+'.exe'),'bin\ClashBridge.exe',('bin\ClawTouchBridge-'+$taskVersion+'.exe'),'bin\SteamAdminLauncher.exe','bin\CompatibilityUtility.exe','resources\clawtweaks-home.patch.gz','dist\index.js','main.py','claw_compatibility.py','claw_navigation_haptics.py','claw_clash.py','claw_subscriptions.py','claw_magpie.py','claw_overlay_frames.py','claw_power.py',('bin\ClawPower-'+$taskVersion+'.exe'),'bin\pawnio\IntelMSR.bin','package.json','plugin.json')
+$taskFiles = @(('bin\ClawRouter-'+$taskVersion+'.exe'),'bin\ClashBridge.exe',('bin\ClawTouchBridge-'+$taskVersion+'.exe'),'bin\SteamAdminLauncher.exe','bin\CompatibilityUtility.exe','resources\clawtweaks-home.patch.gz','dist\index.js','main.py','claw_compatibility.py','claw_navigation_haptics.py','claw_clash.py','claw_subscriptions.py','claw_magpie.py','claw_overlay_frames.py','claw_power.py','claw_rumble.py',('bin\ClawPower-'+$taskVersion+'.exe'),'bin\pawnio\IntelMSR.bin','package.json','plugin.json')
 $taskMagpieRoot = Join-Path $taskSource 'bin\magpie'
 $taskFiles += @(Get-ChildItem -LiteralPath $taskMagpieRoot -Recurse -File | ForEach-Object { $_.FullName.Substring($taskSource.TrimEnd('\').Length+1) })
 foreach ($taskFile in $taskFiles) { if (-not (Test-Path -LiteralPath (Join-Path $taskSource $taskFile))) { throw ('Build output missing: '+$taskFile) } }

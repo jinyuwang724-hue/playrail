@@ -35,6 +35,7 @@ $taskPanelLifecycle = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\panel-
 $taskToolboxUI = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\toolbox-ui.js'),[Text.Encoding]::UTF8)
 $taskMagpie = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\magpie.js'),[Text.Encoding]::UTF8)
 $taskPower = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\power.js'),[Text.Encoding]::UTF8)
+$taskRumble = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\rumble.js'),[Text.Encoding]::UTF8)
 $taskSteamContext = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\steam-context.js'),[Text.Encoding]::UTF8)
 $taskFrontend = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\frontend.js'),[Text.Encoding]::UTF8)
 $taskFrontend = $taskFrontend.Replace('import { createMenuRouter } from "./menu-router.js";', '')
@@ -46,5 +47,6 @@ $taskFrontend = $taskFrontend.Replace('import { createMagpieController, createMa
 $taskFrontend = $taskFrontend.Replace('import { syncOverlayInset, syncQuickAccessSize } from "./magpie.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { installSteamContext } from "./steam-context.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { createPowerController, createPowerPanel, powerSummaries, powerTiles } from "./power.js";', '')
-[IO.File]::WriteAllText((Join-Path $taskRoot 'plugin\dist\index.js'),($taskRouter + [Environment]::NewLine + $taskHaptics + [Environment]::NewLine + $taskGameAdder + [Environment]::NewLine + $taskPanelLifecycle + [Environment]::NewLine + $taskToolboxUI + [Environment]::NewLine + $taskMagpie + [Environment]::NewLine + $taskPower + [Environment]::NewLine + $taskSteamContext + [Environment]::NewLine + $taskFrontend),(New-Object Text.UTF8Encoding($false)))
+$taskFrontend = $taskFrontend.Replace('import { createRumbleController, createRumbleRows } from "./rumble.js";', '')
+[IO.File]::WriteAllText((Join-Path $taskRoot 'plugin\dist\index.js'),($taskRouter + [Environment]::NewLine + $taskHaptics + [Environment]::NewLine + $taskGameAdder + [Environment]::NewLine + $taskPanelLifecycle + [Environment]::NewLine + $taskToolboxUI + [Environment]::NewLine + $taskMagpie + [Environment]::NewLine + $taskPower + [Environment]::NewLine + $taskRumble + [Environment]::NewLine + $taskSteamContext + [Environment]::NewLine + $taskFrontend),(New-Object Text.UTF8Encoding($false)))
 Write-Output 'Build complete.'
