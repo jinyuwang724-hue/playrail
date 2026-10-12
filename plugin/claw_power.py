@@ -29,7 +29,7 @@ DEFAULTS = {
     "smart": {"target": 60, "acMax": 35, "dcMax": 25, "floor": 8},
     # The OSD also keeps games such as 鸣潮 3.7 from crashing under RTSS (see ClawPower.cs Osd).
     "osd": {"enabled": True, "level": 2, "size": "medium", "rows": 1, "smallUnits": False},
-    "fan": {"mode": "firmware", "custom": [20, 30, 50, 59, 67, 76], "full": False},
+    "fan": {"mode": "firmware", "curves": None, "full": False},  # curves: FAN_PRESETS until edited
 }
 # The toolbox drives the fan itself from the CPU package temperature: each mode is a curve of
 # (°C, duty %) points, interpolated in between. Measured on the Claw 8 EX (2026-10-12):
@@ -37,16 +37,17 @@ DEFAULTS = {
 # 100 % ~6100 rpm. The user wants it no louder than 4700 rpm, which is 76 %; only the
 # full-speed switch goes past it.
 FAN_CAP = 76
-FAN_PRESETS = {"quiet": [[55, 20], [65, 30], [75, 50], [90, FAN_CAP]],
-               "balanced": [[50, 20], [60, 30], [70, 50], [85, FAN_CAP]],
-               "performance": [[45, 30], [55, 50], [65, 65], [75, FAN_CAP]]}
-# Temperatures of the six custom points.
-FAN_CUSTOM_TEMPS = (50, 60, 70, 75, 80, 90)
+# Six duty points (%) per mode at FAN_TEMPS °C, linear in between. 均衡 is the user's curve
+# (20 % ≤50 °C, 30 % 60 °C, 50 % 70 °C, 76 % ≥85 °C); 静音 is it 5 °C later, 性能 5 °C earlier.
+# The user can edit every mode's points; these are the defaults.
+FAN_TEMPS = (50, 60, 70, 75, 80, 90)
+FAN_PRESETS = {"quiet": [20, 25, 40, 50, 59, 76], "balanced": [20, 30, 50, 59, 67, 76],
+               "performance": [25, 40, 59, 67, 76, 76]}
 # Hysteresis: speed up only after the curve has asked for more for FAN_RISE s straight, slow
 # down only after it has asked for less for FAN_FALL s, so a short spike (loading screen,
 # shader compile) does not make the fan surge and drop again. At FAN_HOT °C it reacts at once.
 FAN_RISE, FAN_FALL, FAN_HOT = 6.0, 10.0, 95
-FAN_MODES = ("firmware", "custom") + tuple(FAN_PRESETS)
+FAN_MODES = ("firmware",) + tuple(FAN_PRESETS)
 
 
 def _int(value, low, high, name):
@@ -90,17 +91,21 @@ def validate(value):
 
 def _fan(value):
     fan = {**DEFAULTS["fan"], **(value or {})}
-    custom = fan["custom"]
-    if (fan["mode"] not in FAN_MODES or type(fan["full"]) is not bool or not isinstance(custom, list) or len(custom) != 6
-            or any(type(d) is not int or not 0 <= d <= 100 for d in custom)):
+    if fan["mode"] == "custom":  # 0.16.9 had one custom curve instead of editable modes
+        fan["mode"] = "balanced"
+    if fan["curves"] is not None and not isinstance(fan["curves"], dict):
         raise ValueError("风扇设置格式错误")
-    return {"mode": fan["mode"], "custom": [min(d, FAN_CAP) for d in custom], "full": fan["full"]}
+    curves = {**FAN_PRESETS, **(fan["curves"] or {})}
+    if (fan["mode"] not in FAN_MODES or type(fan["full"]) is not bool or set(curves) != set(FAN_PRESETS)
+            or any(not isinstance(c, list) or len(c) != 6 or any(type(d) is not int or not 0 <= d <= 100 for d in c)
+                   for c in curves.values())):
+        raise ValueError("风扇设置格式错误")
+    return {"mode": fan["mode"], "curves": {m: [min(d, FAN_CAP) for d in curves[m]] for m in FAN_PRESETS},
+            "full": fan["full"]}
 
 
 def fan_points(fan):
-    if fan["mode"] == "custom":
-        return [[t, d] for t, d in zip(FAN_CUSTOM_TEMPS, fan["custom"])]
-    return FAN_PRESETS.get(fan["mode"])
+    return [[t, d] for t, d in zip(FAN_TEMPS, fan["curves"][fan["mode"]])]
 
 
 def fan_duty_at(points, temp):
@@ -914,7 +919,7 @@ class PowerControl:
                 "backup": self.backup_path.exists(), "otherTool": self.other_tool, "reapplied": self.reapplied,
                 "smart": self.smart if self.settings["mode"] == "smart" else None, "targets": list(TARGETS),
                 "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS, "cap": FAN_CAP,
-                        "axis": list(FAN_CUSTOM_TEMPS), "target": self.fan_governor.duty},
+                        "axis": list(FAN_TEMPS), "target": self.fan_governor.duty},
                 # Read-only readings for the toolbox home; a temperature older than 15 s is not shown.
                 "live": {"battery": battery_percent(),
                          "cpuTemp": self.temperature if time.monotonic() - self.temperature_at < 15 else None,
