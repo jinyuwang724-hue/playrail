@@ -402,7 +402,12 @@ static class Osd {
             for (uint i = 1; i < count; i++) {  // slot 0 belongs to RTSS itself
                 long entry = offset + (long)i * size;
                 string owner = ReadString(view, entry + 256, 256);
-                if (owner == Owner) { slot = entry; break; }
+                if (owner == Owner) { slot = entry; continue; }
+                // 体感助手 leaves its OSD line behind when it exits, so a second, frozen line stays on
+                // screen. Clear its slot only while it is not running; a running copy keeps its line.
+                if (owner == "MotionAssistant" && Process.GetProcessesByName("MotionAssistant").Length == 0) {
+                    Clear(view, entry, size); Bump(view); owner = "";
+                }
                 if (owner.Length == 0 && free < 0) free = entry;
             }
             if (text.Length == 0) {
