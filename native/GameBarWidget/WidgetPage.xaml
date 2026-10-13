@@ -1,0 +1,10 @@
+<Page
+    x:Class="ClawWidget.WidgetPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Background="Transparent">
+    <StackPanel Padding="20" Spacing="8">
+        <TextBlock Text="Claw 掌机工具箱" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock x:Name="Status" Text="工具箱组件已就位，功能即将加入。" Opacity="0.7" TextWrapping="Wrap" />
+    </StackPanel>
+</Page>

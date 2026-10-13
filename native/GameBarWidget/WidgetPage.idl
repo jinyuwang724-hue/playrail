@@ -1,0 +1,8 @@
+namespace ClawWidget
+{
+    [default_interface]
+    runtimeclass WidgetPage : Windows.UI.Xaml.Controls.Page
+    {
+        WidgetPage();
+    }
+}
