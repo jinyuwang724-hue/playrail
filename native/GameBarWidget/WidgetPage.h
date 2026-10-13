@@ -13,6 +13,8 @@ namespace winrt::ClawWidget::implementation
     private:
         Windows::Foundation::IAsyncAction StartAsync();
         void Post(hstring const& json);
+        void FocusSelf();
+        std::chrono::steady_clock::time_point m_lastFocus{};
 
         Microsoft::Gaming::XboxGameBar::XboxGameBarWidget m_widget{ nullptr };
         event_token m_displayModeToken{};

@@ -45,12 +45,24 @@ namespace winrt::ClawWidget::implementation
             m_displayModeToken = m_widget.GameBarDisplayModeChanged([weak = get_weak()](auto&&, auto&&) {
                 if (auto self = weak.get())
                     self->Dispatcher().RunAsync(Windows::UI::Core::CoreDispatcherPriority::Normal, [self]() {
-                        self->Post(self->m_widget.GameBarDisplayMode() == XboxGameBarDisplayMode::Foreground
-                            ? L"{\"gamebar\":\"foreground\"}" : L"{\"gamebar\":\"pinned\"}");
+                        bool open = self->m_widget.GameBarDisplayMode() == XboxGameBarDisplayMode::Foreground;
+                        self->Post(open ? L"{\"gamebar\":\"foreground\"}" : L"{\"gamebar\":\"pinned\"}");
+                        // Game Bar opened: bring this widget to the front with controller focus, the
+                        // way ClawTweaks does, so the Xbox button lands here instead of on Home.
+                        if (open) self->FocusSelf();
                     });
             });
         }
         core.Navigate(L"https://widget.claw/index.html");
+    }
+
+    void WidgetPage::FocusSelf()
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (now - m_lastFocus < std::chrono::seconds(2)) return;  // the launch itself re-raises Foreground
+        m_lastFocus = now;
+        Windows::System::Launcher::LaunchUriAsync(Uri(
+            L"ms-gamebar://launchForeground/activate/ClawToolbox.GameBarWidget_ba3r68zr466za_App_Toolbox/"));
     }
 
     void WidgetPage::Post(hstring const& json)

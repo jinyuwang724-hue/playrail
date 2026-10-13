@@ -12,6 +12,8 @@
 #include <winrt/Windows.UI.Xaml.Interop.h>
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.Storage.h>
+#include <winrt/Windows.System.h>
+#include <chrono>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.XamlTypeInfo.h>
 #include <winrt/Microsoft.Web.WebView2.Core.h>
