@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Claw toolbox Game Bar widget: C++/WinRT UWP app. Packages come from local folders, no restore:
-     CPPWINRT_DIR = Microsoft.Windows.CppWinRT package folder, GAMEBAR_DIR = Microsoft.Gaming.XboxGameBar folder. -->
+     CPPWINRT_DIR = Microsoft.Windows.CppWinRT, GAMEBAR_DIR = Microsoft.Gaming.XboxGameBar,
+     MUX_DIR = Microsoft.UI.Xaml (2.8, WebView2 control), WEBVIEW2_DIR = Microsoft.Web.WebView2 package folders.
+     tools\Build-GameBarWidget.ps1 passes them. -->
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(CPPWINRT_DIR)\build\native\Microsoft.Windows.CppWinRT.props" />
+  <Import Project="$(MUX_DIR)\build\native\Microsoft.UI.Xaml.props" />
   <PropertyGroup Label="Globals">
     <CppWinRTOptimized>true</CppWinRTOptimized>
     <CppWinRTRootNamespaceAutoMerge>true</CppWinRTRootNamespaceAutoMerge>
@@ -74,7 +77,12 @@
     <Image Include="Assets\StoreLogo.png" />
     <Image Include="Assets\SplashScreen.png" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="web\**\*"><DeploymentContent>true</DeploymentContent></None>
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="$(GAMEBAR_DIR)\build\native\Microsoft.Gaming.XboxGameBar.targets" />
+  <Import Project="$(MUX_DIR)\build\native\Microsoft.UI.Xaml.targets" />
+  <Import Project="$(WEBVIEW2_DIR)\build\native\Microsoft.Web.WebView2.targets" />
   <Import Project="$(CPPWINRT_DIR)\build\native\Microsoft.Windows.CppWinRT.targets" />
 </Project>

@@ -105,6 +105,42 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.client.call("shutdown"), {"stopping": True})
         self.assertTrue(self.agent.stopped.is_set())
 
+    async def test_websocket_speaks_the_same_protocol(self):
+        import base64, os, struct
+        endpoint = json.loads((self.home / "agent.json").read_text(encoding="utf-8"))
+        reader, writer = await asyncio.open_connection("127.0.0.1", endpoint["wsPort"])
+        key = base64.b64encode(os.urandom(16)).decode()
+        writer.write(("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                      f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+        response = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 3)
+        self.assertIn(b"101 Switching Protocols", response)
+
+        def frame(text):
+            data, mask = text.encode(), os.urandom(4)
+            size = bytes([0x80 | len(data)]) if len(data) < 126 else bytes([0x80 | 126]) + struct.pack(">H", len(data))
+            return bytes([0x81]) + size + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+
+        async def read():
+            head = await reader.readexactly(2)
+            length = head[1] & 0x7F
+            if length == 126:
+                length = struct.unpack(">H", await reader.readexactly(2))[0]
+            return json.loads(await reader.readexactly(length))
+        writer.write(frame(json.dumps({"hello": endpoint["token"], "client": "gamebar"})))
+        self.assertEqual((await read())["hello"], "ok")
+        writer.write(frame(json.dumps({"id": 7, "method": "get_power_state", "args": [False]})))
+        messages = [await read(), await read()]
+        self.assertIn({"id": 7, "result": {"pl1": 12}}, messages)
+        self.assertIn({"event": "power_status", "value": {"sample": False}}, messages)
+        writer.close()
+
+    def test_widget_gets_its_endpoint_only_when_installed(self):
+        record = {"port": 1, "wsPort": 2, "token": "t", "pid": 3, "version": "x"}
+        self.agent.publish_widget_endpoint(record, self.home / "missing")
+        self.assertFalse((self.home / "missing").exists())
+        self.agent.publish_widget_endpoint(record, self.home)
+        self.assertEqual(json.loads((self.home / "agent.json").read_text(encoding="utf-8")), {"wsPort": 2, "token": "t"})
+
     async def test_endpoint_removed_only_by_its_owner(self):
         await self.agent.close()
         self.assertFalse((self.home / "agent.json").exists())
@@ -209,7 +245,7 @@ class DeckyProxyTests(unittest.IsolatedAsyncioTestCase):
         plugin = self.proxy(calls)
         for name in self.module.FORWARDED:
             self.assertTrue(callable(getattr(plugin, name)))
-        self.assertEqual(set(self.module.FORWARDED), agent_module.METHODS)
+        self.assertLessEqual(set(self.module.FORWARDED), agent_module.METHODS)
         await plugin.save_power({"tdp": 15})
         self.assertEqual(calls, [("save_power", {"tdp": 15})])
 

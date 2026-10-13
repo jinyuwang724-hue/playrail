@@ -195,6 +195,32 @@ def boot_time():
     return time.time() - ctypes.windll.kernel32.GetTickCount64() / 1000
 
 
+def window_title(pid):
+    """Title of the visible top-level window of a process (the game's own name, e.g. 鸣潮)."""
+    u = ctypes.windll.user32
+    found = []
+    PROC = ctypes.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
+
+    def each(hwnd, _):
+        owner = W.DWORD()
+        u.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and u.IsWindowVisible(hwnd):
+            length = u.GetWindowTextLengthW(hwnd)
+            if length:
+                buffer = ctypes.create_unicode_buffer(length + 1)
+                u.GetWindowTextW(hwnd, buffer, length + 1)
+                found.append(buffer.value)
+                return False
+        return True
+    u.EnumWindows(PROC(each), 0)
+    return found[0] if found else None
+
+
+def battery_charging():
+    status = PowerStatus()
+    return bool(ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status))) and status.battery & 8 != 0
+
+
 def battery_percent():
     status = PowerStatus()
     if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status)):
@@ -642,6 +668,9 @@ class PowerControl:
                 return reply.get("fan") or {}
             if command in ("thermal", "osd", "stats", "osd_zoom", "osd_height", "osd_font", "rtss_app", "gpu"):
                 return reply.get(command) or {}
+            if command in ("sys_read", "brightness_set", "volume_set", "mute_set", "refresh_set", "fps_limit_set",
+                           "kill", "power_action", "keyboard", "screenshot"):
+                return reply.get("sys") or {}
             if command == "cpu_info":
                 return reply.get("cpu") or {}
             if command == "ecore_set":
@@ -986,6 +1015,30 @@ class PowerControl:
             except OSError:
                 pass
         return {"enabled": enabled, "pending": enabled != record["atBoot"]}
+
+    # ---- system controls for the Game Bar widget --------------------------------
+    async def system(self):
+        """Brightness, volume, refresh rates, frame limit and the foreground game."""
+        try:
+            view = await self._call("sys_read")
+        except RuntimeError as e:
+            view = {"error": str(e)}
+        game = await asyncio.to_thread(foreground_game)
+        view["game"] = {"pid": game[0], "exe": game[1],
+                        "title": await asyncio.to_thread(window_title, game[0]) or game[1].rsplit(".", 1)[0]} if game else None
+        view["charging"] = battery_charging()
+        return view
+
+    async def system_set(self, command, **args):
+        await self._call(command, **args)
+        return await self.system()
+
+    async def close_game(self, pid):
+        game = await asyncio.to_thread(foreground_game)
+        if type(pid) is not int or not game or game[0] != pid:
+            raise RuntimeError("要关闭的游戏已不在前台，请重新确认")
+        await self._call("kill", pid=pid)
+        return await self.system()
 
     async def set_ecore(self, enabled):
         if type(enabled) is not bool:

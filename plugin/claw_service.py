@@ -249,6 +249,50 @@ class Service:
             raise RuntimeError("工具箱后台正在退出，请稍候")
         return await self._power.set_ecore(enabled)
 
+    # ---- Game Bar widget ----------------------------------------------------------
+    async def widget_state(self):
+        """Everything the widget's single page shows, in one call."""
+        power = await self._power.get(True)
+        return {"power": power, "system": await self._power.system(), "rumble": await self._rumble.refresh(),
+                "magpie": await self._magpie.get()}
+
+    async def set_brightness(self, value):
+        return await self._power.system_set("brightness_set", value=self._number(value, 0, 100))
+
+    async def set_volume(self, value):
+        return await self._power.system_set("volume_set", value=self._number(value, 0, 100))
+
+    async def set_mute(self, muted):
+        if type(muted) is not bool:
+            raise ValueError("静音开关格式错误")
+        return await self._power.system_set("mute_set", muted=muted)
+
+    async def set_refresh_rate(self, hz):
+        return await self._power.system_set("refresh_set", hz=self._number(hz, 24, 500))
+
+    async def set_fps_limit(self, fps):
+        return await self._power.system_set("fps_limit_set", fps=self._number(fps, 0, 360))
+
+    async def close_game(self, pid):
+        return await self._power.close_game(pid)
+
+    async def power_action(self, action):
+        if action not in ("sleep", "shutdown", "restart", "lock"):
+            raise ValueError("不支持的电源操作")
+        return await self._power.system_set("power_action", action=action)
+
+    async def toggle_keyboard(self):
+        return await self._power.system_set("keyboard")
+
+    async def screenshot(self):
+        return await self._power.system_set("screenshot")
+
+    @staticmethod
+    def _number(value, low, high):
+        if type(value) not in (int, float) or not low <= value <= high:
+            raise ValueError("数值超出范围")
+        return int(round(value))
+
     async def restore_power(self):
         if self._stopping:
             raise RuntimeError("工具箱后台正在退出，请稍候")
