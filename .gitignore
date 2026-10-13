@@ -38,3 +38,6 @@ desktop.ini
 
 # Agent Python runtime (build.ps1 rebuilds it from a local Python 3.12)
 /plugin/runtime/
+
+# Game Bar widget: C++/WinRT generated sources
+/native/GameBarWidget/Generated Files/
