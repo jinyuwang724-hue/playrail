@@ -138,8 +138,8 @@ public sealed class Rail
         float nameH = (float)name.LayoutBounds.Height;
         float accH = av + 8 + nameH;
         float accY = statusY - groupGap - accH;
-        // 工具：竖着一列（搜索、设置、文件管理器），每个 44 × 38，间隔 8
-        const float toolW = 44, toolH = 38, toolGap = 8;
+        // 工具：竖着一列（搜索、设置、文件管理器），照 folia 缝里的工具格：40 × 40 方格、圆角 12、静止时无底无框，间隔 8
+        const float toolW = 40, toolH = 40, toolGap = 8;
         var tools = new[] { (RailKind.Search, ""), (RailKind.Settings, ""), (RailKind.Explorer, "") };
         float toolsH = tools.Length * toolH + (tools.Length - 1) * toolGap;
         float ruleY = accY - groupGap / 2 - 0.5f;   // 工具与账户之间一道短分隔线
@@ -158,9 +158,15 @@ public sealed class Rail
         {
             var r = new Rect(cx - toolW / 2, toolsY + i * (toolH + toolGap), toolW, toolH);
             bool pressed = tools[i].Item1 == RailKind.Settings && m.SettingsOpen;
-            ds.FillRoundedRectangle(r, 12, 12, Gfx.WithAlpha(Theme.Ink, pressed ? 0.16 : 0.06));
-            var icon = this.H(tools[i].Item2, new FontSpec(IconFont, 400), 16);
-            DrawCentered(ds, icon, (float)(r.X + toolW / 2), (float)(r.Y + toolH / 2), pressed ? Theme.Ink : Gfx.WithAlpha(Theme.Ink, 0.8));
+            bool focused = focus == Items.Count;   // 这一项马上登记成第 Items.Count 项
+            // 焦点 / 按下时才出现底色与描边（folia：hover / is-pressed 都是 16 % 底，描边 26 %）
+            if (pressed || focused)
+            {
+                ds.FillRoundedRectangle(r, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.16));
+                ds.DrawRoundedRectangle(new Rect(r.X + 0.5, r.Y + 0.5, r.Width - 1, r.Height - 1), 11.5f, 11.5f, Gfx.WithAlpha(Theme.Ink, 0.26), 1);
+            }
+            var icon = this.H(tools[i].Item2, new FontSpec(IconFont, 400), 18);
+            DrawCentered(ds, icon, (float)(r.X + toolW / 2), (float)(r.Y + toolH / 2), pressed ? Theme.Accent : focused ? Theme.Ink : Gfx.WithAlpha(Theme.Ink, 0.8));
             Add(tools[i].Item1, 0, r);
         }
         ds.FillRectangle(cx - 12, ruleY, 24, 1, Gfx.WithAlpha(Theme.Ink, 0.16));
@@ -190,8 +196,13 @@ public sealed class Rail
         if (focus >= 0 && focus < Items.Count)
         {
             var it = Items[focus];
-            if (it.Kind is RailKind.Account or RailKind.Search or RailKind.Settings or RailKind.Explorer)
-                Focus(ds, it.Bounds, 12);
+            if (it.Kind is RailKind.Search or RailKind.Settings or RailKind.Explorer)
+            {
+                // 工具格：方形焦点环（folia focus-visible：2 px 描边，离按钮 2 px），底色上面已经画了
+                var b = it.Bounds;
+                ds.DrawRoundedRectangle(new Rect(b.X - 3, b.Y - 3, b.Width + 6, b.Height + 6), 14, 14, Theme.Ink, 2);
+            }
+            else if (it.Kind == RailKind.Account) Focus(ds, it.Bounds, 12);
         }
     }
 
