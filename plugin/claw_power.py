@@ -452,12 +452,14 @@ def motion_assistant_running():
 
 
 # Foreground windows that are never a game: Steam's own UI (the in-game overlay
-# keeps the game in front), the shell, and this toolbox's helpers.
+# keeps the game in front), the shell, consoles, Game Bar, and this toolbox's helpers.
 NOT_GAMES = {"steam.exe", "steamwebhelper.exe", "gameoverlayui.exe", "gameoverlayui64.exe", "explorer.exe",
              "searchhost.exe", "startmenuexperiencehost.exe", "shellexperiencehost.exe", "textinputhost.exe",
              "applicationframehost.exe", "lockapp.exe", "taskmgr.exe", "claude.exe", "msedge.exe",
              "losslessscaling.exe", "magpie.exe", "motionassistant.exe", "rtss.exe", "clash-verge.exe",
-             "sunshine.exe", "pluginloader_noconsole.exe", "pluginloader.exe", "gamingmode.exe"}
+             "sunshine.exe", "pluginloader_noconsole.exe", "pluginloader.exe", "gamingmode.exe",
+             "windowsterminal.exe", "openconsole.exe", "conhost.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
+             "gamebar.exe", "gamebarftserver.exe", "xboxgamebarwidgets.exe", "clawwidget.exe"}
 
 
 def foreground_game():

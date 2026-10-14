@@ -214,11 +214,31 @@ namespace winrt::ClawWidget::implementation
         SizeChanged([this](IInspectable const&, SizeChangedEventArgs const& e) {
             // Narrow (400 wide): readings go under the game name, as in the design's 400 variant.
             bool narrow = e.NewSize().Width < 480;
+            if (narrow == m_narrow && m_layoutDone) return;
+            m_narrow = narrow; m_layoutDone = true;
             Grid::SetRow(Stats(), narrow ? 1 : 0);
             Grid::SetColumn(Stats(), narrow ? 0 : 1);
             Grid::SetColumnSpan(Stats(), narrow ? 2 : 1);
+            // Q-400-3: game name and frame rate on one line, compact readings, slimmer rail and tiles.
+            TitleBlock().Orientation(narrow ? Orientation::Horizontal : Orientation::Vertical);
+            TitleBlock().Spacing(narrow ? 10 : 0);
+            FpsValue().FontSize(narrow ? 28 : 32);
+            Header().Padding(narrow ? Thickness{ 12, 8, 12, 8 } : Thickness{ 14, 10, 14, 10 });
+            Rail().Width(narrow ? 44 : 48);
+            for (auto const& child : Stats().Children())
+            {
+                auto panel = child.as<StackPanel>();
+                panel.Orientation(narrow ? Orientation::Horizontal : Orientation::Vertical);
+                panel.Spacing(narrow ? 4 : 0);
+                panel.Children().GetAt(1).as<TextBlock>().FontSize(narrow ? 14 : 18);
+            }
+            for (auto& [id, view] : m_views) view.button.Padding(narrow ? Thickness{ 10, 10, 10, 10 } : Thickness{ 12, 12, 12, 12 });
+            Update();
         });
 
+        Loaded([this](IInspectable const&, RoutedEventArgs const&) {
+            if (!m_tiles.empty()) m_views[m_tiles.front()].button.Focus(FocusState::Programmatic);
+        });
         Update();
         LoadCache();
         m_agent->Connect();
@@ -229,6 +249,14 @@ namespace winrt::ClawWidget::implementation
     {
         m_widget = e.Parameter().try_as<XboxGameBarWidget>();
         if (!m_widget) return;
+        // Game Bar keeps the window size from earlier versions; once per layout change, set the
+        // size this version is designed for (400 wide, like Game Bar's own widgets).
+        auto values = ApplicationData::Current().LocalSettings().Values();
+        if (unbox_value_or<hstring>(values.TryLookup(L"windowSize"), L"") != L"400x480")
+        {
+            m_widget.TryResizeWindowAsync(Size{ 400, 480 });
+            values.Insert(L"windowSize", box_value(L"400x480"));
+        }
         m_widget.GameBarDisplayModeChanged([weak = get_weak()](auto&&, auto&&) {
             if (auto self = weak.get())
                 self->Dispatcher().RunAsync(Core::CoreDispatcherPriority::Normal, [self]() {
@@ -297,7 +325,7 @@ namespace winrt::ClawWidget::implementation
             auto& b = view.button;
             b.HorizontalAlignment(HorizontalAlignment::Stretch); b.VerticalAlignment(VerticalAlignment::Stretch);
             b.HorizontalContentAlignment(HorizontalAlignment::Stretch); b.VerticalContentAlignment(VerticalAlignment::Stretch);
-            b.Padding(Thickness{ 12, 12, 12, 12 });
+            b.Padding(m_narrow ? Thickness{ 10, 10, 10, 10 } : Thickness{ 12, 12, 12, 12 });
             Grid content;
             RowDefinition top, name, value; top.Height(Star()); name.Height(GridLengthHelper::Auto()); value.Height(GridLengthHelper::Auto());
             content.RowDefinitions().Append(top); content.RowDefinitions().Append(name); content.RowDefinitions().Append(value);
@@ -335,7 +363,7 @@ namespace winrt::ClawWidget::implementation
                 b.Tag(box_value(hstring(id)));
                 b.HorizontalAlignment(HorizontalAlignment::Stretch); b.VerticalAlignment(VerticalAlignment::Stretch);
                 b.HorizontalContentAlignment(HorizontalAlignment::Stretch); b.VerticalContentAlignment(VerticalAlignment::Stretch);
-                b.Padding(Thickness{ 12, 12, 12, 12 });
+                b.Padding(m_narrow ? Thickness{ 10, 10, 10, 10 } : Thickness{ 12, 12, 12, 12 });
                 if (!pinned) { b.Background(SolidColorBrush(Colors::Transparent())); b.BorderBrush(Resource(L"ControlStrongStrokeColorDefaultBrush")); }
                 if (moving) { TranslateTransform lift; lift.Y(-4); b.RenderTransform(lift); }
                 Grid content;
@@ -745,11 +773,12 @@ namespace winrt::ClawWidget::implementation
             view.button.ClearValue(Control::ForegroundProperty());
             view.value.Foreground(Resource(L"TextFillColorSecondaryBrush"));
         }
+        view.dots.Spacing(m_narrow ? 2 : 3);
         view.dots.Children().Clear();
         if (usable && level.count >= 2)
             for (int i = 0; i < level.count; i++)
             {
-                Shapes::Ellipse dot; dot.Width(6); dot.Height(6);
+                Shapes::Ellipse dot; dot.Width(m_narrow ? 5 : 6); dot.Height(m_narrow ? 5 : 6);
                 dot.Fill(i == level.index ? Resource(L"TextFillColorPrimaryBrush") : SolidColorBrush(ColorHelper::FromArgb(61, 255, 255, 255)));
                 view.dots.Children().Append(dot);
             }

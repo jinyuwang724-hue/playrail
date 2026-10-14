@@ -8,7 +8,10 @@ $log = Join-Path (Split-Path -Parent $Script) ('outside-' + [IO.Path]::GetFileNa
 Remove-Item -LiteralPath $log -ErrorAction SilentlyContinue
 $argumentText = ($Arguments | ForEach-Object { '"' + $_ + '"' }) -join ' '
 $command = '-NoProfile -ExecutionPolicy Bypass -Command "& { & ''' + $Script + ''' ' + $argumentText.Replace('"', "'") + ' *> ''' + $log + '''; exit $LASTEXITCODE }"'
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ('-WindowStyle Hidden ' + $command) -WorkingDirectory (Split-Path -Parent $Script)
+# conhost --headless: no console window at all. With Windows Terminal as the default console a plain
+# powershell.exe opens a terminal tab even with -WindowStyle Hidden, takes the focus, and on a
+# handheld that focus on a text window pops the touch keyboard.
+$action = New-ScheduledTaskAction -Execute 'conhost.exe' -Argument ('--headless powershell.exe ' + $command) -WorkingDirectory (Split-Path -Parent $Script)
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Seconds $TimeoutSeconds)
 $name = 'Outside-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
 Register-ScheduledTask -TaskPath '\ClawToolbox\' -TaskName $name -Action $action -Settings $settings | Out-Null

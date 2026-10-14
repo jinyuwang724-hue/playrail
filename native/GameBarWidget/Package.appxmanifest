@@ -6,7 +6,7 @@
   xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   IgnorableNamespaces="uap uap3 mp">
 
-  <Identity Name="ClawToolbox.GameBarWidget" Publisher="CN=ClawToolbox" Version="0.4.1.0" />
+  <Identity Name="ClawToolbox.GameBarWidget" Publisher="CN=ClawToolbox" Version="0.4.4.0" />
   <mp:PhoneIdentity PhoneProductId="6c1b6f0e-8c2c-4c9b-9e0b-5f2a6b9c1d11" PhonePublisherId="00000000-0000-0000-0000-000000000000" />
 
   <Properties>
@@ -46,7 +46,7 @@
                 <Window>
                   <Size>
                     <Height>480</Height>
-                    <Width>560</Width>
+                    <Width>400</Width>
                     <MinHeight>400</MinHeight>
                     <MinWidth>400</MinWidth>
                     <MaxHeight>1080</MaxHeight>

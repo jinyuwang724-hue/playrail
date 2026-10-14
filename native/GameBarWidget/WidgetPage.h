@@ -75,7 +75,7 @@ namespace winrt::ClawWidget::implementation
         std::map<std::wstring, Hold> m_holds;
         std::map<std::wstring, std::optional<Pending>> m_sending;
         Clock::time_point m_draftHeldUntil{}, m_failedSince{}, m_lastCache{}, m_lastFocus{};
-        bool m_saving = false, m_updatingSliders = false, m_editing = false, m_offline = false;
+        bool m_saving = false, m_updatingSliders = false, m_editing = false, m_offline = false, m_narrow = false, m_layoutDone = false;
         std::wstring m_moving;
         double m_armPid = 0; int m_armLeft = 0;
         Windows::UI::Xaml::DispatcherTimer m_saveTimer, m_pollTimer, m_armTimer, m_flashTimer;
