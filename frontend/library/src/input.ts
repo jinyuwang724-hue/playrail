@@ -23,6 +23,7 @@ export const attachInput = (stage: Stage, onToggleHud: () => void) => {
         else if (e.key === 'q' || e.key === 'Q' || e.key === 'PageUp') stage.switchTab(-1);
         else if (e.key === 'e' || e.key === 'E' || e.key === 'PageDown') stage.switchTab(1);
         else if (e.key === 'f' || e.key === 'F') onToggleHud();
+        else if (e.key === 't' || e.key === 'T') toggleTitleStyle(stage);
         else if (e.key === 'r' || e.key === 'R') {
             const root = document.documentElement;
             root.dataset.reduceMotion = root.dataset.reduceMotion === '1' ? '' : '1';
@@ -100,6 +101,7 @@ export const attachInput = (stage: Stage, onToggleHud: () => void) => {
         if (edge(4)) stage.switchTab(-1);
         if (edge(5)) stage.switchTab(1);
         if (edge(3)) stage.toast('游戏设置（原型里还没有）');
+        if (edge(2)) toggleTitleStyle(stage);
         if (edge(8)) onToggleHud();
         // 右摇杆：死区外按平方曲线给速度，再用与滚轮同一类的指数平滑追上去
         const shape = (v: number) => (Math.abs(v) < PAN_DEAD ? 0 : Math.sign(v) * ((Math.abs(v) - PAN_DEAD) / (1 - PAN_DEAD)) ** 2);
@@ -118,3 +120,10 @@ export const attachInput = (stage: Stage, onToggleHud: () => void) => {
     window.addEventListener('gamepaddisconnected', syncAlive);
     syncAlive();
 };
+
+/** 标题样式：默认 D「电影字幕」，T 键 / 手柄 X 切到备选 B「极简黑体」再切回。 */
+function toggleTitleStyle(stage: Stage) {
+    const root = document.documentElement;
+    root.dataset.title = root.dataset.title === 'b' ? '' : 'b';
+    stage.toast(root.dataset.title === 'b' ? '标题样式：极简黑体' : '标题样式：电影字幕');
+}
