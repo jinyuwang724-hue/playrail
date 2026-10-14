@@ -196,18 +196,18 @@ public sealed class Chrome
     // ---------------- 缝：搜索面板 ----------------
 
     /// <summary>搜索面板里能聚焦 / 能点的几处（面板坐标，DIP）。Input 是输入框里放文字的那块（XAML TextBox 叠在上面）。</summary>
-    public sealed record SearchPanelLayout(Windows.Foundation.Rect Back, Windows.Foundation.Rect Close, Windows.Foundation.Rect Field,
-        Windows.Foundation.Rect Input, Windows.Foundation.Rect Clear, Windows.Foundation.Rect Submit);
+    public sealed record SearchPanelLayout(Windows.Foundation.Rect Field, Windows.Foundation.Rect Input, Windows.Foundation.Rect Clear, Windows.Foundation.Rect Submit);
 
     public const string SearchPlaceholder = "搜索游戏库";
-    private const string SearchHint = "按名字搜索整个游戏库（标题、原名、开发商），结果铺成一面封面墙；不会收窄当前这面墙。";
+    private const string SearchHint = "输入游戏名、原名或开发商，按回车搜索。";
 
     /// <summary>
     /// 首页窄缝临时展开成的搜索面板（照 folia 书库首页缝里的全局搜索框：BravaisSeamSearch + bravaisHome.css）。
-    /// 自上而下：面包屑行（‹ · 游戏库 › 搜索 ·〔关闭搜索〕）→ 带框的输入框（放大镜、输入、×）→ 提示 → 主按钮「搜索」。
+    /// 自上而下：面包屑（游戏库 › 搜索）→ 带框的输入框（放大镜、输入、× 关闭）→ 提示 → 主按钮「搜索」。
+    /// （folia 面包屑行里的 ‹ 与「关闭搜索」不要：× 和 B 已经能关。）
     /// 间距照 .bravais-seam-search（padding 22 22 0，gap 16）、.bravais-search-form（高 44、圆角 12、描边 24 %、底 5 %，
     /// 有焦点时描边换强调色）、.bravais-search-hint（12 px、行高 1.45、上边 -6）、.bravais-chrome-button.is-primary（高 44、
-    /// 圆角 12、15 px 粗体、底 16 %）。focus：手柄焦点在哪一项（0 关闭搜索、1 输入框、2 搜索按钮，-1 不在面板里）。
+    /// 圆角 12、15 px 粗体、底 16 %）。focus：手柄焦点在哪一项（1 输入框、2 搜索按钮，-1 不在面板里）。
     /// </summary>
     public (ChromeArt Art, SearchPanelLayout Layout) SeamSearch(float height, int focus, bool typing)
     {
@@ -215,11 +215,6 @@ public sealed class Chrome
         float inner = W - PadX * 2;
         var iconFont = new FontSpec("Segoe Fluent Icons", 400);
         // 面包屑行（min-height 32）
-        var back = new Windows.Foundation.Rect(PadX, PadTop, 32, 32);
-        var closeL = H("关闭搜索", TextKit.Ui(400), 11, 0.08f * 11);
-        var (clx, cly, clw, clh) = Box(closeL);
-        float pillW = clw + 18 + 2, pillH = clh + 6 + 2;
-        var close = new Windows.Foundation.Rect(W - PadX - pillW, PadTop + 16 - pillH / 2, pillW, pillH);
         // 输入框（44 高）
         float formY = PadTop + 32 + Gap;
         var field = new Windows.Foundation.Rect(PadX, formY, inner, 44);
@@ -235,26 +230,15 @@ public sealed class Chrome
         var (lbx, lby, lbw, lbh) = Box(label);
         float btnW = 16 + 18 + 8 + lbw + 16;
         var submit = new Windows.Foundation.Rect(PadX, hintY + hbh + Gap, btnW, 44);
-        var layout = new SearchPanelLayout(back, close, field, input, clear, submit);
+        var layout = new SearchPanelLayout(field, input, clear, submit);
 
         var art = Draw(W, height, ds =>
         {
             var soft = Theme.SeamInkSoft;
-            // ‹ 与面包屑
-            ds.FillCircle((float)back.X + 16, (float)back.Y + 16, 16, Gfx.Rgba(255, 255, 255, 0.08));
-            var bl = H("‹", TextKit.Ui(400), 18);
-            var (bx, by, bw, bh) = Box(bl);
-            ds.DrawTextLayout(bl, (float)back.X + 16 - bw / 2 - bx, (float)back.Y + 16 - bh / 2 - by, Theme.Ink);
+            // 面包屑
             var crumb = H("游戏库 › 搜索", TextKit.Ui(400), 11, 0.08f * 11);
             var (cx0, cy0, _, ch) = Box(crumb);
-            ds.DrawTextLayout(crumb, (float)back.Right + 6 - cx0, PadTop + 16 - ch / 2 - cy0, soft);
-            // 关闭搜索（.bravais-seam-level：静止无框，焦点时 16 % 底 + 描边）
-            if (focus == 0)
-            {
-                ds.FillRoundedRectangle(close, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.16));
-                ds.DrawRoundedRectangle(close, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.26), 1);
-            }
-            ds.DrawTextLayout(closeL, (float)close.X + 10 - clx, (float)close.Y + 4 - cly, focus == 0 ? Theme.Ink : soft);
+            ds.DrawTextLayout(crumb, PadX - cx0, PadTop + 16 - ch / 2 - cy0, soft);
 
             // 输入框
             ds.FillRoundedRectangle(field, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.05));

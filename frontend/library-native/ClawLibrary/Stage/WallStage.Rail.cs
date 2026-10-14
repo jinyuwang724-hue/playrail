@@ -322,9 +322,9 @@ public sealed partial class WallStage
     // ---------------- 搜索（照 folia 首页缝里的全局搜索框） ----------------
     // 放大镜把首页窄缝临时展开成完整宽度的搜索面板（与进合集同一套开口补间 + 翻面），输入框拿焦点。
     // 输入框不跟着打字过滤：提交才搜，结果作为一层「游戏库 › 搜索」压进来，铺成一面封面墙（不是列表）；
-    // 「关闭搜索」、×、Esc / B 只关面板，缝翻回竖条。没有结果时面板留着，提示一下。
+    // ×、Esc / B 只关面板，缝翻回竖条。没有结果时面板留着，提示一下。
 
-    /// <summary>搜索面板里手柄焦点在哪一项：0 关闭搜索、1 输入框、2 搜索按钮。</summary>
+    /// <summary>搜索面板里手柄焦点在哪一项：1 输入框、2 搜索按钮。</summary>
     private int _searchFocus = 1;
     /// <summary>输入框此刻有键盘焦点（描边换强调色）。</summary>
     private bool _searchTyping;
@@ -367,11 +367,6 @@ public sealed partial class WallStage
                     e.Handled = true;
                     _rootEl.Focus(FocusState.Programmatic);
                     _railFocused = true; _searchFocus = 2; RepaintRail();
-                    break;
-                case Windows.System.VirtualKey.Up:
-                    e.Handled = true;
-                    _rootEl.Focus(FocusState.Programmatic);
-                    _railFocused = true; _searchFocus = 0; RepaintRail();
                     break;
             }
         };
@@ -510,7 +505,7 @@ public sealed partial class WallStage
     private bool SearchMove(Direction dir)
     {
         if (dir is Direction.Left or Direction.Right) { ExitRail(dir == Direction.Left); return true; }
-        int next = Math.Clamp(_searchFocus + (dir == Direction.Down ? 1 : -1), 0, 2);
+        int next = Math.Clamp(_searchFocus + (dir == Direction.Down ? 1 : -1), 1, 2);
         if (next != _searchFocus) { _searchFocus = next; RepaintRail(); }
         return true;
     }
@@ -519,7 +514,6 @@ public sealed partial class WallStage
     {
         switch (_searchFocus)
         {
-            case 0: CloseSearch(); break;
             case 1: FocusSearchBox(); break;
             default: SubmitSearch(); break;
         }
@@ -530,7 +524,7 @@ public sealed partial class WallStage
     {
         if (_searchLayout is not { } l) return;
         var p = new Windows.Foundation.Point(lx, ly);
-        if (l.Back.Contains(p) || l.Close.Contains(p) || l.Clear.Contains(p)) CloseSearch();
+        if (l.Clear.Contains(p)) CloseSearch();
         else if (l.Field.Contains(p)) FocusSearchBox();
         else if (l.Submit.Contains(p)) { _railFocused = true; _searchFocus = 2; SubmitSearch(); }
     }
