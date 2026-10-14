@@ -61,6 +61,7 @@ namespace winrt::ClawWidget::implementation
         // view
         void Update();
         void UpdateTile(std::wstring const& id, TileView& view);
+        void ShowBanners();
         void SetEditing(bool editing);
         void MoveTile(int dx, int dy);
         void OnPreviewKey(Windows::Foundation::IInspectable const&, Windows::UI::Xaml::Input::KeyRoutedEventArgs const& e);

@@ -62,20 +62,21 @@
         </Border>
 
         <!-- Quick tiles page -->
-        <Grid x:Name="MainPanel" Grid.Column="1" RowSpacing="12">
+        <Grid x:Name="MainPanel" Grid.Column="1">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <StackPanel x:Name="Banners" Spacing="12">
+            <!-- Collapsed while no banner shows, so the header lines up with the top of the rail. -->
+            <StackPanel x:Name="Banners" Spacing="12" Margin="0,0,0,12" Visibility="Collapsed">
                 <muxc:InfoBar x:Name="OfflineBar" IsClosable="False" Severity="Error" Title="未连接" Message="工具箱后台没有运行">
                     <muxc:InfoBar.ActionButton><Button x:Name="ReconnectButton" Content="重新连接" Style="{ThemeResource AccentButtonStyle}" /></muxc:InfoBar.ActionButton>
                 </muxc:InfoBar>
                 <muxc:InfoBar x:Name="ConflictBar" IsClosable="False" Severity="Warning" Title="功耗冲突" Message="体感助手也在设置功耗，两边会互相改写" />
                 <muxc:InfoBar x:Name="MessageBar" IsClosable="False" Severity="Warning" />
             </StackPanel>
-            <Border x:Name="Header" Grid.Row="1" CornerRadius="4" Padding="14,10"
+            <Border x:Name="Header" Grid.Row="1" CornerRadius="4" Padding="14,10" Margin="0,0,0,12"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                 <Grid x:Name="HeaderGrid" ColumnSpacing="12" RowSpacing="6">

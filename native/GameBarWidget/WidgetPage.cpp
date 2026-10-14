@@ -171,7 +171,7 @@ namespace winrt::ClawWidget::implementation
         m_armTimer.Interval(std::chrono::seconds(1));
         m_armTimer.Tick([this](auto&&, auto&&) { if (--m_armLeft <= 0) ClearArm(); else Update(); });
         m_flashTimer.Interval(std::chrono::seconds(4));
-        m_flashTimer.Tick([this](auto&&, auto&&) { m_flashTimer.Stop(); MessageBar().IsOpen(false); });
+        m_flashTimer.Tick([this](auto&&, auto&&) { m_flashTimer.Stop(); MessageBar().IsOpen(false); ShowBanners(); });
 
         EditButton().Click([this](auto&&, auto&&) { SetEditing(!m_editing); });
         DoneButton().Click([this](auto&&, auto&&) { SetEditing(false); });
@@ -522,6 +522,7 @@ namespace winrt::ClawWidget::implementation
     {
         MessageBar().Message(text);
         MessageBar().IsOpen(true);
+        ShowBanners();
         m_flashTimer.Stop();
         m_flashTimer.Start();
     }
@@ -711,6 +712,7 @@ namespace winrt::ClawWidget::implementation
         bool usable = m_data && !m_offline;
         OfflineBar().IsOpen(m_offline);
         ConflictBar().IsOpen(usable && Bool(m_data, L"power.otherTool") && m_draft && Bool(m_draft, L"enabled"));
+        ShowBanners();
 
         // Header
         auto secondary = Resource(L"TextFillColorSecondaryBrush");
@@ -752,6 +754,12 @@ namespace winrt::ClawWidget::implementation
         EditButton().IsEnabled(usable || m_editing);
 
         for (auto& [id, view] : m_views) UpdateTile(id, view);
+    }
+
+    void WidgetPage::ShowBanners()
+    {
+        bool any = OfflineBar().IsOpen() || ConflictBar().IsOpen() || MessageBar().IsOpen();
+        Banners().Visibility(any ? Visibility::Visible : Visibility::Collapsed);
     }
 
     void WidgetPage::UpdateTile(std::wstring const& id, TileView& view)
