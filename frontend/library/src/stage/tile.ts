@@ -10,12 +10,12 @@ const CJK = /[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
 
 type ArtKind = 'v' | 'n' | 'h' | 's' | 'x' | 'p';
 
-/** 按卡片宽高比挑封面套件里的哪张图：细长竖卡 n、竖卡 v、方卡 s / x、横卡 h，都从无字背景图裁；没有背景图才用竖封面 p。 */
+/** 按卡片宽高比挑封面套件里的哪张图（规则见 game-library-ui/封面尺寸规范.md）：
+ *  宽高比 < 0.8 的竖卡用 Steam 竖封面 p（构图本来就是竖的）；其余都用大背景：方卡 s / x、横卡 h；缺哪张就退到有的那张。 */
 export function pickArt(art: ArtKit, w: number, h: number, expanded: boolean): ArtKind | null {
     const r = w / Math.max(h, 1);
     const want: ArtKind[] = expanded ? ['x', 'h', 'p']
-        : r < 0.6 ? ['n', 'v', 'p', 'x']
-        : r < 0.9 ? ['v', 'n', 'p', 'x']
+        : r < 0.8 ? ['p', 'v', 'n', 'x']
         : r <= 1.12 ? (Math.max(w, h) >= 500 ? ['x', 's', 'h', 'p'] : ['s', 'x', 'h', 'p'])
         : ['h', 'x', 'p'];
     return want.find(k => art[k]) ?? null;
