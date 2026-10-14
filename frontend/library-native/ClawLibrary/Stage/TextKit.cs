@@ -43,14 +43,62 @@ public static partial class TextKit
         return fmt;
     }
 
+    /// <summary>窗口创建期间在后台把 DirectWrite 的字体集合与中文回退预热（第一次排版要 100+ ms）。</summary>
+    public static void Warm()
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var dev = CanvasDevice.GetSharedDevice();
+            foreach (var f in new[] { TitleCjk, TitleLatin, Kicker, Ui(800), Ui(600), UiB(700) })
+            {
+                using var l = Layout(dev, "游戏库 Galgame 非 Steam 2077", f, 20, 1000, CanvasHorizontalAlignment.Left, 1);
+                _ = l.LayoutBounds;
+                FaceMetrics(f);
+            }
+            using var fmt = Format(Ui(800), 40, false, vertical: true);
+            using var v = new CanvasTextLayout(dev, "游戏库全部最近", fmt, 1000, 1000);
+            _ = v.DrawBounds;
+            // 再把 Direct2D（文字栅格化、阴影特效）也走一遍
+            using var rt = new CanvasRenderTarget(dev, 128, 128, 96);
+            using (var ds = rt.CreateDrawingSession())
+            {
+                ds.TextAntialiasing = CanvasTextAntialiasing.Grayscale;
+                using var cl = new CanvasCommandList(ds);
+                using (var cds = cl.CreateDrawingSession()) cds.DrawTextLayout(v, 0, 0, Ink());
+                using var sh = new Microsoft.Graphics.Canvas.Effects.ShadowEffect { Source = cl, BlurAmount = 6 };
+                ds.DrawImage(sh);
+                ds.DrawImage(cl);
+            }
+            Log.Info($"text warm-up done in {sw.ElapsedMilliseconds}ms ({ClawLibrary.App.SinceProcessStartMs():F0}ms since process start)");
+        }
+        catch (Exception ex) { Log.Warn($"text warm-up: {ex.Message}"); }
+    }
+
     /// <summary>默认（line-height: normal）时的 (基线, 行高)。</summary>
     public static (float Baseline, float Height) NormalLine(ICanvasResourceCreator dev, FontSpec f, float size, string sample)
     {
         using var fmt = Format(f, size, false);
         using var l = new CanvasTextLayout(dev, string.IsNullOrEmpty(sample) ? "国Ag" : sample, fmt, 100000, 100000);
-        var m = l.LineMetrics;
-        return m.Length > 0 ? (m[0].Baseline, m[0].Height) : (size * 0.9f, size * 1.3f);
+        // 不用 LineMetrics：NativeAOT 下 Win2D 这个数组属性的封送会抛异常。行高取单行排版框，基线取主字体的 ascent。
+        float h = (float)l.LayoutBounds.Height;
+        var (asc, desc, gap) = FaceMetrics(f);
+        float content = (asc + desc + gap) * size;
+        return (asc * size + Math.Max(0, h - content) / 2, h);
     }
+
+    /// <summary>
+    /// 用到的几款字体的 (ascent, descent, lineGap)，单位 em（字体文件里的 hhea/OS2 值，本机实测）。
+    /// 不在运行时查系统字体集：GetSystemFontSet 第一次要几百毫秒，会拖慢启动。
+    /// </summary>
+    private static (float Ascent, float Descent, float LineGap) FaceMetrics(FontSpec f) => f.Family switch
+    {
+        "Noto Serif SC" => (1.151f, 0.286f, 0f),
+        "Noto Sans SC" => (1.160f, 0.288f, 0f),
+        "Georgia" => (0.917f, 0.219f, 0f),
+        "Segoe UI Variable Text" => (1.079f, 0.251f, 0f),
+        _ => (1.058f, 0.262f, 0f),   // Microsoft YaHei
+    };
 
     /// <summary>
     /// 排一段文字。letterSpacing 是 px（CSS 的 em × 字号）；lineHeight 为 null 时 = normal。

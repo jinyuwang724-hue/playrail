@@ -28,7 +28,7 @@ addEventListener('load', () => setTimeout(() => {
       const id = s.itemFor(t.slot); const it = id && t.lookup(id);
       const sl = t.slot;
       if (!it || it.kind !== 'collection') continue;
-      if (!(vis.left < sl.x && sl.x + sl.width < vis.right && vis.top < sl.y && sl.y + sl.height < vis.bottom)) continue;
+      if (!(vis.left < sl.cx && sl.cx < vis.right && vis.top < sl.cy && sl.cy < vis.bottom)) continue;
       const d = (sl.cx - s.center.x) ** 2 + (sl.cy - s.center.y) ** 2;
       if (d < bd) { bd = d; best = sl; }
     }

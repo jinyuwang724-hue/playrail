@@ -19,6 +19,7 @@ using Microsoft.UI.Xaml.Media;
 using Windows.System;
 using DispatcherQueue = Microsoft.UI.Dispatching.DispatcherQueue;
 using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
+using DispatcherQueuePriority = Microsoft.UI.Dispatching.DispatcherQueuePriority;
 using Windows.UI;
 using static ClawLibrary.Engine.Geometry;
 using static ClawLibrary.Engine.ViewMath;
@@ -142,6 +143,7 @@ public sealed class WallStage : IDisposable
             return;
         }
         BuildChrome();
+        long tChrome = NowMs;
         Log.Info($"library: {_lib.Games.Count} games, {_lib.Collections.Count} collections, view {View.Width}x{View.Height} scale {View.Scale} dpi {Chrome.Dpi} ({NowMs - t0}ms)");
 
         var tab = _lib.HomeTabs[_tabIndex];
@@ -158,7 +160,10 @@ public sealed class WallStage : IDisposable
         _contentWidth = SeamHome;
         _cam.InsertScalar("cw", (float)_contentWidth);
         RenderSeamContent();
-        Recull(true);
+        long tSeam = NowMs;
+        // 第一帧只建屏上的卡，视口外的预备区等第一帧画出来再补
+        Recull(true, null, 0);
+        Log.Info($"timing: chrome {tChrome - t0}ms, seam {tSeam - tChrome}ms, tiles {NowMs - tSeam}ms");
         // 首次进入：整墙按对角线落下，缝同时张开
         var vis = VisibleWorld(_center, View, 0, 0);
         long now = NowMs;
@@ -174,6 +179,8 @@ public sealed class WallStage : IDisposable
         {
             CompositionTarget.Rendering -= first;
             FirstFrameLogged = true;
+            _dq.TryEnqueue(DispatcherQueuePriority.Low, RenderEdgeTabs);
+            _dq.TryEnqueue(DispatcherQueuePriority.Low, () => { var t = NowMs; Recull(true); Log.Info($"overscan tiles built: {_tiles.Count} ({NowMs - t}ms)"); });
             Log.Info($"first frame: {App.SinceProcessStartMs():F0}ms since process start");
         };
         CompositionTarget.Rendering += first;
@@ -572,12 +579,12 @@ public sealed class WallStage : IDisposable
 
     private Bounds Visible() { Sync(); return VisibleWorld(_center, View, _openWidth, 0); }
 
-    private void Recull(bool force, Bounds? extra = null)
+    private void Recull(bool force, Bounds? extra = null, double overscan = Overscan)
     {
         var vis = Visible();
         double pad = Overscan - CullMargin;
         if (!force && _culled is { } c && vis.Left >= c.Left - pad && vis.Right <= c.Right + pad && vis.Top >= c.Top - pad && vis.Bottom <= c.Bottom + pad) return;
-        var want = new Bounds(vis.Left - Overscan, vis.Right + Overscan, vis.Top - Overscan, vis.Bottom + Overscan);
+        var want = new Bounds(vis.Left - overscan, vis.Right + overscan, vis.Top - overscan, vis.Bottom + overscan);
         if (extra is { } ex) want = want.Union(ex);
         _culled = vis;
         var slots = SlotsIn(want, MaxTiles, _slotScratch);
@@ -943,8 +950,12 @@ public sealed class WallStage : IDisposable
     {
         var front = _seamFront ? _seamB : _seamA;
         if (CurrentLayer.Home && _seamTween == null) { _contentWidth = SeamHome; _cam.StopAnimation("cw"); _cam.InsertScalar("cw", (float)SeamHome); }
+        var t = NowMs;
         PaintSeam(front);
-        RenderEdgeTabs();
+        var t2 = NowMs;
+        // 边缘标签只在缝被挤出屏幕时出现：启动时放到第一帧之后再画
+        if (FirstFrameLogged) RenderEdgeTabs();
+        if (!FirstFrameLogged) Log.Info($"seam paint {t2 - t}ms");
     }
 
     private void RenderEdgeTabs()
@@ -1169,7 +1180,7 @@ public sealed class WallStage : IDisposable
     internal bool FocusFirstCollection()
     {
         var vis = Visible();
-        var pick = Nav.NearestTo(SlotsIn(vis).Where(sl => ItemFor(sl) is { } id && Lookup(id)?.Kind == ItemKind.Collection && vis.Left < sl.X && sl.X + sl.Width < vis.Right && vis.Top < sl.Y && sl.Y + sl.Height < vis.Bottom), _center.X, _center.Y);
+        var pick = Nav.NearestTo(SlotsIn(vis).Where(sl => ItemFor(sl) is { } id && Lookup(id)?.Kind == ItemKind.Collection && vis.Left < sl.Cx && sl.Cx < vis.Right && vis.Top < sl.Cy && sl.Cy < vis.Bottom), _center.X, _center.Y);
         if (pick == null) return false;
         Focus(pick.Key);
         return true;

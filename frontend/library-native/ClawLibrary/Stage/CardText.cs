@@ -124,6 +124,8 @@ public sealed class CardText
             blocks.Add((lh, 0, (ds, y) =>
             {
                 float x0 = left + copyW / 2 - total / 2;
+                // overflow: hidden：超宽时两端裁掉（仍居中）
+                using var clip = ds.CreateLayer(1, new Windows.Foundation.Rect(left, y - 2, copyW, lh + 4));
                 ds.FillRectangle(x0, y + lh / 2 - 0.5f, line, 1, Gfx.Rgba(255, 255, 255, 0.55 * 0.9));
                 ds.DrawTextLayout(lay, x0 + line + g2, y, TextKit.Ink(0.9));
                 ds.FillRectangle(x0 + line + g2 + tw + g2, y + lh / 2 - 0.5f, line, 1, Gfx.Rgba(255, 255, 255, 0.55 * 0.9));
@@ -148,17 +150,36 @@ public sealed class CardText
                 size = expanded ? Clamp(32, 6.4f * cqi, 64) : narrow ? 8.4f * cqi : Clamp(14, 6.6f * cqi, 44);
                 ls = (narrow && !expanded ? 0.18f : 0.26f) * size; lh = 1.35f * size;
             }
-            var lay = TextKit.Layout(dev, main, font, size, maxW, align, ls, lh, maxLines: 2, balance: true);
             float pad = 0.06f * size;
-            int lines = Math.Min(2, Math.Max(1, lay.LineCount));
-            float height = lines * lh + 2 * pad;
-            float layW = (float)lay.RequestedSize.Width;
-            float indent = b ? 0 : ls / 2;   // text-indent 抵消行尾字距，首行居中
-            blocks.Add((height, 0, (ds, y) =>
+            float indent = b ? 0 : ls;   // text-indent = 字距，抵消行尾字距
+            var lines = BalanceLines(main, font, size, ls, maxW, indent, latin);
+            if (lines != null)
             {
-                float x = b ? left : left + (copyW - layW) / 2 + indent;
-                ds.DrawTextLayout(lay, x, y + pad, TextKit.Ink());
-            }));
+                // 一行或两行（text-wrap: balance：在仍是这么多行的前提下取最窄宽度，再按贪心断行；首行算上缩进）
+                var lays = lines.Select(t => TextKit.Layout(dev, t.text, font, size, 100000, CanvasHorizontalAlignment.Left, ls, lh)).ToList();
+                float height = lines.Count * lh + 2 * pad;
+                blocks.Add((height, 0, (ds, y) =>
+                {
+                    for (int i = 0; i < lays.Count; i++)
+                    {
+                        float boxW = lines[i].width + (i == 0 ? indent : 0);
+                        float x = b ? left : left + (copyW - boxW) / 2;
+                        if (i == 0) x += indent;
+                        ds.DrawTextLayout(lays[i], x, y + pad + i * lh, TextKit.Ink());
+                    }
+                }));
+            }
+            else
+            {
+                // 两行放不下：截断成两行，末尾省略号（-webkit-line-clamp: 2）
+                var lay = TextKit.Layout(dev, main, font, size, maxW, align, ls, lh, maxLines: 2);
+                float layW = (float)lay.RequestedSize.Width;
+                blocks.Add((2 * lh + 2 * pad, 0, (ds, y) =>
+                {
+                    float x = b ? left : left + (copyW - layW) / 2 + indent / 2;
+                    ds.DrawTextLayout(lay, x, y + pad, TextKit.Ink());
+                }));
+            }
         }
 
         // 副标题（tail）
@@ -229,10 +250,51 @@ public sealed class CardText
         return new TextArt { Surface = surface, Rect = rect };
     }
 
+    /// <summary>单行宽度（含每个字后面的字距，与 Chrome 一样）。</summary>
+    private float Advance(string text, FontSpec font, float size, float ls)
+    {
+        if (text.Length == 0) return 0;
+        using var l = TextKit.Layout(_g.Device, text, font, size, 100000, CanvasHorizontalAlignment.Left, ls);
+        return (float)l.LayoutBounds.Width;
+    }
+
+    /// <summary>
+    /// 标题断行：一行放得下就一行；否则在所有断点里找「两行都放得下、最长那行最短」的宽度 x*，
+    /// 再按 x* 贪心断（首行尽量多放）——等同 Chrome 的 text-wrap: balance。两行也放不下返回 null。
+    /// </summary>
+    private List<(string text, float width)>? BalanceLines(string s, FontSpec font, float size, float ls, float maxW, float indent, bool latin)
+    {
+        // 整行排一次，用光标位置得到每个前缀的宽度（不再每个断点排两次）
+        using var full = TextKit.Layout(_g.Device, s, font, size, 100000, CanvasHorizontalAlignment.Left, ls);
+        float whole = (float)full.LayoutBounds.Width;
+        if (indent + whole <= maxW + 0.5f) return new() { (s, whole) };
+        float x0 = full.GetCaretPosition(0, false).X;
+        float At(int k) => full.GetCaretPosition(k, false).X - x0;
+        var cands = new List<(int k, float w1, float w2)>();
+        for (int k = 1; k < s.Length; k++)
+        {
+            char a = s[k - 1], c = s[k];
+            if (char.IsLowSurrogate(c)) continue;
+            bool cjk = TextKit.Cjk().IsMatch(a.ToString()) || TextKit.Cjk().IsMatch(c.ToString());
+            bool ok = a == ' ' || a == '-' || (cjk && !"，。、：；！？）」』》·~～".Contains(c) && !"（「『《".Contains(a));
+            if (!ok) continue;
+            string l1 = s[..k].TrimEnd(), l2 = s[k..].TrimStart();
+            if (l1.Length == 0 || l2.Length == 0) continue;
+            // 断在空格处时两边都不含空格
+            int e1 = k; while (e1 > 0 && s[e1 - 1] == ' ') e1--;
+            int s2 = k; while (s2 < s.Length && s[s2] == ' ') s2++;
+            float w1 = indent + At(e1), w2 = whole - At(s2);
+            if (w1 <= maxW + 0.5f && w2 <= maxW + 0.5f) cands.Add((k, w1, w2));
+        }
+        if (cands.Count == 0) return null;
+        float target = cands.Min(e => Math.Max(e.w1, e.w2));
+        var pick = cands.Where(e => e.w1 <= target + 0.01f).MaxBy(e => e.k);
+        return new() { (s[..pick.k].TrimEnd(), pick.w1 - indent), (s[pick.k..].TrimStart(), pick.w2) };
+    }
+
     private float LineHeight(CanvasTextLayout lay, FontSpec font, float size, string text)
     {
-        var m = lay.LineMetrics;
-        return m.Length > 0 ? m[0].Height : TextKit.NormalLine(_g.Device, font, size, text).Height;
+        return (float)lay.LayoutBounds.Height / Math.Max(1, lay.LineCount);
     }
 
     // ---------------- 聚焦卡按钮排 ----------------

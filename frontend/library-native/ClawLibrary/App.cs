@@ -10,7 +10,7 @@ using Microsoft.UI.Xaml.Media;
 
 namespace ClawLibrary;
 
-public sealed class App : Application
+public sealed partial class App : Application
 {
     public static string CacheDir { get; private set; } = "";
     public static bool Packaged { get; private set; }
@@ -25,9 +25,20 @@ public sealed class App : Application
                 ? Windows.Storage.ApplicationData.Current.LocalCacheFolder.Path
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClawLibrary");
             Log.Init(Path.Combine(CacheDir, "logs"));
+            // 打包版不能带命令行参数：测试脚本把一次性的参数写在缓存目录的 args.txt 里（读完即删）
+            var argsFile = Path.Combine(CacheDir, "args.txt");
+            if (File.Exists(argsFile))
+            {
+                var extra = File.ReadAllText(argsFile).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                Program.Args = Program.Args.Concat(extra).ToArray();
+                File.Delete(argsFile);
+            }
             Log.Info($"start pid={Environment.ProcessId} packaged={Packaged} args=[{string.Join(' ', Program.Args)}] since-process-start={SinceProcessStartMs():F0}ms");
+            _ = Task.Run(Stage.TextKit.Warm);
             _window = new MainWindow();
             _window.Activate();
+            var dq = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+            try { Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += (_, _) => dq.TryEnqueue(() => { Log.Info("re-activated"); _window?.Activate(); }); } catch { }
         }
         catch (Exception ex)
         {
@@ -49,7 +60,7 @@ public sealed class App : Application
     }
 }
 
-public sealed class MainWindow : Window
+public sealed partial class MainWindow : Window
 {
     private readonly RootElement _root;
     private WallStage? _stage;
@@ -90,7 +101,7 @@ public sealed class MainWindow : Window
 }
 
 /// <summary>可获得焦点的根元素（Panel 不能拿焦点，用 ContentControl）。</summary>
-public sealed class RootElement : ContentControl
+public sealed partial class RootElement : ContentControl
 {
     public RootElement()
     {

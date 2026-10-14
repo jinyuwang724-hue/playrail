@@ -1,4 +1,4 @@
-// 墙以外的东西：配色、缝里的内容（首页窄缝 / 集合信息条，照 src/stage/seam.ts 与 styles.css）、提示条、边缘标签、性能读数。
+﻿// 墙以外的东西：配色、缝里的内容（首页窄缝 / 集合信息条，照 src/stage/seam.ts 与 styles.css）、提示条、边缘标签、性能读数。
 // 这些都在屏幕坐标（DIP）里，按系统缩放栅格化。
 using System.Numerics;
 using Microsoft.Graphics.Canvas;
@@ -175,11 +175,15 @@ public sealed class Chrome
             var (qx, qy, qw, _) = Box(q);
             var vt = V(title, TextKit.Ui(800), 64, 0.04f * 64, 1.25f * 64);
             var (vx, vy, vw, vh) = Box(vt);
-            float groupW = qw + 6 + vw;
+            const float colW = 1.25f * 64;   // 竖排一列的宽度 = 行高
+            float groupW = qw + 6 + colW;
             float gx = PadX + (W - PadX * 2 - groupW) / 2;
+            var vink = vt.DrawBounds;
+            // 竖排西文字形在列里的位置与 Chrome 不同：对照截图实测偏右 15 px，在这里校正
+            float vtX = gx + qw + 6 + colW / 2 - (float)(vink.X + vink.Width / 2) - 15;
             ds.DrawTextLayout(q, gx - qx, wrapTop - qy - 28 * 0.2f, Gfx.WithAlpha(Theme.Ink, 0.35));
             using (ds.CreateLayer(1, new Windows.Foundation.Rect(0, wrapTop, W, Math.Max(0, wrapBottom - wrapTop))))
-                ds.DrawTextLayout(vt, gx + qw + 6 - vx, wrapTop - vy, Theme.Ink);
+                ds.DrawTextLayout(vt, vtX, wrapTop - vy, Theme.Ink);
         });
     }
 
