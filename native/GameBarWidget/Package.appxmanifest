@@ -6,7 +6,7 @@
   xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   IgnorableNamespaces="uap uap3 mp">
 
-  <Identity Name="ClawToolbox.GameBarWidget" Publisher="CN=ClawToolbox" Version="0.4.8.0" />
+  <Identity Name="ClawToolbox.GameBarWidget" Publisher="CN=ClawToolbox" Version="0.4.14.0" />
   <mp:PhoneIdentity PhoneProductId="6c1b6f0e-8c2c-4c9b-9e0b-5f2a6b9c1d11" PhonePublisherId="00000000-0000-0000-0000-000000000000" />
 
   <Properties>
@@ -45,7 +45,9 @@
                 <IsDeviceWidget>true</IsDeviceWidget>
                 <Window>
                   <Size>
-                    <Height>480</Height>
+                    <!-- Taller than the screen on purpose: Game Bar's handheld panel clips it to the
+                         space under the bar, like its own widget panels. TryResizeWindowAsync is ignored there. -->
+                    <Height>1000</Height>
                     <Width>464</Width>
                     <MinHeight>400</MinHeight>
                     <MinWidth>400</MinWidth>

@@ -254,14 +254,6 @@ namespace winrt::ClawWidget::implementation
     {
         m_widget = e.Parameter().try_as<XboxGameBarWidget>();
         if (!m_widget) return;
-        // Game Bar keeps the window size from earlier versions; once per layout change, set the
-        // size this version is designed for (464 wide, the width of Game Bar's own widget panels).
-        auto values = ApplicationData::Current().LocalSettings().Values();
-        if (unbox_value_or<hstring>(values.TryLookup(L"windowSize"), L"") != L"464x480")
-        {
-            m_widget.TryResizeWindowAsync(Size{ 464, 480 });
-            values.Insert(L"windowSize", box_value(L"464x480"));
-        }
         m_widget.GameBarDisplayModeChanged([weak = get_weak()](auto&&, auto&&) {
             if (auto self = weak.get())
                 self->Dispatcher().RunAsync(Core::CoreDispatcherPriority::Normal, [self]() {

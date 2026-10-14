@@ -6,7 +6,8 @@
     Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
     <!-- Native layout of the approved design ("UI design", WinUI Fluent dark): side rail, header with
          readings, 3x3 quick tiles; tiles and their contents are built in WidgetPage.cpp. -->
-    <Grid x:Name="Root" Padding="12" ColumnSpacing="12">
+    <!-- Game Bar's title bar already sits right above; only a small gap under it. -->
+    <Grid x:Name="Root" Padding="12,4,12,12" ColumnSpacing="12">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="*" />
