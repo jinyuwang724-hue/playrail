@@ -190,7 +190,8 @@ namespace winrt::ClawWidget::implementation
         ShutdownItem().Click(power(L"shutdown"));
         RestartItem().Click(power(L"restart"));
         LockItem().Click(power(L"lock"));
-        for (auto const& [slider, key] : { std::pair{ BrightnessSlider(), std::wstring(L"brightness") }, std::pair{ VolumeSlider(), std::wstring(L"volume") } })
+        for (auto const& [slider, label, key] : { std::tuple{ BrightnessSlider(), BrightnessValue(), std::wstring(L"brightness") },
+                                                  std::tuple{ VolumeSlider(), VolumeValue(), std::wstring(L"volume") } })
         {
             slider.ValueChanged([this, key = key](IInspectable const&, Primitives::RangeBaseValueChangedEventArgs const& e) {
                 if (m_updatingSliders || !m_data) return;
@@ -200,14 +201,18 @@ namespace winrt::ClawWidget::implementation
                 Send(key, key == L"volume" ? L"set_volume" : L"set_brightness", Args({ N(value) }));
                 Update();
             });
-            // Vertical slider: up/down change the value, left/right leave it (XAML would adjust it).
-            slider.PreviewKeyDown([](IInspectable const&, KeyRoutedEventArgs const& e) {
+            // Two-step focus, as on Game Bar's own sliders: the D-pad passes over the slider, A takes
+            // hold of it (up/down then change the value, the number turns blue), A or B lets go.
+            slider.FocusEngaged([label = label](auto&&, auto&&) { label.Foreground(Resource(L"AccentTextFillColorPrimaryBrush")); });
+            slider.FocusDisengaged([label = label](auto&&, auto&&) { label.ClearValue(TextBlock::ForegroundProperty()); });
+            slider.PreviewKeyDown([slider = slider](IInspectable const&, KeyRoutedEventArgs const& e) {
                 auto key = e.Key();
-                bool left = key == VirtualKey::GamepadDPadLeft || key == VirtualKey::GamepadLeftThumbstickLeft || key == VirtualKey::Left;
-                bool right = key == VirtualKey::GamepadDPadRight || key == VirtualKey::GamepadLeftThumbstickRight || key == VirtualKey::Right;
-                if (!left && !right) return;
-                FocusManager::TryMoveFocus(left ? FocusNavigationDirection::Left : FocusNavigationDirection::Right);
-                e.Handled(true);
+                if (!slider.IsFocusEngaged()) return;
+                if (key == VirtualKey::GamepadA) { slider.RemoveFocusEngagement(); e.Handled(true); return; }
+                // Held, a vertical slider would also take left/right as value changes.
+                bool sideways = key == VirtualKey::GamepadDPadLeft || key == VirtualKey::GamepadLeftThumbstickLeft || key == VirtualKey::Left
+                    || key == VirtualKey::GamepadDPadRight || key == VirtualKey::GamepadLeftThumbstickRight || key == VirtualKey::Right;
+                if (sideways) e.Handled(true);
             });
         }
         PreviewKeyDown({ this, &WidgetPage::OnPreviewKey });

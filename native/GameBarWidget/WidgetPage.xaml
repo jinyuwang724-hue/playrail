@@ -33,7 +33,7 @@
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <TextBlock x:Name="BrightnessValue" HorizontalAlignment="Center" FontWeight="SemiBold" Text="--" />
                     <Slider x:Name="BrightnessSlider" Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" Minimum="0" Maximum="100"
-                            SmallChange="5" LargeChange="10" StepFrequency="1" IsThumbToolTipEnabled="False" IsFocusEngagementEnabled="False" />
+                            SmallChange="5" LargeChange="10" StepFrequency="1" IsThumbToolTipEnabled="False" IsFocusEngagementEnabled="True" />
                     <Button x:Name="AutoBrightness" Grid.Row="2" Width="40" Height="36" Padding="0" HorizontalAlignment="Center"
                             Background="Transparent" BorderThickness="0" IsEnabled="False" />
                 </Grid>
@@ -42,7 +42,7 @@
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <TextBlock x:Name="VolumeValue" HorizontalAlignment="Center" FontWeight="SemiBold" Text="--" />
                     <Slider x:Name="VolumeSlider" Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" Minimum="0" Maximum="100"
-                            SmallChange="5" LargeChange="10" StepFrequency="1" IsThumbToolTipEnabled="False" IsFocusEngagementEnabled="False" />
+                            SmallChange="5" LargeChange="10" StepFrequency="1" IsThumbToolTipEnabled="False" IsFocusEngagementEnabled="True" />
                     <Button x:Name="MuteButton" Grid.Row="2" Width="40" Height="36" Padding="0" HorizontalAlignment="Center"
                             Background="Transparent" BorderThickness="0" />
                 </Grid>
