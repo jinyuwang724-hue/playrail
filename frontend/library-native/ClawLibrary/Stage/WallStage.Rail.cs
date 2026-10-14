@@ -516,6 +516,11 @@ public sealed partial class WallStage
     private void EnsureBackdropLoop()
     {
         PublishStrip();
+        StartBackdropLoop();
+    }
+
+    private void StartBackdropLoop()
+    {
         if (_backdropLoop || _backdrop == null || !_backdrop.NeedsFrames) return;
         _backdropLoop = true;
         _backdropLast = 0;
@@ -539,7 +544,13 @@ public sealed partial class WallStage
         try
         {
             long now = NowMs;
-            if (now < _wallBusyUntil) { _backdropLast = 0; return; }
+            if (now < _wallBusyUntil)
+            {
+                // 墙面在动：背景的流动停着，但缝变宽 / 挪动露出来的新区域要立刻补上（进合集时缝从竖条张到整屏）
+                _backdropLast = 0;
+                _backdrop.FrameNow(0, hold: true);
+                return;
+            }
             double dt = _backdropLast == 0 ? 16.7 : Math.Min(100, now - _backdropLast);
             _backdropLast = now;
             _backdrop.FrameNow(dt);
@@ -566,10 +577,17 @@ public sealed partial class WallStage
         }
         double home = _backdropHome ?? View.Width / 2, homeW = _backdropHomeWidth;
         double width = g.Width;
-        if (_seamTween != null) width = Math.Max(width, SeamGeometry(_anchorX, _center, _seamTween.To, View).Width);
+        if (_seamTween != null || _camX != null || _camY != null)
+        {
+            // 补间途中：开口终点宽度 × 相机起止两头，取最宽的（开口受屏幕边距限制，相机走到哪宽度就不一样）
+            var end = new Center(_camX?.To ?? _center.X, _camY?.To ?? _center.Y);
+            double to = _seamTween?.To ?? _openWidth;
+            width = Math.Max(width, Math.Max(SeamGeometry(_anchorX, _center, to, View).Width, SeamGeometry(_anchorX, end, to, View).Width));
+        }
         // 与 Offset 表达式同一个公式：缝越宽，画布里的中心越往正中靠（铺满全屏时正好是整张画布）
         double t = Math.Clamp((width - homeW) / Math.Max(1, View.Width - homeW), 0, 1);
         double center = home + (View.Width / 2 - home) * t;
         _backdrop.SetStrip(center - width / 2, width);
+        StartBackdropLoop();   // 背景停着时开口变了，也要把新露出来的那块补画上
     }
 }
