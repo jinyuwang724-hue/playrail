@@ -212,7 +212,7 @@ namespace winrt::ClawWidget::implementation
         }
         PreviewKeyDown({ this, &WidgetPage::OnPreviewKey });
         SizeChanged([this](IInspectable const&, SizeChangedEventArgs const& e) {
-            // Narrow (400 wide): readings go under the game name, as in the design's 400 variant.
+            // Narrow (under 480 wide): readings go under the game name, as in the design's 400 variant.
             bool narrow = e.NewSize().Width < 480;
             if (narrow == m_narrow && m_layoutDone) return;
             m_narrow = narrow; m_layoutDone = true;
@@ -250,12 +250,12 @@ namespace winrt::ClawWidget::implementation
         m_widget = e.Parameter().try_as<XboxGameBarWidget>();
         if (!m_widget) return;
         // Game Bar keeps the window size from earlier versions; once per layout change, set the
-        // size this version is designed for (400 wide, like Game Bar's own widgets).
+        // size this version is designed for (464 wide, the width of Game Bar's own widget panels).
         auto values = ApplicationData::Current().LocalSettings().Values();
-        if (unbox_value_or<hstring>(values.TryLookup(L"windowSize"), L"") != L"400x480")
+        if (unbox_value_or<hstring>(values.TryLookup(L"windowSize"), L"") != L"464x480")
         {
-            m_widget.TryResizeWindowAsync(Size{ 400, 480 });
-            values.Insert(L"windowSize", box_value(L"400x480"));
+            m_widget.TryResizeWindowAsync(Size{ 464, 480 });
+            values.Insert(L"windowSize", box_value(L"464x480"));
         }
         m_widget.GameBarDisplayModeChanged([weak = get_weak()](auto&&, auto&&) {
             if (auto self = weak.get())
