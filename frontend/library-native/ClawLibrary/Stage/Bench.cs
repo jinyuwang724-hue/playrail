@@ -148,6 +148,7 @@ public static class Bench
             switch (state)
             {
                 case "expand": s.Activate(); break;
+                case "collapse": s.Activate(); await Task.Delay(1500); Log.Info("state collapse now"); s.Back(); break;
                 case "collection": if (s.FocusFirstCollection()) { await Task.Delay(700); s.Activate(); } break;
                 case "styleb": s.ToggleTitleStyle(); break;
                 case "tab": s.SwitchTab(1); break;

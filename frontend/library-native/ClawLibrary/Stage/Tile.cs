@@ -14,6 +14,9 @@ using Colors = Microsoft.UI.Colors;
 
 namespace ClawLibrary.Stage;
 
+/// <summary>卡面重建时接过去的那张图：种类、表面、此刻的取景。</summary>
+public readonly record struct ImageCarry(char Kind, LoadedImageSurface? Surface, float Ratio);
+
 public sealed class Tile : IDisposable
 {
     private readonly WallStage _s;
@@ -103,6 +106,7 @@ public sealed class Tile : IDisposable
         El.StartAnimation("Offset", off);
         El.StartAnimation("Size", size);
         _face?.Relayout(to, scaleWith: El);
+        _face?.TransitionArt(from, to, ms);
     }
 
     /// <summary>让位结束：定在终点。</summary>
@@ -135,10 +139,21 @@ public sealed class Tile : IDisposable
     {
         Shown = id;
         var old = _face;
-        _face = new Face(_s, this, id, Rect, Expanded);
+        // 同一款游戏重建卡面（展开 / 收起、换标题样式）：接着画正在显示的那张图
+        var carry = old != null && id != null && old.ItemId == id ? old.CurrentImage : null;
+        _face = new Face(_s, this, id, Rect, Expanded, carry);
         _face.ApplyFocus(Focused, Expanded, animate: false);
         _pivot.Children.InsertAtTop(_face.Root);
         if (old != null) { _pivot.Children.Remove(old.Root); old.Dispose(); }
+        if (_rectAnimating)
+        {
+            // 正在让位：标题按终点排、随卡宽缩放；图从此刻的样子沿剩下的曲线过渡
+            long now = _s.NowMs;
+            var cur = CurrentRect(now);
+            double remain = Math.Max(0, _animMs - (now - _animStart));
+            _face.Relayout(_animTo, scaleWith: El);
+            _face.TransitionArt(cur, _animTo, remain);
+        }
     }
 
     /// <summary>尺寸定下来之后（让位动画结束）按新宽高比换图；同一张图只更新取景。</summary>
@@ -367,8 +382,9 @@ public sealed class Tile : IDisposable
         private readonly LibraryItem? _item;
         private readonly bool _expanded;
         private char? _artKind;
-        private LoadedImageSurface? _image;
-        private CompositionSurfaceBrush? _imageBrush;
+        private ImageLayer? _img, _incoming;
+        private ContainerVisual? _imgHost;
+        public string? ItemId => _item?.Id;
         private SpriteVisual? _ring1, _ring4, _ring5, _shadowCaster, _stack1, _stack2, _tint, _hilite;
         private ContainerVisual? _ring;
         private DropShadow? _shadow;
@@ -377,7 +393,7 @@ public sealed class Tile : IDisposable
         private readonly ContainerVisual? _inner;
         private CompositionLinearGradientBrush? _tintBrush;
 
-        public Face(WallStage s, Tile tile, string? id, Engine.Rect r, bool expanded)
+        public Face(WallStage s, Tile tile, string? id, Engine.Rect r, bool expanded, ImageCarry? carry = null)
         {
             _s = s;
             _expanded = expanded;
@@ -440,11 +456,16 @@ public sealed class Tile : IDisposable
             _inner.Children.InsertAtTop(G.Sprite(G.Solid(_artKind != null ? Gfx.Mix(c, 0.3, Theme.Bg) : posterBg)));
             if (_artKind is char k)
             {
-                _imageBrush = G.C.CreateSurfaceBrush();
-                _imageBrush.Stretch = CompositionStretch.UniformToFill;
-                _imageBrush.VerticalAlignmentRatio = 0.5f;
-                SetImage(art!, k, r);
-                _inner.Children.InsertAtTop(G.Sprite(_imageBrush));
+                _imgHost = G.Container();
+                _inner.Children.InsertAtTop(_imgHost);
+                if (carry is { } cy && art!.Has(cy.Kind))
+                {
+                    // 卡面重建（展开 / 收起、换标题样式）：先原样接着画正在显示的那张图、同样的取景，第一帧不变
+                    _s.Images.AddRef(cy.Surface);
+                    _img = MakeLayer(cy.Kind, cy.Surface, cy.Ratio);
+                    _artKind = cy.Kind;
+                }
+                else _img = MakeLayer(k, AcquireFor(art!, k, r), (float)(ObjectX(art!, k, r.Width, r.Height) / 100));
             }
             else
             {
@@ -588,29 +609,147 @@ public sealed class Tile : IDisposable
             if (_badgeArt != null && _badge != null) { var nb = _s.Text.Badge(_item.Badge, _item.Kind == ItemKind.Collection); _s.Text.Release(_badgeArt); _badgeArt = nb; ((CompositionSurfaceBrush)_badge.Brush).Surface = nb.Surface; }
         }
 
+        // ---------------- 封面图层：接着画、随卡取景、交叉淡入 ----------------
+
+        private sealed class ImageLayer
+        {
+            public required SpriteVisual Sprite;
+            public required CompositionSurfaceBrush Brush;
+            public LoadedImageSurface? Surface;
+            public char Kind;
+            public float Ratio;
+            // 取景动画（算此刻的取景用）
+            public Engine.Rect From, To;
+            public long Start;
+            public double Ms;
+        }
+
+        public ImageCarry? CurrentImage => _img == null ? null : new ImageCarry(_img.Kind, _img.Surface, RatioNow(_img));
+
+        /// <summary>这一层此刻的取景（取景动画途中按同一条曲线算）。</summary>
+        private float RatioNow(ImageLayer l)
+        {
+            if (l.Ms <= 0 || _item?.Art is not { } art) return l.Ratio;
+            double t = Math.Clamp((_s.NowMs - l.Start) / l.Ms, 0, 1);
+            if (t >= 1) return l.Ratio;
+            double e = Motion.ReflowEase(t);
+            double w = l.From.Width + (l.To.Width - l.From.Width) * e, h = l.From.Height + (l.To.Height - l.From.Height) * e;
+            return (float)(ObjectX(art, l.Kind, w, h) / 100);
+        }
+
+        private ImageLayer MakeLayer(char kind, LoadedImageSurface? surface, float ratio)
+        {
+            var brush = G.C.CreateSurfaceBrush(surface);
+            brush.Stretch = CompositionStretch.UniformToFill;
+            brush.VerticalAlignmentRatio = 0.5f;
+            brush.HorizontalAlignmentRatio = ratio;
+            var sp = G.Sprite(brush);
+            _imgHost!.Children.InsertAtTop(sp);
+            return new ImageLayer { Sprite = sp, Brush = brush, Surface = surface, Kind = kind, Ratio = ratio };
+        }
+
+        /// <summary>按显示尺寸解码：cover 时的缩放 × 栅格倍率，不超过原图；32px 一档好共用。</summary>
+        private LoadedImageSurface? AcquireFor(ArtKit art, char kind, Engine.Rect r)
+        {
+            var (iw, ih) = NativeSize(art, kind);
+            double cover = Math.Max(r.Width / iw, r.Height / ih) * G.RasterScale;
+            double k2 = Math.Min(1, cover);
+            return _s.Images.Acquire(art.File(kind), Bucket(iw * k2), Bucket(ih * k2));
+        }
+
+        /// <summary>取景（水平对齐比例）沿卡片的让位曲线走：每一刻都等于按那一刻的宽高比算的值。</summary>
+        private void AnimateRatio(ImageLayer l, ArtKit art, Engine.Rect from, Engine.Rect to, double ms)
+        {
+            float end = (float)(ObjectX(art, l.Kind, to.Width, to.Height) / 100);
+            float startRatio = RatioNow(l);
+            if (ms < 16) { l.Brush.StopAnimation("HorizontalAlignmentRatio"); l.Brush.HorizontalAlignmentRatio = end; l.Ratio = end; l.Ms = 0; return; }
+            var a = G.C.CreateScalarKeyFrameAnimation();
+            const int n = 24;
+            for (int i = 0; i <= n; i++)
+            {
+                double t = i / (double)n, e = Motion.ReflowEase(t);
+                double w = from.Width + (to.Width - from.Width) * e, h = from.Height + (to.Height - from.Height) * e;
+                a.InsertKeyFrame((float)t, (float)(ObjectX(art, l.Kind, w, h) / 100), G.Linear);
+            }
+            a.Duration = Gfx.Ms(ms);
+            _ = startRatio;   // 关键帧第 0 帧就是按 from 算的此刻取景
+            l.Brush.StartAnimation("HorizontalAlignmentRatio", a);
+            l.Ratio = end;
+            l.From = from; l.To = to; l.Start = _s.NowMs; l.Ms = ms;
+        }
+
+        /// <summary>
+        /// 卡片从 from 变到 to（ms 内，让位弹簧）：当前这张图原样留着、取景跟着走；要换成另一种图（竖封面 ⇄ 大背景裁切）时，
+        /// 新图在旧图上面，解码好之后在剩下的时间里淡入（至少 180 ms）。第一帧永远和变之前一模一样。
+        /// </summary>
+        public void TransitionArt(Engine.Rect from, Engine.Rect to, double ms)
+        {
+            if (_item?.Art is not { } art || _img == null) return;
+            Promote(force: true);
+            var kind = PickArt(art, to.Width, to.Height, _expanded) ?? _img.Kind;
+            AnimateRatio(_img, art, from, to, ms);
+            if (kind == _img.Kind) { UpgradeDecode(art, to); return; }
+            var inc = MakeLayer(kind, AcquireFor(art, kind, to), (float)(ObjectX(art, kind, from.Width, from.Height) / 100));
+            inc.Sprite.Opacity = 0;
+            AnimateRatio(inc, art, from, to, ms);
+            _incoming = inc;
+            long start = _s.NowMs;
+            void FadeIn()
+            {
+                if (_incoming != inc) return;
+                double remain = Math.Max(180, ms - (_s.NowMs - start));
+                inc.Sprite.StartAnimation("Opacity", G.Scalar(0, 1, remain, Bezier.EaseInOut));
+                inc.Sprite.Opacity = 1;
+                _s.After(remain + 30, () => { if (_incoming == inc) Promote(force: false); });
+            }
+            if (inc.Surface == null) FadeIn(); else _s.Images.WhenLoaded(inc.Surface, FadeIn);
+        }
+
+        /// <summary>淡入完成（或要开始下一次过渡）：新图层成为当前图层，旧的拿掉。</summary>
+        private void Promote(bool force)
+        {
+            var inc = _incoming;
+            if (inc == null) return;
+            if (!force && !_s.Images.IsLoaded(inc.Surface) && inc.Surface != null) return;
+            _incoming = null;
+            inc.Sprite.StopAnimation("Opacity");
+            inc.Sprite.Opacity = 1;
+            if (_img != null)
+            {
+                _imgHost!.Children.Remove(_img.Sprite);
+                _s.Images.Release(_img.Surface);
+            }
+            _img = inc;
+            _artKind = inc.Kind;
+        }
+
+        /// <summary>同一张图：卡变大了需要更高的解码尺寸时，新尺寸解码好再换（内容相同，看不出切换）。</summary>
+        private void UpgradeDecode(ArtKit art, Engine.Rect to)
+        {
+            var l = _img!;
+            var next = AcquireFor(art, l.Kind, to);
+            if (next == null || ReferenceEquals(next, l.Surface)) { _s.Images.Release(next); return; }
+            _s.Images.WhenLoaded(next, () =>
+            {
+                if (_img != l || !_s.Images.IsLoaded(next)) { _s.Images.Release(next); return; }
+                var old = l.Surface;
+                l.Surface = next;
+                l.Brush.Surface = next;
+                _s.Images.Release(old);
+            });
+        }
+
+        /// <summary>尺寸定下来（让位结束 / 直接摆放）：按新尺寸重画标题；图该换就交叉淡入，不再硬切。</summary>
         public void FitArt(Engine.Rect r)
         {
             EndScale();
             Relayout(r, null);
-            if (_item?.Art is not { } art || _imageBrush == null) return;
+            if (_item?.Art is not { } art || _img == null) return;
+            if (_incoming != null) { Promote(force: false); if (_incoming != null) return; }
             var kind = PickArt(art, r.Width, r.Height, _expanded);
-            if (kind is not char k) return;
-            if (k != _artKind) _artKind = k;
-            SetImage(art, k, r);
-        }
-
-        private void SetImage(ArtKit art, char kind, Engine.Rect r)
-        {
-            var (iw, ih) = NativeSize(art, kind);
-            // 按显示尺寸解码：cover 时的缩放 × 栅格倍率，不超过原图；32px 一档好共用
-            double cover = Math.Max(r.Width / iw, r.Height / ih) * G.RasterScale;
-            double k2 = Math.Min(1, cover);
-            int dw = Bucket(iw * k2), dh = Bucket(ih * k2);
-            var next = _s.Images.Acquire(art.File(kind), dw, dh);
-            _s.Images.Release(_image);
-            _image = next;
-            _imageBrush!.Surface = next;
-            _imageBrush.HorizontalAlignmentRatio = (float)(ObjectX(art, kind, r.Width, r.Height) / 100);
+            if (kind is char k && k != _img.Kind) { TransitionArt(r, r, 0); return; }
+            AnimateRatio(_img, art, r, r, 0);
+            UpgradeDecode(art, r);
         }
 
         private static int Bucket(double v) => (int)Math.Ceiling(v / 32) * 32;
@@ -662,7 +801,8 @@ public sealed class Tile : IDisposable
 
         public void Dispose()
         {
-            _s.Images.Release(_image);
+            _s.Images.Release(_img?.Surface);
+            _s.Images.Release(_incoming?.Surface);
             _s.Text.Release(_copyArt);
             _s.Text.Release(_actionsArt);
             _s.Text.Release(_badgeArt);

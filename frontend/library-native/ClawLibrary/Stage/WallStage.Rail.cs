@@ -430,8 +430,12 @@ public sealed partial class WallStage
         var slot = SlotByKey(k);
         var id = slot != null ? ItemFor(slot) : null;
         var item = id != null ? Lookup(id) : null;
-        var c = Gfx.Hex(item?.Art?.C ?? item?.SeedColor, Gfx.Rgba(110, 100, 150));
-        _backdrop.SetKey(c, animate && !Reduced);
+        // folia 取的是封面（专辑图）：这里用竖封面，没有就用大背景
+        var art = item?.Art;
+        string? path = art == null ? null : art.Has('p') ? art.File('p') : art.Has('x') ? art.File('x') : art.Has('h') ? art.File('h') : null;
+        _backdrop.SetCover(path, a => _dq.TryEnqueue(() => { a(); EnsureBackdropLoop(); }));
+        EnsureBackdropLoop();
+        _ = animate;
     }
 
     /// <summary>只在缝开着、窗口在前台、开着动态背景、没降低动态效果时跑循环动画。</summary>
@@ -441,10 +445,11 @@ public sealed partial class WallStage
         bool seamOpen;
         try { Sync(); seamOpen = SeamGeometry(_anchorX, _center, _openWidth, View).Width > 1 || _seamTween != null; }
         catch { seamOpen = true; }
-        _backdrop.Root.IsVisible = _backdropOn;
+        _backdrop.Visible = _backdropOn;
         bool recent = NowMs - _lastInput < BackdropIdleMs;
         bool run = _backdropOn && _windowActive && !Reduced && seamOpen && recent;
         _backdrop.Run(run);
+        EnsureBackdropLoop();
         // 背景在动时，角落里那个 1 px 的点也一起动：实测只有缝里一条在动时，展开 / 换页签时 DWM 会隔帧合成（约 8 % 的帧 33 ms），
         // 加上这个点就每帧都准时；背景本来就让合成每帧都在跑，它不额外花什么
         if (run) StartFrameProbe(); else if (!Program.Args.Contains("--probe")) _pacer?.TryGetAnimationController("Opacity")?.Pause();
@@ -502,5 +507,60 @@ public sealed partial class WallStage
         _root.Children.InsertAtTop(dot);
         dot.StartAnimation("Opacity", a);
         _pacer = dot;
+    }
+}
+
+public sealed partial class WallStage
+{
+    /// <summary>动态背景在自己的线程上出帧；这里只把缝的开口报过去（补间途中报起止两头的并集，合成线程上开口怎么走都在里面）。</summary>
+    private void EnsureBackdropLoop()
+    {
+        PublishStrip();
+        if (_backdropLoop || _backdrop == null || !_backdrop.NeedsFrames) return;
+        _backdropLoop = true;
+        _backdropLast = 0;
+        CompositionTarget.Rendering += OnBackdropFrame;
+    }
+
+    private bool _backdropLoop;
+    private long _backdropLast;
+    /// <summary>墙面动画进行到什么时候（这之前背景停帧）。</summary>
+    private long _wallBusyUntil;
+
+    /// <summary>墙面开始一段动画：背景先停到它结束。</summary>
+    private void WallBusy(double ms) => _wallBusyUntil = Math.Max(_wallBusyUntil, NowMs + (long)ms + 30);
+
+    private void OnBackdropFrame(object? sender, object e)
+    {
+        try
+        {
+            long now = NowMs;
+            if (now < _wallBusyUntil) { _backdropLast = 0; return; }
+            double dt = _backdropLast == 0 ? 16.7 : Math.Min(100, now - _backdropLast);
+            _backdropLast = now;
+            _backdrop.FrameNow(dt);
+            if (!_backdrop.NeedsFrames)
+            {
+                CompositionTarget.Rendering -= OnBackdropFrame;
+                _backdropLoop = false;
+            }
+        }
+        catch (Exception ex) { Log.Error("backdrop frame", ex); }
+    }
+
+    private void PublishStrip()
+    {
+        if (_backdrop == null || _stack.Count == 0) return;
+        Sync();
+        var g = SeamGeometry(_anchorX, _center, _openWidth, View);
+        double l = g.ScreenX - g.Width / 2, r = g.ScreenX + g.Width / 2;
+        if (_camX != null || _camY != null || _seamTween != null)
+        {
+            var end = new Center(_camX?.To ?? _center.X, _camY?.To ?? _center.Y);
+            var g2 = SeamGeometry(_anchorX, end, _seamTween?.To ?? _openWidth, View);
+            l = Math.Min(l, g2.ScreenX - g2.Width / 2);
+            r = Math.Max(r, g2.ScreenX + g2.Width / 2);
+        }
+        _backdrop.SetStrip(l, Math.Max(0, r - l));
     }
 }

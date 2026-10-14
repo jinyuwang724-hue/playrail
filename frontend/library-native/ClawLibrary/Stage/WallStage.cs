@@ -69,6 +69,7 @@ public sealed partial class WallStage : IDisposable
     private SpriteVisual _seamA = null!, _seamB = null!;
     private bool _seamFront;   // false = A 在前
     private SpriteVisual _edgeLeft = null!, _edgeRight = null!, _toast = null!, _hud = null!;
+    private SpriteVisual _bgBaseR = null!, _glow1R = null!, _glow2R = null!;
     private SpriteVisual _bgBase = null!, _glow1 = null!, _glow2 = null!, _vignette = null!;
 
     public View View;
@@ -169,6 +170,7 @@ public sealed partial class WallStage : IDisposable
         var vis = VisibleWorld(_center, View, 0, 0);
         long now = NowMs;
         _entrance = (now, vis.Left, vis.Top, now + (long)(Motion.Wave.MaxDelay + Motion.Wave.InMs));
+        WallBusy(Motion.Wave.MaxDelay + Motion.Wave.InMs);
         if (!Reduced) foreach (var t in _tiles.Values) t.Land(Plans.WaveStagger(t.Slot.X, t.Slot.Y, vis.Left, vis.Top));
         TweenSeam(SeamHome, 0);
         Focus(start?.Key, false);
@@ -196,6 +198,7 @@ public sealed partial class WallStage : IDisposable
         _rootEl.XamlRoot.Changed += (_, _) => { try { OnResize(); } catch (Exception ex) { Log.Error("resize", ex); } };
         _ = BuildMissingArtAsync();
         if (Program.Args.Contains("--probe")) StartFrameProbe();
+        if (Program.Args.Contains("--debug-backplate")) _root.IsVisible = false;
         if (Program.Args.Contains("--bench")) _ = Bench.RunAsync(this);
         if (Program.Args.Contains("--hud")) ToggleHud();
         if (Program.Args.FirstOrDefault(a => a.StartsWith("--state=")) is { } state) _ = Bench.StateAsync(this, state[8..]);
@@ -296,19 +299,27 @@ public sealed partial class WallStage : IDisposable
     private void BuildChrome()
     {
         // 背景：底色 + 两团光（radial-gradient circle farthest-corner）
+        // 墙面底色分成缝左、缝右两半（各自裁到开口边上）：开口处是透的，露出最底下的动态背景
         _bgBase = G.Sprite(G.Solid(Theme.Bg));
         _glow1 = G.Sprite(null);
         _glow2 = G.Sprite(null);
-        _root.Children.InsertAtTop(_bgBase);
-        _root.Children.InsertAtTop(_glow1);
-        _root.Children.InsertAtTop(_glow2);
-        // 动态背景：只在缝的开口里露出来（墙是实色的），所以裁剪到开口，合成器只画这一条
-        _backdrop = new Backdrop(G, (float)View.Width, (float)View.Height);
-        var openClip = G.C.CreateInsetClip();
-        _backdrop.Root.Clip = openClip;
-        Expr(openClip, "LeftInset", "p.sx - p.sw / 2");
-        Expr(openClip, "RightInset", "p.vw - (p.sx + p.sw / 2)");
-        _root.Children.InsertAtTop(_backdrop.Root);
+        _bgBaseR = G.Sprite(G.Solid(Theme.Bg));
+        _glow1R = G.Sprite(null);
+        _glow2R = G.Sprite(null);
+        var wallL = G.Container();
+        var wallR = G.Container();
+        foreach (var v in new Visual[] { _bgBase, _glow1, _glow2 }) wallL.Children.InsertAtTop(v);
+        foreach (var v in new Visual[] { _bgBaseR, _glow1R, _glow2R }) wallR.Children.InsertAtTop(v);
+        var clipL = G.C.CreateInsetClip();
+        var clipR = G.C.CreateInsetClip();
+        wallL.Clip = clipL;
+        wallR.Clip = clipR;
+        Expr(clipL, "RightInset", "p.vw - (p.sx - p.sw / 2)");
+        Expr(clipR, "LeftInset", "p.sx + p.sw / 2");
+        _root.Children.InsertAtTop(wallL);
+        _root.Children.InsertAtTop(wallR);
+        _backdrop = new Backdrop(G) { Dpi = Chrome.Dpi };
+        _root.Children.InsertAtBottom(_backdrop.Root);
         _root.Children.InsertAtTop(_field);
         _field.Children.InsertAtTop(_worlds[0]);
         _field.Children.InsertAtTop(_worlds[1]);
@@ -405,6 +416,8 @@ public sealed partial class WallStage : IDisposable
         // radial-gradient(circle at 14% 12%, glow-a 16%, transparent 29%)（半径 = 到最远角）
         Glow(_glow1, 0.14f, 0.12f, Gfx.WithAlpha(Theme.GlowA, 0.16), 0.29f, w, h);
         Glow(_glow2, 0.86f, 0.82f, Gfx.WithAlpha(Theme.GlowB, 0.20), 0.32f, w, h);
+        _glow1R.Brush = _glow1.Brush;
+        _glow2R.Brush = _glow2.Brush;
         var vig = G.C.CreateRadialGradientBrush();
         vig.MappingMode = CompositionMappingMode.Absolute;
         vig.EllipseCenter = new Vector2(w / 2, h / 2);
@@ -478,6 +491,8 @@ public sealed partial class WallStage : IDisposable
         _camY = new Tween { From = _center.Y, To = to.Y, Start = now, Ms = ms, Ease = Motion.CameraEase };
         _cam.StartAnimation("cx", G.Scalar(_center.X, to.X, ms, Motion.CameraEase));
         _cam.StartAnimation("cy", G.Scalar(_center.Y, to.Y, ms, Motion.CameraEase));
+        WallBusy(ms);
+        PublishStrip();
         int v = ++_version;
         After(ms + 20, () => { if (v == _version) { Sync(); Recull(false); } });
     }
@@ -495,6 +510,8 @@ public sealed partial class WallStage : IDisposable
         _seamTween = new Tween { From = f, To = to, Start = NowMs, Ms = Motion.SeamMs, Ease = Motion.SeamEase };
         _openWidth = f;
         _cam.StartAnimation("open", G.Scalar(f, to, Motion.SeamMs, Motion.SeamEase));
+        WallBusy(Motion.SeamMs);
+        PublishStrip();
         // 开口变宽，看得见的范围也变宽
         After(Motion.SeamMs + 20, () => { Sync(); Recull(false); });
         Recull(true, VisibleWorld(_center, View, Math.Max(to, f), 0));
@@ -538,6 +555,8 @@ public sealed partial class WallStage : IDisposable
             _center = new Center(_center.X + v.X * dt / 1000 / View.Scale, _center.Y + v.Y * dt / 1000 / View.Scale);
             SetCam(_center);
             Recull(false);
+            WallBusy(120);
+            PublishStrip();
         }
         if (_glide != Vector2.Zero)
         {
@@ -764,6 +783,7 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         int ms = Motion.ReflowMs;
+        WallBusy(ms);
         foreach (var (key, r) in to)
         {
             var from = _tiles.TryGetValue(key, out var t) ? t.CurrentRect(now) : Drawn(SlotByKey(key)!);
@@ -814,6 +834,7 @@ public sealed partial class WallStage : IDisposable
             foreach (var st in plan.Steps) { var t = _tiles[st.Key]; t.Wave(ItemFor(t.Slot), st.OutDelay, st.InDelay, reduced); }
             duration = reduced ? Motion.ReducedFadeMs : plan.DurationMs;
         }
+        WallBusy(duration);
         After(duration + 80, SweepTiles);
     }
 
@@ -1177,6 +1198,7 @@ public sealed partial class WallStage : IDisposable
     public void Dispose()
     {
         _pad?.Dispose();
+        _backdrop?.Dispose();
         if (_loopOn) CompositionTarget.Rendering -= OnRendering;
     }
 
