@@ -1,6 +1,6 @@
-// 中间的竖条（首页窄缝，120 px）：参照 folia 首页窄缝的排法（自己实现），并按需求加了系统信息与快捷入口。
-// 从上到下：状态行（时间、电池）→ 导航区（搜索框〔打开时〕、竖排页签、分隔线、合集直达入口）→ 账户（头像 + 用户名）
-// → 工具行（搜索、设置、文件管理器）。导航区是唯一可伸缩的一段：放不下全名时页签缩成一个字，再放不下就在里面滚，
+﻿// 中间的竖条（首页窄缝，120 px）：参照 folia 首页窄缝的排法（自己实现），并按需求加了系统信息与快捷入口。
+// 从上到下：导航区（竖排页签、分隔线、合集直达入口）→ 账户（头像在上、用户名在下）
+// → 工具行（搜索、设置、文件管理器）→ 时间与电池。搜索打开时整条缝换成搜索面板（Chrome.SeamSearch）。导航区是唯一可伸缩的一段：放不下全名时页签缩成一个字，再放不下就在里面滚，
 // 保证焦点那一项露出来。设置打开时导航区换成设置列表。
 // 竖条可以交互：手柄 / 键盘的焦点进到竖条里时，焦点那一项画白色描边高亮（墙上的焦点环同时熄掉）。
 using System.Numerics;
@@ -18,7 +18,7 @@ using Colors = Microsoft.UI.Colors;
 
 namespace ClawLibrary.Stage;
 
-public enum RailKind { Tab, Shortcut, Account, Search, Settings, Explorer, SearchField, Setting, Back }
+public enum RailKind { Tab, Shortcut, Account, Search, Settings, Explorer, Setting, Back }
 
 public sealed class RailItem
 {
@@ -42,9 +42,6 @@ public sealed class RailModel
     public BatteryState Battery;
     public string User = "";
     public CanvasBitmap? Avatar;
-    public bool SearchOpen;
-    public string Query = "";
-    public int Matches = -1;
     public bool SettingsOpen;
     public List<(string Label, string Value)> Settings = new();
 }
@@ -157,7 +154,7 @@ public sealed class Rail
         for (int i = 0; i < tools.Length; i++)
         {
             var r = new Rect(tx + i * (tool + toolGap), toolsY, tool, tool);
-            bool pressed = (tools[i].Item1 == RailKind.Search && m.SearchOpen) || (tools[i].Item1 == RailKind.Settings && m.SettingsOpen);
+            bool pressed = tools[i].Item1 == RailKind.Settings && m.SettingsOpen;
             ds.FillRoundedRectangle(r, 10, 10, Gfx.WithAlpha(Theme.Ink, pressed ? 0.16 : 0.06));
             var icon = this.H(tools[i].Item2, new FontSpec(IconFont, 400), 15);
             DrawCentered(ds, icon, (float)(r.X + tool / 2), (float)(r.Y + tool / 2), pressed ? Theme.Ink : Gfx.WithAlpha(Theme.Ink, 0.8));
@@ -246,34 +243,17 @@ public sealed class Rail
         float RowH(List<int> row) => row.Max(i => (float)scLayouts[i].LayoutBounds.Height) + 12;
         float scH = scRows.Count == 0 ? 0 : scRows.Sum(RowH) + 6 * (scRows.Count - 1) + 16 + 1 + 16;   // 含分隔线上下
 
-        float searchH = m.SearchOpen ? 32 + 6 + 14 + 12 : 0;
         float avail = bottom - top;
         var tabLs = MakeTabs(false);
         bool shortTabs = false;
-        if (searchH + TabsHeight(tabLs) + scH > avail) { tabLs = MakeTabs(true); shortTabs = true; }
-        float content = searchH + TabsHeight(tabLs) + scH;
+        if (TabsHeight(tabLs) + scH > avail) { tabLs = MakeTabs(true); shortTabs = true; }
+        float content = TabsHeight(tabLs) + scH;
 
         // 放不下就滚：保证焦点那一项在导航区里
         int itemsBefore = Items.Count;
         float y = top;
         var placed = new List<(RailItem item, Action<float> draw)>();
 
-        if (m.SearchOpen)
-        {
-            var r = new Rect(PadX, y, inner, 32);
-            Add(RailKind.SearchField, 0, r);
-            int idx = Items.Count - 1;
-            placed.Add((Items[idx], off =>
-            {
-                var rr = new Rect(r.X, r.Y - off, r.Width, r.Height);
-                ds.FillRoundedRectangle(rr, 8, 8, Gfx.WithAlpha(Theme.Ink, 0.10));
-                // 框里的字由叠在上面的输入框（XAML TextBox，支持中文输入法）来画
-                var hint = H(m.Matches < 0 ? "B 关闭" : $"{m.Matches} 个结果 · B 关闭", TextKit.Ui(500), 10);
-                DrawCentered(ds, hint, cx, (float)(rr.Y + rr.Height + 6 + 7), Theme.SeamInkSoft);
-                if (focus == idx) Focus(ds, rr, 8);
-            }));
-            y += searchH;
-        }
 
         for (int i = 0; i < tabLs.Count; i++)
         {
@@ -379,10 +359,10 @@ public sealed class Rail
 
     // ---------------- 焦点走法 ----------------
 
-    /// <summary>默认落点：当前页签（设置打开时第一行，搜索打开时搜索框）。</summary>
+    /// <summary>默认落点：当前页签（设置打开时第一行）。</summary>
     public int DefaultFocus(RailModel m)
     {
-        int i = Items.FindIndex(it => m.SettingsOpen ? it.Kind == RailKind.Setting : m.SearchOpen ? it.Kind == RailKind.SearchField : it.Kind == RailKind.Tab && it.Index == m.ActiveTab);
+        int i = Items.FindIndex(it => m.SettingsOpen ? it.Kind == RailKind.Setting : it.Kind == RailKind.Tab && it.Index == m.ActiveTab);
         return i >= 0 ? i : Items.FindIndex(it => it.Kind == RailKind.Search);
     }
 

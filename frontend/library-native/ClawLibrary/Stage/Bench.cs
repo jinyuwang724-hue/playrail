@@ -1,4 +1,4 @@
-// 自测（--bench）：按固定脚本跑一遍（静止、右摇杆平移、十字键走位、展开 / 收起、换页签、进出合集），
+﻿// 自测（--bench）：按固定脚本跑一遍（静止、右摇杆平移、十字键走位、展开 / 收起、换页签、进出合集），
 // 每段用 DWM 合成时间戳量帧间隔（后台线程 2 ms 轮询 qpcCompose），同时记进程 CPU 与内存，写进日志和 logs\bench.json。
 // --state=expand|collection|styleb|tab 则只把墙摆到某个状态停住（截图对比用）。
 using System.Diagnostics;
@@ -155,7 +155,7 @@ public static class Bench
                 case "styleb": s.ToggleTitleStyle(); break;
                 case "tab": s.SwitchTab(1); break;
                 case "nav": for (int i = 0; i < 3; i++) { s.Move(Direction.Right); await Task.Delay(250); } break;
-                case "rail" or "railtab" or "settings" or "search": s.RailTestState(state); break;
+                case "rail" or "railtab" or "settings" or "search" or "searchresults": s.RailTestState(state); break;
             }
             Log.Info($"state {state} reached");
         }

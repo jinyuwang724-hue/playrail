@@ -249,7 +249,7 @@ public sealed class Backdrop : IDisposable
     private void DrawRange(int x0, int x1)
     {
         int sw = x1 - x0;
-        if (sw < 1) return;
+        if (sw < 1 || _surface == null || _effect == null) return;
         try
         {
             if (_strip == null || _strip.SizeInPixels.Width < sw)

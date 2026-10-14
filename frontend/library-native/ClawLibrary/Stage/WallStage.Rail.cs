@@ -36,7 +36,6 @@ public sealed partial class WallStage
         if (wasIdle) UpdateBackdropRunning();
     }
     private TextBox? _searchBox;
-    private string _searchQuery = "";
 
     // ---------------- 初始化 ----------------
 
@@ -99,8 +98,6 @@ public sealed partial class WallStage
         m.Tabs = _lib.HomeTabs.Select(t => t.Label).ToList();
         m.ActiveTab = _tabIndex;
         m.Shortcuts = new();   // 竖条里只放平台页签；Steam 的分类铺在 Steam 页签的墙上
-        m.SearchOpen = _searchBox != null && _searchOpen;
-        m.Query = _searchQuery;
         m.Settings = new()
         {
             ("标题样式", Style == TitleStyle.B ? "极简黑体" : "电影字幕"),
@@ -138,6 +135,7 @@ public sealed partial class WallStage
         if (_expandedKey != null) Collapse(false);
         _railFocused = true;
         if (FocusKey is { } fk && _tiles.TryGetValue(fk, out var t)) t.SetFocused(false);
+        if (_searchOpen) { _searchFocus = 1; RepaintRail(); return; }
         RepaintRail();   // 先排一遍拿到各项的位置
         _railFocus = item ?? (CurrentLayer.Home ? _rail.NearestTo((float)screenY) : 0);
         if (_railFocus < 0) _railFocus = CurrentLayer.Home ? _rail.DefaultFocus(_railModel) : 0;
@@ -148,7 +146,7 @@ public sealed partial class WallStage
     private void ExitRail(bool toLeft)
     {
         float y = 0;
-        if (CurrentLayer.Home && _railFocus >= 0 && _railFocus < _rail.Items.Count)
+        if (CurrentLayer.Home && !_searchOpen && _railFocus >= 0 && _railFocus < _rail.Items.Count)
         {
             var b = _rail.Items[_railFocus].Bounds;
             y = (float)(b.Y + b.Height / 2);
@@ -171,6 +169,7 @@ public sealed partial class WallStage
     private bool RailMove(Direction dir)
     {
         if (!_railFocused) return false;
+        if (_searchOpen) return SearchMove(dir);
         if (!CurrentLayer.Home)
         {
             if (dir is Direction.Left or Direction.Right) ExitRail(dir == Direction.Left);
@@ -204,6 +203,7 @@ public sealed partial class WallStage
     private bool RailActivate()
     {
         if (!_railFocused) return false;
+        if (_searchOpen) { SearchActivate(); return true; }
         if (!CurrentLayer.Home) { Pop(); return true; }
         if (_railFocus < 0 || _railFocus >= _rail.Items.Count) return true;
         var it = _rail.Items[_railFocus];
@@ -222,10 +222,7 @@ public sealed partial class WallStage
                 SystemInfo.Open("explorer.exe");
                 break;
             case RailKind.Search:
-                if (_searchOpen) CloseSearch(); else OpenSearch();
-                break;
-            case RailKind.SearchField:
-                _searchBox?.Focus(FocusState.Programmatic);
+                OpenSearch();
                 break;
             case RailKind.Settings:
                 _railModel.SettingsOpen = !_railModel.SettingsOpen;
@@ -308,6 +305,7 @@ public sealed partial class WallStage
         Sync();
         var geo = SeamGeometry(_anchorX, _center, _openWidth, View);
         if (geo.Width < 2 || sx < geo.ScreenX - geo.Width / 2 || sx > geo.ScreenX + geo.Width / 2) return false;
+        if (_searchOpen) { SearchClick(sx - (geo.ScreenX - SeamFull / 2), sy); return true; }
         if (!CurrentLayer.Home)
         {
             if (sy < 80 && sx < geo.ScreenX - geo.Width / 2 + 80) Pop();
@@ -321,105 +319,244 @@ public sealed partial class WallStage
         return true;
     }
 
-    // ---------------- 搜索 ----------------
+    // ---------------- 搜索（照 folia 首页缝里的全局搜索框） ----------------
+    // 放大镜把首页窄缝临时展开成完整宽度的搜索面板（与进合集同一套开口补间 + 翻面），输入框拿焦点。
+    // 输入框不跟着打字过滤：提交才搜，结果作为一层「游戏库 › 搜索」压进来，铺成一面封面墙（不是列表）；
+    // 「关闭搜索」、×、Esc / B 只关面板，缝翻回竖条。没有结果时面板留着，提示一下。
+
+    /// <summary>搜索面板里手柄焦点在哪一项：0 关闭搜索、1 输入框、2 搜索按钮。</summary>
+    private int _searchFocus = 1;
+    /// <summary>输入框此刻有键盘焦点（描边换强调色）。</summary>
+    private bool _searchTyping;
+    private Chrome.SearchPanelLayout? _searchLayout;
+    private bool _placePending;
+
+    private void EnsureSearchBox()
+    {
+        if (_searchBox != null) return;
+        _searchBox = new TextBox
+        {
+            PlaceholderText = Chrome.SearchPlaceholder,
+            FontSize = 16,
+            Height = 42,
+            MinHeight = 0,
+            Padding = new Thickness(0, 10, 0, 0),
+            BorderThickness = new Thickness(0),
+            RequestedTheme = ElementTheme.Dark,
+            IsSpellCheckEnabled = false,
+            IsTextPredictionEnabled = false,
+            Visibility = Visibility.Collapsed,
+        };
+        var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        var ink = new SolidColorBrush(Theme.Ink);
+        var soft = new SolidColorBrush(Theme.SeamInkSoft);
+        foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused", "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused" })
+            _searchBox.Resources[key] = clear;
+        foreach (var key in new[] { "TextControlForeground", "TextControlForegroundPointerOver", "TextControlForegroundFocused" })
+            _searchBox.Resources[key] = ink;
+        foreach (var key in new[] { "TextControlPlaceholderForeground", "TextControlPlaceholderForegroundPointerOver", "TextControlPlaceholderForegroundFocused" })
+            _searchBox.Resources[key] = soft;
+        _searchBox.KeyDown += (_, e) =>
+        {
+            switch (e.Key)
+            {
+                case Windows.System.VirtualKey.Enter: e.Handled = true; SubmitSearch(); break;
+                case Windows.System.VirtualKey.Escape: e.Handled = true; CloseSearch(); break;
+                case Windows.System.VirtualKey.Down:
+                    // 离开输入框，焦点落到「搜索」按钮
+                    e.Handled = true;
+                    _rootEl.Focus(FocusState.Programmatic);
+                    _railFocused = true; _searchFocus = 2; RepaintRail();
+                    break;
+                case Windows.System.VirtualKey.Up:
+                    e.Handled = true;
+                    _rootEl.Focus(FocusState.Programmatic);
+                    _railFocused = true; _searchFocus = 0; RepaintRail();
+                    break;
+            }
+        };
+        // 系统输入框自带的「清空」× 不要：面板上画的 × 是 folia 的「关闭搜索」
+        // （模板里的按钮要等第一次布局才有，打字 / 拿焦点时都再藏一次）
+        void HideClearButton()
+        {
+            if (FindChild(_searchBox!, "DeleteButton") is FrameworkElement clearButton && clearButton.MaxWidth != 0)
+            {
+                clearButton.MaxWidth = 0;
+                clearButton.Opacity = 0;
+                clearButton.IsHitTestVisible = false;
+            }
+        }
+        _searchBox.Loaded += (_, _) => HideClearButton();
+        _searchBox.TextChanged += (_, _) => HideClearButton();
+        _searchBox.GotFocus += (_, _) => { HideClearButton(); _searchTyping = true; RepaintRail(); };
+        _searchBox.LostFocus += (_, _) => { _searchTyping = false; RepaintRail(); };
+        _rootEl.Overlay.Children.Add(_searchBox);
+    }
+
+    private static DependencyObject? FindChild(DependencyObject root, string name)
+    {
+        int n = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < n; i++)
+        {
+            var c = VisualTreeHelper.GetChild(root, i);
+            if (c is FrameworkElement fe && fe.Name == name) return c;
+            if (FindChild(c, name) is { } hit) return hit;
+        }
+        return null;
+    }
 
     private void OpenSearch()
     {
+        if (_searchOpen || _stack.Count != 1) return;
         try
         {
-            if (_searchBox == null)
-            {
-                _searchBox = new TextBox
-                {
-                    PlaceholderText = "输入游戏名",
-                    FontSize = 12,
-                    Width = Rail.HomeWidth - 28,
-                    Height = 32,
-                    MinHeight = 0,
-                    Padding = new Thickness(8, 6, 4, 4),
-                    BorderThickness = new Thickness(0),
-                    RequestedTheme = ElementTheme.Dark,
-                    IsSpellCheckEnabled = false,
-                    IsTextPredictionEnabled = false,
-                };
-                var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-                var ink = new SolidColorBrush(Theme.Ink);
-                foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused", "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused" })
-                    _searchBox.Resources[key] = clear;
-                foreach (var key in new[] { "TextControlForeground", "TextControlForegroundPointerOver", "TextControlForegroundFocused" })
-                    _searchBox.Resources[key] = ink;
-                _searchBox.TextChanged += (_, _) => { _searchQuery = _searchBox.Text.Trim(); ApplySearch(); };
-                _searchBox.KeyDown += (_, e) =>
-                {
-                    if (e.Key is Windows.System.VirtualKey.Escape) { CloseSearch(); e.Handled = true; }
-                    else if (e.Key is Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Down)
-                    {
-                        // 回到竖条（焦点留在搜索框那一项），可以直接往右走进结果
-                        _rootEl.Focus(FocusState.Programmatic);
-                        e.Handled = true;
-                    }
-                };
-                _rootEl.Overlay.Children.Add(_searchBox);
-            }
+            EnsureSearchBox();
+            if (_expandedKey != null) Collapse(false);
+            _railModel.SettingsOpen = false;
+            if (FocusKey is { } fk && _tiles.TryGetValue(fk, out var t)) t.SetFocused(false);
             _searchOpen = true;
-            _searchBox.Visibility = Visibility.Visible;
-            _searchBox.Text = _searchQuery;
-            RepaintRail();
-            if (!_railFocused) EnterRail(0);
-            _railFocus = _rail.Items.FindIndex(i => i.Kind == RailKind.SearchField);
-            RepaintRail();
-            _searchBox.Focus(FocusState.Programmatic);
+            _searchFocus = 1;
+            _railFocused = true;
+            _searchBox!.Text = "";
+            // 窄缝展开成完整宽度（贴边时相机让一让），缝翻面换成搜索面板
+            var target = ReopenSeamIfGone(SeamFull);
+            var plan = PlanSeam(target, SeamFull, View, _anchorX);
+            TweenSeam(SeamFull);
+            FlipSeam(SeamFull);
+            if (Math.Abs(plan.CenterX - target.X) > 0.5 || Math.Abs(target.X - _center.X) > 0.5) TweenCamera(new Center(plan.CenterX, target.Y));
+            PlaceSearchBox();
+            // 翻面完了再把输入框放上去、给它键盘焦点（folia：打开即聚焦）
+            After(Motion.SeamFlip.OutMs + Motion.SeamFlip.InMs + 20, () =>
+            {
+                if (!_searchOpen) return;
+                PlaceSearchBox();
+                FocusSearchBox();
+            });
         }
         catch (Exception ex) { Log.Error("open search", ex); }
     }
 
-    private void CloseSearch()
+    private void FocusSearchBox()
     {
-        _searchOpen = false;
-        if (_searchBox != null) { _searchBox.Visibility = Visibility.Collapsed; _searchBox.Text = ""; }
-        _searchQuery = "";
-        ApplySearch();
-        _rootEl.Focus(FocusState.Programmatic);
+        if (_searchBox == null || !_searchOpen) return;
+        _searchFocus = 1;
+        _railFocused = true;
+        PlaceSearchBox();
+        _searchBox.Focus(FocusState.Programmatic);
         RepaintRail();
-        if (_railFocused) { _railFocus = _rail.Items.FindIndex(i => i.Kind == RailKind.Search); RepaintRail(); }
     }
 
-    private string _appliedQuery = "";
-
-    /// <summary>按名字过滤当前页签（标题、主标题、原名、副标题里包含即算），整面墙翻牌换成结果。</summary>
-    private void ApplySearch()
+    /// <summary>只关面板：缝翻回竖条（焦点在竖条里就落在放大镜上）。</summary>
+    private void CloseSearch()
     {
-        if (_stack.Count == 0 || _searchQuery == _appliedQuery) { RepaintRail(); return; }
-        _appliedQuery = _searchQuery;
-        while (_stack.Count > 1) _stack.RemoveAt(_stack.Count - 1);
-        var all = _lib.HomeTabs[_tabIndex].Items();
-        var q = _searchQuery;
-        var items = q.Length == 0 ? all : all.Where(i =>
-            Contains(i.Title, q) || Contains(i.Main, q) || Contains(i.Kicker, q) || Contains(i.Tail, q) || Contains(i.Subtitle, q)).ToList();
-        _railModel.Matches = q.Length == 0 ? -1 : items.Count;
-        if (_expandedKey != null) Collapse(false);
+        if (!_searchOpen) return;
+        _searchOpen = false;
+        _searchTyping = false;
+        HideSearchBox();
+        _rootEl.Focus(FocusState.Programmatic);
+        if (_stack.Count == 1 && CurrentLayer.Home)
+        {
+            TweenSeam(SeamHome);
+            FlipSeam(SeamHome);
+            if (_railFocused) { _railFocus = _rail.Items.FindIndex(i => i.Kind == RailKind.Search); RepaintRail(); }
+        }
+    }
+
+    private void HideSearchBox()
+    {
+        if (_searchBox != null) _searchBox.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>提交：在整个游戏库里按名字找（标题、主标题、原名、副标题、开发商），结果压成一层封面墙。</summary>
+    private void SubmitSearch()
+    {
+        if (!_searchOpen || _searchBox == null) return;
+        var q = _searchBox.Text.Trim();
+        if (q.Length == 0) { FocusSearchBox(); return; }
+        var all = _lib.HomeTabs.Count > 0 ? _lib.HomeTabs[0].Items() : _lib.Games;   // 「全部」：最近玩过的在前
+        var items = all.Where(i => Contains(i.Title, q) || Contains(i.Main, q) || Contains(i.Kicker, q) || Contains(i.Tail, q) || Contains(i.Subtitle, q)).ToList();
+        Log.Info($"search \"{q}\": {items.Count}");
+        if (items.Count == 0) { Toast($"没有找到「{q}」"); FocusSearchBox(); return; }
         Sync();
         var start = SlotNearSeam();
-        _stack[0] = new Layer { Id = $"home:{_lib.HomeTabs[_tabIndex].Id}", Title = "游戏库", Items = items, Layout = Content.Infinite(items.Count, start), Home = true };
-        SwapContent(new FlipOrigin.Line(_anchorX));
-        FocusKey = start?.Key;
-        RepaintRail();
+        if (start == null) return;
+        _searchOpen = false;
+        _searchTyping = false;
+        HideSearchBox();
+        _rootEl.Focus(FocusState.Programmatic);
+        _railFocused = false;
+        _railFocus = -1;
+        // 结果墙是有限的方块矩阵（不像合集那样循环铺满）：缝右边的格子按离起点的远近排名，第 0 名就是起点那格，
+        // 往外一圈圈放，放完为止，其余格子空着
+        int anchorCol = BoundaryColumn(_anchorX);
+        var cands = new List<Slot>();
+        for (double span = 1600; ; span *= 1.6)
+        {
+            cands = SlotsIn(new Bounds(_anchorX, _anchorX + span * 2, start.Cy - span, start.Cy + span), 6000, new List<Slot>())
+                .Where(s => s.Column >= anchorCol).ToList();
+            if (cands.Count >= items.Count * 2 || span > 60000) break;
+        }
+        // 面板已经是完整宽度：开口不用再动，缝直接翻面成「游戏库 › 搜索」信息条，墙从缝边翻牌换成结果
+        PushLayer(start, new Layer
+        {
+            Id = $"search:{q}", Title = q, Items = items, Layout = Content.Finite(cands, items.Count, start.Cx, start.Cy, start.Key), Home = false,
+            Crumbs = new[] { "游戏库", "搜索" },
+        });
     }
 
     private static bool Contains(string? s, string q) => s != null && s.Contains(q, StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>搜索框（XAML TextBox，为了中文输入法）放在竖条里画好的框上。</summary>
+    /// <summary>搜索面板里的手柄操作（焦点在面板里时）。</summary>
+    private bool SearchMove(Direction dir)
+    {
+        if (dir is Direction.Left or Direction.Right) { ExitRail(dir == Direction.Left); return true; }
+        int next = Math.Clamp(_searchFocus + (dir == Direction.Down ? 1 : -1), 0, 2);
+        if (next != _searchFocus) { _searchFocus = next; RepaintRail(); }
+        return true;
+    }
+
+    private void SearchActivate()
+    {
+        switch (_searchFocus)
+        {
+            case 0: CloseSearch(); break;
+            case 1: FocusSearchBox(); break;
+            default: SubmitSearch(); break;
+        }
+    }
+
+    /// <summary>鼠标点在搜索面板上。</summary>
+    private void SearchClick(double lx, double ly)
+    {
+        if (_searchLayout is not { } l) return;
+        var p = new Windows.Foundation.Point(lx, ly);
+        if (l.Back.Contains(p) || l.Close.Contains(p) || l.Clear.Contains(p)) CloseSearch();
+        else if (l.Field.Contains(p)) FocusSearchBox();
+        else if (l.Submit.Contains(p)) { _railFocused = true; _searchFocus = 2; SubmitSearch(); }
+    }
+
+    /// <summary>输入框（XAML TextBox，为了中文输入法）叠在面板画好的框里；开口还在动 / 相机还在走的时候先藏着，停了再放。</summary>
     private void PlaceSearchBox()
     {
-        if (_searchBox == null || !_searchOpen) return;
-        var it = _rail.Items.FirstOrDefault(i => i.Kind == RailKind.SearchField);
+        if (_searchBox == null) return;
+        if (!_searchOpen || _searchLayout is not { } l) { HideSearchBox(); return; }
         Sync();
+        if (_seamTween != null || _camX != null || _camY != null)
+        {
+            HideSearchBox();
+            if (!_placePending)
+            {
+                _placePending = true;
+                After(Math.Max(Motion.SeamMs, Motion.CameraMs) + 30, () => { _placePending = false; PlaceSearchBox(); });
+            }
+            return;
+        }
         var geo = SeamGeometry(_anchorX, _center, _openWidth, View);
-        if (it == null || geo.Width < Rail.HomeWidth * 0.6) { _searchBox.Visibility = Visibility.Collapsed; return; }
+        if (geo.Width < SeamFull * 0.95) { HideSearchBox(); return; }
+        _searchBox.Width = l.Input.Width;
+        Canvas.SetLeft(_searchBox, geo.ScreenX - SeamFull / 2 + l.Input.X);
+        Canvas.SetTop(_searchBox, l.Input.Y);
         _searchBox.Visibility = Visibility.Visible;
-        double left = geo.ScreenX - Rail.HomeWidth / 2 + it.Bounds.X + 4;
-        Canvas.SetLeft(_searchBox, left);
-        Canvas.SetTop(_searchBox, it.Bounds.Y);
     }
 
     // ---------------- 动态背景 ----------------
@@ -458,7 +595,7 @@ public sealed partial class WallStage
 
 public sealed partial class WallStage
 {
-    /// <summary>截图自测用（--state=rail|settings|search|railtab）：把竖条摆到某个状态。</summary>
+    /// <summary>截图自测用（--state=rail|settings|search|searchresults|railtab）：把竖条摆到某个状态。</summary>
     internal void RailTestState(string s)
     {
         switch (s)
@@ -482,7 +619,13 @@ public sealed partial class WallStage
                 EnterRail(0, null);
                 _railFocus = _rail.Items.FindIndex(i => i.Kind == RailKind.Search);
                 Activate();
-                if (_searchBox != null) _searchBox.Text = "命运";
+                After(700, () => { if (_searchBox != null) _searchBox.Text = "命运"; });
+                break;
+            case "searchresults":
+                EnterRail(0, null);
+                _railFocus = _rail.Items.FindIndex(i => i.Kind == RailKind.Search);
+                Activate();
+                After(700, () => { if (_searchBox != null) _searchBox.Text = "命运"; SubmitSearch(); });
                 break;
         }
     }
@@ -588,6 +731,7 @@ public sealed partial class WallStage
         double t = Math.Clamp((width - homeW) / Math.Max(1, View.Width - homeW), 0, 1);
         double center = home + (View.Width / 2 - home) * t;
         _backdrop.SetStrip(center - width / 2, width);
+        if (_searchOpen) PlaceSearchBox();   // 缝挪了，输入框跟着（在动时先藏起来）
         StartBackdropLoop();   // 背景停着时开口变了，也要把新露出来的那块补画上
     }
 }

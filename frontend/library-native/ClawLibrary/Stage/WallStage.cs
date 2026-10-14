@@ -40,6 +40,8 @@ public sealed partial class WallStage : IDisposable
         public required List<LibraryItem> Items;
         public required WallLayout Layout;
         public required bool Home;
+        /// <summary>缝里信息条的面包屑（合集：游戏库；搜索结果：游戏库 › 搜索）。</summary>
+        public IReadOnlyList<string> Crumbs = new[] { "游戏库" };
         public (Center center, SlotKey? focus)? Saved;
     }
 
@@ -936,12 +938,19 @@ public sealed partial class WallStage : IDisposable
 
     private void Push(Slot slot, LibraryItem item)
     {
+        var items = (item.Children ?? new()).Select(Lookup).Where(i => i != null).Cast<LibraryItem>().ToList();
+        PushLayer(slot, new Layer { Id = item.Id, Title = item.Title, Items = items, Layout = Content.Infinite(items.Count, slot), Home = false });
+    }
+
+    /// <summary>进一层（合集、搜索结果）：缝展开成信息条并翻面，墙从 slot 处翻牌换成这一层的内容。</summary>
+    private void PushLayer(Slot slot, Layer layer)
+    {
         if (_expandedKey != null) Collapse(false);
+        if (_searchOpen) { _searchOpen = false; _searchTyping = false; HideSearchBox(); }
         var cur = CurrentLayer;
         Sync();
         cur.Saved = (_center, FocusKey);
-        var items = (item.Children ?? new()).Select(Lookup).Where(i => i != null).Cast<LibraryItem>().ToList();
-        _stack.Add(new Layer { Id = item.Id, Title = item.Title, Items = items, Layout = Content.Infinite(items.Count, slot), Home = false });
+        _stack.Add(layer);
         var target = ReopenSeamIfGone(SeamFull);
         var plan = PlanSeam(target, SeamFull, View, _anchorX);
         target = new Center(plan.CenterX, target.Y);
@@ -977,6 +986,7 @@ public sealed partial class WallStage : IDisposable
         MarkInput();
         if (_stack.Count > 1) return;
         if (_expandedKey != null) Collapse(false);
+        if (_searchOpen) CloseSearch();
         _tabIndex = (_tabIndex + delta + _lib.HomeTabs.Count) % _lib.HomeTabs.Count;
         var tab = _lib.HomeTabs[_tabIndex];
         var items = tab.Items();
@@ -995,9 +1005,16 @@ public sealed partial class WallStage : IDisposable
     {
         var layer = CurrentLayer;
         float h = (float)View.Height;
-        ChromeArt art = layer.Home
+        ChromeArt art;
+        if (layer.Home && _searchOpen)
+        {
+            var (a, lay) = Chrome.SeamSearch(h, _railFocused ? _searchFocus : -1, _searchTyping);
+            art = a;
+            _searchLayout = lay;
+        }
+        else art = layer.Home
             ? _rail.Draw(RailModelNow(), h, _railFocused ? _railFocus : -1)
-            : Chrome.SeamFull(layer.Title, new[] { "游戏库" }, layer.Items.Count, layer.Items.Sum(i => i.PlaytimeH ?? 0), h, _railFocused);
+            : Chrome.SeamFull(layer.Title, layer.Crumbs, layer.Items.Count, layer.Items.Sum(i => i.PlaytimeH ?? 0), h, _railFocused);
         var brush = (CompositionSurfaceBrush)target.Brush;
         (brush.Surface as IDisposable)?.Dispose();
         brush.Surface = art.Surface;
@@ -1009,7 +1026,7 @@ public sealed partial class WallStage : IDisposable
     private void RenderSeamContent()
     {
         var front = _seamFront ? _seamB : _seamA;
-        if (CurrentLayer.Home && _seamTween == null) { _contentWidth = SeamHome; _cam.StopAnimation("cw"); _cam.InsertScalar("cw", (float)SeamHome); }
+        if (CurrentLayer.Home && !_searchOpen && _seamTween == null) { _contentWidth = SeamHome; _cam.StopAnimation("cw"); _cam.InsertScalar("cw", (float)SeamHome); }
         var t = NowMs;
         PaintSeam(front);
         var t2 = NowMs;
@@ -1149,6 +1166,7 @@ public sealed partial class WallStage : IDisposable
 
     private void OnKey(KeyRoutedEventArgs e)
     {
+        if (e.OriginalSource is Microsoft.UI.Xaml.Controls.TextBox) return;   // 搜索框里打字不当快捷键
         bool repeat = e.KeyStatus.RepeatCount > 1 || e.KeyStatus.WasKeyDown;
         switch (e.Key)
         {
@@ -1222,14 +1240,19 @@ public sealed partial class WallStage : IDisposable
         var t = _dq.CreateTimer();
         t.Interval = TimeSpan.FromMilliseconds(Math.Max(1, ms));
         t.IsRepeating = false;
+        // 计时器没人引用会被回收、到点也不响：响之前一直挂在这里
+        _pendingTimers.Add(t);
         t.Tick += (s, _) =>
         {
             s.Stop();
+            _pendingTimers.Remove(s);
             try { action(); } catch (Exception ex) { Log.Error("timer", ex); }
         };
         t.Start();
         return t;
     }
+
+    private readonly HashSet<DispatcherQueueTimer> _pendingTimers = new();
 
     public void Dispose()
     {

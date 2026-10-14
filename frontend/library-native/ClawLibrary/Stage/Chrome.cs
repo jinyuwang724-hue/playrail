@@ -193,6 +193,117 @@ public sealed class Chrome
         });
     }
 
+    // ---------------- 缝：搜索面板 ----------------
+
+    /// <summary>搜索面板里能聚焦 / 能点的几处（面板坐标，DIP）。Input 是输入框里放文字的那块（XAML TextBox 叠在上面）。</summary>
+    public sealed record SearchPanelLayout(Windows.Foundation.Rect Back, Windows.Foundation.Rect Close, Windows.Foundation.Rect Field,
+        Windows.Foundation.Rect Input, Windows.Foundation.Rect Clear, Windows.Foundation.Rect Submit);
+
+    public const string SearchPlaceholder = "搜索游戏库";
+    private const string SearchHint = "按名字搜索整个游戏库（标题、原名、开发商），结果铺成一面封面墙；不会收窄当前这面墙。";
+
+    /// <summary>
+    /// 首页窄缝临时展开成的搜索面板（照 folia 书库首页缝里的全局搜索框：BravaisSeamSearch + bravaisHome.css）。
+    /// 自上而下：面包屑行（‹ · 游戏库 › 搜索 ·〔关闭搜索〕）→ 带框的输入框（放大镜、输入、×）→ 提示 → 主按钮「搜索」。
+    /// 间距照 .bravais-seam-search（padding 22 22 0，gap 16）、.bravais-search-form（高 44、圆角 12、描边 24 %、底 5 %，
+    /// 有焦点时描边换强调色）、.bravais-search-hint（12 px、行高 1.45、上边 -6）、.bravais-chrome-button.is-primary（高 44、
+    /// 圆角 12、15 px 粗体、底 16 %）。focus：手柄焦点在哪一项（0 关闭搜索、1 输入框、2 搜索按钮，-1 不在面板里）。
+    /// </summary>
+    public (ChromeArt Art, SearchPanelLayout Layout) SeamSearch(float height, int focus, bool typing)
+    {
+        const float W = 300, PadX = 22, PadTop = 22, Gap = 16;
+        float inner = W - PadX * 2;
+        var iconFont = new FontSpec("Segoe Fluent Icons", 400);
+        // 面包屑行（min-height 32）
+        var back = new Windows.Foundation.Rect(PadX, PadTop, 32, 32);
+        var closeL = H("关闭搜索", TextKit.Ui(400), 11, 0.08f * 11);
+        var (clx, cly, clw, clh) = Box(closeL);
+        float pillW = clw + 18 + 2, pillH = clh + 6 + 2;
+        var close = new Windows.Foundation.Rect(W - PadX - pillW, PadTop + 16 - pillH / 2, pillW, pillH);
+        // 输入框（44 高）
+        float formY = PadTop + 32 + Gap;
+        var field = new Windows.Foundation.Rect(PadX, formY, inner, 44);
+        var clear = new Windows.Foundation.Rect(field.Right - 6 - 32, formY + 6, 32, 32);
+        float inputX = PadX + 12 + 16 + 8;
+        var input = new Windows.Foundation.Rect(inputX, formY + 1, clear.X - 4 - inputX, 42);
+        // 提示（gap 16、margin-top -6）
+        float hintY = (float)field.Bottom + Gap - 6;
+        var hint = TextKit.Layout(_g.Device, SearchHint, TextKit.Ui(400), 12, inner, CanvasHorizontalAlignment.Left, 0, 12 * 1.45f, maxLines: 4);
+        var (hbx, hby, _, hbh) = Box(hint);
+        // 主按钮「搜索」
+        var label = H("搜索", TextKit.Ui(700), 15);
+        var (lbx, lby, lbw, lbh) = Box(label);
+        float btnW = 16 + 18 + 8 + lbw + 16;
+        var submit = new Windows.Foundation.Rect(PadX, hintY + hbh + Gap, btnW, 44);
+        var layout = new SearchPanelLayout(back, close, field, input, clear, submit);
+
+        var art = Draw(W, height, ds =>
+        {
+            var soft = Theme.SeamInkSoft;
+            // ‹ 与面包屑
+            ds.FillCircle((float)back.X + 16, (float)back.Y + 16, 16, Gfx.Rgba(255, 255, 255, 0.08));
+            var bl = H("‹", TextKit.Ui(400), 18);
+            var (bx, by, bw, bh) = Box(bl);
+            ds.DrawTextLayout(bl, (float)back.X + 16 - bw / 2 - bx, (float)back.Y + 16 - bh / 2 - by, Theme.Ink);
+            var crumb = H("游戏库 › 搜索", TextKit.Ui(400), 11, 0.08f * 11);
+            var (cx0, cy0, _, ch) = Box(crumb);
+            ds.DrawTextLayout(crumb, (float)back.Right + 6 - cx0, PadTop + 16 - ch / 2 - cy0, soft);
+            // 关闭搜索（.bravais-seam-level：静止无框，焦点时 16 % 底 + 描边）
+            if (focus == 0)
+            {
+                ds.FillRoundedRectangle(close, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.16));
+                ds.DrawRoundedRectangle(close, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.26), 1);
+            }
+            ds.DrawTextLayout(closeL, (float)close.X + 10 - clx, (float)close.Y + 4 - cly, focus == 0 ? Theme.Ink : soft);
+
+            // 输入框
+            ds.FillRoundedRectangle(field, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.05));
+            var inset = new Windows.Foundation.Rect(field.X + 0.5, field.Y + 0.5, field.Width - 1, field.Height - 1);
+            ds.DrawRoundedRectangle(inset, 11.5f, 11.5f, typing || focus == 1 ? Theme.Accent : Gfx.WithAlpha(Theme.Ink, 0.24), 1);
+            var mag = H("", iconFont, 16);
+            var (mx, my, mw, mh) = Box(mag);
+            ds.DrawTextLayout(mag, PadX + 12 + 8 - (float)(mag.DrawBounds.X + mag.DrawBounds.Width / 2), (float)field.Y + 22 - mh / 2 - my, Gfx.WithAlpha(Theme.Ink, 0.7));
+            var x = H("", iconFont, 14);
+            var (xx, xy, xw, xh) = Box(x);
+            ds.DrawTextLayout(x, (float)(clear.X + 16) - (float)(x.DrawBounds.X + x.DrawBounds.Width / 2), (float)(clear.Y + 16) - xh / 2 - xy, Gfx.WithAlpha(Theme.Ink, 0.8));
+
+            // 提示
+            ds.DrawTextLayout(hint, PadX - hbx, hintY - hby, soft);
+
+            // 主按钮
+            ds.FillRoundedRectangle(submit, 12, 12, Gfx.WithAlpha(Theme.Ink, focus == 2 ? 0.22 : 0.16));
+            if (focus == 2) ds.DrawRoundedRectangle(submit, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.26), 1);
+            var si = H("", iconFont, 18);
+            var (sx, sy, sw, sh) = Box(si);
+            ds.DrawTextLayout(si, (float)submit.X + 16 + 9 - (float)(si.DrawBounds.X + si.DrawBounds.Width / 2), (float)submit.Y + 22 - sh / 2 - sy, Theme.Ink);
+            ds.DrawTextLayout(label, (float)submit.X + 16 + 18 + 8 - lbx, (float)submit.Y + 22 - lbh / 2 - lby, Theme.Ink);
+
+            // 手柄焦点：与竖条同一种白色描边（输入框、按钮各自的圆角）
+            // 正在打字时输入框自己换了强调色描边（:focus-within），不再叠一圈手柄焦点
+            var fr = focus switch { 1 when !typing => field, 2 => submit, _ => (Windows.Foundation.Rect?)null };
+            if (fr is { } f)
+            {
+                var rr = new Windows.Foundation.Rect(f.X - 3, f.Y - 3, f.Width + 6, f.Height + 6);
+                ds.DrawRoundedRectangle(new Windows.Foundation.Rect(rr.X + 1, rr.Y + 1, rr.Width - 2, rr.Height - 2), 14, 14, Theme.Ink, 2);
+            }
+
+            // 底部按键提示（手柄）
+            float keysY = height - 20 - 22, kx = PadX;
+            foreach (var (k, t) in new[] { ("A", "选择"), ("B", "关闭搜索") })
+            {
+                ds.FillCircle(kx + 11, keysY + 11, 11, Gfx.WithAlpha(Theme.Ink, 0.55 * 0.22));
+                var kl = H(k, TextKit.Ui(800), 11);
+                var (kbx, kby, kbw, kbh) = Box(kl);
+                ds.DrawTextLayout(kl, kx + 11 - kbw / 2 - kbx, keysY + 11 - kbh / 2 - kby, soft);
+                var ll = H(t, TextKit.Ui(700), 12);
+                var (lx, ly, lw, lh) = Box(ll);
+                ds.DrawTextLayout(ll, kx + 22 + 6 - lx, keysY + 11 - lh / 2 - ly, soft);
+                kx += 22 + 6 + lw + 14;
+            }
+        });
+        return (art, layout);
+    }
+
     // ---------------- 边缘标签 / 提示条 / 读数 ----------------
 
     public ChromeArt EdgeTab(string text, bool left, float maxHeight)
