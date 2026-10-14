@@ -1,0 +1,699 @@
+// 墙上的一张卡（照 src/stage/tile.ts）。视觉树：
+//   El（位置 / 尺寸，世界 px）
+//    └ Persp（原点在卡中心，带 1400px 透视；焦点放大 pop 在这里）
+//       └ Pivot（翻牌绕 Y 轴转、整墙波次的抬起 / 缩放 / 淡出）
+//          └ Face（一份内容：底色、封面、渐变、染色、角标、标题；换内容时新旧两份叠着，在合成线程按时刻切换）
+// 所有动画都交给合成线程；UI 线程只在换内容、换尺寸时建 / 画一次。
+using System.Numerics;
+using ClawLibrary.Data;
+using ClawLibrary.Engine;
+using Microsoft.UI.Composition;
+using Microsoft.UI.Xaml.Media;
+using Windows.UI;
+using Colors = Microsoft.UI.Colors;
+
+namespace ClawLibrary.Stage;
+
+public sealed class Tile : IDisposable
+{
+    private readonly WallStage _s;
+    private Gfx G => _s.G;
+    public readonly ContainerVisual El;
+    private readonly ContainerVisual _persp;
+    private readonly ContainerVisual _pivot;
+    private readonly CompositionPropertySet _props;
+    public Slot Slot;
+    /// <summary>挂在哪半边墙（0 = 缝左，1 = 缝右）。</summary>
+    public int Side;
+    /// <summary>此刻摆放的目标矩形（让位动画中是终点）。</summary>
+    public Engine.Rect Rect;
+    /// <summary>此刻画着的内容（id），以及目标内容。</summary>
+    public string? Shown, Target;
+    public bool Expanded { get; private set; }
+    public bool Focused { get; private set; }
+
+    private Face? _face;
+    private readonly List<(Face face, long until)> _leaving = new();
+    private long _animUntil;
+
+    // 让位动画（用来在途中打断时算出当前矩形）
+    private Engine.Rect _animFrom, _animTo;
+    private long _animStart;
+    private double _animMs;
+    private bool _rectAnimating;
+
+    public Tile(WallStage stage, Slot slot)
+    {
+        _s = stage;
+        Slot = slot;
+        Rect = slot.Rect;
+        El = G.C.CreateContainerVisual();
+        _persp = G.Container();
+        _persp.RelativeOffsetAdjustment = new Vector3(0.5f, 0.5f, 0);
+        _persp.TransformMatrix = Perspective((float)Motion.Flip.Perspective);
+        _pivot = G.Container();
+        _pivot.RotationAxis = new Vector3(0, 1, 0);
+        _persp.Children.InsertAtTop(_pivot);
+        El.Children.InsertAtTop(_persp);
+        _props = G.C.CreatePropertySet();
+        _props.InsertScalar("pop", 0);
+        Place(Rect);
+    }
+
+    public static Matrix4x4 Perspective(float d) => new(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -1 / d, 0, 0, 0, 1);
+
+    public void Place(Engine.Rect r)
+    {
+        StopRectAnimation();
+        Rect = r;
+        El.Offset = new Vector3((float)r.X, (float)r.Y, 0);
+        El.Size = new Vector2((float)r.Width, (float)r.Height);
+    }
+
+    private void StopRectAnimation()
+    {
+        if (!_rectAnimating) return;
+        El.StopAnimation("Offset");
+        El.StopAnimation("Size");
+        _rectAnimating = false;
+        _face?.EndScale();
+    }
+
+    /// <summary>此刻实际画在哪（让位动画途中按同一条曲线算）。</summary>
+    public Engine.Rect CurrentRect(long nowMs)
+    {
+        if (!_rectAnimating) return Rect;
+        double t = Math.Min(1, (nowMs - _animStart) / _animMs);
+        double e = Motion.ReflowEase(t);
+        return new Engine.Rect(
+            _animFrom.X + (_animTo.X - _animFrom.X) * e, _animFrom.Y + (_animTo.Y - _animFrom.Y) * e,
+            _animFrom.Width + (_animTo.Width - _animFrom.Width) * e, _animFrom.Height + (_animTo.Height - _animFrom.Height) * e);
+    }
+
+    /// <summary>让位：从 from 按弹簧曲线走到 to（合成线程）。标题按终点尺寸重画，途中随卡宽缩放。</summary>
+    public void AnimateRect(Engine.Rect from, Engine.Rect to, double ms, long nowMs)
+    {
+        StopRectAnimation();
+        _animFrom = from; _animTo = to; _animStart = nowMs; _animMs = ms; _rectAnimating = true;
+        Rect = to;
+        var off = G.SampledV3(new Vector3((float)from.X, (float)from.Y, 0), new Vector3((float)to.X, (float)to.Y, 0), ms, Motion.ReflowEase);
+        var size = G.SampledV2(new Vector2((float)from.Width, (float)from.Height), new Vector2((float)to.Width, (float)to.Height), ms, Motion.ReflowEase);
+        El.Offset = new Vector3((float)from.X, (float)from.Y, 0);
+        El.Size = new Vector2((float)from.Width, (float)from.Height);
+        El.StartAnimation("Offset", off);
+        El.StartAnimation("Size", size);
+        _face?.Relayout(to, scaleWith: El);
+    }
+
+    /// <summary>让位结束：定在终点。</summary>
+    public void FinishRect()
+    {
+        if (!_rectAnimating) return;
+        StopRectAnimation();
+        Place(Rect);
+    }
+
+    // ---------------- 内容 ----------------
+
+    /// <summary>立即画成目标内容（不动画）。</summary>
+    public void Show(string? id)
+    {
+        Cancel();
+        Target = id;
+        Draw(id);
+    }
+
+    public void SetExpanded(bool on)
+    {
+        if (Expanded == on) return;
+        Expanded = on;
+        Draw(Shown);
+        ApplyPop(true);
+    }
+
+    private void Draw(string? id)
+    {
+        Shown = id;
+        var old = _face;
+        _face = new Face(_s, this, id, Rect, Expanded);
+        _face.ApplyFocus(Focused, Expanded, animate: false);
+        _pivot.Children.InsertAtTop(_face.Root);
+        if (old != null) { _pivot.Children.Remove(old.Root); old.Dispose(); }
+    }
+
+    /// <summary>尺寸定下来之后（让位动画结束）按新宽高比换图；同一张图只更新取景。</summary>
+    public void FitArt() => _face?.FitArt(Rect);
+
+    /// <summary>标题样式切换 / 栅格倍率变了：按当前尺寸重画文字。</summary>
+    public void Redraw() => _face?.Relayout(Rect, null);
+
+    public void SetFocused(bool on)
+    {
+        if (Focused == on) return;
+        Focused = on;
+        _face?.ApplyFocus(on, Expanded, animate: !_s.Reduced);
+        ApplyPop(!_s.Reduced);
+    }
+
+    /// <summary>焦点放大：四边各外扩一个 gap（缩放量随卡尺寸，让位途中也对）。展开态不放大。</summary>
+    private void ApplyPop(bool animate)
+    {
+        float target = Focused && !Expanded ? 1 : 0;
+        var expr = G.C.CreateExpressionAnimation("Vector3(1 + p.pop * 16 / Max(1, el.Size.X), 1 + p.pop * 16 / Max(1, el.Size.Y), 1)");
+        expr.SetReferenceParameter("p", _props);
+        expr.SetReferenceParameter("el", El);
+        _persp.StartAnimation("Scale", expr);
+        if (animate) _props.StartAnimation("pop", G.Scalar(CurrentPop(), target, Motion.PopMs, Bezier.EaseOut));
+        else { _props.StopAnimation("pop"); _props.InsertScalar("pop", target); }
+        _popTarget = target;
+    }
+
+    private float _popTarget;
+    private float CurrentPop() { _props.TryGetScalar("pop", out float v); return v; }
+
+    public void Cancel()
+    {
+        _pivot.StopAnimation("RotationAngleInDegrees");
+        _pivot.StopAnimation("Offset");
+        _pivot.StopAnimation("Scale");
+        _pivot.StopAnimation("Opacity");
+        _pivot.RotationAngleInDegrees = 0;
+        _pivot.Offset = Vector3.Zero;
+        _pivot.Scale = Vector3.One;
+        _pivot.Opacity = 1;
+        foreach (var (f, _) in _leaving) { _pivot.Children.Remove(f.Root); f.Dispose(); }
+        _leaving.Clear();
+        if (_face != null) { _face.Root.StopAnimation("Opacity"); _face.Root.Opacity = 1; }
+        _animUntil = 0;
+    }
+
+    /// <summary>旧内容在合成线程上按时刻收起（动画结束后由舞台调 Sweep 拿掉）。</summary>
+    private void SwapAt(double delay, double total, double at, string? to)
+    {
+        Target = to;
+        Draw(to);   // 新内容立刻建好，先藏着；旧的那份（_pendingOld）按时刻收起
+        double p = Math.Clamp(at / total, 0.0001, 0.9989);
+        var hide = G.C.CreateScalarKeyFrameAnimation();
+        hide.InsertKeyFrame((float)p, 1, G.Linear);
+        hide.InsertKeyFrame((float)p + 0.001f, 0, G.Linear);
+        hide.Duration = Gfx.Ms(total);
+        hide.DelayTime = Gfx.Ms(delay);
+        hide.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+        var show = G.C.CreateScalarKeyFrameAnimation();
+        show.InsertKeyFrame(0, 0, G.Linear);
+        show.InsertKeyFrame((float)p, 0, G.Linear);
+        show.InsertKeyFrame((float)p + 0.001f, 1, G.Linear);
+        show.Duration = Gfx.Ms(total);
+        show.DelayTime = Gfx.Ms(delay);
+        show.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+        _face!.Root.Opacity = 0;
+        _face.Root.StartAnimation("Opacity", show);
+        if (_pendingOld != null)
+        {
+            _pendingOld.Root.StartAnimation("Opacity", hide);
+            _leaving.Add((_pendingOld, _s.NowMs + (long)(delay + total) + 50));
+            _pendingOld = null;
+        }
+        _animUntil = Math.Max(_animUntil, _s.NowMs + (long)(delay + total) + 50);
+    }
+
+    private Face? _pendingOld;
+
+    /// <summary>把当前内容留着当「离场」那份，Draw 不要释放它。</summary>
+    private void DetachForSwap()
+    {
+        _pendingOld = _face;
+        _face = null;
+    }
+
+    /// <summary>翻牌：转到 90° → 换内容 → 从另一侧转回来。</summary>
+    public void Flip(string? to, double delay, int direction, bool reduced)
+    {
+        Cancel();
+        DetachForSwap();
+        if (reduced)
+        {
+            double half = Motion.ReducedFadeMs / 2;
+            SwapAtFade(to, half);
+            return;
+        }
+        double outMs = Motion.Flip.OutMs, inMs = Motion.Flip.InMs, total = outMs + inMs;
+        float p = (float)(outMs / total);
+        var rot = G.C.CreateScalarKeyFrameAnimation();
+        rot.InsertKeyFrame(0, 0, G.Linear);
+        rot.InsertKeyFrame(p, 90 * direction, G.Ease(Motion.Flip.OutEase));
+        rot.InsertKeyFrame(p + 0.001f, -90 * direction, G.Linear);
+        rot.InsertKeyFrame(1, 0, G.Ease(Motion.Flip.InEase));
+        rot.Duration = Gfx.Ms(total);
+        rot.DelayTime = Gfx.Ms(delay);
+        rot.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+        _pivot.StartAnimation("RotationAngleInDegrees", rot);
+        SwapAt(delay, total, outMs, to);
+    }
+
+    /// <summary>降低动态效果：淡出 → 换内容 → 淡入。</summary>
+    private void SwapAtFade(string? to, double half)
+    {
+        double total = half * 2;
+        var fade = G.C.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(0, 1, G.Linear);
+        fade.InsertKeyFrame(0.5f, 0, G.Ease(Bezier.EaseIn));
+        fade.InsertKeyFrame(1, 1, G.Ease(Bezier.EaseOut));
+        fade.Duration = Gfx.Ms(total);
+        _pivot.StartAnimation("Opacity", fade);
+        SwapAt(0, total, half, to);
+    }
+
+    /// <summary>整墙波次：抬起淡出 → 换内容 → 等到自己的时刻落回。</summary>
+    public void Wave(string? to, double outDelay, double inDelay, bool reduced)
+    {
+        if (reduced) { Flip(to, 0, 1, true); return; }
+        Cancel();
+        DetachForSwap();
+        double outMs = Motion.Wave.OutMs, inMs = Motion.Wave.InMs;
+        double inStart = Math.Max(outMs, inDelay - outDelay);
+        double total = inStart + inMs;
+        float pOut = (float)(outMs / total), pIn = (float)(inStart / total);
+        var lifted = new Vector3(0, -(float)Motion.Wave.Lift, 0);
+        float sc = (float)Motion.Wave.Scale;
+
+        var off = G.C.CreateVector3KeyFrameAnimation();
+        off.InsertKeyFrame(0, Vector3.Zero, G.Linear);
+        off.InsertKeyFrame(pOut, lifted, G.Ease(Motion.Wave.OutEase));
+        if (pIn > pOut) off.InsertKeyFrame(pIn, lifted, G.Linear);
+        off.InsertKeyFrame(1, Vector3.Zero, G.Ease(Motion.Wave.InEase));
+        var scale = G.C.CreateVector3KeyFrameAnimation();
+        scale.InsertKeyFrame(0, Vector3.One, G.Linear);
+        scale.InsertKeyFrame(pOut, new Vector3(sc, sc, 1), G.Ease(Motion.Wave.OutEase));
+        if (pIn > pOut) scale.InsertKeyFrame(pIn, new Vector3(sc, sc, 1), G.Linear);
+        scale.InsertKeyFrame(1, Vector3.One, G.Ease(Motion.Wave.InEase));
+        var op = G.C.CreateScalarKeyFrameAnimation();
+        op.InsertKeyFrame(0, 1, G.Linear);
+        op.InsertKeyFrame(pOut, 0, G.Ease(Motion.Wave.OutEase));
+        if (pIn > pOut) op.InsertKeyFrame(pIn, 0, G.Linear);
+        op.InsertKeyFrame(1, 1, G.Ease(Motion.Wave.InEase));
+        foreach (var a in new KeyFrameAnimation[] { off, scale, op })
+        {
+            a.Duration = Gfx.Ms(total);
+            a.DelayTime = Gfx.Ms(outDelay);
+            a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+        }
+        _pivot.StartAnimation("Offset", off);
+        _pivot.StartAnimation("Scale", scale);
+        _pivot.StartAnimation("Opacity", op);
+        SwapAt(outDelay, total, outMs, to);
+    }
+
+    /// <summary>新挂上的卡在整墙入场期间也要落回（保持抬起到自己的时刻）。</summary>
+    public void Land(double delay)
+    {
+        Cancel();
+        float sc = (float)Motion.Wave.Scale;
+        var off = G.C.CreateVector3KeyFrameAnimation();
+        off.InsertKeyFrame(0, new Vector3(0, -(float)Motion.Wave.Lift, 0), G.Linear);
+        off.InsertKeyFrame(1, Vector3.Zero, G.Ease(Motion.Wave.InEase));
+        var scale = G.C.CreateVector3KeyFrameAnimation();
+        scale.InsertKeyFrame(0, new Vector3(sc, sc, 1), G.Linear);
+        scale.InsertKeyFrame(1, Vector3.One, G.Ease(Motion.Wave.InEase));
+        var op = G.C.CreateScalarKeyFrameAnimation();
+        op.InsertKeyFrame(0, 0, G.Linear);
+        op.InsertKeyFrame(1, 1, G.Ease(Motion.Wave.InEase));
+        foreach (var a in new KeyFrameAnimation[] { off, scale, op })
+        {
+            a.Duration = Gfx.Ms(Motion.Wave.InMs);
+            a.DelayTime = Gfx.Ms(delay);
+            a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+        }
+        _pivot.StartAnimation("Offset", off);
+        _pivot.StartAnimation("Scale", scale);
+        _pivot.StartAnimation("Opacity", op);
+        _animUntil = _s.NowMs + (long)(delay + Motion.Wave.InMs) + 50;
+    }
+
+    /// <summary>动画都走完了：拿掉离场的旧内容。</summary>
+    public void Sweep(long now)
+    {
+        for (int i = _leaving.Count - 1; i >= 0; i--)
+            if (now >= _leaving[i].until)
+            {
+                _pivot.Children.Remove(_leaving[i].face.Root);
+                _leaving[i].face.Dispose();
+                _leaving.RemoveAt(i);
+            }
+    }
+
+    public bool Busy(long now) => now < _animUntil || _leaving.Count > 0;
+
+    public void Dispose()
+    {
+        Cancel();
+        _face?.Dispose();
+        _face = null;
+        _pendingOld?.Dispose();
+        El.Children.RemoveAll();
+        El.Dispose();
+        _props.Dispose();
+    }
+
+    // ================================================================
+    // 一份卡面内容
+    // ================================================================
+
+    internal sealed class Face : IDisposable
+    {
+        private readonly WallStage _s;
+        private Gfx G => _s.G;
+        public readonly ContainerVisual Root;
+        private readonly LibraryItem? _item;
+        private readonly bool _expanded;
+        private char? _artKind;
+        private LoadedImageSurface? _image;
+        private CompositionSurfaceBrush? _imageBrush;
+        private SpriteVisual? _ring1, _ring4, _ring5, _shadowCaster, _stack1, _stack2, _tint, _hilite;
+        private ContainerVisual? _ring;
+        private DropShadow? _shadow;
+        private SpriteVisual? _copy, _actions, _badge, _glyph;
+        private TextArt? _copyArt, _actionsArt, _badgeArt, _glyphArt;
+        private readonly ContainerVisual? _inner;
+        private CompositionLinearGradientBrush? _tintBrush;
+
+        public Face(WallStage s, Tile tile, string? id, Engine.Rect r, bool expanded)
+        {
+            _s = s;
+            _expanded = expanded;
+            Root = G.Container();
+            Root.RelativeOffsetAdjustment = new Vector3(-0.5f, -0.5f, 0);
+            _item = id != null ? s.Lookup(id) : null;
+            if (_item == null)
+            {
+                // .face.is-wall：透明 + 1px 内描边（墨色 7%）
+                var edge = Gfx.WithAlpha(TextKit.Ink(), 0.07);
+                foreach (var (ox, oy, rw, rh, w, h) in new (float, float, float, float, float, float)[] { (0, 0, 1, 0, 0, 1), (0, 0, 0, 1, 1, 0), (0, 1, 1, 0, 0, 1), (1, 0, 0, 1, 1, 0) })
+                {
+                    var e = G.Sprite(G.Solid(edge), relative: false);
+                    e.RelativeSizeAdjustment = new Vector2(rw, rh);
+                    e.Size = new Vector2(w, h);
+                    e.RelativeOffsetAdjustment = new Vector3(ox, oy, 0);
+                    e.Offset = new Vector3(ox > 0 ? -1 : 0, oy > 0 ? -1 : 0, 0);
+                    Root.Children.InsertAtTop(e);
+                }
+                return;
+            }
+            var item = _item;
+            var art = item.Art;
+            _artKind = art != null ? PickArt(art, r.Width, r.Height, expanded) : null;
+            var posterBg = Theme.PosterBg;
+
+            // ---- 卡外的装饰：集合叠页边、投影、焦点环（卡面 overflow:hidden 不裁 box-shadow）----
+            if (item.Kind == ItemKind.Collection)
+            {
+                _stack2 = G.Sprite(G.Solid(Gfx.Mix(posterBg, 0.9, TextKit.Ink())));
+                _stack2.Offset = new Vector3(6, 6, 0);
+                _stack1 = G.Sprite(G.Solid(Gfx.Mix(posterBg, 0.8, TextKit.Ink())));
+                _stack1.Offset = new Vector3(3, 3, 0);
+                Root.Children.InsertAtTop(_stack2);
+                Root.Children.InsertAtTop(_stack1);
+            }
+            _shadowCaster = G.Sprite(G.Solid(Colors.Black));
+            _shadowCaster.Opacity = 0;
+            Root.Children.InsertAtTop(_shadowCaster);
+            _ring = G.Container();
+            _ring.Opacity = 0;
+            SpriteVisual Ring(float inflate, Color c)
+            {
+                var sp = G.Sprite(G.Solid(c));
+                sp.Size = new Vector2(inflate * 2, inflate * 2);
+                sp.Offset = new Vector3(-inflate, -inflate, 0);
+                _ring.Children.InsertAtTop(sp);
+                return sp;
+            }
+            _ring5 = Ring(5, Gfx.Rgba(0, 0, 0, 0.38));
+            _ring4 = Ring(4, TextKit.Ink());
+            _ring1 = Ring(1, Gfx.Rgba(0, 0, 0, 0.62));
+            Root.Children.InsertAtTop(_ring);
+
+            // ---- 卡面本身（裁到卡的矩形）----
+            _inner = G.Container();
+            _inner.Clip = G.C.CreateInsetClip();
+            Root.Children.InsertAtTop(_inner);
+            var c = Gfx.Hex(art?.C, posterBg);
+            _inner.Children.InsertAtTop(G.Sprite(G.Solid(_artKind != null ? Gfx.Mix(c, 0.3, Theme.Bg) : posterBg)));
+            if (_artKind is char k)
+            {
+                _imageBrush = G.C.CreateSurfaceBrush();
+                _imageBrush.Stretch = CompositionStretch.UniformToFill;
+                _imageBrush.VerticalAlignmentRatio = 0.5f;
+                SetImage(art!, k, r);
+                _inner.Children.InsertAtTop(G.Sprite(_imageBrush));
+            }
+            else
+            {
+                // 原型封面：按色相生成（真机上只在缺图时出现）
+                double hue = item.Hue;
+                _inner.Children.InsertAtTop(G.Sprite(G.LinearGradient(160, r.Width, r.Height, (0, Gfx.Hsl(hue, 52, 50)), (1, Gfx.Hsl(hue + 40, 45, 18)))));
+                var rad = G.C.CreateRadialGradientBrush();
+                rad.MappingMode = CompositionMappingMode.Relative;
+                rad.EllipseCenter = new Vector2(0.78f, 0.12f);
+                rad.EllipseRadius = new Vector2(1.2f, 0.9f);
+                var hc = Gfx.Hsl(hue + 30, 70, 72, 0.55);
+                rad.ColorStops.Add(G.C.CreateColorGradientStop(0, hc));
+                rad.ColorStops.Add(G.C.CreateColorGradientStop(0.6f, Gfx.WithAlpha(hc, 0)));
+                _inner.Children.InsertAtTop(G.Sprite(rad));
+                _glyphArt = s.Text.Glyph(item.Title, tile.Slot.Width, tile.Slot.Height, r.Width, r.Height, expanded);
+                _glyph = TextSprite(_glyphArt, r, anchorBottom: false);
+                _inner.Children.InsertAtTop(_glyph);
+            }
+            foreach (var sh in ShadeSprites(r)) _inner.Children.InsertAtTop(sh);
+            // 焦点顶部 10% 高光
+            _hilite = G.Sprite(G.LinearGradient(180, r.Width, r.Height, (0, Gfx.Rgba(255, 255, 255, 0.10)), (0.6, Gfx.Rgba(255, 255, 255, 0))));
+            _hilite.Opacity = 0;
+            _inner.Children.InsertAtTop(_hilite);
+            // 主题染色压住背景卡，焦点 / 展开时褪掉
+            _tintBrush = G.LinearGradient(145, r.Width, r.Height, (0, Theme.TintA), (1, Theme.TintB));
+            _tint = G.Sprite(_tintBrush);
+            _tint.Opacity = (float)Theme.TintOpacity;
+            _inner.Children.InsertAtTop(_tint);
+            _badgeArt = s.Text.Badge(item.Badge, item.Kind == ItemKind.Collection);
+            _badge = TextSprite(_badgeArt, r, anchorBottom: false);
+            _inner.Children.InsertAtTop(_badge);
+            BuildCopy(r, null);
+        }
+
+        private IEnumerable<SpriteVisual> ShadeSprites(Engine.Rect r)
+        {
+            bool b = _s.Style == TitleStyle.B;
+            Color K(double a) => Gfx.Rgba(0, 0, 0, a);
+            if (_expanded && b)
+            {
+                yield return G.Sprite(G.LinearGradient(0, r.Width, r.Height, (0, K(.86)), (.14, K(.62)), (.30, K(.26)), (.46, K(0))));
+                yield return G.Sprite(G.LinearGradient(90, r.Width, r.Height, (0, K(.88)), (.52, K(.50)), (1, K(.08))));
+            }
+            else if (_expanded)
+                yield return G.Sprite(G.LinearGradient(0, r.Width, r.Height, (0, K(.88)), (.18, K(.66)), (.38, K(.24)), (.55, K(0))));
+            else if (_artKind != null && b)
+                yield return G.Sprite(G.LinearGradient(180, r.Width, r.Height, (.52, K(0)), (1, K(.78))));
+            else if (_artKind != null)
+                yield return G.Sprite(G.LinearGradient(180, r.Width, r.Height, (.45, K(0)), (.66, K(.38)), (1, K(.84))));
+            else
+                yield return G.Sprite(G.LinearGradient(180, r.Width, r.Height, (.34, K(.05)), (.56, K(.24)), (1, K(.92))));
+        }
+
+        /// <summary>文字图挂成精灵：anchorBottom 时按卡底边定位（D 居中 / B 靠左），让位途中可随卡宽缩放。</summary>
+        private SpriteVisual TextSprite(TextArt art, Engine.Rect r, bool anchorBottom)
+        {
+            var sp = G.Sprite(G.C.CreateSurfaceBrush(art.Surface), relative: false);
+            sp.Size = new Vector2((float)art.Rect.Width, (float)art.Rect.Height);
+            PositionText(sp, art, r, anchorBottom);
+            return sp;
+        }
+
+        private void PositionText(SpriteVisual sp, TextArt art, Engine.Rect r, bool anchorBottom)
+        {
+            sp.Size = new Vector2((float)art.Rect.Width, (float)art.Rect.Height);
+            if (!anchorBottom)
+            {
+                sp.RelativeOffsetAdjustment = Vector3.Zero;
+                sp.Offset = new Vector3((float)art.Rect.X, (float)art.Rect.Y, 0);
+                return;
+            }
+            float ax = _s.Style == TitleStyle.B ? 0 : 0.5f;
+            float anchorX = (float)(r.Width * ax);
+            sp.RelativeOffsetAdjustment = new Vector3(ax, 1, 0);
+            sp.Offset = new Vector3((float)art.Rect.X - anchorX, (float)(art.Rect.Y - r.Height), 0);
+            sp.CenterPoint = new Vector3(anchorX - (float)art.Rect.X, (float)(r.Height - art.Rect.Y), 0);
+        }
+
+        private void BuildCopy(Engine.Rect r, Visual? scaleWith)
+        {
+            if (_item == null || _inner == null) return;
+            var oldCopy = _copyArt; var oldActions = _actionsArt;
+            _copyArt = _s.Text.Copy(_item, r.Width, r.Height, _expanded, _s.Style);
+            if (_copy == null) { _copy = TextSprite(_copyArt, r, anchorBottom: true); _inner.Children.InsertAtTop(_copy); }
+            else { ((CompositionSurfaceBrush)_copy.Brush).Surface = _copyArt.Surface; PositionText(_copy, _copyArt, r, true); }
+            if (_expanded)
+            {
+                _actionsArt = _s.Text.Actions(r.Width, r.Height, _s.Style);
+                if (_actions == null)
+                {
+                    _actions = TextSprite(_actionsArt, r, anchorBottom: true);
+                    _inner.Children.InsertAtTop(_actions);
+                    // .focus-actions：卡起步后 140ms 从下方 12px 淡入（240ms）
+                    if (!_s.Reduced)
+                    {
+                        var o = _actions.Offset;
+                        var op = G.Scalar(0, 1, Motion.FocusActionsMs, Bezier.EaseInOut, Motion.FocusActionsDelayMs);
+                        var rise = G.C.CreateVector3KeyFrameAnimation();
+                        rise.InsertKeyFrame(0, o + new Vector3(0, (float)Motion.FocusActionsRise, 0), G.Linear);
+                        rise.InsertKeyFrame(1, o, G.Ease(Bezier.EaseInOut));
+                        rise.Duration = Gfx.Ms(Motion.FocusActionsMs);
+                        rise.DelayTime = Gfx.Ms(Motion.FocusActionsDelayMs);
+                        rise.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+                        _actions.StartAnimation("Opacity", op);
+                        _actions.StartAnimation("Offset", rise);
+                    }
+                }
+                else { ((CompositionSurfaceBrush)_actions.Brush).Surface = _actionsArt.Surface; _actions.StopAnimation("Offset"); PositionText(_actions, _actionsArt, r, true); }
+            }
+            _s.Text.Release(oldCopy);
+            _s.Text.Release(oldActions);
+            if (scaleWith != null)
+            {
+                // 让位途中：文字按终点尺寸画好，随卡宽等比缩放（网页里字号是 cqi，跟卡宽走）
+                foreach (var sp in new[] { _copy, _actions })
+                {
+                    if (sp == null) continue;
+                    var e = G.C.CreateExpressionAnimation($"Vector3(el.Size.X / {r.Width:F3}, el.Size.X / {r.Width:F3}, 1)");
+                    e.SetReferenceParameter("el", scaleWith);
+                    sp.StartAnimation("Scale", e);
+                }
+            }
+        }
+
+        public void EndScale()
+        {
+            foreach (var sp in new[] { _copy, _actions })
+            {
+                if (sp == null) continue;
+                sp.StopAnimation("Scale");
+                sp.Scale = Vector3.One;
+            }
+        }
+
+        /// <summary>卡尺寸变了：按新尺寸重画标题（和网页 cqi 一样），并重新取景。</summary>
+        public void Relayout(Engine.Rect r, Visual? scaleWith)
+        {
+            if (_item == null) return;
+            BuildCopy(r, scaleWith);
+            if (_tintBrush != null) Gfx.SetLinear(_tintBrush, 145, r.Width, r.Height);
+            if (_badgeArt != null && _badge != null) { var nb = _s.Text.Badge(_item.Badge, _item.Kind == ItemKind.Collection); _s.Text.Release(_badgeArt); _badgeArt = nb; ((CompositionSurfaceBrush)_badge.Brush).Surface = nb.Surface; }
+        }
+
+        public void FitArt(Engine.Rect r)
+        {
+            EndScale();
+            Relayout(r, null);
+            if (_item?.Art is not { } art || _imageBrush == null) return;
+            var kind = PickArt(art, r.Width, r.Height, _expanded);
+            if (kind is not char k) return;
+            if (k != _artKind) _artKind = k;
+            SetImage(art, k, r);
+        }
+
+        private void SetImage(ArtKit art, char kind, Engine.Rect r)
+        {
+            var (iw, ih) = NativeSize(art, kind);
+            // 按显示尺寸解码：cover 时的缩放 × 栅格倍率，不超过原图；32px 一档好共用
+            double cover = Math.Max(r.Width / iw, r.Height / ih) * G.RasterScale;
+            double k2 = Math.Min(1, cover);
+            int dw = Bucket(iw * k2), dh = Bucket(ih * k2);
+            var next = _s.Images.Acquire(art.File(kind), dw, dh);
+            _s.Images.Release(_image);
+            _image = next;
+            _imageBrush!.Surface = next;
+            _imageBrush.HorizontalAlignmentRatio = (float)(ObjectX(art, kind, r.Width, r.Height) / 100);
+        }
+
+        private static int Bucket(double v) => (int)Math.Ceiling(v / 32) * 32;
+
+        private static (double w, double h) NativeSize(ArtKit art, char kind) => kind switch
+        {
+            'p' => (400, 600),
+            'v' => (440, 660),
+            'n' => (320, 650),
+            's' => (360, 360),
+            'x' => (900, 900),
+            _ => (1600, 1600 / Math.Max(0.1, art.Ha ?? 3.1)),
+        };
+
+        public void ApplyFocus(bool focused, bool expanded, bool animate)
+        {
+            if (_item == null) return;
+            // 焦点环 + 投影：box-shadow 600ms ease；集合的叠页边同时褪掉
+            float ring = focused ? 1 : 0;
+            SetOpacity(_ring, ring, Motion.ShadowMs, Bezier.Ease_, animate);
+            SetOpacity(_stack1, 1 - ring, Motion.ShadowMs, Bezier.Ease_, animate);
+            SetOpacity(_stack2, 1 - ring, Motion.ShadowMs, Bezier.Ease_, animate);
+            if (focused || expanded)
+            {
+                if (_shadow == null)
+                {
+                    _shadow = G.C.CreateDropShadow();
+                    _shadow.SourcePolicy = CompositionDropShadowSourcePolicy.Default;
+                    _shadowCaster!.Shadow = _shadow;
+                }
+                // --focus-lift: 0 12px 32px / 45%；展开：0 42px 110px / 74%
+                _shadow.Offset = expanded ? new Vector3(0, 42, 0) : new Vector3(0, 12, 0);
+                _shadow.BlurRadius = expanded ? 110 : 32;
+                _shadow.Color = expanded ? Gfx.Rgba(0, 0, 0, 0.74) : Gfx.Rgba(0, 0, 0, 0.45);
+                SetOpacity(_shadowCaster, 1, Motion.ShadowMs, Bezier.Ease_, animate);
+            }
+            else SetOpacity(_shadowCaster, 0, Motion.ShadowMs, Bezier.Ease_, animate);
+            SetOpacity(_tint, focused || expanded ? 0 : (float)Theme.TintOpacity, Motion.TintMs, Bezier.Ease_, animate);
+            SetOpacity(_hilite, focused ? 1 : 0, Motion.HighlightMs, Bezier.Ease_, animate);
+        }
+
+        private void SetOpacity(Visual? v, float to, double ms, Bezier ease, bool animate)
+        {
+            if (v == null) return;
+            if (!animate) { v.StopAnimation("Opacity"); v.Opacity = to; return; }
+            v.StartAnimation("Opacity", G.Scalar(v.Opacity, to, ms, ease));
+            v.Opacity = to;
+        }
+
+        public void Dispose()
+        {
+            _s.Images.Release(_image);
+            _s.Text.Release(_copyArt);
+            _s.Text.Release(_actionsArt);
+            _s.Text.Release(_badgeArt);
+            _s.Text.Release(_glyphArt);
+            Root.Children.RemoveAll();
+            Root.Dispose();
+        }
+    }
+
+    // ---------------- 选图（照 tile.ts pickArt / objectX） ----------------
+
+    /// <summary>按卡片宽高比挑封面套件里的哪张图（规则见 game-library-ui/封面尺寸规范.md）：
+    /// 宽高比 &lt; 0.8 的竖卡用 Steam 竖封面 p；其余都用大背景：方卡 s / x、横卡 h；缺哪张就退到有的那张。</summary>
+    public static char? PickArt(ArtKit art, double w, double h, bool expanded)
+    {
+        double r = w / Math.Max(h, 1);
+        string want = expanded ? "xhp"
+            : r < 0.8 ? "pvnx"
+            : r <= 1.12 ? (Math.Max(w, h) >= 500 ? "xshp" : "sxhp")
+            : "hxp";
+        foreach (char k in want) if (art.Has(k)) return k;
+        return null;
+    }
+
+    /// <summary>横图在卡里按焦点取景：object-position 的横向百分比。</summary>
+    public static double ObjectX(ArtKit art, char kind, double w, double h)
+    {
+        if (kind != 'h' || art.Ha is not double ha || art.Fx is not double fx) return 50;
+        double visible = w / Math.Max(h, 1) / ha;
+        if (visible >= 1) return 50;
+        double left = Math.Min(Math.Max(fx - visible / 2, 0), 1 - visible);
+        return Math.Round(left / (1 - visible) * 1000) / 10;
+    }
+}
