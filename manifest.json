@@ -27,7 +27,7 @@
     }
   ],
   "development": {
-    "version": "0.17.6",
+    "version": "0.17.9",
     "installed": true,
     "button_events_verified": true,
     "desktop_helper_handoff_verified": true,

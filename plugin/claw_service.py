@@ -251,10 +251,10 @@ class Service:
 
     # ---- Game Bar widget ----------------------------------------------------------
     async def widget_state(self):
-        """Everything the widget's single page shows, in one call."""
-        power = await self._power.get(True)
-        return {"power": power, "system": await self._power.system(), "rumble": await self._rumble.refresh(),
-                "magpie": await self._magpie.get()}
+        """Everything the widget's single page shows, in one call. Answered from what the agent
+        already keeps up to date, so a press in the widget never waits on hardware reads."""
+        return {"power": self._power.view(), "system": await self._power.system_cached(),
+                "rumble": self._rumble.view(), "magpie": self._magpie.view()}
 
     async def set_brightness(self, value):
         return await self._power.system_set("brightness_set", value=self._number(value, 0, 100))
@@ -271,7 +271,8 @@ class Service:
         return await self._power.system_set("refresh_set", hz=self._number(hz, 24, 500))
 
     async def set_fps_limit(self, fps):
-        return await self._power.system_set("fps_limit_set", fps=self._number(fps, 0, 360))
+        game = (self._power.sys_cache or {}).get("game") or {}
+        return await self._power.system_set("fps_limit_set", fps=self._number(fps, 0, 360), exe=game.get("exe") or "")
 
     async def close_game(self, pid):
         return await self._power.close_game(pid)

@@ -13,6 +13,8 @@
 #include <winrt/Windows.UI.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Windows.UI.ViewManagement.h>
+#include <string_view>
 #include <chrono>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.XamlTypeInfo.h>

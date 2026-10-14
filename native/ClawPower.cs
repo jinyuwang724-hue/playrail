@@ -178,7 +178,7 @@ class Executor : IDisposable {
             else if (command == "volume_set") reply["sys"] = SystemControls.SetVolume(Convert.ToInt32(Number(request, "value")), null);
             else if (command == "mute_set") reply["sys"] = SystemControls.SetVolume(-1, true.Equals(request.ContainsKey("muted") ? request["muted"] : false));
             else if (command == "refresh_set") reply["sys"] = SystemControls.SetRefresh(Convert.ToInt32(Number(request, "hz")));
-            else if (command == "fps_limit_set") reply["sys"] = SystemControls.SetFpsLimit(Convert.ToInt32(Number(request, "fps")));
+            else if (command == "fps_limit_set") reply["sys"] = SystemControls.SetFpsLimit(Convert.ToInt32(Number(request, "fps")), request.ContainsKey("exe") ? Convert.ToString(request["exe"]) : null);
             else if (command == "kill") reply["sys"] = SystemControls.Kill(Convert.ToInt32(Number(request, "pid")));
             else if (command == "power_action") reply["sys"] = SystemControls.Power(Convert.ToString(request["action"]));
             else if (command == "keyboard") reply["sys"] = SystemControls.ToggleKeyboard();
@@ -555,6 +555,24 @@ static class Osd {
         return new Dictionary<string, object> { { "face", face }, { "previous", previous } };
     }
 
+    // One integer property in the given profiles only ("" = global); a missing game profile is skipped.
+    internal static void SetIntIn(string property, int value, string[] profiles) {
+        var hooks = Hooks();
+        var enumProfiles = Get<EnumProfilesFn>(hooks, "EnumProfiles");
+        var load = Get<ProfileFn>(hooks, "LoadProfile");
+        var save = Get<ProfileFn>(hooks, "SaveProfile");
+        var setProp = Get<PropertyFn>(hooks, "SetProfileProperty");
+        var update = Get<UpdateFn>(hooks, "UpdateProfiles");
+        var existing = new HashSet<string>(ProfileNames(enumProfiles), StringComparer.OrdinalIgnoreCase);
+        foreach (string name in profiles) {
+            if (!existing.Contains(name)) continue;
+            load(name);
+            setProp(property, BitConverter.GetBytes(value), 4);
+            save(name);
+        }
+        update();
+    }
+
     // Frame limit (RTSS "FramerateLimit", 0 = off) of the global profile, for the widget.
     internal static int HooksForWidget() {
         var hooks = Hooks();
@@ -734,10 +752,12 @@ static class SystemControls {
         return Read();
     }
 
-    public static Dictionary<string, object> SetFpsLimit(int fps) {
+    // Global profile plus the running game's own profile (it overrides the global one). Touching every
+    // profile like the OSD settings do took ~10 s with the ~60 profiles here, far too slow for a tile.
+    public static Dictionary<string, object> SetFpsLimit(int fps, string exe) {
         if (fps < 0 || fps > 360) throw new ArgumentException("帧率限制超出范围");
-        Osd.SetInt("FramerateLimit", fps);
-        return Read();
+        Osd.SetIntIn("FramerateLimit", fps, string.IsNullOrEmpty(exe) ? new[] { "" } : new[] { "", exe });
+        return new Dictionary<string, object> { { "fpsLimit", fps } };
     }
 
     // Only ever called with the foreground game the agent detected.

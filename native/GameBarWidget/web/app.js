@@ -52,6 +52,7 @@ const agent = {
       ws.onmessage = event => {
         const message = JSON.parse(event.data);
         if (message.hello === "ok") { clearTimeout(timer); this.ready = true; resolve(); return; }
+        if (!this.ready) return;
         if (message.event) { this.listeners.forEach(fn => fn(message.event, message.value)); return; }
         const waiter = this.pending.get(message.id);
         if (!waiter) return;
@@ -69,8 +70,9 @@ const agent = {
       };
     });
   },
-  call(method, ...args) {
-    if (!this.ready) return Promise.reject(new Error("工具箱后台未连接"));
+  async call(method, ...args) {
+    for (let i = 0; !this.ready && i < 40; i++) await new Promise(r => setTimeout(r, 100));
+    if (!this.ready) throw new Error("工具箱后台未连接");
     const id = ++this.seq;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -84,43 +86,96 @@ const agent = {
 const DEFAULT_TILES = ["power", "fan", "fps", "refresh", "osd", "magpie", "rumble", "keyboard", "close"];
 const POOL = ["target", "cpu", "fanfull", "ecore", "sharpen", "screenshot"];
 let tiles = load("claw.tiles", DEFAULT_TILES).filter(id => DEFAULT_TILES.includes(id) || POOL.includes(id));
+// The widget opens on the last readings it saw and connects quietly behind them: Game Bar starts
+// it cold most times, and a "connecting" screen in front of every open is what the user rejected.
+const cached = load("claw.state", null);
 const S = {
-  conn: "loading", data: null, draft: null, busy: false, message: "", menu: false,
-  edit: false, moving: null, arm: null, focus: null, visible: true,
+  conn: cached ? "online" : "waiting", data: cached, draft: cached ? structuredClone(cached.power.settings) : null,
+  message: "", menu: false, edit: false, moving: null, arm: null, focus: null, failedSince: 0,
 };
 
 function load(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch { return fallback; } }
 function save(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ } }
 
-async function connect() {
-  S.conn = S.conn === "online" ? "online" : "loading";
-  render();
-  try {
-    await agent.connect();
-    S.conn = "online";
-    await refresh();
-  } catch {
-    S.conn = "offline";
-    render();
+let connecting = null;
+function connect() {
+  if (connecting) return connecting;
+  connecting = (async () => {
+    try {
+      await agent.connect();
+      S.failedSince = 0;
+      await refresh();
+    } catch {
+      // Only after a few seconds without the agent is it worth telling the user.
+      S.failedSince ||= Date.now();
+      if (Date.now() - S.failedSince > 4000 || !S.data) S.conn = "offline";
+      render();
+    } finally { connecting = null; }
+  })();
+  return connecting;
+}
+
+// Values the user just changed win over readings for a moment: the agent and the hardware lag a
+// press by up to a second, and a reading taken before the change must not pull the tile back.
+const held = new Map();
+function getPath(object, path) { return path.split(".").reduce((o, k) => o?.[k], object); }
+function setPath(object, path, value) {
+  const keys = path.split("."), last = keys.pop();
+  const target = keys.reduce((o, k) => (o[k] ??= {}), object);
+  target[last] = value;
+}
+// A hold lasts while its request is in flight and a moment after (see send), at least `ms`.
+function hold(path, value, ms = 3000, key = null) {
+  setPath(S.data, path, value);
+  held.set(path, { value, key, until: key ? Infinity : Date.now() + ms });
+}
+function release(key) {
+  for (const h of held.values()) if (h.key === key) h.until = Date.now() + 1500;
+  if (key === "power") S.draftHeld = Date.now() + 1500;
+}
+function applyHolds(data) {
+  for (const [path, h] of held) {
+    if (h.until > Date.now()) setPath(data, path, h.value);
+    else held.delete(path);
   }
+  return data;
+}
+
+let lastSaved = 0;
+function accept(data) {
+  S.data = applyHolds(data);
+  if (!S.saveTimer && !(S.draftHeld > Date.now())) S.draft = structuredClone(S.data.power.settings);
+  S.conn = "online";
+  if (Date.now() - lastSaved > 5000) { lastSaved = Date.now(); save("claw.state", S.data); }
 }
 
 async function refresh() {
   if (!agent.ready) return;
-  try {
-    S.data = await agent.call("widget_state");
-    if (!S.saveTimer) S.draft = structuredClone(S.data.power.settings);
-    S.conn = "online";
-  } catch (error) { flash(error.message); }
+  try { accept(await agent.call("widget_state")); } catch (error) { if (agent.ready) flash(error.message); }
   render();
 }
 
 agent.listeners.add((event, value) => {
-  if (event === "closed") { S.conn = "offline"; render(); return; }
+  if (event === "closed") { connect(); return; }
   if (!S.data) return;
-  if (event === "power_status") { S.data.power = value; if (!S.saveTimer) S.draft = structuredClone(value.settings); render(); }
-  if (event === "magpie_status") { S.data.magpie = value; render(); }
+  if (event === "power_status") { accept({ ...S.data, power: value }); render(); }
+  if (event === "magpie_status") { accept({ ...S.data, magpie: value }); render(); }
 });
+
+// One request per control in flight; presses made meanwhile collapse into the latest value.
+const sending = new Map();
+async function send(key, method, ...args) {
+  if (sending.has(key)) { sending.set(key, { method, args }); return; }
+  sending.set(key, null);
+  let next = { method, args };
+  while (next) {
+    try { await agent.call(next.method, ...next.args); } catch (error) { flash(error.message || String(error)); }
+    next = sending.get(key);
+    sending.set(key, null);
+  }
+  sending.delete(key);
+  release(key);
+}
 
 function flash(text) {
   S.message = text;
@@ -130,20 +185,19 @@ function flash(text) {
 }
 
 async function run(promise) {
-  try { const result = await promise; await refresh(); return result; }
-  catch (error) { flash(error.message || String(error)); }
+  try { return await promise; } catch (error) { flash(error.message || String(error)); }
 }
 
-// Power settings edits: the draft changes at once, the agent gets the last one after a pause.
-function editPower(patch, delay = 700) {
+// Power settings edits: the draft changes at once; the agent gets the latest draft shortly after
+// (a run of presses sends once), and readings do not replace the draft until it has settled.
+function editPower(patch, delay = 200) {
   if (!S.draft) return;
   S.draft = { ...S.draft, ...patch };
+  S.draftHeld = Infinity;
   clearTimeout(S.saveTimer);
-  S.saveTimer = setTimeout(async () => {
+  S.saveTimer = setTimeout(() => {
     S.saveTimer = null;
-    try { S.data.power = await agent.call("save_power", S.draft); } catch (error) { flash(error.message); }
-    S.draft = structuredClone(S.data.power.settings);
-    render();
+    send("power", "save_power", structuredClone(S.draft));
   }, delay);
   render();
 }
@@ -180,14 +234,14 @@ const TILES = {
   fps: {
     name: "限帧", icon: "fps",
     levels() { const v = S.data.system.fpsLimit ?? 0, i = nearest(FPS_STEPS, v); return { index: i, count: FPS_STEPS.length, value: v ? `${v} 帧` : "不限" }; },
-    press() { const { index } = this.levels(); return run(agent.call("set_fps_limit", FPS_STEPS[(index + 1) % FPS_STEPS.length])); },
+    press() { const { index } = this.levels(), v = FPS_STEPS[(index + 1) % FPS_STEPS.length]; hold("system.fpsLimit", v, 0, "fps"); send("fps", "set_fps_limit", v); },
     disabled: () => S.data.system.fpsLimit == null,
   },
   refresh: {
     name: "刷新率", icon: "refresh",
     rates: () => (S.data.system.refreshRates || []).filter(r => r >= 60),
     levels() { const rates = this.rates(), v = S.data.system.refresh, i = Math.max(0, rates.indexOf(v)); return { index: i, count: rates.length || 1, value: v ? `${v} Hz` : "--" }; },
-    press() { const rates = this.rates(); if (rates.length < 2) return; const { index } = this.levels(); return run(agent.call("set_refresh_rate", rates[(index + 1) % rates.length])); },
+    press() { const rates = this.rates(); if (rates.length < 2) return; const { index } = this.levels(), v = rates[(index + 1) % rates.length]; hold("system.refresh", v, 0, "refresh"); send("refresh", "set_refresh_rate", v); },
   },
   osd: {
     name: "性能显示", icon: "osd",
@@ -197,18 +251,18 @@ const TILES = {
   magpie: {
     name: "画面缩放", icon: "magpie",
     levels() { const on = !!S.data.magpie.enabled; return { index: on ? 1 : 0, count: 2, value: on ? "开" : "关" }; },
-    press() { return run(agent.call("toggle_magpie")); },
+    press() { hold("magpie.enabled", !S.data.magpie.enabled, 0, "magpie"); send("magpie", "toggle_magpie"); },
     disabled: () => !S.data.magpie.available,
   },
   rumble: {
     name: "震动", icon: "rumble",
     levels() { const v = S.data.rumble.strength ?? 100, i = nearest(RUMBLE_STEPS.map(s => s[0]), v); return { index: i, count: 4, value: RUMBLE_STEPS[i][1] }; },
-    press() { const { index } = this.levels(); return run(agent.call("set_rumble_strength", RUMBLE_STEPS[(index + 1) % 4][0])); },
+    press() { const { index } = this.levels(), v = RUMBLE_STEPS[(index + 1) % 4][0]; hold("rumble.strength", v, 0, "rumble"); send("rumble", "set_rumble_strength", v); },
   },
   keyboard: {
     name: "显示键盘", icon: "keyboard",
     levels: () => ({ value: "打开" }),
-    press() { return run(agent.call("toggle_keyboard")); },
+    press() { window.chrome?.webview?.postMessage({ keyboard: true }); send("keyboard", "toggle_keyboard"); },
   },
   close: {
     name: "关闭程序", icon: "close",
@@ -217,7 +271,7 @@ const TILES = {
     press() {
       const game = S.data.system.game;
       if (!game) return;
-      if (S.arm && S.arm.pid === game.pid) { clearArm(); return run(agent.call("close_game", game.pid)); }
+      if (S.arm && S.arm.pid === game.pid) { clearArm(); return run(agent.call("close_game", game.pid).then(refresh)); }
       armClose(game);
     },
   },
@@ -250,7 +304,7 @@ const TILES = {
   ecore: {
     name: "E 核调度", icon: "ecore",
     levels() { const e = S.data.power.ecore || {}; return { index: e.enabled ? 1 : 0, count: 2, value: (e.enabled ? "开" : "关") + (e.pending ? " · 重启后生效" : "") }; },
-    press() { return run(agent.call("set_ecore", !S.data.power.ecore?.enabled)); },
+    press() { const v = !S.data.power.ecore?.enabled; hold("power.ecore.enabled", v, 0, "ecore"); send("ecore", "set_ecore", v); },
     hint: "重启后生效",
   },
   sharpen: {
@@ -266,7 +320,7 @@ const TILES = {
   screenshot: {
     name: "截图", icon: "screenshot",
     levels: () => ({ value: "保存到相册" }),
-    press() { return run(agent.call("screenshot")); },
+    press() { send("screenshot", "screenshot"); },
     hint: "保存到相册",
   },
 };
@@ -293,7 +347,7 @@ function dots(level) {
 
 function tileHtml(id) {
   const t = TILES[id], online = S.conn === "online" && S.data;
-  if (!online) return `<button class="tl" disabled data-nav="tile:${id}"><span class="tt">${icon(t.icon)}</span><span class="tn">${t.name}</span><span>${S.conn === "loading" ? "…" : "--"}</span></button>`;
+  if (!online) return `<button class="tl" disabled data-nav="tile:${id}"><span class="tt">${icon(t.icon)}</span><span class="tn">${t.name}</span><span>--</span></button>`;
   const level = t.levels(), disabled = t.disabled?.();
   if (id === "close" && S.arm) {
     return `<button class="tl warn" data-nav="tile:${id}" aria-label="再按一次关闭${esc(level.value)}，${S.arm.left} 秒后取消"><span class="tt"><span class="num" style="font-weight:600">${S.arm.left}</span></span><span class="tn">再按一次</span><span class="tv">关闭${esc(level.value)}</span><span class="cnt" style="width:${S.arm.left / 3 * 100}%"></span></button>`;
@@ -324,7 +378,7 @@ function sideHtml() {
 function headerHtml() {
   const narrow = window.innerWidth < 480;
   if (S.conn !== "online" || !S.data) {
-    const sub = S.conn === "loading" ? `<div class="t2" style="display:flex;align-items:center;gap:8px;margin-top:2px"><span class="ring" aria-hidden="true"></span>正在连接后台…</div>` : `<div class="t2">数据和设置暂不可用</div>`;
+    const sub = S.conn === "offline" ? `<div class="t2">数据和设置暂不可用</div>` : "";
     const stat = name => `<div class="stat"><span class="t2">${name}</span><span class="num sv dis">--</span></div>`;
     return `<header class="card hdr"><div class="head"><div class="gname">Claw 掌机工具箱</div>${sub}</div><div class="stats">${stat("功耗")}${stat("CPU")}${stat("电量")}</div></header>`;
   }
@@ -366,10 +420,8 @@ function editHtml() {
 }
 
 function render() {
-  const busy = S.conn === "loading";
   root.className = "r";
-  root.setAttribute("aria-busy", busy);
-  root.innerHTML = (busy ? `<div class="pb" aria-hidden="true"><i></i></div>` : "") + sideHtml() + (S.edit ? editHtml()
+  root.innerHTML = sideHtml() + (S.edit ? editHtml()
     : `<div class="right">${S.conn === "offline" ? bannersHtml() + headerHtml() : headerHtml() + bannersHtml()}<section class="grid" aria-label="快捷磁贴">${tiles.map(tileHtml).join("")}</section></div>`) + menuHtml();
   restoreFocus();
 }
@@ -428,26 +480,25 @@ function adjustSlider(key, delta) {
   if (!sys) return;
   const base = key === "volume" && sys.muted ? 0 : sys[key] ?? 0;
   const value = Math.max(0, Math.min(100, base + delta));
-  sys[key] = value;
-  if (key === "volume") sys.muted = false;
+  hold(`system.${key}`, value, 0, key);
+  if (key === "volume") hold("system.muted", false, 0, key);
   render();
-  clearTimeout(S.sliderTimer);
-  S.sliderTimer = setTimeout(() => run(agent.call(key === "volume" ? "set_volume" : "set_brightness", value)), 150);
+  send(key, key === "volume" ? "set_volume" : "set_brightness", value);
 }
 
 function activate(el) {
   const nav = el?.dataset.nav;
   if (!nav) return;
   const [kind, id] = nav.split(":");
-  if (kind === "tile") return TILES[id].press();
+  if (kind === "tile") { TILES[id].press(); return render(); }
   if (kind === "edit") { S.edit = !S.edit; S.moving = null; S.focus = S.edit ? null : "edit"; return render(); }
   if (kind === "done") { S.edit = false; S.moving = null; S.focus = "edit"; return render(); }
   if (kind === "pin") { if (S.moving) { S.moving = null; return render(); } tiles = tiles.filter(t => t !== id); save("claw.tiles", tiles); return render(); }
   if (kind === "add") { tiles.push(id); save("claw.tiles", tiles); S.focus = `pin:${id}`; return render(); }
-  if (kind === "mute") return run(agent.call("set_mute", !S.data.system.muted));
+  if (kind === "mute") { const v = !S.data.system.muted; hold("system.muted", v, 0, "mute"); render(); return send("mute", "set_mute", v); }
   if (kind === "power") { S.menu = true; S.focus = null; return render(); }
-  if (kind === "pa") { S.menu = false; S.focus = "power"; render(); return run(agent.call("power_action", id)); }
-  if (kind === "reconnect") return connect();
+  if (kind === "pa") { S.menu = false; S.focus = "power"; render(); return send("power_action", "power_action", id); }
+  if (kind === "reconnect") { S.failedSince = 0; return connect(); }
 }
 
 function back() {
@@ -494,7 +545,9 @@ root.addEventListener("pointerdown", event => {
   if (!track || track.disabled) return;
   const key = track.dataset.key;
   const apply = e => {
-    const r = track.getBoundingClientRect(), value = Math.round(Math.max(0, Math.min(1, (r.bottom - 9 - e.clientY) / (r.height - 18))) * 100);
+    // Look the track up again: a refresh may have redrawn it while the finger moves.
+    const now = root.querySelector(`.vtrk[data-key="${key}"]`) || track;
+    const r = now.getBoundingClientRect(), value = Math.round(Math.max(0, Math.min(1, (r.bottom - 9 - e.clientY) / (r.height - 18))) * 100);
     adjustSlider(key, value - (key === "volume" && S.data.system.muted ? 0 : S.data.system[key] ?? 0));
   };
   apply(event);
@@ -533,8 +586,8 @@ window.chrome?.webview?.addEventListener("message", event => {
   if (event.data?.gamebar === "foreground") { S.visible = true; refresh(); }
 });
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
-setInterval(() => { if (!document.hidden && S.conn === "online" && !S.saveTimer) refresh(); }, 2000);
-setInterval(() => { if (S.conn === "offline") connect(); }, 5000);
+setInterval(() => { if (!document.hidden && agent.ready && !S.saveTimer) refresh(); }, 1500);
+setInterval(() => { if (!agent.ready) connect(); }, 2000);
 window.addEventListener("resize", render);
 
 render();

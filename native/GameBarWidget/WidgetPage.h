@@ -15,6 +15,8 @@ namespace winrt::ClawWidget::implementation
         void Post(hstring const& json);
         void FocusSelf();
         std::chrono::steady_clock::time_point m_lastFocus{};
+        std::chrono::steady_clock::time_point m_keyboardAllowedUntil{};
+        event_token m_inputPaneToken{};
 
         Microsoft::Gaming::XboxGameBar::XboxGameBarWidget m_widget{ nullptr };
         event_token m_displayModeToken{};

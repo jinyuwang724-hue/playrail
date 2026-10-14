@@ -53,6 +53,17 @@ namespace winrt::ClawWidget::implementation
                     });
             });
         }
+        // The touch keyboard came up on every open: Windows treats the focused WebView2 as a text
+        // field. Hide it unless the page's own "显示键盘" tile just asked for it.
+        core.WebMessageReceived([weak = get_weak()](auto&&, CoreWebView2WebMessageReceivedEventArgs const& args) {
+            if (auto self = weak.get(); self && args.WebMessageAsJson().size() && std::wstring_view(args.WebMessageAsJson()).find(L"keyboard") != std::wstring_view::npos)
+                self->m_keyboardAllowedUntil = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        });
+        m_inputPaneToken = Windows::UI::ViewManagement::InputPane::GetForCurrentView().Showing(
+            [weak = get_weak()](Windows::UI::ViewManagement::InputPane const& pane, auto&&) {
+                auto self = weak.get();
+                if (!self || std::chrono::steady_clock::now() > self->m_keyboardAllowedUntil) pane.TryHide();
+            });
         core.Navigate(L"https://widget.claw/index.html");
     }
 

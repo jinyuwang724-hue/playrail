@@ -618,6 +618,9 @@ class PowerControl:
         self.fan_backup_path = self.data / "fan-backup.json"
         self.ecore_path = self.data / "ecore.json"
         self.cpu_max = None  # MHz, read once from the CPU
+        self.sys_cache = None  # widget readings (brightness, volume, refresh, frame limit, game)
+        self.sys_at = 0.0
+        self.sys_task = None
         self.stats = {}
         self.cpu = LightStats()
         self.last_frames = None
@@ -1027,11 +1030,24 @@ class PowerControl:
         view["game"] = {"pid": game[0], "exe": game[1],
                         "title": await asyncio.to_thread(window_title, game[0]) or game[1].rsplit(".", 1)[0]} if game else None
         view["charging"] = battery_charging()
+        self.sys_cache, self.sys_at = view, time.monotonic()
         return view
 
+    async def system_cached(self):
+        """The widget asks every few seconds; answer from the cache at once and refresh it behind."""
+        if self.sys_cache is None:
+            return await self.system()
+        if time.monotonic() - self.sys_at > 1.0 and (self.sys_task is None or self.sys_task.done()):
+            self.sys_task = asyncio.create_task(self.system())
+        return self.sys_cache
+
     async def system_set(self, command, **args):
-        await self._call(command, **args)
-        return await self.system()
+        # The helper answers setters with its fresh readings; the game and charging state are unchanged.
+        result = await self._call(command, **args)
+        self.sys_cache = {**(self.sys_cache or {}), **{k: v for k, v in result.items() if k in
+                          ("brightness", "volume", "muted", "refresh", "refreshRates", "fpsLimit")}}
+        self.sys_at = time.monotonic()
+        return self.sys_cache
 
     async def close_game(self, pid):
         game = await asyncio.to_thread(foreground_game)
