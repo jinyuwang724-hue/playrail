@@ -1,0 +1,10 @@
+[
+  {"phase":"idle","ms":4029,"frames":241,"fps":60.0,"p50":16.67,"p95":16.67,"p99":16.67,"max":16.67,"over20ms":0,"over34ms":0,"cpuPct":1.25,"workingSetMB":229,"privateMB":174},
+  {"phase":"pan-right-stick","ms":3329,"frames":199,"fps":60.0,"p50":16.67,"p95":16.67,"p99":16.67,"max":16.67,"over20ms":0,"over34ms":0,"cpuPct":1.91,"workingSetMB":268,"privateMB":211},
+  {"phase":"pan-diagonal-stick","ms":2831,"frames":169,"fps":60.0,"p50":16.67,"p95":16.67,"p99":16.67,"max":16.67,"over20ms":0,"over34ms":0,"cpuPct":2.33,"workingSetMB":317,"privateMB":259},
+  {"phase":"dpad-nav","ms":3956,"frames":235,"fps":59.7,"p50":16.67,"p95":16.67,"p99":16.67,"max":33.34,"over20ms":1,"over34ms":0,"cpuPct":1.95,"workingSetMB":321,"privateMB":261},
+  {"phase":"expand-collapse","ms":7613,"frames":455,"fps":59.9,"p50":16.67,"p95":16.67,"p99":16.67,"max":33.33,"over20ms":1,"over34ms":0,"cpuPct":1.00,"workingSetMB":319,"privateMB":260},
+  {"phase":"tab-switch-wave","ms":4934,"frames":295,"fps":60.0,"p50":16.67,"p95":16.67,"p99":16.67,"max":16.67,"over20ms":0,"over34ms":0,"cpuPct":1.92,"workingSetMB":354,"privateMB":296},
+  {"phase":"collection-push-pop","ms":4278,"frames":256,"fps":60.0,"p50":16.67,"p95":16.67,"p99":16.67,"max":16.67,"over20ms":0,"over34ms":0,"cpuPct":1.49,"workingSetMB":356,"privateMB":295},
+  {"phase":"idle-after","ms":4031,"frames":241,"fps":60.0,"p50":16.67,"p95":16.67,"p99":16.67,"max":16.67,"over20ms":0,"over34ms":0,"cpuPct":0.94,"workingSetMB":348,"privateMB":287}
+]

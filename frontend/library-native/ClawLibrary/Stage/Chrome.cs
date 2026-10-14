@@ -124,7 +124,7 @@ public sealed class Chrome
 
     // ---------------- 缝：集合信息条 ----------------
 
-    public ChromeArt SeamFull(string title, IReadOnlyList<string> crumbs, int count, double hours, float height)
+    public ChromeArt SeamFull(string title, IReadOnlyList<string> crumbs, int count, double hours, float height, bool backFocused = false)
     {
         const float W = 300, PadX = 22, PadTop = 22, PadBottom = 20, Gap = 14;
         return Draw(W, height, ds =>
@@ -132,6 +132,12 @@ public sealed class Chrome
             // 面包屑
             float y = PadTop;
             ds.FillCircle(PadX + 16, y + 16, 16, Gfx.Rgba(255, 255, 255, 0.08));
+            if (backFocused)
+            {
+                // 焦点在竖条里：返回按钮画白色描边高亮
+                ds.FillCircle(PadX + 16, y + 16, 18, Gfx.WithAlpha(Theme.Ink, 0.12));
+                ds.DrawCircle(PadX + 16, y + 16, 17, Theme.Ink, 2);
+            }
             var back = H("‹", TextKit.Ui(400), 18);
             var (bx, by, bw, bh) = Box(back);
             ds.DrawTextLayout(back, PadX + 16 - bw / 2 - bx, y + 16 - bh / 2 - by, Theme.Ink);

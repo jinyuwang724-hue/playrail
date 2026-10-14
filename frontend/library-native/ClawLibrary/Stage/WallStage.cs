@@ -26,7 +26,7 @@ using static ClawLibrary.Engine.ViewMath;
 
 namespace ClawLibrary.Stage;
 
-public sealed class WallStage : IDisposable
+public sealed partial class WallStage : IDisposable
 {
     /// <summary>视口外多渲染的世界距离；离已渲染范围边缘还剩这么多时重新裁剪。</summary>
     private const double Overscan = 420;
@@ -69,7 +69,7 @@ public sealed class WallStage : IDisposable
     private SpriteVisual _seamA = null!, _seamB = null!;
     private bool _seamFront;   // false = A 在前
     private SpriteVisual _edgeLeft = null!, _edgeRight = null!, _toast = null!, _hud = null!;
-    private SpriteVisual _bgBase = null!, _glow1 = null!, _glow2 = null!, _vignette = null!, _grain = null!;
+    private SpriteVisual _bgBase = null!, _glow1 = null!, _glow2 = null!, _vignette = null!;
 
     public View View;
     private Center _center;
@@ -142,6 +142,7 @@ public sealed class WallStage : IDisposable
             Application.Current.Exit();
             return;
         }
+        InitRail();
         BuildChrome();
         long tChrome = NowMs;
         Log.Info($"library: {_lib.Games.Count} games, {_lib.Collections.Count} collections, view {View.Width}x{View.Height} scale {View.Scale} dpi {Chrome.Dpi} ({NowMs - t0}ms)");
@@ -189,9 +190,12 @@ public sealed class WallStage : IDisposable
         HookInput();
         _pad = new Input.GamepadPoller(_dq, this, () => IsForeground());
         _pad.Start();
+        StartRailTimers();
+        UpdateBackdropRunning();
         _rootEl.Focus(FocusState.Programmatic);
         _rootEl.XamlRoot.Changed += (_, _) => { try { OnResize(); } catch (Exception ex) { Log.Error("resize", ex); } };
         _ = BuildMissingArtAsync();
+        if (Program.Args.Contains("--probe")) StartFrameProbe();
         if (Program.Args.Contains("--bench")) _ = Bench.RunAsync(this);
         if (Program.Args.Contains("--hud")) ToggleHud();
         if (Program.Args.FirstOrDefault(a => a.StartsWith("--state=")) is { } state) _ = Bench.StateAsync(this, state[8..]);
@@ -298,6 +302,13 @@ public sealed class WallStage : IDisposable
         _root.Children.InsertAtTop(_bgBase);
         _root.Children.InsertAtTop(_glow1);
         _root.Children.InsertAtTop(_glow2);
+        // 动态背景：只在缝的开口里露出来（墙是实色的），所以裁剪到开口，合成器只画这一条
+        _backdrop = new Backdrop(G, (float)View.Width, (float)View.Height);
+        var openClip = G.C.CreateInsetClip();
+        _backdrop.Root.Clip = openClip;
+        Expr(openClip, "LeftInset", "p.sx - p.sw / 2");
+        Expr(openClip, "RightInset", "p.vw - (p.sx + p.sw / 2)");
+        _root.Children.InsertAtTop(_backdrop.Root);
         _root.Children.InsertAtTop(_field);
         _field.Children.InsertAtTop(_worlds[0]);
         _field.Children.InsertAtTop(_worlds[1]);
@@ -321,23 +332,28 @@ public sealed class WallStage : IDisposable
         _vignette = G.Sprite(null);
         _root.Children.InsertAtTop(_vignette);
 
-        // 缝：纸色 + 1px 描边 + 投影；里面的内容居中、随开口淡入，换层时翻转
+        // 缝：透明的纸条（folia「始终透明」的缝）——底色 64% 的纱 + 上沿一道很淡的主色渐变 + 两侧发丝线 + 两侧投影，
+        // 透出后面的动态背景；里面的内容居中、随开口淡入，换层时翻转
         _seamHost = G.C.CreateContainerVisual();
-        var ring = G.Sprite(G.Solid(Gfx.WithAlpha(Theme.Ink, 0.06)), relative: false);
-        var paper = G.Sprite(G.Solid(Theme.SeamPaper), relative: false);
-        var shadow = G.C.CreateDropShadow();
-        shadow.Offset = new Vector3(0, 24, 0);
-        shadow.BlurRadius = 64;
-        shadow.Color = Gfx.Rgba(0, 0, 0, 0.42);
-        paper.Shadow = shadow;
-        _seamHost.Children.InsertAtTop(ring);
-        _seamHost.Children.InsertAtTop(paper);
+        var shadowL = G.Sprite(G.LinearGradient(90, 32, 100, (0, Gfx.Rgba(0, 0, 0, 0)), (1, Gfx.Rgba(0, 0, 0, 0.32))), relative: false);
+        var shadowR = G.Sprite(G.LinearGradient(90, 32, 100, (0, Gfx.Rgba(0, 0, 0, 0.32)), (1, Gfx.Rgba(0, 0, 0, 0))), relative: false);
+        var veil = G.Sprite(G.Solid(Gfx.WithAlpha(Theme.Bg, 0.64)), relative: false);
+        var sheen = G.Sprite(G.LinearGradient(180, 100, 100, (0, Gfx.WithAlpha(Theme.Ink, 0.06)), (0.22, Gfx.WithAlpha(Theme.Ink, 0))), relative: false);
+        var hairL = G.Sprite(G.Solid(Gfx.WithAlpha(Theme.Ink, 0.12)), relative: false);
+        var hairR = G.Sprite(G.Solid(Gfx.WithAlpha(Theme.Ink, 0.12)), relative: false);
+        foreach (var v in new Visual[] { shadowL, shadowR, veil, sheen, hairL, hairR }) _seamHost.Children.InsertAtTop(v);
         Expr(_seamHost, "Offset", "Vector3(p.sx - p.sw / 2, 0, 0)");
         Expr(_seamHost, "Size", "Vector2(p.sw, p.vh)");
         Expr(_seamHost, "Opacity", "p.sw < 1 ? 0 : 1");
-        Expr(paper, "Size", "Vector2(p.sw, p.vh)");
-        Expr(ring, "Size", "Vector2(p.sw + 2, p.vh + 2)");
-        ring.Offset = new Vector3(-1, -1, 0);
+        Expr(veil, "Size", "Vector2(p.sw, p.vh)");
+        Expr(sheen, "Size", "Vector2(p.sw, p.vh)");
+        Expr(shadowL, "Size", "Vector2(32, p.vh)");
+        shadowL.Offset = new Vector3(-32, 0, 0);
+        Expr(shadowR, "Size", "Vector2(32, p.vh)");
+        Expr(shadowR, "Offset", "Vector3(p.sw, 0, 0)");
+        Expr(hairL, "Size", "Vector2(1, p.vh)");
+        Expr(hairR, "Size", "Vector2(1, p.vh)");
+        Expr(hairR, "Offset", "Vector3(p.sw - 1, 0, 0)");
         var clip = G.C.CreateContainerVisual();
         clip.Clip = G.C.CreateInsetClip();
         Expr(clip, "Size", "Vector2(p.sw, p.vh)");
@@ -374,10 +390,6 @@ public sealed class WallStage : IDisposable
         Expr(_edgeLeft, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx < p.lineX) ? 1 : 0");
         Expr(_edgeRight, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx >= p.lineX) ? 1 : 0");
 
-        // 颗粒（soft-light 13% 的近似：极淡的明暗噪点）
-        _grain = G.Sprite(null);
-        _root.Children.InsertAtTop(_grain);
-
         _toast = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _toast.Opacity = 0;
         _root.Children.InsertAtTop(_toast);
@@ -400,7 +412,7 @@ public sealed class WallStage : IDisposable
         vig.ColorStops.Add(G.C.CreateColorGradientStop(0.78f, Gfx.Rgba(0, 0, 0, 0)));
         vig.ColorStops.Add(G.C.CreateColorGradientStop(1f, Gfx.Rgba(0, 0, 0, 0.52)));
         _vignette.Brush = vig;
-        _grain.Brush = GrainBrush();
+        _backdrop?.Build(w, h);
         RenderEdgeTabs();
     }
 
@@ -416,28 +428,6 @@ public sealed class WallStage : IDisposable
         b.ColorStops.Add(G.C.CreateColorGradientStop(0, c));
         b.ColorStops.Add(G.C.CreateColorGradientStop(stop, Gfx.WithAlpha(c, 0)));
         v.Brush = b;
-    }
-
-    private CompositionSurfaceBrush GrainBrush()
-    {
-        const int N = 180;
-        var surface = G.Surface(N, N);
-        var rnd = new Random(7);
-        var px = new byte[N * N * 4];
-        for (int i = 0; i < N * N; i++)
-        {
-            double v = rnd.NextDouble() * 2 - 1;     // -1..1
-            double a = Math.Abs(v) * 0.035;
-            byte A = (byte)Math.Round(a * 255);
-            byte C = v > 0 ? A : (byte)0;            // 预乘：亮点白、暗点黑
-            px[i * 4] = C; px[i * 4 + 1] = C; px[i * 4 + 2] = C; px[i * 4 + 3] = A;
-        }
-        using (var ds = CanvasComposition.CreateDrawingSession(surface))
-        using (var bmp = CanvasBitmap.CreateFromBytes(G.Device, px, N, N, Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized))
-            ds.DrawImage(bmp);
-        var brush = G.C.CreateSurfaceBrush(surface);
-        brush.Stretch = CompositionStretch.Fill;
-        return brush;
     }
 
     private void CamExpr(string prop, string expr)
@@ -541,6 +531,7 @@ public sealed class WallStage : IDisposable
         var v = PanVelocity + _glide;
         if (v.X != 0 || v.Y != 0)
         {
+            MarkInput();
             Sync();
             _camX = _camY = null;
             _version++;
@@ -567,6 +558,7 @@ public sealed class WallStage : IDisposable
     /// <summary>拖动：直接平移相机（屏幕 px）。</summary>
     public void PanBy(double dx, double dy)
     {
+        MarkInput();
         Sync();
         _camX = _camY = null;
         _version++;
@@ -581,6 +573,7 @@ public sealed class WallStage : IDisposable
 
     private void Recull(bool force, Bounds? extra = null, double overscan = Overscan)
     {
+        UpdateBackdropRunning();
         var vis = Visible();
         double pad = Overscan - CullMargin;
         if (!force && _culled is { } c && vis.Left >= c.Left - pad && vis.Right <= c.Right + pad && vis.Top >= c.Top - pad && vis.Bottom <= c.Bottom + pad) return;
@@ -670,9 +663,10 @@ public sealed class WallStage : IDisposable
     {
         if (FocusKey is { } old && _tiles.TryGetValue(old, out var ot)) ot.SetFocused(false);
         FocusKey = key;
+        UpdateBackdropKey(key, true);
         if (key is { } k)
         {
-            if (_tiles.TryGetValue(k, out var t)) { t.SetFocused(true); BringToFront(t); }
+            if (_tiles.TryGetValue(k, out var t)) { t.SetFocused(!_railFocused); BringToFront(t); }
             if (reveal) Reveal(k);
         }
     }
@@ -690,10 +684,13 @@ public sealed class WallStage : IDisposable
 
     public void Move(Direction dir)
     {
+        MarkInput();
+        if (RailMove(dir)) return;
         if (EnsureFocusOnScreen()) return;
         var from = SlotByKey(FocusKey!.Value);
         if (from == null) return;
         var next = Nav.FindAdjacentSlot(from, dir, HasContent, Drawn);
+        if (TryEnterRailFrom(from, next, dir)) return;
         if (next == null) return;
         if (_expandedKey is { } ek && next.Key != ek) Collapse(false);
         Focus(next.Key);
@@ -702,6 +699,8 @@ public sealed class WallStage : IDisposable
     /// <summary>A：游戏卡展开聚焦卡；聚焦卡上再按 = 启动；集合卡 = 进入。</summary>
     public void Activate()
     {
+        MarkInput();
+        if (RailActivate()) return;
         if (EnsureFocusOnScreen()) return;
         var slot = SlotByKey(FocusKey!.Value);
         var id = slot != null ? ItemFor(slot) : null;
@@ -715,6 +714,8 @@ public sealed class WallStage : IDisposable
     /// <summary>B：收起聚焦卡 → 返回上一层。</summary>
     public void Back()
     {
+        MarkInput();
+        if (RailBack()) return;
         if (_expandedKey != null) { Collapse(true); return; }
         if (_stack.Count > 1) Pop();
     }
@@ -916,6 +917,7 @@ public sealed class WallStage : IDisposable
     /// <summary>LB / RB：首页换页签，整墙出场 → 入场。</summary>
     public void SwitchTab(int delta)
     {
+        MarkInput();
         if (_stack.Count > 1) return;
         if (_expandedKey != null) Collapse(false);
         _tabIndex = (_tabIndex + delta + _lib.HomeTabs.Count) % _lib.HomeTabs.Count;
@@ -927,6 +929,7 @@ public sealed class WallStage : IDisposable
         RenderSeamContent();
         SwapContent(null);
         Focus(start?.Key, false);
+        AfterTabSwitch();
     }
 
     // ---------------- 缝的内容 ----------------
@@ -936,8 +939,8 @@ public sealed class WallStage : IDisposable
         var layer = CurrentLayer;
         float h = (float)View.Height;
         ChromeArt art = layer.Home
-            ? Chrome.SeamHome("游戏库", _lib.HomeTabs.Select(t => t.Label).ToList(), _tabIndex, h)
-            : Chrome.SeamFull(layer.Title, new[] { "游戏库" }, layer.Items.Count, layer.Items.Sum(i => i.PlaytimeH ?? 0), h);
+            ? _rail.Draw(RailModelNow(), h, _railFocused ? _railFocus : -1)
+            : Chrome.SeamFull(layer.Title, new[] { "游戏库" }, layer.Items.Count, layer.Items.Sum(i => i.PlaytimeH ?? 0), h, _railFocused);
         var brush = (CompositionSurfaceBrush)target.Brush;
         (brush.Surface as IDisposable)?.Dispose();
         brush.Surface = art.Surface;
@@ -1008,6 +1011,7 @@ public sealed class WallStage : IDisposable
     /// <summary>鼠标：点卡 = 聚焦并激活。</summary>
     public void ClickAt(double sx, double sy)
     {
+        if (RailClick(sx, sy)) return;
         Sync();
         var geo = SeamGeometry(_anchorX, _center, _openWidth, View);
         var off = SplitOffsets(geo.Width, View.Scale);

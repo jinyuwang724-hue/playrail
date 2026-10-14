@@ -10,14 +10,32 @@ using Microsoft.UI.Xaml.Media;
 
 namespace ClawLibrary;
 
-public sealed partial class App : Application
+public sealed partial class App : Application, Microsoft.UI.Xaml.Markup.IXamlMetadataProvider
 {
+    // 纯代码的 WinUI 应用没有生成的类型信息：把 XAML 元数据转给 WinUI 控件库自己的提供者（加载控件样式要用）
+    private readonly Microsoft.UI.Xaml.XamlTypeInfo.XamlControlsXamlMetaDataProvider _controlsMeta = new();
+    public Microsoft.UI.Xaml.Markup.IXamlType GetXamlType(Type type) => _controlsMeta.GetXamlType(type);
+    public Microsoft.UI.Xaml.Markup.IXamlType GetXamlType(string fullName) => _controlsMeta.GetXamlType(fullName);
+    public Microsoft.UI.Xaml.Markup.XmlnsDefinition[] GetXmlnsDefinitions() => _controlsMeta.GetXmlnsDefinitions();
+
     public static string CacheDir { get; private set; } = "";
     public static bool Packaged { get; private set; }
     private Window? _window;
 
+    private static void LoadControlResources()
+    {
+        // WinUI 控件（搜索框）的默认样式；只能在应用启动时挂上
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try { Current.Resources.MergedDictionaries.Add(new Microsoft.UI.Xaml.Controls.XamlControlsResources()); }
+        catch (Exception ex) { StartupNote = $"XamlControlsResources: 0x{ex.HResult:X8} {ex}"; }
+        StartupNote ??= $"controls resources {sw.ElapsedMilliseconds}ms";
+    }
+
+    public static string? StartupNote;
+
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
+        LoadControlResources();
         try
         {
             Packaged = DetectPackaged();
@@ -33,6 +51,7 @@ public sealed partial class App : Application
                 Program.Args = Program.Args.Concat(extra).ToArray();
                 File.Delete(argsFile);
             }
+            if (StartupNote != null) Log.Info(StartupNote);
             Log.Info($"start pid={Environment.ProcessId} packaged={Packaged} args=[{string.Join(' ', Program.Args)}] since-process-start={SinceProcessStartMs():F0}ms");
             _ = Task.Run(Stage.TextKit.Warm);
             _window = new MainWindow();
@@ -111,8 +130,15 @@ public sealed partial class RootElement : ContentControl
         VerticalAlignment = VerticalAlignment.Stretch;
         HorizontalContentAlignment = HorizontalAlignment.Stretch;
         VerticalContentAlignment = VerticalAlignment.Stretch;
-        Content = new Grid { Background = new SolidColorBrush(Colors.Transparent) };
+        // 两层：Surface 上挂合成视觉层（墙面），Overlay 在它上面放少量 XAML 控件（搜索框，为了中文输入法）
+        Surface = new Grid { Background = new SolidColorBrush(Colors.Transparent) };
+        Overlay = new Canvas();
+        var host = new Grid();
+        host.Children.Add(Surface);
+        host.Children.Add(Overlay);
+        Content = host;
     }
 
-    public Grid Surface => (Grid)Content;
+    public Grid Surface { get; }
+    public Canvas Overlay { get; }
 }

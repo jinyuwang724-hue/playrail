@@ -152,6 +152,7 @@ public static class Bench
                 case "styleb": s.ToggleTitleStyle(); break;
                 case "tab": s.SwitchTab(1); break;
                 case "nav": for (int i = 0; i < 3; i++) { s.Move(Direction.Right); await Task.Delay(250); } break;
+                case "rail" or "railtab" or "settings" or "search": s.RailTestState(state); break;
             }
             Log.Info($"state {state} reached");
         }
