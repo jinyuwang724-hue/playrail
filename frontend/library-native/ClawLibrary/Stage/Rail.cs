@@ -1,6 +1,6 @@
 ﻿// 中间的竖条（首页窄缝，120 px）：参照 folia 首页窄缝的排法（自己实现），并按需求加了系统信息与快捷入口。
 // 从上到下：导航区（竖排页签、分隔线、合集直达入口）→ 账户（头像在上、用户名在下）
-// → 工具行（搜索、设置、文件管理器）→ 时间与电池。搜索打开时整条缝换成搜索面板（Chrome.SeamSearch）。导航区是唯一可伸缩的一段：放不下全名时页签缩成一个字，再放不下就在里面滚，
+// → 工具列（搜索、设置、文件管理器竖着排）→ 时间、电池各一行。搜索打开时整条缝换成搜索面板（Chrome.SeamSearch）。导航区是唯一可伸缩的一段：放不下全名时页签缩成一个字，再放不下就在里面滚，
 // 保证焦点那一项露出来。设置打开时导航区换成设置列表。
 // 竖条可以交互：手柄 / 键盘的焦点进到竖条里时，焦点那一项画白色描边高亮（墙上的焦点环同时熄掉）。
 using System.Numerics;
@@ -117,19 +117,34 @@ public sealed class Rail
         const float W = HomeWidth, inner = W - PadX * 2;
         float cx = W / 2;
 
-        // ---- 自下而上先定位置：最底下时间 + 电池，上面工具行，再上面账户（头像在上、名字在下）----
-        var time = this.H(m.Now.ToString("HH:mm"), TextKit.Ui(700), 16);
+        // ---- 自下而上先定位置（各组之间留 22 px，不再挤在一起）----
+        // 最底下：时间一行、电池一行，都居中
+        const float groupGap = 22;
+        var time = this.H(m.Now.ToString("HH:mm"), TextKit.Ui(700), 18);
         var tb = time.LayoutBounds;
-        float statusH = (float)tb.Height;
+        float timeH = (float)tb.Height;
+        CanvasTextLayout? pct = null;
+        float battRowH = 0;
+        if (m.Battery.HasBattery)
+        {
+            pct = this.H($"{m.Battery.Percent}%", TextKit.Ui(600), 11);
+            battRowH = Math.Max(10, (float)pct.LayoutBounds.Height);
+        }
+        float statusH = timeH + (battRowH > 0 ? 5 + battRowH : 0);
         float statusY = H - PadBottom - statusH;
-        const float tool = 30, toolGap = 5;
-        float toolsY = statusY - 12 - tool;
-        const float av = 40;
-        var name = this.H(m.User, TextKit.Ui(600), 11);
+        // 账户：头像在上、名字在下
+        const float av = 44;
+        var name = this.H(m.User, TextKit.Ui(600), 12);
         float nameH = (float)name.LayoutBounds.Height;
-        float accH = av + 6 + nameH;
-        float accY = toolsY - 16 - accH;
-        float navTop = PadTop, navBottom = accY - 18;
+        float accH = av + 8 + nameH;
+        float accY = statusY - groupGap - accH;
+        // 工具：竖着一列（搜索、设置、文件管理器），每个 44 × 38，间隔 8
+        const float toolW = 44, toolH = 38, toolGap = 8;
+        var tools = new[] { (RailKind.Search, ""), (RailKind.Settings, ""), (RailKind.Explorer, "") };
+        float toolsH = tools.Length * toolH + (tools.Length - 1) * toolGap;
+        float ruleY = accY - groupGap / 2 - 0.5f;   // 工具与账户之间一道短分隔线
+        float toolsY = accY - groupGap - toolsH;
+        float navTop = PadTop, navBottom = toolsY - groupGap;
 
         // ---- 导航区（页签；先登记，焦点项的顺序才是从上到下）----
         using (ds.CreateLayer(1, new Rect(0, navTop - 4, W, Math.Max(0, navBottom - navTop + 8))))
@@ -138,45 +153,37 @@ public sealed class Rail
             else DrawNav(ds, m, navTop, navBottom, focus);
         }
 
+        // ---- 工具列 ----
+        for (int i = 0; i < tools.Length; i++)
+        {
+            var r = new Rect(cx - toolW / 2, toolsY + i * (toolH + toolGap), toolW, toolH);
+            bool pressed = tools[i].Item1 == RailKind.Settings && m.SettingsOpen;
+            ds.FillRoundedRectangle(r, 12, 12, Gfx.WithAlpha(Theme.Ink, pressed ? 0.16 : 0.06));
+            var icon = this.H(tools[i].Item2, new FontSpec(IconFont, 400), 16);
+            DrawCentered(ds, icon, (float)(r.X + toolW / 2), (float)(r.Y + toolH / 2), pressed ? Theme.Ink : Gfx.WithAlpha(Theme.Ink, 0.8));
+            Add(tools[i].Item1, 0, r);
+        }
+        ds.FillRectangle(cx - 12, ruleY, 24, 1, Gfx.WithAlpha(Theme.Ink, 0.16));
+
         // ---- 账户：头像在上，名字在下 ----
         {
             var avRect = new Rect(cx - av / 2, accY, av, av);
             DrawAvatar(ds, m, avRect);
             float nameW = Math.Min((float)name.LayoutBounds.Width, inner);
-            using (ds.CreateLayer(1, new Rect(cx - nameW / 2, accY + av + 6 - 2, nameW, nameH + 4)))
-                ds.DrawTextLayout(name, cx - nameW / 2 - (float)name.LayoutBounds.X, accY + av + 6 - (float)name.LayoutBounds.Y, Gfx.WithAlpha(Theme.Ink, 0.85));
-            Add(RailKind.Account, 0, new Rect(PadX, accY - 4, inner, accH + 8));
+            using (ds.CreateLayer(1, new Rect(cx - nameW / 2, accY + av + 8 - 2, nameW, nameH + 4)))
+                ds.DrawTextLayout(name, cx - nameW / 2 - (float)name.LayoutBounds.X, accY + av + 8 - (float)name.LayoutBounds.Y, Gfx.WithAlpha(Theme.Ink, 0.85));
+            Add(RailKind.Account, 0, new Rect(PadX, accY - 6, inner, accH + 12));
         }
 
-        // ---- 工具行 ----
-        var tools = new[] { (RailKind.Search, ""), (RailKind.Settings, ""), (RailKind.Explorer, "") };
-        float tx = cx - (tools.Length * tool + (tools.Length - 1) * toolGap) / 2;
-        for (int i = 0; i < tools.Length; i++)
-        {
-            var r = new Rect(tx + i * (tool + toolGap), toolsY, tool, tool);
-            bool pressed = tools[i].Item1 == RailKind.Settings && m.SettingsOpen;
-            ds.FillRoundedRectangle(r, 10, 10, Gfx.WithAlpha(Theme.Ink, pressed ? 0.16 : 0.06));
-            var icon = this.H(tools[i].Item2, new FontSpec(IconFont, 400), 15);
-            DrawCentered(ds, icon, (float)(r.X + tool / 2), (float)(r.Y + tool / 2), pressed ? Theme.Ink : Gfx.WithAlpha(Theme.Ink, 0.8));
-            Add(tools[i].Item1, 0, r, row: 1000);
-        }
-
-        // ---- 最底下：时间 + 电池 ----
-        float battW = 0;
-        CanvasTextLayout? pct = null;
-        if (m.Battery.HasBattery)
-        {
-            pct = this.H($"{m.Battery.Percent}", TextKit.Ui(600), 10);
-            battW = 22 + 3 + (float)pct.LayoutBounds.Width;
-        }
-        float rowW = (float)tb.Width + (battW > 0 ? 8 + battW : 0);
-        float x0 = cx - rowW / 2;
-        ds.DrawTextLayout(time, x0 - (float)tb.X, statusY - (float)tb.Y, Gfx.WithAlpha(Theme.Ink, 0.9));
+        // ---- 最底下：时间一行，电池一行 ----
+        ds.DrawTextLayout(time, cx - (float)tb.Width / 2 - (float)tb.X, statusY - (float)tb.Y, Gfx.WithAlpha(Theme.Ink, 0.92));
         if (pct != null)
         {
-            float bx = x0 + (float)tb.Width + 8, by = statusY + statusH / 2 - 5;
-            DrawBattery(ds, bx, by, m.Battery);
-            ds.DrawTextLayout(pct, bx + 25 - (float)pct.LayoutBounds.X, statusY + statusH / 2 - (float)pct.LayoutBounds.Height / 2 - (float)pct.LayoutBounds.Y, Theme.SeamInkSoft);
+            var pb = pct.LayoutBounds;
+            float rowW = 22 + 5 + (float)pb.Width;
+            float bx = cx - rowW / 2, rowY = statusY + timeH + 5;
+            DrawBattery(ds, bx, rowY + battRowH / 2 - 5, m.Battery);
+            ds.DrawTextLayout(pct, bx + 27 - (float)pb.X, rowY + battRowH / 2 - (float)pb.Height / 2 - (float)pb.Y, Theme.SeamInkSoft);
         }
 
         // 焦点高亮画在最上面（导航区之外的几项）
@@ -184,7 +191,7 @@ public sealed class Rail
         {
             var it = Items[focus];
             if (it.Kind is RailKind.Account or RailKind.Search or RailKind.Settings or RailKind.Explorer)
-                Focus(ds, it.Bounds, it.Kind == RailKind.Account ? 12 : 10);
+                Focus(ds, it.Bounds, 12);
         }
     }
 
