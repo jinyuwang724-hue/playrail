@@ -109,11 +109,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 .tail { margin-top: .3em; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-style: normal; font-family: var(--title-font);
     font-size: clamp(11px, 4.4cqi, 26px); font-weight: 700; opacity: .88; letter-spacing: .04em; }
 .copy small { margin-top: .7em; overflow: hidden; font-size: clamp(10px, 3cqi, 14px); font-weight: 600; opacity: .66; text-overflow: ellipsis; white-space: nowrap; }
-/* 小卡只留主标题；竖封面自带书名，平时不压字，聚焦时才出现 */
+/* 小卡只留主标题 */
 @container (max-width: 300px) { .copy small, .kicker { display: none; } .tail { font-size: 12px; } }
 @container (max-height: 300px) { .copy small { display: none; } }
-.face.art-p .copy, .face.art-p .shade { opacity: 0; transition: opacity 200ms ease; }
-.tile.is-focused .face.art-p .copy, .tile.is-focused .face.art-p .shade { opacity: 1; }
 .face.has-art .shade { background: linear-gradient(180deg, rgb(var(--shade-rgb) / 0%) 42%, rgb(var(--shade-rgb) / 30%) 62%, rgb(var(--shade-rgb) / 88%) 100%); }
 
 /* ---------- 聚焦卡 ---------- */

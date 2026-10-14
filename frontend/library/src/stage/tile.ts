@@ -8,14 +8,14 @@ const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;
 
 const CJK = /[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
 
-type ArtKind = 'p' | 't' | 'h' | 's' | 'x';
+type ArtKind = 'v' | 'n' | 'h' | 's' | 'x' | 'p';
 
-/** 按卡片宽高比挑封面套件里的哪张图：细长竖卡 t、竖卡 p、方卡 s / x、横卡 h；缺哪张就退到有的那张。 */
+/** 按卡片宽高比挑封面套件里的哪张图：细长竖卡 n、竖卡 v、方卡 s / x、横卡 h，都从无字背景图裁；没有背景图才用竖封面 p。 */
 export function pickArt(art: ArtKit, w: number, h: number, expanded: boolean): ArtKind | null {
     const r = w / Math.max(h, 1);
     const want: ArtKind[] = expanded ? ['x', 'h', 'p']
-        : r < 0.6 ? ['t', 'p', 'x', 'h']
-        : r < 0.9 ? ['p', 't', 'x', 'h']
+        : r < 0.6 ? ['n', 'v', 'p', 'x']
+        : r < 0.9 ? ['v', 'n', 'p', 'x']
         : r <= 1.12 ? (Math.max(w, h) >= 500 ? ['x', 's', 'h', 'p'] : ['s', 'x', 'h', 'p'])
         : ['h', 'x', 'p'];
     return want.find(k => art[k]) ?? null;

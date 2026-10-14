@@ -23,8 +23,8 @@ export type LibraryItem = {
     lastPlayed?: number;
 };
 
-/** 封面套件（tools/art-kit.py 产出）：base 下的 p/t/h/s/x.webp，fx 是背景图的水平焦点，ha 是背景图宽高比，c 是主色。 */
-export type ArtKit = { base: string; p?: boolean; t?: boolean; h?: boolean; s?: boolean; x?: boolean; fx?: number; ha?: number; c?: string };
+/** 封面套件（tools/art-kit.py 产出）：base 下的 v/n/h/s/x/p.webp，fx 是背景图的水平焦点，ha 是背景图宽高比，c 是主色。 */
+export type ArtKit = { base: string; v?: boolean; n?: boolean; p?: boolean; h?: boolean; s?: boolean; x?: boolean; fx?: number; ha?: number; c?: string };
 
 type Seed = [title: string, platform: Platform, genre: string, playtimeH: number, lastPlayedDays: number];
 
