@@ -283,6 +283,7 @@ class Service:
         return await self._power.system_set("power_action", action=action)
 
     async def toggle_keyboard(self):
+        logging.info("Touch keyboard toggled from the Game Bar widget")
         return await self._power.system_set("keyboard")
 
     async def screenshot(self):

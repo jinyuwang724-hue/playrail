@@ -523,6 +523,7 @@ function direction(dx, dy) {
 }
 
 document.addEventListener("keydown", event => {
+  if (event.repeat && !event.key.startsWith("Arrow") && !event.key.startsWith("GamepadDPad")) return;
   const keys = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
     GamepadDPadUp: [0, -1], GamepadDPadDown: [0, 1], GamepadDPadLeft: [-1, 0], GamepadDPadRight: [1, 0] };
   if (keys[event.key]) { direction(...keys[event.key]); event.preventDefault(); return; }
@@ -557,15 +558,27 @@ root.addEventListener("pointerdown", event => {
 });
 
 // Controller through the Gamepad API (Game Bar hands it to the focused widget).
-const pad = { last: {}, repeatAt: 0 };
+// Only while this widget has focus, and only after every button has been let go once since it got
+// focus: the A press that picks this widget in Game Bar (or anything pressed while another widget
+// or the game had focus) must not reach a tile. That stray A was opening the touch keyboard.
+const pad = { last: {}, repeatAt: 0, armed: false };
+window.addEventListener("blur", () => { pad.armed = false; });
+window.addEventListener("focus", () => { pad.armed = false; });
 function pollPad(now) {
   const gp = [...(navigator.getGamepads?.() || [])].find(Boolean);
-  if (gp) {
+  if (gp && !document.hasFocus()) pad.armed = false;
+  else if (gp) {
     const pressed = {
       a: gp.buttons[0]?.pressed, b: gp.buttons[1]?.pressed, x: gp.buttons[2]?.pressed,
       up: gp.buttons[12]?.pressed || gp.axes[1] < -0.6, down: gp.buttons[13]?.pressed || gp.axes[1] > 0.6,
       left: gp.buttons[14]?.pressed || gp.axes[0] < -0.6, right: gp.buttons[15]?.pressed || gp.axes[0] > 0.6,
     };
+    if (!pad.armed) {
+      pad.armed = !Object.values(pressed).some(Boolean) && !gp.buttons.some(b => b.pressed);
+      pad.last = pressed;
+      requestAnimationFrame(pollPad);
+      return;
+    }
     const edge = k => pressed[k] && !pad.last[k];
     if (edge("a")) activate(current());
     if (edge("b")) back();
