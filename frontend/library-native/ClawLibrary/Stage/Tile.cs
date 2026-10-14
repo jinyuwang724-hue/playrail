@@ -382,6 +382,21 @@ public sealed class Tile : IDisposable
         private readonly LibraryItem? _item;
         private readonly bool _expanded;
         private char? _artKind;
+        private char? _baseKind;
+
+        /// <summary>
+        /// 在这个尺寸上用哪张图：永远是本来那张（竖封面 p、大背景 h、方裁 s / x），显示得比原图大时换成同一张图的高分辨率版
+        /// （p → q 原尺寸竖封面，s → x 同一块方裁的大图）。所以小卡和放大后的卡是同一张封面、同样的构图。
+        /// </summary>
+        private char? KindFor(ArtKit art, Engine.Rect r)
+        {
+            if (_baseKind is not char b) return null;
+            char hi = b == 'p' ? 'q' : b == 's' ? 'x' : b == 'h' ? 'g' : b;
+            if (hi == b || !art.Has(hi)) return b;
+            var (iw, ih) = NativeSize(art, b);
+            double need = Math.Max(r.Width / iw, r.Height / ih) * G.RasterScale;
+            return need > 1.05 ? hi : b;
+        }
         private ImageLayer? _img, _incoming;
         private ContainerVisual? _imgHost;
         public string? ItemId => _item?.Id;
@@ -417,7 +432,9 @@ public sealed class Tile : IDisposable
             }
             var item = _item;
             var art = item.Art;
-            _artKind = art != null ? PickArt(art, r.Width, r.Height, expanded) : null;
+            // 这张卡用哪张图由它在墙上的本来位置（模板 slot）决定，放大 / 让位时只换成同一张图的高分辨率版
+            _baseKind = art != null ? PickArt(art, tile.Slot.Width, tile.Slot.Height, false) : null;
+            _artKind = art != null ? KindFor(art, r) : null;
             var posterBg = Theme.PosterBg;
 
             // ---- 卡外的装饰：集合叠页边、投影、焦点环（卡面 overflow:hidden 不裁 box-shadow）----
@@ -686,7 +703,7 @@ public sealed class Tile : IDisposable
         {
             if (_item?.Art is not { } art || _img == null) return;
             Promote(force: true);
-            var kind = PickArt(art, to.Width, to.Height, _expanded) ?? _img.Kind;
+            var kind = KindFor(art, to) ?? _img.Kind;
             AnimateRatio(_img, art, from, to, ms);
             if (kind == _img.Kind) { UpgradeDecode(art, to); return; }
             var inc = MakeLayer(kind, AcquireFor(art, kind, to), (float)(ObjectX(art, kind, from.Width, from.Height) / 100));
@@ -746,7 +763,7 @@ public sealed class Tile : IDisposable
             Relayout(r, null);
             if (_item?.Art is not { } art || _img == null) return;
             if (_incoming != null) { Promote(force: false); if (_incoming != null) return; }
-            var kind = PickArt(art, r.Width, r.Height, _expanded);
+            var kind = KindFor(art, r);
             if (kind is char k && k != _img.Kind) { TransitionArt(r, r, 0); return; }
             AnimateRatio(_img, art, r, r, 0);
             UpgradeDecode(art, r);
@@ -757,6 +774,8 @@ public sealed class Tile : IDisposable
         private static (double w, double h) NativeSize(ArtKit art, char kind) => kind switch
         {
             'p' => (400, 600),
+            'q' => (600, 900),
+            'g' => (1080 * (art.Ha ?? 3.1), 1080),
             'v' => (440, 660),
             'n' => (320, 650),
             's' => (360, 360),
@@ -830,7 +849,7 @@ public sealed class Tile : IDisposable
     /// <summary>横图在卡里按焦点取景：object-position 的横向百分比。</summary>
     public static double ObjectX(ArtKit art, char kind, double w, double h)
     {
-        if (kind != 'h' || art.Ha is not double ha || art.Fx is not double fx) return 50;
+        if (kind is not ('h' or 'g') || art.Ha is not double ha || art.Fx is not double fx) return 50;
         double visible = w / Math.Max(h, 1) / ha;
         if (visible >= 1) return 50;
         double left = Math.Min(Math.Max(fx - visible / 2, 0), 1 - visible);

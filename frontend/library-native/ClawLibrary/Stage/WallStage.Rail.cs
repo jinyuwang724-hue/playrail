@@ -98,7 +98,7 @@ public sealed partial class WallStage
         m.Home = true;
         m.Tabs = _lib.HomeTabs.Select(t => t.Label).ToList();
         m.ActiveTab = _tabIndex;
-        m.Shortcuts = _lib.Collections.Select(c => c.Title).ToList();
+        m.Shortcuts = new();   // 竖条里只放平台页签；Steam 的分类铺在 Steam 页签的墙上
         m.SearchOpen = _searchBox != null && _searchOpen;
         m.Query = _searchQuery;
         m.Settings = new()

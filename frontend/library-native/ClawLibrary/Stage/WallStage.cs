@@ -249,12 +249,13 @@ public sealed partial class WallStage : IDisposable
         var stats = Steam.ReadPlayStats(user);
         Log.Info($"steam root={steam ?? "-"} user={user ?? "-"} stats={stats.Count}");
         var seed = Path.Combine(AppContext.BaseDirectory, "Assets", "library.json");
-        _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)));
+        var collections = Steam.ReadCollections(user);
+        _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), collections);
         _steamRoot = steam; _steamUser = user;
         if (_lib.Games.Count == 0)
         {
             Log.Warn("library empty");
-            _lib = Library.Build(new List<LibraryItem>());
+            _lib = Library.Build(new List<LibraryItem>(), new List<SteamCollection>());
         }
     }
 

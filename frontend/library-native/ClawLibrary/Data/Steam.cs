@@ -7,6 +7,9 @@ namespace ClawLibrary.Data;
 
 public sealed record PlayStats(long? Last, int? Minutes);
 
+/// <summary>Steam 库里的一个分类：Id（favorite / hidden / uc-…）、名字、手动加进去的 appid。</summary>
+public sealed record SteamCollection(string Id, string Name, List<string> Added);
+
 public static class Steam
 {
     public static string? Root()
@@ -64,6 +67,41 @@ public static class Steam
         }
         catch (Exception ex) { Log.Warn($"shortcuts.vdf: {ex.Message}"); }
         return result;
+    }
+
+    /// <summary>
+    /// Steam 库里用户自己建的分类（收藏夹、已隐藏、自建分类）：config\cloudstorage\cloud-storage-namespace-1.json 里
+    /// user-collections.* 的那些项。删掉的、只有筛选条件（动态分类）的不要。
+    /// </summary>
+    public static List<SteamCollection> ReadCollections(string? userDir)
+    {
+        var list = new List<SteamCollection>();
+        if (userDir == null) return list;
+        try
+        {
+            var path = Path.Combine(userDir, "config", "cloudstorage", "cloud-storage-namespace-1.json");
+            if (!File.Exists(path)) return list;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path, Encoding.UTF8));
+            foreach (var pair in doc.RootElement.EnumerateArray())
+            {
+                if (pair.GetArrayLength() < 2 || pair[0].GetString() is not { } key || !key.StartsWith("user-collections.")) continue;
+                var meta = pair[1];
+                if (meta.TryGetProperty("is_deleted", out var del) && del.ValueKind == System.Text.Json.JsonValueKind.True) continue;
+                if (!meta.TryGetProperty("value", out var v) || v.GetString() is not { } json) continue;
+                using var c = System.Text.Json.JsonDocument.Parse(json);
+                var r = c.RootElement;
+                string id = r.TryGetProperty("id", out var idp) ? idp.GetString() ?? "" : "";
+                string name = r.TryGetProperty("name", out var np) ? np.GetString() ?? "" : "";
+                var added = new List<string>();
+                if (r.TryGetProperty("added", out var ap) && ap.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    foreach (var a in ap.EnumerateArray())
+                        added.Add(a.ValueKind == System.Text.Json.JsonValueKind.Number ? ((uint)a.GetInt64()).ToString() : a.ToString());
+                if (id.Length == 0 || name.Length == 0) continue;
+                list.Add(new SteamCollection(id, name, added));
+            }
+        }
+        catch (Exception ex) { Log.Warn($"steam collections: {ex.Message}"); }
+        return list;
     }
 
     /// <summary>二进制 shortcuts.vdf：每个条目取 appid（无符号）和 LastPlayTime。</summary>

@@ -10,10 +10,10 @@ public enum ItemKind { Game, Collection }
 public sealed class ArtKit
 {
     public required string Dir;
-    public bool P, V, N, H, S, X;
+    public bool P, Q, G, V, N, H, S, X;
     public double? Fx, Ha;
     public string? C;
-    public bool Has(char kind) => kind switch { 'p' => P, 'v' => V, 'n' => N, 'h' => H, 's' => S, 'x' => X, _ => false };
+    public bool Has(char kind) => kind switch { 'p' => P, 'q' => Q, 'g' => G, 'v' => V, 'n' => N, 'h' => H, 's' => S, 'x' => X, _ => false };
     public string File(char kind) => System.IO.Path.Combine(Dir, kind + ".jpg");
 }
 
@@ -65,7 +65,7 @@ public sealed class Library
 
     private const long Day = 86400;
 
-    public static Library Load(string seedPath, Dictionary<string, PlayStats> stats, Func<string, ArtKit?> art)
+    public static Library Load(string seedPath, Dictionary<string, PlayStats> stats, Func<string, ArtKit?> art, List<SteamCollection>? steamCollections = null)
     {
         var games = new List<LibraryItem>();
         try
@@ -102,51 +102,53 @@ public sealed class Library
             }
         }
         catch (Exception ex) { Log.Error("library seed", ex); }
-        return Build(games);
+        return Build(games, steamCollections ?? new());
     }
 
-    public static Library Build(List<LibraryItem> games)
+    /// <summary>
+    /// 首页三个页签：全部、Steam、本地（非 Steam）。合集只用 Steam 库里用户自己建的分类（收藏夹、自建分类），
+    /// 只在 Steam 页签里出现；不自己编分类。Steam 里「已隐藏」的游戏不上墙。空的分类不显示。
+    /// </summary>
+    public static Library Build(List<LibraryItem> games, List<SteamCollection> steamCollections)
     {
-        var lib = new Library { Games = games };
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         foreach (var g in games)
             g.LastPlayedDays = g.LastPlayed is long l ? (int)Math.Max(0, (now - l) / Day) : null;
-        var byGame = games.ToDictionary(g => g.Id);
+        var hidden = steamCollections.FirstOrDefault(c => c.Id == "hidden")?.Added.ToHashSet() ?? new HashSet<string>();
+        var shown = games.Where(g => !hidden.Contains(g.Id)).ToList();
+        var lib = new Library { Games = shown };
 
-        var recent = games.Where(g => g.LastPlayed != null).OrderByDescending(g => g.LastPlayed).ToList();
-        var rest = games.Where(g => g.LastPlayed == null).ToList();
+        var recent = shown.Where(g => g.LastPlayed != null).OrderByDescending(g => g.LastPlayed).ToList();
+        var rest = shown.Where(g => g.LastPlayed == null).ToList();
         var ordered = recent.Concat(rest).ToList();
+        var steamGames = ordered.Where(g => g.Platform == "steam").ToList();
 
-        // 合集封面借一张成员的图，避开首页最前面那几张，免得同一张图在眼前出现两次
-        var front = ordered.Take(6).Select(g => g.Id).ToHashSet();
-        LibraryItem Collection(string id, string title, string kicker, List<LibraryItem> children) => new()
+        // 合集封面借一张成员的图，避开 Steam 页签最前面那几张，免得同一张图在眼前出现两次
+        var front = steamGames.Take(6).Select(g => g.Id).ToHashSet();
+        var rank = ordered.Select((g, i) => (g.Id, i)).ToDictionary(e => e.Id, e => e.i);
+        foreach (var sc in steamCollections)
         {
-            Id = id, Kind = ItemKind.Collection, Title = title, Main = title, Kicker = kicker,
-            Subtitle = $"{children.Count} 款游戏", Badge = $"合集 · {children.Count}", Hue = HueOf(title),
-            Children = children.Select(c => c.Id).ToList(),
-            ArtFrom = children.FirstOrDefault(c => !front.Contains(c.Id)) ?? children.FirstOrDefault(),
-        };
-        var series = new List<(string name, List<LibraryItem> list)>();
-        foreach (var g in games)
-        {
-            if (g.Series == null) continue;
-            var entry = series.FindIndex(s => s.name == g.Series);
-            if (entry < 0) series.Add((g.Series, new List<LibraryItem> { g }));
-            else series[entry].list.Add(g);
+            if (sc.Id == "hidden") continue;
+            var members = sc.Added.Distinct().Where(rank.ContainsKey).OrderBy(id => rank[id]).Select(id => ordered[rank[id]]).ToList();
+            if (members.Count == 0) continue;
+            lib.Collections.Add(new LibraryItem
+            {
+                Id = "sc-" + sc.Id, Kind = ItemKind.Collection, Title = sc.Name, Main = sc.Name,
+                Subtitle = $"{members.Count} 款游戏", Badge = $"合集 · {members.Count}", Hue = HueOf(sc.Name),
+                Children = members.Select(c => c.Id).ToList(),
+                ArtFrom = members.FirstOrDefault(c => !front.Contains(c.Id)) ?? members[0],
+            });
         }
-        lib.Collections = new List<LibraryItem> { Collection("c-gal", "Galgame", "VISUAL NOVELS", ordered.Where(g => g.Genre == "Galgame").ToList()) };
-        lib.Collections.AddRange(series.Where(s => s.list.Count >= 3).Select(s => Collection($"c-{s.name}", s.name, "SERIES", s.list)));
         foreach (var it in games) lib.ById[it.Id] = it;
         foreach (var it in lib.Collections) lib.ById[it.Id] = it;
 
         lib.HomeTabs = new List<HomeTab>
         {
-            new("all", "全部", () => ordered.Take(6).Concat(lib.Collections).Concat(ordered.Skip(6)).ToList()),
-            new("recent", "最近", () => recent),
-            new("steam", "Steam", () => ordered.Where(g => g.Platform == "steam").ToList()),
-            new("other", "非 Steam", () => ordered.Where(g => g.Platform == "other").ToList()),
-            new("gal", "Galgame", () => ordered.Where(g => g.Genre == "Galgame").ToList()),
+            new("all", "全部", () => ordered),
+            new("steam", "Steam", () => lib.Collections.Concat(steamGames).ToList()),   // Steam 的分类排最前，就在竖条旁边
+            new("local", "本地", () => ordered.Where(g => g.Platform != "steam").ToList()),
         };
+        Log.Info($"library: {shown.Count} shown ({games.Count - shown.Count} hidden in Steam), steam collections: {string.Join(", ", lib.Collections.Select(c => $"{c.Title}({c.Children!.Count})"))}");
         return lib;
     }
 }

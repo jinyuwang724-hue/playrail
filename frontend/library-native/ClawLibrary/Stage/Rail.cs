@@ -120,57 +120,39 @@ public sealed class Rail
         const float W = HomeWidth, inner = W - PadX * 2;
         float cx = W / 2;
 
-        // ---- 状态行：时间 + 电池 ----
-        var time = this.H(m.Now.ToString("HH:mm"), TextKit.Ui(700), 18);
+        // ---- 自下而上先定位置：最底下时间 + 电池，上面工具行，再上面账户（头像在上、名字在下）----
+        var time = this.H(m.Now.ToString("HH:mm"), TextKit.Ui(700), 16);
         var tb = time.LayoutBounds;
         float statusH = (float)tb.Height;
-        float battW = 0;
-        CanvasTextLayout? pct = null;
-        if (m.Battery.HasBattery)
-        {
-            pct = this.H($"{m.Battery.Percent}", TextKit.Ui(600), 10);
-            battW = 22 + 3 + (float)pct.LayoutBounds.Width;
-        }
-        float rowW = (float)tb.Width + (battW > 0 ? 8 + battW : 0);
-        float x0 = cx - rowW / 2, sy = PadTop;
-        ds.DrawTextLayout(time, x0 - (float)tb.X, sy - (float)tb.Y, Theme.Ink);
-        if (pct != null)
-        {
-            float bx = x0 + (float)tb.Width + 8, by = sy + statusH / 2 - 5;
-            DrawBattery(ds, bx, by, m.Battery);
-            ds.DrawTextLayout(pct, bx + 25 - (float)pct.LayoutBounds.X, sy + statusH / 2 - (float)pct.LayoutBounds.Height / 2 - (float)pct.LayoutBounds.Y, Theme.SeamInkSoft);
-        }
-        float navTop = sy + statusH + 18;
-
-        // ---- 先定底部几段的位置（导航区的下沿取决于它们）----
+        float statusY = H - PadBottom - statusH;
         const float tool = 30, toolGap = 5;
-        float toolsY = H - PadBottom - tool;
-        float accH = 32;
-        float accY = toolsY - 10 - accH;
-        float navBottom = accY - 18;
+        float toolsY = statusY - 12 - tool;
+        const float av = 40;
+        var name = this.H(m.User, TextKit.Ui(600), 11);
+        float nameH = (float)name.LayoutBounds.Height;
+        float accH = av + 6 + nameH;
+        float accY = toolsY - 16 - accH;
+        float navTop = PadTop, navBottom = accY - 18;
 
-        // ---- 导航区（先登记，焦点项的顺序才是从上到下）----
+        // ---- 导航区（页签；先登记，焦点项的顺序才是从上到下）----
         using (ds.CreateLayer(1, new Rect(0, navTop - 4, W, Math.Max(0, navBottom - navTop + 8))))
         {
             if (m.SettingsOpen) DrawSettings(ds, m, navTop, navBottom, focus);
             else DrawNav(ds, m, navTop, navBottom, focus);
         }
 
-        // ---- 账户 ----
+        // ---- 账户：头像在上，名字在下 ----
         {
-            float av = 28;
-            var name = this.H(m.User, TextKit.Ui(600), 11);
-            float nameW = Math.Min((float)name.LayoutBounds.Width, inner - av - 6);
-            float ax = cx - (av + 6 + nameW) / 2;
-            var avRect = new Rect(ax, accY + (accH - av) / 2, av, av);
+            var avRect = new Rect(cx - av / 2, accY, av, av);
             DrawAvatar(ds, m, avRect);
-            using (ds.CreateLayer(1, new Rect(ax + av + 6, accY, nameW, accH)))
-                ds.DrawTextLayout(name, ax + av + 6 - (float)name.LayoutBounds.X, accY + accH / 2 - (float)name.LayoutBounds.Height / 2 - (float)name.LayoutBounds.Y, Gfx.WithAlpha(Theme.Ink, 0.85));
-            Add(RailKind.Account, 0, new Rect(PadX, accY, inner, accH));
+            float nameW = Math.Min((float)name.LayoutBounds.Width, inner);
+            using (ds.CreateLayer(1, new Rect(cx - nameW / 2, accY + av + 6 - 2, nameW, nameH + 4)))
+                ds.DrawTextLayout(name, cx - nameW / 2 - (float)name.LayoutBounds.X, accY + av + 6 - (float)name.LayoutBounds.Y, Gfx.WithAlpha(Theme.Ink, 0.85));
+            Add(RailKind.Account, 0, new Rect(PadX, accY - 4, inner, accH + 8));
         }
 
         // ---- 工具行 ----
-        var tools = new[] { (RailKind.Search, "", "搜索"), (RailKind.Settings, "", "设置"), (RailKind.Explorer, "", "文件") };
+        var tools = new[] { (RailKind.Search, ""), (RailKind.Settings, ""), (RailKind.Explorer, "") };
         float tx = cx - (tools.Length * tool + (tools.Length - 1) * toolGap) / 2;
         for (int i = 0; i < tools.Length; i++)
         {
@@ -180,6 +162,24 @@ public sealed class Rail
             var icon = this.H(tools[i].Item2, new FontSpec(IconFont, 400), 15);
             DrawCentered(ds, icon, (float)(r.X + tool / 2), (float)(r.Y + tool / 2), pressed ? Theme.Ink : Gfx.WithAlpha(Theme.Ink, 0.8));
             Add(tools[i].Item1, 0, r, row: 1000);
+        }
+
+        // ---- 最底下：时间 + 电池 ----
+        float battW = 0;
+        CanvasTextLayout? pct = null;
+        if (m.Battery.HasBattery)
+        {
+            pct = this.H($"{m.Battery.Percent}", TextKit.Ui(600), 10);
+            battW = 22 + 3 + (float)pct.LayoutBounds.Width;
+        }
+        float rowW = (float)tb.Width + (battW > 0 ? 8 + battW : 0);
+        float x0 = cx - rowW / 2;
+        ds.DrawTextLayout(time, x0 - (float)tb.X, statusY - (float)tb.Y, Gfx.WithAlpha(Theme.Ink, 0.9));
+        if (pct != null)
+        {
+            float bx = x0 + (float)tb.Width + 8, by = statusY + statusH / 2 - 5;
+            DrawBattery(ds, bx, by, m.Battery);
+            ds.DrawTextLayout(pct, bx + 25 - (float)pct.LayoutBounds.X, statusY + statusH / 2 - (float)pct.LayoutBounds.Height / 2 - (float)pct.LayoutBounds.Y, Theme.SeamInkSoft);
         }
 
         // 焦点高亮画在最上面（导航区之外的几项）

@@ -121,7 +121,9 @@ public static class Bench
             });
             await Measure("collection-push-pop", async () =>
             {
+                s.SwitchTab(1); await Wait(1500);
                 if (s.FocusFirstCollection()) { await Wait(600); s.Activate(); await Wait(1800); s.Back(); await Wait(1800); }
+                s.SwitchTab(-1); await Wait(1500);
             });
             await Measure("idle-after", () => Wait(4000));
             var sb = new StringBuilder("[\n");
@@ -149,7 +151,7 @@ public static class Bench
             {
                 case "expand": s.Activate(); break;
                 case "collapse": s.Activate(); await Task.Delay(1500); Log.Info("state collapse now"); s.Back(); break;
-                case "collection": if (s.FocusFirstCollection()) { await Task.Delay(700); s.Activate(); } break;
+                case "collection": s.SwitchTab(1); await Task.Delay(1500); if (s.FocusFirstCollection()) { await Task.Delay(700); s.Activate(); } break;
                 case "styleb": s.ToggleTitleStyle(); break;
                 case "tab": s.SwitchTab(1); break;
                 case "nav": for (int i = 0; i < 3; i++) { s.Move(Direction.Right); await Task.Delay(250); } break;

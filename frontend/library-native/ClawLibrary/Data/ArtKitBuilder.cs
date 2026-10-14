@@ -15,7 +15,7 @@ namespace ClawLibrary.Data;
 
 public static class ArtKitBuilder
 {
-    private const int KitVersion = 1;
+    private const int KitVersion = 2;   // 2：加 q（竖封面原尺寸，放大时用的同一张图）
 
     public static ArtKit? TryLoad(string dir)
     {
@@ -28,7 +28,7 @@ public static class ArtKitBuilder
             if (!r.TryGetProperty("version", out var ver) || ver.GetInt32() != KitVersion) return null;
             bool B(string k) => r.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.True && File.Exists(Path.Combine(dir, k + ".jpg"));
             double? D(string k) => r.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : null;
-            var kit = new ArtKit { Dir = dir, P = B("p"), V = B("v"), N = B("n"), H = B("h"), S = B("s"), X = B("x"), Fx = D("fx"), Ha = D("ha") };
+            var kit = new ArtKit { Dir = dir, P = B("p"), Q = B("q"), G = B("g"), V = B("v"), N = B("n"), H = B("h"), S = B("s"), X = B("x"), Fx = D("fx"), Ha = D("ha") };
             if (r.TryGetProperty("c", out var c) && c.ValueKind == JsonValueKind.String) kit.C = c.GetString();
             return kit;
         }
@@ -46,6 +46,9 @@ public static class ArtKitBuilder
             {
                 await ResizeAsync(portrait, Path.Combine(dir, "p.jpg"), 400, 600, null);
                 kit["p"] = true;
+                // q：同一张竖封面的原尺寸（600x900），卡片放大时用，和小卡是同一张图
+                await ResizeAsync(portrait, Path.Combine(dir, "q.jpg"), 600, 900, null);
+                kit["q"] = true;
             }
             catch (Exception ex) { Log.Warn($"art p {portrait}: {ex.Message}"); }
         }
@@ -55,6 +58,10 @@ public static class ArtKitBuilder
             {
                 var (w, h) = await SizeAsync(hero);
                 await ResizeAsync(hero, Path.Combine(dir, "h.jpg"), 1600, (int)Math.Round(h * 1600.0 / w), null);
+                // g：同一张背景图的大尺寸（高 1080，不超过原图），横卡放大成方卡时用
+                int gh = Math.Min(h, 1080);
+                await ResizeAsync(hero, Path.Combine(dir, "g.jpg"), (int)Math.Round(w * gh / (double)h), gh, null);
+                kit["g"] = true;
                 await ResizeAsync(hero, Path.Combine(dir, "s.jpg"), 360, 360, fx);
                 await ResizeAsync(hero, Path.Combine(dir, "x.jpg"), 900, 900, fx);
                 if (portrait == null)
