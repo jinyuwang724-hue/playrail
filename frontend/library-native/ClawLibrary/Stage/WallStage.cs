@@ -1,4 +1,4 @@
-// 舞台（照 src/stage/stage.ts）：一面常驻的墙 + 一道缝，全部画在合成视觉层上。
+﻿// 舞台（照 src/stage/stage.ts）：一面常驻的墙 + 一道缝，全部画在合成视觉层上。
 // - 相机与缝的开口是一个 CompositionPropertySet 里的几个数（cx、cy、open…），两半墙、缝、边缘标签的位置都是表达式动画，
 //   相机补间 / 缝补间就是对这几个数做关键帧动画 —— 全在合成线程跑，UI 线程不逐帧干活。
 // - UI 线程用同一条曲线解析地算出「此刻相机在哪」，供导航、裁剪、点击命中用。
@@ -250,7 +250,10 @@ public sealed partial class WallStage : IDisposable
         Log.Info($"steam root={steam ?? "-"} user={user ?? "-"} stats={stats.Count}");
         var seed = Path.Combine(AppContext.BaseDirectory, "Assets", "library.json");
         var collections = Steam.ReadCollections(user);
-        _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), collections);
+        var owned = steam != null ? Steam.ReadOwnedApps(steam) : null;
+        var installed = steam != null ? Steam.ReadInstalled(steam) : null;
+        Log.Info($"steam owned apps={owned?.Count ?? 0} installed={installed?.Count ?? 0}");
+        _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), collections, owned, installed);
         _steamRoot = steam; _steamUser = user;
         if (_lib.Games.Count == 0)
         {
@@ -265,7 +268,9 @@ public sealed partial class WallStage : IDisposable
     private async Task BuildMissingArtAsync()
     {
         if (_steamRoot == null) return;
-        var missing = _lib.Games.Where(g => g.Art == null).ToList();
+        // 按墙上的顺序（最近玩过的在前）生成，先看得到的先有图
+        var order = _lib.HomeTabs.Count > 0 ? _lib.HomeTabs[0].Items() : _lib.Games;
+        var missing = order.Where(g => g.Kind == ItemKind.Game && g.Art == null).ToList();
         if (missing.Count == 0) return;
         Log.Info($"art kits missing: {missing.Count}; building");
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -727,8 +732,34 @@ public sealed partial class WallStage : IDisposable
         var item = id != null ? Lookup(id) : null;
         if (slot == null || item == null) return;
         if (item.Kind == ItemKind.Collection) { Push(slot, item); return; }
-        if (_expandedKey == slot.Key) { Toast($"启动「{item.Title}」（原型里不会真的启动）"); return; }
+        if (_expandedKey == slot.Key) { LaunchOrInstall(item); return; }
         Expand(slot);
+    }
+
+    /// <summary>
+    /// 交给 Steam：装好的 Steam 游戏 steam://rungameid/&lt;appid&gt;；没装的 steam://install/&lt;appid&gt;（Steam 弹出安装窗口，
+    /// 按一下就开始下载）；本地游戏是 Steam 里的非 Steam 快捷方式，用 (appid &lt;&lt; 32) | 0x02000000 的游戏 ID 启动。
+    /// </summary>
+    private void LaunchOrInstall(LibraryItem item)
+    {
+        if (!uint.TryParse(item.Id, out var appid)) { Toast($"「{item.Title}」没有可用的启动方式"); return; }
+        if (item.Platform != "steam")
+        {
+            ulong gameId = ((ulong)appid << 32) | 0x02000000UL;
+            SystemInfo.Open($"steam://rungameid/{gameId}");
+            Toast($"正在启动「{item.Title}」");
+        }
+        else if (item.Installed)
+        {
+            SystemInfo.Open($"steam://rungameid/{appid}");
+            Toast($"正在启动「{item.Title}」");
+        }
+        else
+        {
+            SystemInfo.Open($"steam://install/{appid}");
+            Toast($"在 Steam 里安装「{item.Title}」");
+        }
+        Log.Info($"launch {item.Id} {item.Platform} installed={item.Installed}");
     }
 
     /// <summary>B：收起聚焦卡 → 返回上一层。</summary>

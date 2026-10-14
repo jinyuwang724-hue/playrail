@@ -1,4 +1,4 @@
-// 墙上的一张卡（照 src/stage/tile.ts）。视觉树：
+﻿// 墙上的一张卡（照 src/stage/tile.ts）。视觉树：
 //   El（位置 / 尺寸，世界 px）
 //    └ Persp（原点在卡中心，带 1400px 透视；焦点放大 pop 在这里）
 //       └ Pivot（翻牌绕 Y 轴转、整墙波次的抬起 / 缩放 / 淡出）
@@ -570,7 +570,7 @@ public sealed class Tile : IDisposable
             else { ((CompositionSurfaceBrush)_copy.Brush).Surface = _copyArt.Surface; PositionText(_copy, _copyArt, r, true); }
             if (_expanded)
             {
-                _actionsArt = _s.Text.Actions(r.Width, r.Height, _s.Style);
+                _actionsArt = _s.Text.Actions(r.Width, r.Height, _s.Style, _item.Kind == ItemKind.Game && !_item.Installed);
                 if (_actions == null)
                 {
                     _actions = TextSprite(_actionsArt, r, anchorBottom: true);
@@ -846,13 +846,6 @@ public sealed class Tile : IDisposable
         return null;
     }
 
-    /// <summary>横图在卡里按焦点取景：object-position 的横向百分比。</summary>
-    public static double ObjectX(ArtKit art, char kind, double w, double h)
-    {
-        if (kind is not ('h' or 'g') || art.Ha is not double ha || art.Fx is not double fx) return 50;
-        double visible = w / Math.Max(h, 1) / ha;
-        if (visible >= 1) return 50;
-        double left = Math.Min(Math.Max(fx - visible / 2, 0), 1 - visible);
-        return Math.Round(left / (1 - visible) * 1000) / 10;
-    }
+    /// <summary>横图在卡里取景：一律从正中裁（按焦点取景常常把主体裁掉，比如艾尔登法环）。</summary>
+    public static double ObjectX(ArtKit art, char kind, double w, double h) => 50;
 }

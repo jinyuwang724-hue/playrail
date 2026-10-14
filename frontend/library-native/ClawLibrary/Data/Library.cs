@@ -1,4 +1,4 @@
-// 游戏库数据：种子清单（Assets\library.json，与网页预览同一份）+ 本机 Steam 的上次游玩 / 时长 + 封面套件。
+﻿// 游戏库数据：种子清单（Assets\library.json，与网页预览同一份）+ 本机 Steam 的上次游玩 / 时长 + 封面套件。
 // 条目、合集、首页页签的规则与 src/data/real.ts 相同。
 using System.Text.Json;
 
@@ -38,6 +38,8 @@ public sealed class LibraryItem
     public LibraryItem? ArtFrom;
     public ArtKit? Art => OwnArt ?? ArtFrom?.Art;
     public long? LastPlayed;
+    /// <summary>Steam 游戏装好了没有（本地游戏总是 true）。没装的卡上写「未安装」，A 键去 Steam 安装。</summary>
+    public bool Installed = true;
     public string? Series;
     public double SeedFx;
     public string? SeedColor;
@@ -65,9 +67,11 @@ public sealed class Library
 
     private const long Day = 86400;
 
-    public static Library Load(string seedPath, Dictionary<string, PlayStats> stats, Func<string, ArtKit?> art, List<SteamCollection>? steamCollections = null)
+    public static Library Load(string seedPath, Dictionary<string, PlayStats> stats, Func<string, ArtKit?> art,
+        List<SteamCollection>? steamCollections = null, List<SteamApp>? owned = null, HashSet<string>? installed = null)
     {
         var games = new List<LibraryItem>();
+        steamCollections ??= new();
         try
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(seedPath));
@@ -102,7 +106,42 @@ public sealed class Library
             }
         }
         catch (Exception ex) { Log.Error("library seed", ex); }
-        return Build(games, steamCollections ?? new());
+
+        // 种子清单以外、Steam 库里的其余游戏：只要类型是游戏的（工具、DLC、原声不要）；
+        // 用户自己放进分类里的软件（比如「工具」分类里的 Wallpaper Engine）也收进来。
+        if (owned != null)
+        {
+            var seen = games.Select(g => g.Id).ToHashSet();
+            var inCollections = steamCollections.Where(c => c.Id != "hidden").SelectMany(c => c.Added).ToHashSet();
+            foreach (var app in owned)
+            {
+                if (seen.Contains(app.Id)) continue;
+                bool game = app.Type.Equals("game", StringComparison.OrdinalIgnoreCase);
+                bool soft = app.Type.Equals("application", StringComparison.OrdinalIgnoreCase) && inCollections.Contains(app.Id);
+                if (!game && !soft) continue;
+                stats.TryGetValue(app.Id, out var st);
+                var sub = string.Join(" · ", new[] { app.Developer, app.Year?.ToString() }.Where(x => !string.IsNullOrEmpty(x)));
+                var g = new LibraryItem
+                {
+                    Id = app.Id, Kind = ItemKind.Game, Title = app.Name, Main = app.Name, Subtitle = sub,
+                    Platform = "steam", Badge = "STEAM", SeedFx = 0.5,
+                    LastPlayed = st?.Last,
+                    PlaytimeH = st?.Minutes is int m ? Math.Round(m / 60.0) : null,
+                };
+                g.Hue = HueOf(g.Title);
+                g.OwnArt = art(app.Id);
+                games.Add(g);
+                seen.Add(app.Id);
+            }
+        }
+        if (installed != null)
+            foreach (var g in games)
+                if (g.Platform == "steam")
+                {
+                    g.Installed = installed.Contains(g.Id);
+                    if (!g.Installed) g.Badge = "STEAM · 未安装";
+                }
+        return Build(games, steamCollections);
     }
 
     /// <summary>

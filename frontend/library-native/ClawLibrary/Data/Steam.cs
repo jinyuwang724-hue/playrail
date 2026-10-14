@@ -1,4 +1,4 @@
-// 读本机 Steam：安装目录、当前用户、上次游玩 / 时长（localconfig.vdf、shortcuts.vdf），以及封面原图在哪。
+﻿// 读本机 Steam：安装目录、当前用户、上次游玩 / 时长（localconfig.vdf、shortcuts.vdf），以及封面原图在哪。
 // 读不到就返回空，绝不抛出。
 using System.Text;
 using Microsoft.Win32;
@@ -9,6 +9,9 @@ public sealed record PlayStats(long? Last, int? Minutes);
 
 /// <summary>Steam 库里的一个分类：Id（favorite / hidden / uc-…）、名字、手动加进去的 appid。</summary>
 public sealed record SteamCollection(string Id, string Name, List<string> Added);
+
+/// <summary>Steam 库里的一项（appinfo.vdf）：类型 game / application / tool / dlc …</summary>
+public sealed record SteamApp(string Id, string Name, string Type, string? Developer, int? Year);
 
 public static class Steam
 {
@@ -96,12 +99,167 @@ public static class Steam
                 if (r.TryGetProperty("added", out var ap) && ap.ValueKind == System.Text.Json.JsonValueKind.Array)
                     foreach (var a in ap.EnumerateArray())
                         added.Add(a.ValueKind == System.Text.Json.JsonValueKind.Number ? ((uint)a.GetInt64()).ToString() : a.ToString());
+                if (r.TryGetProperty("removed", out var rp) && rp.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    foreach (var a in rp.EnumerateArray())
+                        added.Remove(a.ValueKind == System.Text.Json.JsonValueKind.Number ? ((uint)a.GetInt64()).ToString() : a.ToString());
                 if (id.Length == 0 || name.Length == 0) continue;
                 list.Add(new SteamCollection(id, name, added));
             }
         }
         catch (Exception ex) { Log.Warn($"steam collections: {ex.Message}"); }
         return list;
+    }
+
+    /// <summary>
+    /// Steam 库里的应用：appcache\librarycache 下每个 appid 一个目录（Steam 给库里的每一项缓存封面），
+    /// 名字、类型、开发商、发行年份从 appcache\appinfo.vdf（二进制 KeyValues，v28 / v29）里取。
+    /// </summary>
+    public static List<SteamApp> ReadOwnedApps(string root)
+    {
+        var list = new List<SteamApp>();
+        try
+        {
+            var cache = Path.Combine(root, "appcache", "librarycache");
+            if (!Directory.Exists(cache)) return list;
+            var ids = Directory.GetDirectories(cache).Select(Path.GetFileName).Where(n => n != null && uint.TryParse(n, out _)).ToHashSet()!;
+            foreach (var f in Directory.GetFiles(cache, "*_library_600x900.jpg"))   // 老版本 Steam：平铺的文件
+            {
+                var n = Path.GetFileName(f).Split('_')[0];
+                if (uint.TryParse(n, out _)) ids.Add(n);
+            }
+            var info = ReadAppInfo(Path.Combine(root, "appcache", "appinfo.vdf"), ids!);
+            foreach (var id in ids) if (id != null && info.TryGetValue(id, out var app)) list.Add(app);
+        }
+        catch (Exception ex) { Log.Warn($"steam owned apps: {ex.Message}"); }
+        return list;
+    }
+
+    /// <summary>已经装好的 appid：各个库目录（libraryfolders.vdf）里 appmanifest 的 StateFlags 带「完整安装」位。</summary>
+    public static HashSet<string> ReadInstalled(string root)
+    {
+        var set = new HashSet<string>();
+        try
+        {
+            var dirs = new List<string> { Path.Combine(root, "steamapps") };
+            var lf = Path.Combine(root, "steamapps", "libraryfolders.vdf");
+            if (File.Exists(lf))
+            {
+                var folders = TextVdf.Parse(File.ReadAllText(lf, Encoding.UTF8)).Path("libraryfolders");
+                if (folders != null)
+                    foreach (var (_, node) in folders.Children)
+                        if (node.Value("path") is { } p) dirs.Add(Path.Combine(p, "steamapps"));
+            }
+            foreach (var d in dirs.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!Directory.Exists(d)) continue;
+                foreach (var acf in Directory.GetFiles(d, "appmanifest_*.acf"))
+                {
+                    try
+                    {
+                        var st = TextVdf.Parse(File.ReadAllText(acf, Encoding.UTF8)).Path("AppState");
+                        if (st?.Value("appid") is not { } id) continue;
+                        if (int.TryParse(st.Value("StateFlags"), out var flags) && (flags & 4) != 0) set.Add(id);
+                    }
+                    catch (Exception ex) { Log.Warn($"{Path.GetFileName(acf)}: {ex.Message}"); }
+                }
+            }
+        }
+        catch (Exception ex) { Log.Warn($"steam installed: {ex.Message}"); }
+        return set;
+    }
+
+    /// <summary>appinfo.vdf：头（magic、universe、v29 起还有字符串表偏移），然后每个应用一段二进制 KeyValues。</summary>
+    private static Dictionary<string, SteamApp> ReadAppInfo(string path, HashSet<string> want)
+    {
+        var result = new Dictionary<string, SteamApp>();
+        if (!File.Exists(path)) return result;
+        var b = File.ReadAllBytes(path);
+        int pos = 0;
+        uint U32() { var v = BitConverter.ToUInt32(b, pos); pos += 4; return v; }
+        uint magic = U32();
+        U32();
+        List<string>? strings = null;
+        if (magic == 0x07564429)
+        {
+            long off = BitConverter.ToInt64(b, pos); pos += 8;
+            strings = new();
+            int p = (int)off;
+            uint n = BitConverter.ToUInt32(b, p); p += 4;
+            for (int i = 0; i < n && p < b.Length; i++)
+            {
+                int s = p;
+                while (p < b.Length && b[p] != 0) p++;
+                strings.Add(Encoding.UTF8.GetString(b, s, p - s));
+                p++;
+            }
+        }
+        else if (magic != 0x07564428) { Log.Warn($"appinfo.vdf: unknown magic {magic:X8}"); return result; }
+
+        string CStr()
+        {
+            int s = pos;
+            while (pos < b.Length && b[pos] != 0) pos++;
+            var v = Encoding.UTF8.GetString(b, s, pos - s);
+            pos++;
+            return v;
+        }
+        while (pos + 8 <= b.Length)
+        {
+            uint id = U32();
+            if (id == 0) break;
+            int size = (int)U32();
+            int end = pos + size;
+            if (!want.Contains(id.ToString())) { pos = end; continue; }
+            pos += 4 + 4 + 8 + 20 + 4 + 20;   // infoState、lastUpdated、picsToken、sha1、changeNumber、二进制 sha1
+            var stack = new List<string>();
+            string? name = null, type = null, dev = null, assocType = null, assocName = null;
+            uint release = 0;
+            while (pos < end)
+            {
+                byte t = b[pos++];
+                if (t == 8)
+                {
+                    if (stack.Count == 0) break;
+                    if (stack.Count == 4 && stack[2] == "associations")
+                    {
+                        if (assocType == "developer" && dev == null) dev = assocName;
+                        assocType = assocName = null;
+                    }
+                    stack.RemoveAt(stack.Count - 1);
+                    continue;
+                }
+                string key = strings != null ? strings[(int)U32()] : CStr();
+                switch (t)
+                {
+                    case 0: stack.Add(key); break;
+                    case 1:
+                        var v = CStr();
+                        if (stack.Count == 2 && stack[1] == "common")
+                        {
+                            if (key == "name") name = v;
+                            else if (key == "type") type = v;
+                        }
+                        else if (stack.Count == 4 && stack[2] == "associations")
+                        {
+                            if (key == "type") assocType = v;
+                            else if (key == "name") assocName = v;
+                        }
+                        break;
+                    case 2:
+                        uint u = U32();
+                        if (stack.Count == 2 && stack[1] == "common" && (key == "steam_release_date" || (key == "original_release_date" && release == 0))) release = u;
+                        break;
+                    case 3: pos += 4; break;
+                    case 7: pos += 8; break;
+                    default: pos = end; break;
+                }
+            }
+            pos = end;
+            if (name != null && type != null)
+                result[id.ToString()] = new SteamApp(id.ToString(), name, type, dev,
+                    release > 0 ? DateTimeOffset.FromUnixTimeSeconds(release).Year : null);
+        }
+        return result;
     }
 
     /// <summary>二进制 shortcuts.vdf：每个条目取 appid（无符号）和 LastPlayTime。</summary>

@@ -1,4 +1,4 @@
-// 卡片上的文字：标题排版（D「电影字幕」默认 / B「极简黑体」）、角标、聚焦卡的按钮排、无图时的大字。
+﻿// 卡片上的文字：标题排版（D「电影字幕」默认 / B「极简黑体」）、角标、聚焦卡的按钮排、无图时的大字。
 // 规则逐条照 src/styles.css（.copy / .kicker / strong / .tail / small / 容器查询 / 展开态），字号单位 cqi = 卡宽 / 100。
 // 每张图按「世界 px × 栅格倍率」画进 CompositionDrawingSurface，同一款游戏、同一种卡尺寸共用一张。
 using System.Numerics;
@@ -301,14 +301,14 @@ public sealed class CardText
 
     public const float ActionsHeight = 44;
 
-    public TextArt Actions(double w, double h, TitleStyle style) =>
-        Acquire($"actions|{Math.Round(w)}x{Math.Round(h)}|{style}", () => BuildActions((float)w, (float)h, style));
+    public TextArt Actions(double w, double h, TitleStyle style, bool install = false) =>
+        Acquire($"actions|{Math.Round(w)}x{Math.Round(h)}|{style}|{install}", () => BuildActions((float)w, (float)h, style, install));
 
-    private TextArt BuildActions(float w, float h, TitleStyle style)
+    private TextArt BuildActions(float w, float h, TitleStyle style, bool install)
     {
         var dev = _g.Device;
         float left = 32, copyW = w - 64;
-        var buttons = new[] { ("A", "开始游戏", true), ("Y", "游戏设置", false), ("B", "收起", false) };
+        var buttons = new[] { ("A", install ? "安装" : "开始游戏", true), ("Y", "游戏设置", false), ("B", "收起", false) };
         var font = TextKit.Ui(700);
         var keyFont = TextKit.Ui(800);
         var labels = buttons.Select(bt => TextKit.Layout(dev, bt.Item2, font, 15, 100000, CanvasHorizontalAlignment.Left)).ToArray();

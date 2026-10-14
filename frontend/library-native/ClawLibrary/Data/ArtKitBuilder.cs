@@ -1,11 +1,11 @@
-// 封面套件（tools/art-kit.py 的 C# 版，用系统自带的 WIC 解码 / 缩放 / 编码，不需要 Python）：
+﻿// 封面套件（tools/art-kit.py 的 C# 版，用系统自带的 WIC 解码 / 缩放 / 编码，不需要 Python）：
 // 从竖封面（600x900）和无字大背景（hero）裁出墙上各种卡片要用的图，尺寸与 art-kit.py 相同：
 //   p  竖卡（2x3、3x4、2x4）：竖封面 400x600
 //   h  横卡：背景图 1600 宽，前端按焦点取景
 //   s  小方卡：背景图按焦点裁方 360
 //   x  大方卡与展开的 6x6：同上 900
 //   v / n  没有竖封面时的兜底：背景图按焦点裁 2:3（440x660）和约 1:2（320x650）
-// 焦点 fx 与主色 c 用种子清单里的值（网页版 art-kit.py 当时算出来的），保证两边取景一致。
+// 背景图一律从正中裁（不再用种子清单里的焦点 fx）；主色 c 用种子清单里的值。
 using System.Text.Json;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -15,7 +15,7 @@ namespace ClawLibrary.Data;
 
 public static class ArtKitBuilder
 {
-    private const int KitVersion = 2;   // 2：加 q（竖封面原尺寸，放大时用的同一张图）
+    private const int KitVersion = 3;   // 2：加 q（竖封面原尺寸，放大时用的同一张图）；3：方图 / 兜底竖图一律从正中裁
 
     public static ArtKit? TryLoad(string dir)
     {
@@ -38,6 +38,7 @@ public static class ArtKitBuilder
     public static async Task<ArtKit?> BuildAsync(string dir, string? portrait, string? hero, double fx, string? color)
     {
         if (portrait == null && hero == null) return null;
+        fx = 0.5;   // 从正中裁：按焦点取景常把主体裁掉
         Directory.CreateDirectory(dir);
         var kit = new Dictionary<string, object> { ["version"] = KitVersion };
         if (portrait != null)
