@@ -1,5 +1,5 @@
 // 舞台：一面常驻的墙 + 一道缝。相机、缝、让位每帧直接写 DOM；只有裁剪范围变化和换内容时才增删 / 重画卡片。
-import { byId, HOME_TABS, type LibraryItem } from '../data/mock';
+import { byId, HOME_TABS, type LibraryItem } from '../data';
 import { infiniteLayout, itemAt, type WallLayout } from '../engine/content';
 import {
     BLOCK_W, focusedBlockSlots, scaleFor, slotByKey, slotsIn, overlaps, rectBounds,
@@ -364,7 +364,7 @@ export class Stage {
             from.set(key, this.tiles.get(key)?.rect ?? this.drawn(s));
         }
         if (this.reduced) {
-            for (const [key, r] of to) this.tiles.get(key)?.place(r);
+            for (const [key, r] of to) { const t = this.tiles.get(key); t?.place(r); t?.fitArt(); }
             if (clearAfter) for (const key of to.keys()) this.drawnOverride.delete(key);
             else for (const [key, r] of to) this.drawnOverride.set(key, r);
             this.reflow = null;
@@ -388,6 +388,7 @@ export class Stage {
             });
         }
         if (t >= 1) {
+            for (const key of rf.to.keys()) this.tiles.get(key)?.fitArt();
             if (rf.clear) for (const key of rf.to.keys()) this.drawnOverride.delete(key);
             this.reflow = null;
             this.root.classList.remove('is-reflowing');

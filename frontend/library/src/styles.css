@@ -15,6 +15,8 @@
     --tint-opacity: 0.5;
     --seam-paper: color-mix(in srgb, var(--bg) 90%, var(--ink));
     --seam-ink-soft: color-mix(in srgb, var(--ink) 55%, transparent);
+    --title-font: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+    --title-latin: "Noto Serif Display", "Noto Serif", Georgia, serif;
     --seam-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 6%, transparent), 0 24px 64px rgb(0 0 0 / 42%);
     color-scheme: dark;
 }
@@ -77,6 +79,9 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
     background:
         radial-gradient(120% 90% at 78% 12%, hsl(calc(var(--h) + 30) 70% 72% / .55), transparent 60%),
         linear-gradient(160deg, hsl(var(--h) 52% 50%), hsl(calc(var(--h) + 40) 45% 18%)); }
+/* 真实封面：套件里按卡片宽高比挑好的图，<img> 异步解码，不进主线程 */
+.art-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.face.has-art { background: color-mix(in srgb, var(--c, var(--poster-bg)) 30%, var(--bg)); }
 .glyph { position: absolute; right: -.06em; bottom: -.2em; line-height: 1; font-weight: 900; pointer-events: none;
     font-family: "Noto Serif SC", "Source Han Serif SC", "SimSun", serif; color: color-mix(in srgb, var(--ink) 14%, transparent); }
 .shade { position: absolute; inset: 0;
@@ -92,10 +97,24 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
 /* 集合：右下露出两层错开的叠页边（画在卡片间距里，不占内容面积） */
 .face.kind-collection { box-shadow: 3px 3px 0 0 color-mix(in srgb, var(--poster-bg) 80%, var(--ink) 20%), 6px 6px 0 0 color-mix(in srgb, var(--poster-bg) 90%, var(--ink) 10%), 0 0 0 4px transparent, var(--elevation, 0 12px 32px transparent); }
 
-.copy { position: absolute; left: 17px; right: 17px; bottom: 17px; z-index: 4; display: flex; flex-direction: column; gap: 5px; }
-.copy strong { overflow: hidden; margin-block: -.14em; padding-block: .14em; font-size: clamp(22px, 2vw, 36px); line-height: .96;
-    letter-spacing: -.045em; font-weight: 800; text-wrap: balance; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
-.copy small { overflow: hidden; font-size: 13px; font-weight: 650; opacity: .78; text-overflow: ellipsis; white-space: nowrap; }
+/* 标题排版（不用 logo）：小字原名 → 衬线粗体主标题 → 副标题 → 开发商 · 年份。字号跟卡片宽度走（cqi）。 */
+.face { container-type: size; }
+.copy { position: absolute; left: 7cqi; right: 7cqi; bottom: 6.5cqi; z-index: 4; display: flex; flex-direction: column; gap: 0; text-shadow: 0 1px 12px rgb(0 0 0 / 45%); }
+.copy strong { overflow: hidden; margin: 0; padding-block: .08em; font-family: var(--title-font); font-weight: 900; line-height: 1.08; letter-spacing: .02em;
+    font-size: clamp(17px, 11.5cqi, 76px); text-wrap: balance; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.copy strong.latin { font-family: var(--title-latin); font-weight: 700; letter-spacing: -.01em; line-height: 1; font-size: clamp(16px, 10cqi, 68px); }
+.kicker { display: flex; align-items: center; gap: .7em; margin-bottom: .55em; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    font-size: clamp(9px, 3cqi, 14px); font-weight: 700; letter-spacing: .22em; opacity: .82; }
+.kicker::before { content: ''; flex: none; width: 1.8em; height: 2px; background: var(--c, var(--accent)); filter: saturate(1.6) brightness(1.5); }
+.tail { margin-top: .3em; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-style: normal; font-family: var(--title-font);
+    font-size: clamp(11px, 4.4cqi, 26px); font-weight: 700; opacity: .88; letter-spacing: .04em; }
+.copy small { margin-top: .7em; overflow: hidden; font-size: clamp(10px, 3cqi, 14px); font-weight: 600; opacity: .66; text-overflow: ellipsis; white-space: nowrap; }
+/* 小卡只留主标题；竖封面自带书名，平时不压字，聚焦时才出现 */
+@container (max-width: 300px) { .copy small, .kicker { display: none; } .tail { font-size: 12px; } }
+@container (max-height: 300px) { .copy small { display: none; } }
+.face.art-p .copy, .face.art-p .shade { opacity: 0; transition: opacity 200ms ease; }
+.tile.is-focused .face.art-p .copy, .tile.is-focused .face.art-p .shade { opacity: 1; }
+.face.has-art .shade { background: linear-gradient(180deg, rgb(var(--shade-rgb) / 0%) 42%, rgb(var(--shade-rgb) / 30%) 62%, rgb(var(--shade-rgb) / 88%) 100%); }
 
 /* ---------- 聚焦卡 ---------- */
 .face.is-expanded { --elevation: 0 42px 110px var(--expanded-shadow); filter: none; }
@@ -103,7 +122,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); c
     linear-gradient(0deg, rgb(var(--shade-rgb) / 86%) 0%, rgb(var(--shade-rgb) / 62%) 14%, rgb(var(--shade-rgb) / 26%) 30%, rgb(var(--shade-rgb) / 0%) 46%),
     linear-gradient(90deg, rgb(var(--shade-rgb) / 88%), rgb(var(--shade-rgb) / 50%) 52%, rgb(var(--shade-rgb) / 8%)); }
 .face.is-expanded .copy { left: 32px; right: 32px; bottom: 28px; }
-.face.is-expanded .copy strong { max-width: 76%; font-size: clamp(48px, 6vw, 82px); line-height: .95; }
+.face.is-expanded .copy strong { max-width: 80%; font-size: clamp(40px, 9cqi, 88px); }
+.face.is-expanded .copy strong.latin { font-size: clamp(36px, 8cqi, 80px); }
+.face.is-expanded .kicker { font-size: 14px; }
+.face.is-expanded .tail { font-size: 24px; }
 .focus-meta { margin-top: 7px; font-size: 17px; font-weight: 650; opacity: .85; }
 .focus-meta i { font-style: normal; opacity: .5; }
 .focus-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px; filter: drop-shadow(0 1px 3px rgb(0 0 0 / 55%));

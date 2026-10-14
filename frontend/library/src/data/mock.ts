@@ -15,7 +15,16 @@ export type LibraryItem = {
     genre?: string;
     /** 集合里的游戏 id。 */
     children?: string[];
+    /** 排版标题：小字原名 / 主标题 / 副标题。没有时用 title。 */
+    kicker?: string;
+    main?: string;
+    tail?: string;
+    art?: ArtKit;
+    lastPlayed?: number;
 };
+
+/** 封面套件（tools/art-kit.py 产出）：base 下的 p/t/h/s/x.webp，fx 是背景图的水平焦点，ha 是背景图宽高比，c 是主色。 */
+export type ArtKit = { base: string; p?: boolean; t?: boolean; h?: boolean; s?: boolean; x?: boolean; fx?: number; ha?: number; c?: string };
 
 type Seed = [title: string, platform: Platform, genre: string, playtimeH: number, lastPlayedDays: number];
 
