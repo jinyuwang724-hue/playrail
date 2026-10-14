@@ -3,6 +3,14 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
-    Background="Transparent">
-    <muxc:WebView2 x:Name="Web" />
+    Background="Transparent"
+    XYFocusKeyboardNavigation="Disabled">
+    <Grid>
+        <!-- Never takes controller focus: Windows shows the touch keyboard when controller focus
+             enters the WebView2. Touch still reaches it. -->
+        <muxc:WebView2 x:Name="Web" IsTabStop="False" />
+        <!-- Holds focus and receives the controller; WidgetPage forwards each press to the page. -->
+        <ContentControl x:Name="Sink" IsTabStop="True" Width="1" Height="1" Opacity="0"
+                        HorizontalAlignment="Left" VerticalAlignment="Top" UseSystemFocusVisuals="False" />
+    </Grid>
 </Page>

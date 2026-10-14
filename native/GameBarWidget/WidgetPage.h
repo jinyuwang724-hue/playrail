@@ -14,6 +14,8 @@ namespace winrt::ClawWidget::implementation
         Windows::Foundation::IAsyncAction StartAsync();
         void Post(hstring const& json);
         void FocusSelf();
+        void OnSinkKeyDown(Windows::Foundation::IInspectable const& sender, Windows::UI::Xaml::Input::KeyRoutedEventArgs const& e);
+        bool m_pageCanGoBack{ false };
         std::chrono::steady_clock::time_point m_lastFocus{};
         std::chrono::steady_clock::time_point m_keyboardAllowedUntil{};
         event_token m_inputPaneToken{};

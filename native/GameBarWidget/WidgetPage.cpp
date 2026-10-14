@@ -49,16 +49,27 @@ namespace winrt::ClawWidget::implementation
                         self->Post(open ? L"{\"gamebar\":\"foreground\"}" : L"{\"gamebar\":\"pinned\"}");
                         // Game Bar opened: bring this widget to the front with controller focus, the
                         // way ClawTweaks does, so the Xbox button lands here instead of on Home.
-                        if (open) self->FocusSelf();
+                        if (open) { self->FocusSelf(); self->Sink().Focus(FocusState::Programmatic); }
                     });
             });
         }
         // The touch keyboard came up on every open: Windows treats the focused WebView2 as a text
         // field. Hide it unless the page's own "显示键盘" tile just asked for it.
         core.WebMessageReceived([weak = get_weak()](auto&&, CoreWebView2WebMessageReceivedEventArgs const& args) {
-            if (auto self = weak.get(); self && args.WebMessageAsJson().size() && std::wstring_view(args.WebMessageAsJson()).find(L"keyboard") != std::wstring_view::npos)
+            auto self = weak.get();
+            if (!self) return;
+            std::wstring_view json = args.WebMessageAsJson();
+            if (json.find(L"keyboard") != std::wstring_view::npos)
                 self->m_keyboardAllowedUntil = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+            if (json.find(L"\"canBack\":true") != std::wstring_view::npos) self->m_pageCanGoBack = true;
+            else if (json.find(L"\"canBack\":false") != std::wstring_view::npos) self->m_pageCanGoBack = false;
         });
+        // Controller focus stays on Sink; a tap may still focus the WebView2, so hand focus back.
+        Sink().KeyDown({ this, &WidgetPage::OnSinkKeyDown });
+        Web().GotFocus([weak = get_weak()](auto&&, auto&&) {
+            if (auto self = weak.get()) self->Sink().Focus(FocusState::Programmatic);
+        });
+        Sink().Focus(FocusState::Programmatic);
         m_inputPaneToken = Windows::UI::ViewManagement::InputPane::GetForCurrentView().Showing(
             [weak = get_weak()](Windows::UI::ViewManagement::InputPane const& pane, auto&&) {
                 auto self = weak.get();
@@ -74,6 +85,28 @@ namespace winrt::ClawWidget::implementation
         m_lastFocus = now;
         Windows::System::Launcher::LaunchUriAsync(Uri(
             L"ms-gamebar://launchForeground/activate/ClawToolbox.GameBarWidget_ba3r68zr466za_App_Toolbox/"));
+    }
+
+    // Controller and arrow keys arrive here and go to the page as {"nav": ...}. B goes to the page only
+    // while it has something to close (menu, edit mode); otherwise Game Bar keeps its own B.
+    void WidgetPage::OnSinkKeyDown(IInspectable const&, Input::KeyRoutedEventArgs const& e)
+    {
+        using Windows::System::VirtualKey;
+        const wchar_t* nav = nullptr;
+        switch (e.Key())
+        {
+        case VirtualKey::GamepadDPadUp: case VirtualKey::GamepadLeftThumbstickUp: case VirtualKey::Up: nav = L"up"; break;
+        case VirtualKey::GamepadDPadDown: case VirtualKey::GamepadLeftThumbstickDown: case VirtualKey::Down: nav = L"down"; break;
+        case VirtualKey::GamepadDPadLeft: case VirtualKey::GamepadLeftThumbstickLeft: case VirtualKey::Left: nav = L"left"; break;
+        case VirtualKey::GamepadDPadRight: case VirtualKey::GamepadLeftThumbstickRight: case VirtualKey::Right: nav = L"right"; break;
+        case VirtualKey::GamepadA: case VirtualKey::Enter: case VirtualKey::Space: nav = L"a"; break;
+        case VirtualKey::GamepadX: case VirtualKey::X: nav = L"x"; break;
+        case VirtualKey::GamepadB: case VirtualKey::Escape: if (m_pageCanGoBack) nav = L"b"; break;
+        default: break;
+        }
+        if (!nav) return;
+        Post(hstring(L"{\"nav\":\"") + nav + L"\"}");
+        e.Handled(true);
     }
 
     void WidgetPage::Post(hstring const& json)

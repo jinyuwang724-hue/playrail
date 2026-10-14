@@ -424,6 +424,7 @@ function render() {
   root.innerHTML = sideHtml() + (S.edit ? editHtml()
     : `<div class="right">${S.conn === "offline" ? bannersHtml() + headerHtml() : headerHtml() + bannersHtml()}<section class="grid" aria-label="快捷磁贴">${tiles.map(tileHtml).join("")}</section></div>`) + menuHtml();
   restoreFocus();
+  reportBack();
 }
 
 // ---- input: touch, keyboard and controller ----------------------------------------------------
@@ -437,7 +438,6 @@ function setFocus(el) {
   if (!el) return;
   S.focus = el.dataset.nav;
   el.classList.add("f");
-  el.focus({ preventScroll: true });
   el.scrollIntoView({ block: "nearest" });
 }
 
@@ -595,9 +595,22 @@ function pollPad(now) {
 requestAnimationFrame(pollPad);
 
 // Game Bar tells the host when it opens; poll the agent only while the widget can be seen.
+// In Game Bar the host owns the controller (controller focus inside the WebView2 makes Windows
+// show the touch keyboard) and forwards each press as {"nav": ...}.
+const NAV = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
 window.chrome?.webview?.addEventListener("message", event => {
-  if (event.data?.gamebar === "foreground") { S.visible = true; refresh(); }
+  const data = event.data || {};
+  if (data.gamebar === "foreground") refresh();
+  if (NAV[data.nav]) direction(...NAV[data.nav]);
+  else if (data.nav === "a") activate(current());
+  else if (data.nav === "b") back();
+  else if (data.nav === "x") pick();
 });
+let canBack = null;
+function reportBack() {
+  const now = !!(S.menu || S.edit || S.moving || S.arm);
+  if (now !== canBack) { canBack = now; window.chrome?.webview?.postMessage({ canBack: now }); }
+}
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 setInterval(() => { if (!document.hidden && agent.ready && !S.saveTimer) refresh(); }, 1500);
 setInterval(() => { if (!agent.ready) connect(); }, 2000);
