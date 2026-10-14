@@ -10,11 +10,14 @@ let seed = Number(process.argv[2] ?? 20261013) >>> 0;
 const rand = () => { seed = (seed + 0x6d2b79f5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const shuffle = a => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 
-const BIG = [[6, 4], [4, 6], [6, 3]];
-const MID = [[4, 4], [4, 3], [3, 4], [6, 2], [4, 2], [2, 4], [3, 3]];
-const SMALL = [[2, 2], [2, 3], [3, 2]];
-const TEMPLATE_SIZES = [...BIG, ...MID, ...SMALL];
-const REFLOW_SIZES = [[2, 2], [2, 3], [3, 2], [3, 3], [2, 4], [4, 2], [3, 4], [4, 3], [4, 4], [6, 2], [2, 6]];
+// 每套模板用哪 12 种尺寸：与 folia Bravais 的 4 套模板逐套相同（大小搭配一致），卡片位置由这里自己随机排。
+const TEMPLATE_SETS = [
+    ['6x4', '4x4', '3x4', '3x2', '3x2', '3x2', '3x2', '2x2', '2x2', '2x2', '2x2', '2x2'],
+    ['6x4', '6x2', '2x4', '2x4', '2x3', '2x3', '2x3', '2x3', '2x3', '2x3', '2x2', '2x2'],
+    ['6x4', '6x3', '4x3', '4x2', '2x3', '2x2', '2x2', '2x2', '2x2', '2x2', '2x2', '2x2'],
+    ['4x4', '4x3', '4x3', '6x2', '2x4', '2x4', '2x3', '2x3', '2x2', '2x2', '2x2', '2x2'],
+].map(set => set.map(k => k.split('x').map(Number)));
+const REFLOW_SIZES = [[2, 2], [2, 3], [3, 2], [2, 4], [4, 2], [3, 4], [4, 3], [4, 4], [6, 2], [2, 6]];
 
 const fits = (g, x, y, w, h) => {
     if (x + w > W || y + h > H) return false;
@@ -24,60 +27,51 @@ const fits = (g, x, y, w, h) => {
 const fill = (g, x, y, w, h, v) => { for (let yy = y; yy < y + h; yy++) for (let xx = x; xx < x + w; xx++) g[yy * W + xx] = v; };
 
 // ---------- 模板 ----------
-const randomTemplate = () => {
+/** 用给定的一组尺寸随机铺满 12×8（每种尺寸可横可竖不换向：尺寸就是 folia 的原样）。 */
+const randomTemplate = sizes => {
     const g = new Uint8Array(W * H);
+    const left = sizes.map(() => true);
     const out = [];
-    let budget = 20000;
+    let budget = 200000;
     const dfs = () => {
         if (--budget < 0) return false;
         const i = g.indexOf(0);
         if (i < 0) return out.length === N;
-        if (out.length >= N) return false;
         const x = i % W, y = (i / W) | 0;
-        for (const [w, h] of shuffle([...TEMPLATE_SIZES])) {
-            if (!fits(g, x, y, w, h)) continue;
-            fill(g, x, y, w, h, 1); out.push({ x, y, cols: w, rows: h });
+        const tried = new Set();
+        for (const j of shuffle(sizes.map((_, k) => k))) {
+            if (!left[j]) continue;
+            const [w, h] = sizes[j];
+            if (tried.has(`${w}x${h}`) || !fits(g, x, y, w, h)) continue;
+            tried.add(`${w}x${h}`);
+            left[j] = false; fill(g, x, y, w, h, 1); out.push({ x, y, cols: w, rows: h, j });
             if (dfs()) return true;
-            fill(g, x, y, w, h, 0); out.pop();
+            left[j] = true; fill(g, x, y, w, h, 0); out.pop();
         }
         return false;
     };
     return dfs() ? out : null;
 };
-const isBig = s => BIG.some(([w, h]) => s.cols === w && s.rows === h);
+/** 块内贯穿整块的直线越少越好（读起来不像表格）；大卡离块中心远一点，相邻块拼起来不挤在一起。 */
 const templateScore = t => {
-    const big = t.filter(isBig).length;
-    if (big !== 1) return -1;
-    const kinds = new Set(t.map(s => `${s.cols}x${s.rows}`)).size;
-    const smalls = t.filter(s => s.cols * s.rows <= 6).length;
-    if (smalls < 5 || smalls > 8) return -1;
-    const portrait = t.filter(s => s.rows > s.cols).length;
-    const landscape = t.filter(s => s.cols > s.rows).length;
-    if (!portrait || !landscape) return -1;
-    return kinds + Math.min(portrait, landscape) * 0.5;
+    let lines = 0;
+    for (let x = 1; x < W; x++) if (t.every(s => s.x >= x || s.x + s.cols <= x)) lines++;
+    for (let y = 1; y < H; y++) if (t.every(s => s.y >= y || s.y + s.rows <= y)) lines++;
+    return -lines * 10 + rand();
 };
-const signature = t => t.map(s => `${s.x},${s.y},${s.cols},${s.rows}`).sort().join('|');
-const shapeSig = t => t.map(s => `${s.cols}x${s.rows}`).sort().join('|');
 
-const pool = [];
-for (let tries = 0; tries < 6000; tries++) {
-    const t = randomTemplate();
-    if (!t) continue;
-    const score = templateScore(t);
-    if (score > 0) pool.push({ t, score });
-}
-pool.sort((a, b) => b.score - a.score);
-const picked = [];
-const seenShapes = new Set();
-const bigPos = t => { const b = t.find(isBig); return `${b.cols}x${b.rows}@${b.x < 3 ? 'L' : b.x > 5 ? 'R' : 'C'}${b.y < 2 ? 'T' : 'B'}`; };
-const seenBig = new Set();
-for (const { t } of pool) {
-    if (picked.length === 4) break;
-    const s = shapeSig(t), b = bigPos(t);
-    if (seenShapes.has(s) || seenBig.has(b)) continue;
-    seenShapes.add(s); seenBig.add(b); picked.push(t);
-}
-if (picked.length < 4) throw new Error('not enough templates');
+const picked = TEMPLATE_SETS.map((sizes, ti) => {
+    let best = null, bestScore = -Infinity;
+    for (let tries = 0; tries < 400; tries++) {
+        const t = randomTemplate(sizes);
+        if (!t) continue;
+        const score = templateScore(t);
+        if (score > bestScore) { best = t; bestScore = score; }
+    }
+    if (!best) throw new Error(`template ${ti}: no cover`);
+    // slot 序号按位置排（行优先），与 folia 一样
+    return best.sort((a, b) => a.y - b.y || a.x - b.x).map(({ x, y, cols, rows }) => ({ x, y, cols, rows }));
+});
 
 // ---------- 让位 ----------
 const center = s => ({ x: s.x + s.cols / 2, y: s.y + s.rows / 2 });
