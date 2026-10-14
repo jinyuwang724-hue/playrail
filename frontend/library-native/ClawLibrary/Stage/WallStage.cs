@@ -123,7 +123,7 @@ public sealed partial class WallStage : IDisposable
         _worlds[0] = G.C.CreateContainerVisual();
         _worlds[1] = G.C.CreateContainerVisual();
         _cam = G.C.CreatePropertySet();
-        foreach (var n in new[] { "cx", "cy", "open", "anchor", "scale", "lineX", "vw", "vh", "cw", "sx", "sw", "pad" }) _cam.InsertScalar(n, 0);
+        foreach (var n in new[] { "cx", "cy", "open", "anchor", "scale", "lineX", "vw", "vh", "cw", "sx", "sw", "pad", "bhome", "bsw" }) _cam.InsertScalar(n, 0);
         G.DeviceReplaced += () => _dq.TryEnqueue(() => { Text.Clear(); foreach (var t in _tiles.Values) t.Redraw(); RenderSeamContent(); });
     }
 
@@ -326,6 +326,10 @@ public sealed partial class WallStage : IDisposable
         _root.Children.InsertAtTop(wallR);
         _backdrop = new Backdrop(G) { Dpi = Chrome.Dpi };
         _root.Children.InsertAtBottom(_backdrop.Root);
+        // 背景跟着缝走：画布按「缝在首页的位置」来画（bhome / bsw：缝第一次打开时的屏幕位置和宽度；缝越宽越往画布正中靠，
+        // 铺满全屏时正好是整张画布），视觉整体平移到缝的实际位置。墙面平移时只是合成线程挪一下，
+        // 不会露出没画过的那一块（以前背景钉在屏幕上，缝挪到哪就得现画到哪，停帧时露出旧画面，成了断层）
+        Expr(_backdrop.Root, "Offset", "Vector3(p.sx - Lerp(p.bhome, p.vw / 2, Clamp((p.sw - p.bsw) / Max(1, p.vw - p.bsw), 0, 1)), 0, 0)");
         _root.Children.InsertAtTop(_field);
         _field.Children.InsertAtTop(_worlds[0]);
         _field.Children.InsertAtTop(_worlds[1]);

@@ -1,9 +1,10 @@
-// 动态背景：一比一复刻 folia 的「隐现」（Latent）背景——封面取色的流体渐变 + 像素抖动两层着色器 + 主题底色遮罩
+﻿// 动态背景：一比一复刻 folia 的「隐现」（Latent）背景——封面取色的流体渐变 + 像素抖动两层着色器 + 主题底色遮罩
 // （着色器见 Shaders/Latent.hlsl）。参数全部照 folia 的默认值：流体速度 0.3、扭曲 0.8、旋涡 0.1、颗粒 0.01；
 // 像素层 warp / 4x4、格子 2.5、速度 0.1、不透明度 0.55（soft-light）；遮罩 35 %；颜色来源「封面 + 主题」：
 // 封面缩到 50×50 用按像素数加权的中位切分取 6 个代表色（folia utils/colorPalette 的算法）。
 // 画布分辨率同 folia：不低于 1 倍、总像素不超过 1280×720，再拉伸到全屏。
 // 出帧：合成器的帧上（UI 线程的 Rendering），每帧只算缝的开口那一条（离屏画好再拷进合成表面的那一块）。
+// 画布按「缝在屏幕正中」来画，整块视觉跟着缝平移（WallStage 里的表达式），墙面平移时不用重画。
 // 墙面在动（相机、让位、翻牌、波次、平移）的时候背景停一下、时钟也停，动完接着走：实测墙面动画和背景同时出帧
 // 会让 DWM 隔帧合成；背景走得极慢（folia 在主页干脆让它静止），停这零点几秒看不出来。暂停时停在最后一帧。
 // 与 folia 的差别：folia 在主页默认让它静止（省 GPU），这里按要求让它动，并在没操作 60 秒后停；
@@ -45,7 +46,8 @@ public sealed class Backdrop : IDisposable
     private bool _running, _dirty = true;
     private double _meshTime, _ditherTime;
     private Vector4[] _from = DefaultColors(), _to = DefaultColors();
-    private double _fadeStart = -1e9;
+    /// <summary>换色渐变走了多少毫秒：按出帧的 dt 累加（不按挂钟），背景停帧时渐变也停，接着走时不会一下跳到新颜色。</summary>
+    private double _fadeMs = ColorFadeMs + 1;
     private string? _coverPath;
     private int _lastX0 = -1, _lastX1 = -1;
     public float Dpi = 1;
@@ -159,7 +161,7 @@ public sealed class Backdrop : IDisposable
     }
 
     /// <summary>还要不要逐帧画（在跑、或颜色还在渐变、或有待画的一帧）。</summary>
-    public bool NeedsFrames => _surface != null && (_running || _dirty || NowMs - _fadeStart < ColorFadeMs + 50);
+    public bool NeedsFrames => _surface != null && (_running || _dirty || _fadeMs < ColorFadeMs);
 
     /// <summary>换封面：后台缩到 50×50 取代表色，颜色在 800 ms 里渐变过去。post 把结果送回 UI 线程。</summary>
     public void SetCover(string? imagePath, Action<Action> post)
@@ -184,17 +186,17 @@ public sealed class Backdrop : IDisposable
     {
         lock (_gate)
         {
-            _from = CurrentColors(NowMs);
+            _from = CurrentColors();
             _to = next;
-            _fadeStart = NowMs;
+            _fadeMs = 0;
             _dirty = true;
         }
         _wake.Set();
     }
 
-    private Vector4[] CurrentColors(double nowMs)
+    private Vector4[] CurrentColors()
     {
-        double k = Math.Clamp((nowMs - _fadeStart) / ColorFadeMs, 0, 1);
+        double k = Math.Clamp(_fadeMs / ColorFadeMs, 0, 1);
         k = k * k * (3 - 2 * k);
         var r = new Vector4[_to.Length];
         for (int i = 0; i < r.Length; i++) r[i] = Vector4.Lerp(_from[i], _to[i], (float)k);
@@ -214,11 +216,12 @@ public sealed class Backdrop : IDisposable
             _meshTime += dtMs * MeshSpeed / 1000;
             _ditherTime += dtMs * DitherSpeed / 1000;
         }
+        bool fading = _fadeMs < ColorFadeMs;
+        if (fading) _fadeMs += dtMs;
         int x0 = Math.Clamp((int)Math.Floor((left - 6) * _pixelRatio), 0, _cw);
         int x1 = Math.Clamp((int)Math.Ceiling((left + width + 6) * _pixelRatio), 0, _cw);
         if (x1 - x0 < 1) return;
         bool moved = x0 != _lastX0 || x1 != _lastX1;
-        bool fading = NowMs - _fadeStart < ColorFadeMs + 50;
         if (!_running && !_dirty && !moved && !fading) return;
         _dirty = false;
         _lastX0 = x0; _lastX1 = x1;
@@ -231,7 +234,7 @@ public sealed class Backdrop : IDisposable
                 int alloc = Math.Min(_cw, (sw + 63) / 64 * 64);
                 _strip = new CanvasRenderTarget(_g.Device, alloc, _ch, 96);
             }
-            var colors = CurrentColors(NowMs);
+            var colors = CurrentColors();
             var p = _effect.Properties;
             p["resolution"] = new Vector2(_cw, _ch);
             p["origin"] = new Vector2(x0, 0);

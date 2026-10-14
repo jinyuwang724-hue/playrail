@@ -1,4 +1,4 @@
-// 舞台里与竖条（首页窄缝）有关的部分：焦点在墙与竖条之间走、竖条各项的动作、设置、搜索、时钟与电池刷新、动态背景。
+﻿// 舞台里与竖条（首页窄缝）有关的部分：焦点在墙与竖条之间走、竖条各项的动作、设置、搜索、时钟与电池刷新、动态背景。
 using System.Numerics;
 using ClawLibrary.Data;
 using ClawLibrary.Engine;
@@ -512,7 +512,7 @@ public sealed partial class WallStage
 
 public sealed partial class WallStage
 {
-    /// <summary>动态背景在自己的线程上出帧；这里只把缝的开口报过去（补间途中报起止两头的并集，合成线程上开口怎么走都在里面）。</summary>
+    /// <summary>动态背景在合成器的帧上出帧；这里把缝的开口宽度报过去（补间途中取起止两头里宽的那个）。</summary>
     private void EnsureBackdropLoop()
     {
         PublishStrip();
@@ -523,11 +523,15 @@ public sealed partial class WallStage
     }
 
     private bool _backdropLoop;
+    /// <summary>缝第一次打开时在屏幕上的中心和宽度（DIP）：背景画布按缝在这里来画。</summary>
+    private double? _backdropHome;
+    private double _backdropHomeWidth;
     private long _backdropLast;
     /// <summary>墙面动画进行到什么时候（这之前背景停帧）。</summary>
     private long _wallBusyUntil;
 
-    /// <summary>墙面开始一段动画：背景先停到它结束。</summary>
+    /// <summary>墙面开始一段动画：背景先停到它结束（背景整块跟着缝平移，停的只是它自己那点极慢的流动；
+    /// 实测停帧期间也出帧会让 DWM 隔帧合成，墙面动画从 60 掉到 51–57 fps）。</summary>
     private void WallBusy(double ms) => _wallBusyUntil = Math.Max(_wallBusyUntil, NowMs + (long)ms + 30);
 
     private void OnBackdropFrame(object? sender, object e)
@@ -552,15 +556,20 @@ public sealed partial class WallStage
     {
         if (_backdrop == null || _stack.Count == 0) return;
         Sync();
+        // 画布里缝的位置固定（视觉跟着缝平移，见 BuildChrome 里的 Offset 表达式），这里只看宽度：补间途中取起止两头里宽的那个
         var g = SeamGeometry(_anchorX, _center, _openWidth, View);
-        double l = g.ScreenX - g.Width / 2, r = g.ScreenX + g.Width / 2;
-        if (_camX != null || _camY != null || _seamTween != null)
+        if (_backdropHome == null && g.Width > 1)
         {
-            var end = new Center(_camX?.To ?? _center.X, _camY?.To ?? _center.Y);
-            var g2 = SeamGeometry(_anchorX, end, _seamTween?.To ?? _openWidth, View);
-            l = Math.Min(l, g2.ScreenX - g2.Width / 2);
-            r = Math.Max(r, g2.ScreenX + g2.Width / 2);
+            _backdropHome = g.ScreenX; _backdropHomeWidth = g.Width;
+            _cam.InsertScalar("bhome", (float)g.ScreenX);
+            _cam.InsertScalar("bsw", (float)g.Width);
         }
-        _backdrop.SetStrip(l, Math.Max(0, r - l));
+        double home = _backdropHome ?? View.Width / 2, homeW = _backdropHomeWidth;
+        double width = g.Width;
+        if (_seamTween != null) width = Math.Max(width, SeamGeometry(_anchorX, _center, _seamTween.To, View).Width);
+        // 与 Offset 表达式同一个公式：缝越宽，画布里的中心越往正中靠（铺满全屏时正好是整张画布）
+        double t = Math.Clamp((width - homeW) / Math.Max(1, View.Width - homeW), 0, 1);
+        double center = home + (View.Width / 2 - home) * t;
+        _backdrop.SetStrip(center - width / 2, width);
     }
 }
