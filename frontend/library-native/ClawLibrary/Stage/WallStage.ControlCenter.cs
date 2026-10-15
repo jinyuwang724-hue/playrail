@@ -38,7 +38,7 @@ public sealed partial class WallStage
     private const float CcBoost = 1.5f;
     /// <summary>滑条上下各 96 px 留白（py-24），信息块 pt-6；整组（滑条 + 信息块）在屏幕上垂直居中。</summary>
     private const float CcRowPadY = 96, CcLabelTop = 24, CcLabelH = 32 + 4 + 16 + 16;
-    private const double CcScrollMs = 350, CcCloseMs = 280, CcStepMs = 200;
+    private const double CcScrollMs = 350, CcCloseMs = 280;
     private static readonly Bezier CcScrollEase = new(0.42f, 0f, 0.58f, 1f);
     private static readonly Bezier CcCloseEase = new(0.4f, 0f, 0.2f, 1f);
     private static readonly Color CcText = Gfx.Rgba(0xf4, 0xf4, 0xf5);
@@ -84,7 +84,6 @@ public sealed partial class WallStage
     private bool _ccOpen;
     private int _ccFocus;
     private int _ccVersion;
-    private long _ccLastStep = -10_000;
     private Tween? _ccOff;
     private double _ccOffNow;
     private float _ccK = 1, _ccH;
@@ -272,11 +271,9 @@ public sealed partial class WallStage
     {
         if (CcChromeMove(dir)) return;
         if (dir is not (Direction.Left or Direction.Right)) return;
-        long now = NowMs;
-        if (now - _ccLastStep < CcStepMs) return;
+        // 不再限制「200 ms 一步」：滚动是弹簧，连按就直接换终点接着滚（可打断）
         int next = Math.Clamp(_ccFocus + (dir == Direction.Left ? -1 : 1), 0, _ccBlocks.Count - 1);
         if (next == _ccFocus) return;
-        _ccLastStep = now;
         CcFocus(next);
     }
 
@@ -364,15 +361,10 @@ public sealed partial class WallStage
 
     private void CcScrollTo(double to)
     {
-        double from = CcOffNow();
-        if (Reduced || Math.Abs(to - from) < 0.5)
-        {
-            _ccOff = null; _ccOffNow = to;
-            _ccP.StopAnimation("off"); _ccP.InsertScalar("off", (float)to);
-            return;
-        }
-        _ccOff = new Tween { From = from, To = to, Start = NowMs, Ms = CcScrollMs, Ease = CcScrollEase };
-        _ccP.StartAnimation("off", G.Scalar(from, to, CcScrollMs, CcScrollEase));
+        // folia 网格把卡拉回中间的那根弹簧（220 / 28）：从当前位置和速度接着走，滚动途中再按方向直接换终点，不停顿、不回头
+        _ccOff = null; _ccOffNow = to;   // 点击命中按终点算
+        if (Reduced) { _ccP.StopAnimation("off"); _ccP.InsertScalar("off", (float)to); return; }
+        _ccP.StartAnimation("off", G.SpringScalar((float)to, Spring.GridCenter));
     }
 
     /// <summary>叠放次序：离焦点越近越靠上（folia 的 z = 10 − 9t；焦点一变就重排）。</summary>
@@ -407,7 +399,8 @@ public sealed partial class WallStage
         foreach (var v in new Visual[] { _ccBack.Root, _ccDim, _ccRow, _ccTitle, _ccLabel }) _cc.Children.InsertAtTop(v);
 
         _ccP = G.C.CreatePropertySet();
-        foreach (var n in new[] { "off", "vw", "pitch", "padx", "half", "r", "lift", "top", "away" }) _ccP.InsertScalar(n, 0);
+        foreach (var n in new[] { "off", "vw", "pitch", "padx", "half", "r", "lift", "top" }) _ccP.InsertScalar(n, 0);
+        for (int i = 0; i < 6; i++) _ccP.InsertScalar($"a{i}", 0);   // 每张卡自己的「焦点离开」量（只有焦点卡会动）
 
         var defs = new (string Name, string Icon, Color Accent)[]
         {
@@ -430,14 +423,14 @@ public sealed partial class WallStage
             foreach (var v in new Visual[] { b.ShadowBase, b.ShadowFocus, b.Face, b.Cover, b.Ring }) b.Body.Children.InsertAtTop(v);
             // folia updateCardTransforms：t = min(|卡中心 − 视口中心| / 600, 1)；scale 1.2 → 0.5，opacity 1 → 0.15，上浮 6 px
             string T = $"Min(Abs(p.padx + {i} * p.pitch + p.half - p.off - p.vw / 2) / p.r, 1)";
-            CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off, p.top - p.lift * (1 - {T}) * (1 - p.away), 0)");
-            // away：焦点离开滑条（去了左下图标 / 电源菜单 / 头像）时 0 → 1，焦点卡从 1.2× 缩回 1×、落回原位、焦点投影换成普通投影
-            string S = $"({CcMaxScale} - 0.7 * {T} - 0.2 * p.away * (1 - {T}))";
+            CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off, p.top - p.lift * (1 - {T}) * (1 - p.a{i}), 0)");
+            // a{i}：焦点从这张卡移到左下图标 / 电源菜单 / 头像时 0 → 1：只有这张卡从 1.2× 缩回 1×、落回原位、焦点投影换成普通投影
+            string S = $"({CcMaxScale} - 0.7 * {T} - 0.2 * p.a{i})";
             CcExpr(b.El, "Scale", $"Vector3({S}, {S}, 1)");
             CcExpr(b.El, "Opacity", $"Max(0.15, 1 - 0.85 * {T})");
             // 不画焦点描边：焦点卡本来就放大到 1.2×，视觉焦点已经锁定；Ring 只在卡片样式下当 1 px 的淡边用（folia 铺满卡的 border），焦点投影只在中间附近出现
-            CcExpr(b.ShadowFocus, "Opacity", $"Max(0, 1 - 1.6 * {T}) * (1 - p.away)");
-            CcExpr(b.ShadowBase, "Opacity", $"Max(Min(1, 1.6 * {T}), p.away)");
+            CcExpr(b.ShadowFocus, "Opacity", $"Max(0, 1 - 1.6 * {T}) * (1 - p.a{i})");
+            CcExpr(b.ShadowBase, "Opacity", $"Max(Min(1, 1.6 * {T}), p.a{i})");
             _ccRow.Children.InsertAtTop(b.El);
             _ccBlocks.Add(b);
         }
@@ -474,7 +467,7 @@ public sealed partial class WallStage
             w = dw * _ccK;
             var inset = CcInset(b) * _ccK;
             string T = $"Min(Abs(p.padx + {i} * p.pitch + p.half - p.off - p.vw / 2) / p.r, 1)";
-            CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off + {inset.X}, p.top - p.lift * (1 - {T}) * (1 - p.away) + {inset.Y}, 0)");
+            CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off + {inset.X}, p.top - p.lift * (1 - {T}) * (1 - p.a{i}) + {inset.Y}, 0)");
             b.El.Size = new Vector2(w, h);
             b.El.CenterPoint = new Vector3(w / 2, h / 2, 0);
             b.Face.Size = new Vector2(w, h);

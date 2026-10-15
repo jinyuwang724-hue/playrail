@@ -406,18 +406,38 @@ public sealed partial class WallStage
     }
 
     private float _ccAway;
+    private int _ccAwayIdx;
 
-    /// <summary>焦点离开 / 回到滑条：焦点卡用和滑条滚动同一条曲线（0.35 s ease-in-out）缩回 1× 或放大回 1.2×。</summary>
+    /// <summary>
+    /// 焦点离开 / 回到滑条：只有焦点从它身上移走的那张卡缩回 1×（或放大回 1.2×），其余卡不动。
+    /// 用 folia 外框那根弹簧（visualDuration 0.36、bounce 0.2）：快进、带一点点回弹；中途反悔直接换终点，从当前大小和速度接着走。
+    /// </summary>
     private void CcAway(float to, bool instant)
     {
-        if (_ccP == null) return;
+        if (_ccP == null || _ccBlocks.Count == 0) return;
         if (!instant && to == _ccAway) return;
-        float from = _ccAway;
         _ccAway = to;
-        if (instant || Reduced) { _ccP.StopAnimation("away"); _ccP.InsertScalar("away", to); return; }
-        _ccP.StartAnimation("away", G.Scalar(from, to, CcScrollMs, CcScrollEase));
+        if (to > 0) _ccAwayIdx = _ccFocus;
+        string prop = $"a{_ccAwayIdx}";
+        if (instant || Reduced)
+        {
+            for (int i = 0; i < _ccBlocks.Count; i++) { _ccP.StopAnimation($"a{i}"); _ccP.InsertScalar($"a{i}", i == _ccAwayIdx ? to : 0); }
+            return;
+        }
+        _ccP.StartAnimation(prop, G.SpringScalar(to, Spring.Frame));
     }
 
+    /// <summary>只给终点的关键帧动画：从属性此刻的值出发（中途再来一次也不跳）。</summary>
+    private ScalarKeyFrameAnimation ToScalar(float to, double ms, Bezier ease, double delay = 0)
+    {
+        var a = G.C.CreateScalarKeyFrameAnimation();
+        a.InsertKeyFrame(1, to, G.Ease(ease));
+        a.Duration = Gfx.Ms(ms);
+        if (delay > 0) a.DelayTime = Gfx.Ms(delay);
+        return a;
+    }
+
+    /// <summary>图标焦点：亮度 0.15 s 渐变（从当前亮度起），放大用 folia 按钮那根弹簧（460 / 36 / 0.9）。都可打断。</summary>
     private void CcFocusVisual(CcButton b, bool on, bool instant)
     {
         if (b.On == on && !instant) return;
@@ -431,16 +451,16 @@ public sealed partial class WallStage
             b.El.Scale = new Vector3(s, s, 1);
             return;
         }
-        b.Focused.StartAnimation("Opacity", G.Scalar(on ? 0 : 1, on ? 1 : 0, 150, EaseOutCss));
-        var sc = G.C.CreateVector3KeyFrameAnimation();
-        sc.InsertKeyFrame(1, new Vector3(s, s, 1), G.Ease(CcScrollEase));
-        sc.Duration = Gfx.Ms(180);
-        b.El.StartAnimation("Scale", sc);
+        b.Focused.StartAnimation("Opacity", ToScalar(on ? 1 : 0, 150, EaseOutCss));
+        b.El.StartAnimation("Scale", G.SpringV3(new Vector3(s, s, 1), Spring.Button));
     }
 
     // ---------------- 电源菜单 ----------------
 
-    /// <summary>上滑展开：每格从电源按钮的位置往上推 16 px、淡入，0.2 s，一格比一格晚 30 ms（folia 菜单弹出 0.16 s 的节奏）。</summary>
+    /// <summary>
+    /// 上滑展开：每格从电源按钮的位置往上弹出（folia 按钮弹簧）、0.18 s 淡入，一格比一格晚 30 ms；收起时往下沉一点淡掉。
+    /// 开着收、收着开都从当前的位置和透明度接着走（可打断）。
+    /// </summary>
     private void CcPowerShow(bool show, bool instant = false)
     {
         _ccPowerOpen = show;
@@ -458,17 +478,20 @@ public sealed partial class WallStage
         float rise = 16 * _ccK;
         if (show)
         {
+            if (!_ccPowerLayer.IsVisible)
+                for (int i = 0; i < _ccPower.Count; i++)
+                {
+                    var p = _ccPower[i];
+                    p.El.StopAnimation("Opacity"); p.El.Opacity = 0;
+                    p.El.StopAnimation("Offset"); p.El.Offset = new Vector3(p.Pos + new Vector2(0, rise + i * 6 * _ccK), 0);
+                }
             _ccPowerLayer.IsVisible = true;
             for (int i = 0; i < _ccPower.Count; i++)
             {
                 var p = _ccPower[i];
-                p.El.StartAnimation("Opacity", G.Scalar(0, 1, 200, EaseOutCss, delay: i * 30));
-                var off = G.C.CreateVector3KeyFrameAnimation();
-                off.InsertKeyFrame(0, new Vector3(p.Pos + new Vector2(0, rise + i * 6 * _ccK), 0), G.Linear);
-                off.InsertKeyFrame(1, new Vector3(p.Pos, 0), G.Ease(CcCloseEase));
-                off.Duration = Gfx.Ms(220);
+                p.El.StartAnimation("Opacity", ToScalar(1, 180, EaseOutCss, i * 30));
+                var off = G.SpringV3(new Vector3(p.Pos, 0), Spring.Button);
                 off.DelayTime = Gfx.Ms(i * 30);
-                off.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
                 p.El.StartAnimation("Offset", off);
             }
         }
@@ -476,13 +499,10 @@ public sealed partial class WallStage
         {
             foreach (var p in _ccPower)
             {
-                p.El.StartAnimation("Opacity", G.Scalar(1, 0, 120, EaseOutCss));
-                var off = G.C.CreateVector3KeyFrameAnimation();
-                off.InsertKeyFrame(1, new Vector3(p.Pos + new Vector2(0, rise / 2), 0), G.Ease(EaseOutCss));
-                off.Duration = Gfx.Ms(120);
-                p.El.StartAnimation("Offset", off);
+                p.El.StartAnimation("Opacity", ToScalar(0, 120, EaseOutCss));
+                p.El.StartAnimation("Offset", G.SpringV3(new Vector3(p.Pos + new Vector2(0, rise / 2), 0), Spring.Button));
             }
-            After(140, () => { if (v == _ccPowerVersion && !_ccPowerOpen) _ccPowerLayer.IsVisible = false; });
+            After(160, () => { if (v == _ccPowerVersion && !_ccPowerOpen) _ccPowerLayer.IsVisible = false; });
         }
     }
 

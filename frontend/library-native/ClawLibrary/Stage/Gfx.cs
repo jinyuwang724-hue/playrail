@@ -160,6 +160,28 @@ public sealed class Gfx
         return a;
     }
 
+    /// <summary>
+    /// 弹簧（合成线程的 NaturalMotion）：不给起点，从属性此刻的值和速度接着走 —— 动画途中再来一次输入，直接换终点，
+    /// 不跳、不停顿（可打断）。
+    /// </summary>
+    public SpringScalarNaturalMotionAnimation SpringScalar(float to, Spring s)
+    {
+        var a = C.CreateSpringScalarAnimation();
+        a.FinalValue = to;
+        a.DampingRatio = s.Zeta;
+        a.Period = s.Period;
+        return a;
+    }
+
+    public SpringVector3NaturalMotionAnimation SpringV3(Vector3 to, Spring s)
+    {
+        var a = C.CreateSpringVector3Animation();
+        a.FinalValue = to;
+        a.DampingRatio = s.Zeta;
+        a.Period = s.Period;
+        return a;
+    }
+
     public Vector3KeyFrameAnimation SampledV3(Vector3 from, Vector3 to, double ms, Func<double, double> curve, int frames = 48)
     {
         var a = C.CreateVector3KeyFrameAnimation();
@@ -171,4 +193,30 @@ public sealed class Gfx
         a.Duration = Ms(ms);
         return a;
     }
+}
+
+/// <summary>
+/// framer-motion 的弹簧参数（stiffness / damping / mass），换算成合成层弹簧的阻尼比和周期：
+/// ω₀ = √(k / m)，ζ = c / (2√(k·m))；合成层的 Period 是 1 / ω₀。
+/// </summary>
+public readonly record struct Spring(double Stiffness, double Damping, double Mass = 1)
+{
+    public double Omega => Math.Sqrt(Stiffness / Mass);
+    public float Zeta => (float)Math.Clamp(Damping / (2 * Math.Sqrt(Stiffness * Mass)), 0.05, 1);
+    public TimeSpan Period => TimeSpan.FromSeconds(1 / Omega);   // 实测：合成层的 Period = 1 / ω₀（按 2π / ω₀ 设会慢 6 倍多）
+
+    /// <summary>framer 的 { visualDuration, bounce }：ω₀ = 2π / visualDuration，ζ = 1 − bounce。</summary>
+    public static Spring Visual(double visualDuration, double bounce)
+    {
+        double w = 2 * Math.PI / visualDuration;
+        return new Spring(w * w, 2 * (1 - bounce) * w);
+    }
+
+    // folia 里用到的几组
+    /// <summary>网格把卡拉回中间（GridView / GridMap：stiffness 220、damping 28）。</summary>
+    public static readonly Spring GridCenter = new(220, 28);
+    /// <summary>外框（MorphExitLayer frame）：visualDuration 0.36、bounce 0.2 —— 带一点点回弹。</summary>
+    public static readonly Spring Frame = Visual(0.36, 0.2);
+    /// <summary>按钮（ProviderConnectButton：stiffness 460、damping 36、mass 0.9）。</summary>
+    public static readonly Spring Button = new(460, 36, 0.9);
 }

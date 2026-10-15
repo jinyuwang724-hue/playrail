@@ -173,6 +173,25 @@ public static class Bench
         Log.Info($"cycle done: {runs} opens, {bad} missing covers");
     }
 
+    /// <summary>可打断性：开 → 80 ms 内连按两次右 → ↓ 后 120 ms 反悔 ↑ → 再 ↓ 停住。</summary>
+    private static async Task RecSpringAsync(WallStage s)
+    {
+        await Task.Delay(1500);
+        var rec = new FrameRecorder();
+        if (!rec.Start(s.HostWindow)) return;
+        await Task.Delay(300);
+        long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+        async Task Step(int ms, Action a) { a(); await Task.Delay(ms); }
+        await Step(1500, s.ToggleControlCenter);
+        await Step(80, () => s.Move(Direction.Right));
+        await Step(900, () => s.Move(Direction.Right));
+        await Step(120, () => s.Move(Direction.Down));
+        await Step(120, () => s.Move(Direction.Up));
+        await Step(900, () => s.Move(Direction.Down));
+        int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "spring"), mark);
+        Log.Info($"rec spring: {n} frames");
+    }
+
     /// <summary>控制中心外围：开 → 滑条右两格（圆角卡）→ ↓ 功能坞 → → ← → A 电源菜单 → ↑ → B → 一路右到头像。配合 --power-dry。</summary>
     private static async Task RecChromeAsync(WallStage s)
     {
@@ -240,6 +259,7 @@ public static class Bench
                 case "control": s.ToggleControlCenter(); break;
                 case "cycle": await CycleAsync(s); break;
                 case "recchrome": await RecChromeAsync(s); break;
+                case "recspring": await RecSpringAsync(s); break;
                 case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
                 case "ccenter": s.ToggleControlCenter(); await Task.Delay(2500); Log.Info("state ccenter now"); s.Activate(); break;
