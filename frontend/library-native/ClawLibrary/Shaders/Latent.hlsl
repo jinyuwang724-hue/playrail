@@ -26,6 +26,7 @@ float pxSize;           // 抖动像素格（CSS px）
 float ditherScale;      // Dithering 的 scale（默认预设 0.6）
 float ditherOpacity;
 float overlayOpacity;
+float displayMode;      // 0 mixed, 1 pixels, 2 fluid (Folia displayMode)
 float4 c0;
 float4 c1;
 float4 c2;
@@ -195,13 +196,17 @@ D2D_PS_ENTRY(main)
     float3 col = themeBg.rgb;
 
     // 流体层：scale(1.025)，saturate(1.04) brightness(0.94)
-    float4 mesh = meshGradient(mid + (frag - mid) / 1.025);
-    float3 meshRgb = saturate(saturateCss(mesh.rgb, 1.04) * 0.94);
-    col = meshRgb + col * (1.0 - mesh.a);
+    if (displayMode != 1) {
+        float4 mesh = meshGradient(mid + (frag - mid) / 1.025);
+        float3 meshRgb = saturate(saturateCss(mesh.rgb, 1.04) * 0.94);
+        col = meshRgb + col * (1.0 - mesh.a);
+    }
 
     // 像素层：scale(1.015)，soft-light，opacity
-    float3 dith = saturate(dithering(mid + (frag - mid) / 1.015));
-    col = lerp(col, softLight(saturate(col), dith), ditherOpacity);
+    if (displayMode != 2) {
+        float3 dith = saturate(dithering(mid + (frag - mid) / 1.015));
+        col = displayMode == 1 ? dith : lerp(col, softLight(saturate(col), dith), ditherOpacity);
+    }
 
     // 主题底色遮罩
     col = lerp(col, themeBg.rgb, overlayOpacity);

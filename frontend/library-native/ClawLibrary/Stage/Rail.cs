@@ -43,6 +43,7 @@ public sealed class RailModel
     public string User = "";
     public CanvasBitmap? Avatar;
     public bool SettingsOpen;
+    public string SettingsTitle = "设置";
     public List<(string Label, string Value)> Settings = new();
 }
 
@@ -56,6 +57,7 @@ public sealed class Rail
     public readonly List<RailItem> Items = new();
     /// <summary>导航区滚动量（内容比导航区高时）。</summary>
     private float _scroll;
+    private float _settingsScroll, _settingsTop, _settingsBottom;
 
     public Rail(Gfx g) { _g = g; }
 
@@ -352,9 +354,20 @@ public sealed class Rail
     private void DrawSettings(CanvasDrawingSession ds, RailModel m, float top, float bottom, int focus)
     {
         const float W = HomeWidth, inner = W - PadX * 2;
-        var title = H("设置", TextKit.Ui(800), 13, 0.3f * 13);
+        var title = H(m.SettingsTitle, TextKit.Ui(800), 13, 0.3f * 13);
         DrawCentered(ds, title, W / 2, top + 9, Theme.Ink);
         float y = top + 28;
+        _settingsTop = y; _settingsBottom = bottom;
+        float available = Math.Max(1, bottom-y), content = m.Settings.Count*50-6;
+        if (focus >= 0 && focus < m.Settings.Count)
+        {
+            float focusY = focus*50;
+            if (focusY < _settingsScroll) _settingsScroll = focusY;
+            if (focusY+44 > _settingsScroll+available) _settingsScroll = focusY+44-available;
+        }
+        _settingsScroll = Math.Clamp(_settingsScroll, 0, Math.Max(0, content-available));
+        y -= _settingsScroll;
+        using var clip = ds.CreateLayer(1,new Rect(0,_settingsTop-2,W,available+4));
         for (int i = 0; i < m.Settings.Count; i++)
         {
             var (label, value) = m.Settings[i];
@@ -371,7 +384,6 @@ public sealed class Rail
             }
             if (focus == idx) Focus(ds, r, 10);
             y += 44 + 6;
-            if (y + 44 > bottom) break;
         }
     }
 
@@ -428,7 +440,10 @@ public sealed class Rail
     public int HitTest(float x, float y)
     {
         for (int i = 0; i < Items.Count; i++)
+        {
+            if (Items[i].Kind == RailKind.Setting && (y < _settingsTop || y > _settingsBottom)) continue;
             if (Items[i].Bounds.Contains(new Point(x, y))) return i;
+        }
         return -1;
     }
 }

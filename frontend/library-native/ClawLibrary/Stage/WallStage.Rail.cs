@@ -23,6 +23,9 @@ public sealed partial class WallStage
     private DispatcherQueueTimer? _railTimer;
     private Backdrop _backdrop = null!;
     private bool _backdropOn = true;
+    private BackgroundSettings _backgroundSettings = new();
+    private bool _backgroundSettingsOpen;
+    private ContainerVisual _wallBackgroundL = null!, _wallBackgroundR = null!;
     private bool _windowActive = true;
     /// <summary>多久没操作就把动态背景停下（省电；有操作立刻恢复）。</summary>
     private const long BackdropIdleMs = 60_000;
@@ -45,6 +48,7 @@ public sealed partial class WallStage
         _railModel.User = SystemInfo.UserName();
         _railModel.Battery = SystemInfo.Battery();
         _railModel.Now = DateTime.Now;
+        _backgroundSettings = BackgroundSettings.Load();
         if (Program.Args.Contains("--no-backdrop")) _backdropOn = false;
     }
 
@@ -101,11 +105,24 @@ public sealed partial class WallStage
         m.Settings = new()
         {
             ("标题样式", Style == TitleStyle.B ? "极简黑体" : "电影字幕"),
+            ("背景样式", _backgroundSettings.Name),
             ("动态背景", _backdropOn ? "开" : "关"),
             ("降低动态效果", _reducedLocal ? "开" : "关"),
             ("性能读数", _hudOn ? "开" : "关"),
             ("完成", "返回竖条"),
         };
+        m.SettingsTitle = _backgroundSettingsOpen ? "背景" : "设置";
+        if (_backgroundSettingsOpen)
+        {
+            m.Settings = new() { ("背景样式", _backgroundSettings.Name) };
+            if (_backgroundSettings.Kind == BackgroundKind.Monet)
+            {
+                m.Settings.Add(("缓慢漂移", _backgroundSettings.MonetDrift ? "开" : "关"));
+                m.Settings.Add(("竖向纹理", _backgroundSettings.MonetStreaks ? "开" : "关"));
+            }
+            else m.Settings.Add((_backgroundSettings.Kind == BackgroundKind.Latent ? "显示模式" : "背景效果", _backgroundSettings.Variant));
+            m.Settings.Add(("完成", "返回设置"));
+        }
         return m;
     }
 
@@ -169,6 +186,12 @@ public sealed partial class WallStage
     private bool RailMove(Direction dir)
     {
         if (!_railFocused) return false;
+        if (_backgroundSettingsOpen && dir is Direction.Left or Direction.Right)
+        {
+            if (_railFocus >= 0 && _railFocus < _rail.Items.Count && _rail.Items[_railFocus].Kind == RailKind.Setting)
+                ToggleSetting(_rail.Items[_railFocus].Index, dir == Direction.Left ? -1 : 1);
+            return true;
+        }
         if (_searchOpen) return SearchMove(dir);
         if (!CurrentLayer.Home)
         {
@@ -207,6 +230,7 @@ public sealed partial class WallStage
         if (!CurrentLayer.Home) { Pop(); return true; }
         if (_railFocus < 0 || _railFocus >= _rail.Items.Count) return true;
         var it = _rail.Items[_railFocus];
+        if (_backgroundSettingsOpen && it.Kind != RailKind.Setting) SetBackgroundPreview(false);
         switch (it.Kind)
         {
             case RailKind.Tab:
@@ -225,6 +249,7 @@ public sealed partial class WallStage
                 OpenSearch();
                 break;
             case RailKind.Settings:
+                _backgroundSettingsOpen = false;
                 _railModel.SettingsOpen = !_railModel.SettingsOpen;
                 RepaintRail();
                 _railFocus = _railModel.SettingsOpen ? _rail.DefaultFocus(_railModel) : _rail.Items.FindIndex(i => i.Kind == RailKind.Settings);
@@ -240,6 +265,7 @@ public sealed partial class WallStage
     /// <summary>B：先关设置 / 搜索，再回到墙上。</summary>
     private bool RailBack()
     {
+        if (_backgroundSettingsOpen) { CloseBackgroundSettings(); return true; }
         if (_railModel.SettingsOpen)
         {
             _railModel.SettingsOpen = false;
@@ -257,21 +283,73 @@ public sealed partial class WallStage
         return false;
     }
 
-    private void ToggleSetting(int i)
+    private void ToggleSetting(int i, int step = 1)
     {
+        if (_backgroundSettingsOpen)
+        {
+            bool monet = _backgroundSettings.Kind == BackgroundKind.Monet;
+            if (i == 0) _backgroundSettings = _backgroundSettings with { Kind = (BackgroundKind)(((int)_backgroundSettings.Kind + step + 3) % 3) };
+            else if (i == 1)
+            {
+                _backgroundSettings = _backgroundSettings.Kind switch
+                {
+                    BackgroundKind.Latent => _backgroundSettings with { Latent = (LatentLayers)(((int)_backgroundSettings.Latent + step + 3) % 3) },
+                    BackgroundKind.Nomand => _backgroundSettings with { Nomand = _backgroundSettings.Nomand == NomandEffect.Lens ? NomandEffect.Paper : NomandEffect.Lens },
+                    _ => _backgroundSettings with { MonetDrift = !_backgroundSettings.MonetDrift },
+                };
+            }
+            else if (i == 2 && monet) _backgroundSettings = _backgroundSettings with { MonetStreaks = !_backgroundSettings.MonetStreaks };
+            else { CloseBackgroundSettings(); return; }
+            ApplyBackgroundSettings();
+            RepaintRail();
+            return;
+        }
         switch (i)
         {
             case 0: ToggleTitleStyle(); break;
-            case 1: _backdropOn = !_backdropOn; UpdateBackdropRunning(); Toast(_backdropOn ? "动态背景：开" : "动态背景：关"); break;
-            case 2: ToggleReducedMotion(); UpdateBackdropRunning(); break;
-            case 3: ToggleHud(); break;
-            case 4:
+            case 1: SetBackgroundPreview(true); _railFocus = 0; break;
+            case 2: _backdropOn = !_backdropOn; UpdateBackdropRunning(); Toast(_backdropOn ? "动态背景：开" : "动态背景：关"); break;
+            case 3: ToggleReducedMotion(); UpdateBackdropRunning(); break;
+            case 4: ToggleHud(); break;
+            case 5:
                 _railModel.SettingsOpen = false;
                 RepaintRail();
                 _railFocus = _rail.Items.FindIndex(it => it.Kind == RailKind.Settings);
                 break;
         }
         RepaintRail();
+    }
+
+    private void CloseBackgroundSettings()
+    {
+        SetBackgroundPreview(false);
+        _railFocus = 1;
+        RepaintRail();
+    }
+
+    // The background page itself is a full-screen preview; the existing settings rail stays usable.
+    private void SetBackgroundPreview(bool on)
+    {
+        _backgroundSettingsOpen = on;
+        _cam.InsertScalar("bpreview", on ? 1 : 0);
+        _wallBackgroundL.IsVisible = _wallBackgroundR.IsVisible = _field.IsVisible = _vignette.IsVisible = !on;
+        UpdateBackdropKey(FocusKey, false);
+        UpdateBackdropRunning();
+    }
+
+    private void ApplyBackgroundSettings()
+    {
+        _backgroundSettings.Save();
+        _backdrop.Configure(_backgroundSettings);
+        _backdrop.Build((float)View.Width, (float)View.Height);
+        UpdateBackdropKey(FocusKey, false);
+        if (_ccBack != null)
+        {
+            _ccBack.Configure(_backgroundSettings);
+            _ccBack.Build((float)View.Width, (float)View.Height);
+            CcBackRun();
+        }
+        UpdateBackdropRunning();
     }
 
     /// <summary>从竖条打开一个合集：起点取缝右边离缝最近的那张卡（与网页版换层同一套翻牌）。</summary>
@@ -576,10 +654,11 @@ public sealed partial class WallStage
         bool seamOpen;
         try { Sync(); seamOpen = SeamGeometry(_anchorX, _center, _openWidth, View).Width > 1 || _seamTween != null; }
         catch { seamOpen = true; }
-        _backdrop.Visible = _backdropOn;
+        _backdrop.Visible = _backdropOn || _backgroundSettingsOpen;
         bool recent = NowMs - _lastInput < BackdropIdleMs;
         bool run = _backdropOn && _windowActive && !Reduced && seamOpen && recent && !_ccOpen;   // 控制中心开着时墙冻住
         _backdrop.Run(run);
+        CcBackRun();
         EnsureBackdropLoop();
         // 背景在动时，角落里那个 1 px 的点也一起动：实测只有缝里一条在动时，展开 / 换页签时 DWM 会隔帧合成（约 8 % 的帧 33 ms），
         // 加上这个点就每帧都准时；背景本来就让合成每帧都在跑，它不额外花什么
@@ -703,6 +782,12 @@ public sealed partial class WallStage
     private void PublishStrip()
     {
         if (_backdrop == null || _stack.Count == 0) return;
+        if (_backgroundSettingsOpen)
+        {
+            _backdrop.SetStrip(0, View.Width);
+            StartBackdropLoop();
+            return;
+        }
         Sync();
         // 画布里缝的位置固定（视觉跟着缝平移，见 BuildChrome 里的 Offset 表达式），这里只看宽度：补间途中取起止两头里宽的那个
         var g = SeamGeometry(_anchorX, _center, _openWidth, View);

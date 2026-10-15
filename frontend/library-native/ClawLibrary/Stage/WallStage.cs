@@ -308,6 +308,7 @@ public sealed partial class WallStage : IDisposable
             if (it == null) continue;
             if (it.Id == id || it.ArtFrom?.Id == id) t.Show(t.Shown);
         }
+        UpdateBackdropKey(FocusKey, false);
     }
 
     // ---------------- 墙以外的视觉 ----------------
@@ -324,6 +325,8 @@ public sealed partial class WallStage : IDisposable
         _glow2R = G.Sprite(null);
         var wallL = G.Container();
         var wallR = G.Container();
+        _wallBackgroundL = wallL; _wallBackgroundR = wallR;
+        _cam.InsertScalar("bpreview", 0);
         foreach (var v in new Visual[] { _bgBase, _glow1, _glow2 }) wallL.Children.InsertAtTop(v);
         foreach (var v in new Visual[] { _bgBaseR, _glow1R, _glow2R }) wallR.Children.InsertAtTop(v);
         var clipL = G.C.CreateInsetClip();
@@ -337,12 +340,13 @@ public sealed partial class WallStage : IDisposable
         Expr(wallL, "Opacity", "p.fade");
         Expr(wallR, "Opacity", "p.fade");
         _backdrop = new Backdrop(G) { Dpi = Chrome.Dpi };
+        _backdrop.Configure(_backgroundSettings);
         _root.Children.InsertAtBottom(_backdrop.Root);
         Expr(_backdrop.Root, "Opacity", "p.fade");
         // 背景跟着缝走：画布按「缝在首页的位置」来画（bhome / bsw：缝第一次打开时的屏幕位置和宽度；缝越宽越往画布正中靠，
         // 铺满全屏时正好是整张画布），视觉整体平移到缝的实际位置。墙面平移时只是合成线程挪一下，
         // 不会露出没画过的那一块（以前背景钉在屏幕上，缝挪到哪就得现画到哪，停帧时露出旧画面，成了断层）
-        Expr(_backdrop.Root, "Offset", "Vector3(p.sx - Lerp(p.bhome, p.vw / 2, Clamp((p.sw - p.bsw) / Max(1, p.vw - p.bsw), 0, 1)), 0, 0)");
+        Expr(_backdrop.Root, "Offset", "p.bpreview > 0.5 ? Vector3(0, 0, 0) : Vector3(p.sx - Lerp(p.bhome, p.vw / 2, Clamp((p.sw - p.bsw) / Max(1, p.vw - p.bsw), 0, 1)), 0, 0)");
         _root.Children.InsertAtTop(_field);
         _field.Children.InsertAtTop(_worlds[0]);
         _field.Children.InsertAtTop(_worlds[1]);
@@ -602,6 +606,7 @@ public sealed partial class WallStage : IDisposable
     /// <summary>拖动：直接平移相机（屏幕 px）。</summary>
     public void PanBy(double dx, double dy)
     {
+        if (_backgroundSettingsOpen) return;
         if (_ccOpen || MorphBusy) return;
         MarkInput();
         Sync();
@@ -1004,6 +1009,7 @@ public sealed partial class WallStage : IDisposable
     /// <summary>LB / RB：首页换页签，整墙出场 → 入场。</summary>
     public void SwitchTab(int delta)
     {
+        if (_backgroundSettingsOpen) return;
         MarkInput();
         if (_stack.Count > 1 || _ccOpen || MorphIntercept()) return;
         if (_expandedKey != null) Collapse(false);
@@ -1107,6 +1113,7 @@ public sealed partial class WallStage : IDisposable
     /// <summary>鼠标：点卡 = 聚焦并激活。</summary>
     public void ClickAt(double sx, double sy)
     {
+        if (_backgroundSettingsOpen) { MarkInput(); RailClick(sx, sy); return; }
         if (MorphIntercept()) return;
         if (_ccOpen) { CcClick(sx, sy); return; }
         if (RailClick(sx, sy)) return;
@@ -1181,6 +1188,12 @@ public sealed partial class WallStage : IDisposable
         _rootEl.PointerWheelChanged += (_, e) =>
         {
             var p = e.GetCurrentPoint(_rootEl).Properties;
+            if (_railModel.SettingsOpen && _railFocused && !p.IsHorizontalMouseWheel)
+            {
+                Move(p.MouseWheelDelta > 0 ? Direction.Up : Direction.Down);
+                e.Handled = true;
+                return;
+            }
             // 网页滚轮一格约 100 px
             double d = p.MouseWheelDelta / 120.0 * 100;
             if (p.IsHorizontalMouseWheel) PanBy(d, 0); else PanBy(0, d);
@@ -1284,6 +1297,9 @@ public sealed partial class WallStage : IDisposable
     {
         _pad?.Dispose();
         _backdrop?.Dispose();
+        _ccBack?.Dispose();
+        if (_backdropLoop) CompositionTarget.Rendering -= OnBackdropFrame;
+        if (_ccBackLoop) CompositionTarget.Rendering -= OnCcBackFrame;
         if (_loopOn) CompositionTarget.Rendering -= OnRendering;
     }
 
