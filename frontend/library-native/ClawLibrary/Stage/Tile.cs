@@ -33,6 +33,8 @@ public sealed class Tile : IDisposable
     /// <summary>此刻画着的内容（id），以及目标内容。</summary>
     public string? Shown, Target;
     public bool Expanded { get; private set; }
+    /// <summary>卡面内容的根（控制中心形变用它的实时画面当 hero 的封面，保证起落帧与卡片完全一致）。</summary>
+    internal Visual? FaceRoot => _face?.Root;
     public bool Focused { get; private set; }
 
     private Face? _face;

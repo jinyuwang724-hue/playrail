@@ -155,6 +155,7 @@ public static class Bench
                 case "styleb": s.ToggleTitleStyle(); break;
                 case "tab": s.SwitchTab(1); break;
                 case "control": s.ToggleControlCenter(); break;
+                case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
                 case "ccenter": s.ToggleControlCenter(); await Task.Delay(2500); Log.Info("state ccenter now"); s.Activate(); break;
                 case "control2": s.ToggleControlCenter(); await Task.Delay(900); s.Move(Direction.Right); await Task.Delay(260); s.Move(Direction.Right); break;
                 case "nav": for (int i = 0; i < 3; i++) { s.Move(Direction.Right); await Task.Delay(250); } break;
