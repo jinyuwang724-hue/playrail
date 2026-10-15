@@ -216,6 +216,22 @@ public sealed class Tile : IDisposable
         _animUntil = _s.NowMs + (long)(delayMs + 420) + 50;
     }
 
+    /// <summary>形变期间藏一段：hideAt 那一刻藏，showAt 起 fadeMs 内淡回来（一条关键帧，合成线程上）。</summary>
+    public void MorphHideBetween(double hideAt, double showAt, double fadeMs)
+    {
+        Cancel();
+        double total = showAt + fadeMs;
+        var op = G.C.CreateScalarKeyFrameAnimation();
+        op.InsertKeyFrame(0, 1, G.Linear);
+        op.InsertKeyFrame((float)(hideAt / total), 1, G.Linear);
+        op.InsertKeyFrame((float)(hideAt / total) + 0.0005f, 0, G.Linear);
+        op.InsertKeyFrame((float)(showAt / total), 0, G.Linear);
+        op.InsertKeyFrame(1, 1, G.Linear);
+        op.Duration = Gfx.Ms(total);
+        _pivot.StartAnimation("Opacity", op);
+        _animUntil = _s.NowMs + (long)total + 50;
+    }
+
     /// <summary>形变起飞：到 delay 那一刻才藏（合成线程上的关键帧，和飞行同一条时间轴）。</summary>
     public void MorphHideAt(double delayMs)
     {
