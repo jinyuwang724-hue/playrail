@@ -25,6 +25,8 @@ public sealed partial class WallStage
         public string[]? Choices;
         public int Choice = -1;
         public bool Section, Disabled, Numeric;
+        /// <summary>这个模式下用不上的行：照样占位（高度不变），焦点跳过。</summary>
+        public bool Skip;
         public Action<int>? Step;
         public Action? Press;
     }
@@ -32,14 +34,21 @@ public sealed partial class WallStage
     // 设计 px（× _ccK），1280×800 舞台：左栏 348、右栏 812、中间 40
     private const float PerfLeftX = 40, PerfLeftW = 348, PerfRightX = 428, PerfRightW = 812, PerfTop = 96;
     private const float PerfRowH = 42, PerfSecH = 38;
+    /// <summary>左右两栏的显示高度固定（舞台底下留 40）；右栏内容比它高时在里面滚，焦点行带上下各 PerfScrollPad 的余量。</summary>
+    private const float PerfViewH = 800 - PerfTop - 40, PerfScrollPad = 60;
     private static readonly string[] FanModes = { "firmware", "quiet", "balanced", "performance" };
     private static readonly string[] FanModeNames = { "固件", "静音", "均衡", "性能" };
     private static readonly string[] PowerModes = { "smart", "auto", "manual" };
     private static readonly string[] PowerModeNames = { "智能", "按电源", "手动" };
-    private static readonly Color PerfOrange = Gfx.Rgba(0xfd, 0x8a, 0x5a);
+    /// <summary>强调色跟着背景的主题色走（当前游戏封面的代表色），背景还没取到色时用 folia 的橙。</summary>
+    private Color PerfAccent => _ccBack?.Accent ?? Gfx.Rgba(0xfd, 0x8a, 0x5a);
 
     private AgentClient? _agent;
     private ContainerVisual? _perf;
+    private ContainerVisual _perfRightView = null!;
+    private float _perfScroll, _perfScrollY = float.NaN;
+    private CpuFreq? _cpuFreq;
+    private int _perfTicks;
     private SpriteVisual _perfTitle = null!, _perfLeft = null!, _perfRight = null!;
     private bool _perfOpen, _perfCurveEdit, _perfBusy, _perfAgentDown;
     private int _perfFocus, _perfPoint, _perfVersion, _perfEdits, _perfSavedEdits;
@@ -60,7 +69,11 @@ public sealed partial class WallStage
         _perfFocus = -1;
         int v = ++_perfVersion;
         BuildPerfRows();
-        _perfFocus = _perfRows.FindIndex(r => !r.Section);
+        _perfFocus = _perfRows.FindIndex(r => !r.Section && !r.Skip);
+        _perfScroll = 0;
+        _perfScrollY = float.NaN;
+        (_cpuFreq ??= new CpuFreq()).Sample();
+        _perfTicks = 1;
         PaintPerf();
         // 控制中心的滑条、标题、说明、左下图标淡出；右上状态留着
         foreach (var vis in CcPageParts()) vis.StartAnimation("Opacity", ToScalar(0, 160, EaseOutCss));
@@ -70,7 +83,7 @@ public sealed partial class WallStage
         _perfTimer ??= MakePerfTimer();
         _perfTimer.Start();
         _ = PerfRefresh(true);
-        Log.Info("perf page open");
+        Log.Info($"perf page open (cover {_ccBack?.CoverColorsText()} → accent #{PerfAccent.R:x2}{PerfAccent.G:x2}{PerfAccent.B:x2})");
     }
 
     private void ClosePerf(bool instant = false)
@@ -111,7 +124,10 @@ public sealed partial class WallStage
         _perfTitle = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _perfLeft = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _perfRight = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
-        foreach (var s in new[] { _perfTitle, _perfLeft, _perfRight }) _perf.Children.InsertAtTop(s);
+        _perfRightView = G.Container(relative: false);
+        _perfRightView.Clip = G.C.CreateInsetClip();
+        _perfRightView.Children.InsertAtTop(_perfRight);
+        foreach (var s in new Visual[] { _perfTitle, _perfLeft, _perfRightView }) _perf.Children.InsertAtTop(s);
         _cc!.Children.InsertAtTop(_perf);
     }
 
@@ -120,7 +136,13 @@ public sealed partial class WallStage
         var t = _dq.CreateTimer();
         t.Interval = TimeSpan.FromSeconds(1);
         t.IsRepeating = true;
-        t.Tick += (_, _) => { if (_perfOpen) _ = PerfRefresh(true); };
+        t.Tick += (_, _) =>
+        {
+            if (!_perfOpen) return;
+            // 实时 CPU 频率两秒采一次（左栏「CPU 频率」）；功耗、风扇每秒从 agent 取，取回来顺手重画
+            if (_perfTicks++ % 2 == 0) (_cpuFreq ??= new CpuFreq()).Sample();
+            _ = PerfRefresh(true);
+        };
         return t;
     }
 
@@ -272,30 +294,35 @@ public sealed partial class WallStage
         _perfRows.Add(new PerfRow { Section = true, Title = "功耗" });
         _perfRows.Add(Choice("功耗接管", new[] { "关", "开" }, on ? 1 : 0, i => { s["enabled"] = i == 1; PerfChanged(); }));
         _perfRows.Add(Choice("模式", PowerModeNames, Math.Max(0, Array.IndexOf(PowerModes, mode)), i => { s["mode"] = PowerModes[i]; PerfChanged(); }, !on));
-        if (mode == "smart")
-        {
-            int[] targets = (_perfView?["targets"] as JsonArray)?.Select(n => Int(n)).ToArray() is { Length: > 0 } t ? t : new[] { 0, 30, 40, 45, 60, 90, 120 };
-            int floor = Int(smart["floor"], 8);
-            _perfRows.Add(List("目标帧率", targets, Int(smart["target"]), f => f == 0 ? "自动" : $"{f} 帧", f => { smart["target"] = f; PerfChanged(); }, !on));
-            _perfRows.Add(Number("功耗下限", floor, 8, 20, w => $"{w} W", w =>
+        // 模式下面固定四行，换模式只换内容不换行数（右栏、左栏的高度都不跟着跳）；这个模式用不上的行变暗、焦点跳过
+        PerfRow Idle(string title, string why) => new() { Title = title, Value = why, Disabled = true, Skip = true };
+        bool smartMode = mode == "smart";
+        int[] targets = (_perfView?["targets"] as JsonArray)?.Select(n => Int(n)).ToArray() is { Length: > 0 } t ? t : new[] { 0, 30, 40, 45, 60, 90, 120 };
+        int floor = Int(smart["floor"], 8);
+        _perfRows.Add(smartMode
+            ? List("目标帧率", targets, Int(smart["target"]), f => f == 0 ? "自动" : $"{f} 帧", f => { smart["target"] = f; PerfChanged(); }, !on)
+            : Idle("目标帧率", "智能模式才用"));
+        _perfRows.Add(smartMode
+            ? Number("功耗下限", floor, 8, 20, w => $"{w} W", w =>
             {
                 smart["floor"] = w;
                 if (Int(smart["acMax"]) < w) smart["acMax"] = w;
                 if (Int(smart["dcMax"]) < w) smart["dcMax"] = w;
                 PerfChanged();
-            }, disabled: !on));
-            _perfRows.Add(Number("插电上限", Int(smart["acMax"], 35), floor, 35, w => $"{w} W", w => { smart["acMax"] = w; PerfChanged(); }, disabled: !on));
-            _perfRows.Add(Number("电池上限", Int(smart["dcMax"], 25), floor, 35, w => $"{w} W", w => { smart["dcMax"] = w; PerfChanged(); }, disabled: !on));
-        }
-        else if (mode == "auto")
+            }, disabled: !on)
+            : Idle("功耗下限", "智能模式才用"));
+        _perfRows.Add(mode switch
         {
-            _perfRows.Add(Number("插电功耗", Int(s["ac"]!["tdp"], 35), 8, 35, w => $"{w} W", w => { s["ac"]!["tdp"] = w; PerfChanged(); }, disabled: !on));
-            _perfRows.Add(Number("电池功耗", Int(s["dc"]!["tdp"], 25), 8, 35, w => $"{w} W", w => { s["dc"]!["tdp"] = w; PerfChanged(); }, disabled: !on));
-        }
-        else
+            "smart" => Number("插电上限", Int(smart["acMax"], 35), floor, 35, w => $"{w} W", w => { smart["acMax"] = w; PerfChanged(); }, disabled: !on),
+            "auto" => Number("插电功耗", Int(s["ac"]!["tdp"], 35), 8, 35, w => $"{w} W", w => { s["ac"]!["tdp"] = w; PerfChanged(); }, disabled: !on),
+            _ => Number("固定功耗", Int(s["manual"]!["tdp"], 20), 8, 35, w => $"{w} W", w => { s["manual"]!["tdp"] = w; PerfChanged(); }, disabled: !on),
+        });
+        _perfRows.Add(mode switch
         {
-            _perfRows.Add(Number("固定功耗", Int(s["manual"]!["tdp"], 20), 8, 35, w => $"{w} W", w => { s["manual"]!["tdp"] = w; PerfChanged(); }, disabled: !on));
-        }
+            "smart" => Number("电池上限", Int(smart["dcMax"], 25), floor, 35, w => $"{w} W", w => { smart["dcMax"] = w; PerfChanged(); }, disabled: !on),
+            "auto" => Number("电池功耗", Int(s["dc"]!["tdp"], 25), 8, 35, w => $"{w} W", w => { s["dc"]!["tdp"] = w; PerfChanged(); }, disabled: !on),
+            _ => Idle("电池功耗", "手动模式不分电源"),
+        });
         _perfRows.Add(Number("短时加成", Int(s["boost"], 1), 0, 15, w => w == 0 ? "关" : $"+{w} W", w => { s["boost"] = w; PerfChanged(); }, disabled: !on));
 
         _perfRows.Add(new PerfRow { Section = true, Title = "CPU" });
@@ -335,7 +362,13 @@ public sealed partial class WallStage
                 Toast($"{FanModeNames[Array.IndexOf(FanModes, fmode)]}档曲线已恢复默认");
             },
         });
-        if (_perfFocus >= _perfRows.Count) _perfFocus = _perfRows.FindLastIndex(r => !r.Section);
+        if (_perfFocus >= _perfRows.Count || (_perfFocus >= 0 && (_perfRows[_perfFocus].Skip || _perfRows[_perfFocus].Section)))
+        {
+            // 换了模式后焦点所在的行用不上了：往上找最近一个能选的（模式那一行总在上面）
+            int f = Math.Min(_perfFocus, _perfRows.Count - 1);
+            while (f > 0 && (_perfRows[f].Section || _perfRows[f].Skip)) f--;
+            _perfFocus = f;
+        }
     }
 
     /// <summary>这档风扇曲线的 6 个占空比（没存过就用默认）。</summary>
@@ -368,7 +401,7 @@ public sealed partial class WallStage
         {
             int d = dir == Direction.Up ? -1 : 1;
             for (int i = _perfFocus + d; i >= 0 && i < _perfRows.Count; i += d)
-                if (!_perfRows[i].Section) { _perfFocus = i; PaintPerf(); return; }
+                if (!_perfRows[i].Section && !_perfRows[i].Skip) { _perfFocus = i; PaintPerf(); return; }
             return;
         }
         if (_perfFocus >= 0 && _perfFocus < _perfRows.Count) _perfRows[_perfFocus].Step?.Invoke(dir == Direction.Left ? -1 : 1);
@@ -394,7 +427,7 @@ public sealed partial class WallStage
     {
         if (_perf == null) return;
         float k = _ccK, raster = k * Chrome.Dpi;
-        float h = PerfListHeight();
+        float h = PerfListHeight(), vh = PerfViewH;
         // 标题：和控制中心的「控制中心」同一个位置、同一个字
         using (var tl = TextKit.Layout(G.Device, "性能", TextKit.Ui(700), 24, 400, CanvasHorizontalAlignment.Left))
         {
@@ -404,12 +437,41 @@ public sealed partial class WallStage
             _perfTitle.Size = new Vector2(w * k, th * k);
             _perfTitle.Offset = new Vector3(40 * k, 32 * k, 0);
         }
+        // 右栏：整张列表画在一张面上，放进固定高度的裁剪框里，按焦点滚动
         CcSet(_perfRight, CcDraw(PerfRightW, h, raster, ds => PaintPerfList(ds, h)));
         _perfRight.Size = new Vector2(PerfRightW * k, h * k);
-        _perfRight.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
-        CcSet(_perfLeft, CcDraw(PerfLeftW, h, raster, ds => PaintPerfLeft(ds, h)));
-        _perfLeft.Size = new Vector2(PerfLeftW * k, h * k);
+        _perfRightView.Size = new Vector2(PerfRightW * k, vh * k);
+        _perfRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
+        PerfScrollTo(h, vh);
+        CcSet(_perfLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintPerfLeft(ds, vh)));
+        _perfLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _perfLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
+    }
+
+    /// <summary>
+    /// 焦点行（连上下各 PerfScrollPad）露在框里就不动，出框才滚到刚好露出来；分组里的第一行连分组标题一起露。
+    /// 用弹簧滚（和控制中心滑条同一手感），连按时从当前位置接着滚，不跳。
+    /// </summary>
+    private void PerfScrollTo(float listH, float viewH)
+    {
+        float max = Math.Max(0, listH - viewH), target = Math.Clamp(_perfScroll, 0, max);
+        if (_perfFocus >= 0 && _perfFocus < _perfRows.Count)
+        {
+            float top = 0;
+            for (int i = 0; i < _perfFocus; i++) top += _perfRows[i].Section ? PerfSecH : PerfRowH;
+            float bottom = top + PerfRowH;
+            if (_perfFocus > 0 && _perfRows[_perfFocus - 1].Section) top -= PerfSecH;
+            if (top - PerfScrollPad < target) target = top - PerfScrollPad;
+            if (bottom + PerfScrollPad > target + viewH) target = bottom + PerfScrollPad - viewH;
+            target = Math.Clamp(target, 0, max);
+        }
+        float y = -target * _ccK;
+        if (target == _perfScroll && y == _perfScrollY) return;   // 每秒重画一次：位置没变就别打断正在走的弹簧
+        bool moving = target != _perfScroll;
+        _perfScroll = target;
+        _perfScrollY = y;
+        if (!moving || Reduced || !_perfOpen) { _perfRight.StopAnimation("Offset.Y"); _perfRight.Offset = new Vector3(0, y, 0); return; }
+        _perfRight.StartAnimation("Offset.Y", G.SpringScalar(y, Spring.GridCenter));
     }
 
     private static void PText(CanvasDrawingSession ds, string s, FontSpec f, float size, Color c, float x, float cy, float width, CanvasHorizontalAlignment al = CanvasHorizontalAlignment.Left)
@@ -508,6 +570,7 @@ public sealed partial class WallStage
         var v = _perfView;
         var s = _perfS;
         float W = PerfLeftW;
+        var accent = PerfAccent;
         const float header = 30, rowH = 28, gap = 10, between = 32;
         float rest = Math.Max(160, h - (header + gap + 3 * rowH + between + header + gap + 3 * rowH));
         float powerH = rest * 0.42f, fanH = rest - powerH;
@@ -533,7 +596,7 @@ public sealed partial class WallStage
 
         // ---- 功耗 ----
         double? pkg = Num(v?["actual"]?["package"]);
-        Header(0, "功耗 · 最近 60 秒", pkg is double p ? $"{p:0.0} W" : "—", PerfOrange);
+        Header(0, "功耗 · 最近 60 秒", pkg is double p ? $"{p:0.0} W" : "—", accent);
         float cTop = header, cH = powerH;
         var hist = _perfPower.ToArray();
         // 上限线：智能模式画当前电源下的上限（插电 / 电池），不是治理器此刻压到的值；其余模式就是设定的功耗
@@ -569,22 +632,19 @@ public sealed partial class WallStage
             area.EndFigure(CanvasFigureLoop.Closed);
             using var ag = CanvasGeometry.CreatePath(area);
             using var lg = CanvasGeometry.CreatePath(line);
-            using var fill = new CanvasLinearGradientBrush(ds, Gfx.WithAlpha(PerfOrange, 0.22), Gfx.WithAlpha(PerfOrange, 0)) { StartPoint = new Vector2(0, cTop), EndPoint = new Vector2(0, cTop + cH) };
+            using var fill = new CanvasLinearGradientBrush(ds, Gfx.WithAlpha(accent, 0.22), Gfx.WithAlpha(accent, 0)) { StartPoint = new Vector2(0, cTop), EndPoint = new Vector2(0, cTop + cH) };
             ds.FillGeometry(ag, fill);
             using var round = new CanvasStrokeStyle { LineJoin = CanvasLineJoin.Round };
-            ds.DrawGeometry(lg, PerfOrange, 2.2f, round);
-            ds.FillCircle(W - 2, Y(hist[^1]), 4, PerfOrange);
+            ds.DrawGeometry(lg, accent, 2.2f, round);
+            ds.FillCircle(W - 2, Y(hist[^1]), 4, accent);
         }
         else PText(ds, _perfAgentDown ? "连不上工具箱后台" : "正在读取…", ui, 13, muted, 0, cTop + cH / 2, 300);
 
-        string mode = Str(s?["mode"]) ?? "smart";
-        bool charger = PerfCharger;
         string preset = s == null ? "—" : PerfPresetText();
         int boost = Int(s?["boost"], 0);
-        int freq = mode == "manual" ? Int(s?["manual"]?["freq"]) : Int(s?[charger ? "ac" : "dc"]?["freq"]);
         Rows(cTop + cH + gap, new[]
         {
-            ("功耗预设", preset), ("短时加成", s == null ? "—" : boost == 0 ? "关" : $"+{boost} W"), ("CPU 频率", s == null ? "—" : Ghz(freq)),
+            ("功耗预设", preset), ("短时加成", s == null ? "—" : boost == 0 ? "关" : $"+{boost} W"), ("CPU 频率", _cpuFreq?.Mhz is double mhz ? $"{mhz / 1000:0.00} GHz" : "—"),
         });
 
         // ---- 风扇 ----
@@ -641,8 +701,8 @@ public sealed partial class WallStage
         {
             float cx = FX(tc);
             using var dash = new CanvasStrokeStyle { CustomDashStyle = new[] { 1f, 2f } };
-            ds.DrawLine(cx, gTop, cx, gTop + gH - labelH, Gfx.WithAlpha(PerfOrange, 0.8), 1.5f, dash);
-            ds.FillCircle(cx, FY(rr), 5, PerfOrange);
+            ds.DrawLine(cx, gTop, cx, gTop + gH - labelH, Gfx.WithAlpha(accent, 0.8), 1.5f, dash);
+            ds.FillCircle(cx, FY(rr), 5, accent);
         }
         var mono = new FontSpec("Cascadia Mono", 400);
         foreach (int t in new[] { axis[0], 60, 70, 80, axis[^1] })

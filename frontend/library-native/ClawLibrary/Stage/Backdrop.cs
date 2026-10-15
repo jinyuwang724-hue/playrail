@@ -210,6 +210,59 @@ public sealed partial class Backdrop : IDisposable
         _wake.Set();
     }
 
+    /// <summary>
+    /// 背景此刻的主题色，给控制中心里的图表、读数当强调色：封面前四个代表色里挑最鲜艳的（按占比稍加权），
+    /// 色相不变，饱和度和亮度拉到深色底上看得清的范围；封面全是灰的就用 folia 的强调色。
+    /// </summary>
+    public Color Accent
+    {
+        get
+        {
+            Vector4[] to;
+            lock (_gate) to = _to;
+            Vector4 best = ThemeAccent;
+            double bestScore = 0.12;
+            for (int i = 0; i < Math.Min(4, to.Length); i++)
+            {
+                var c = to[i];
+                double max = Math.Max(c.X, Math.Max(c.Y, c.Z)), min = Math.Min(c.X, Math.Min(c.Y, c.Z));
+                double score = (max - min) * (1 - i * 0.08);
+                if (score > bestScore) { bestScore = score; best = c; }
+            }
+            var (h, s, _) = ToHsl(best);
+            return FromHsl(h, Math.Clamp(s, 0.55, 0.9), 0.68);
+        }
+    }
+
+    /// <summary>当前封面的前四个代表色（按占比从多到少），日志 / 调色用。</summary>
+    public string CoverColorsText()
+    {
+        Vector4[] to;
+        lock (_gate) to = _to;
+        return string.Join(" ", to.Take(4).Select(c => $"#{(int)(c.X * 255):x2}{(int)(c.Y * 255):x2}{(int)(c.Z * 255):x2}"));
+    }
+
+    private static (double h, double s, double l) ToHsl(Vector4 c)
+    {
+        double r = c.X, g = c.Y, b = c.Z, max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b)), l = (max + min) / 2, d = max - min;
+        if (d < 1e-6) return (0, 0, l);
+        double s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        double h = max == r ? (g - b) / d + (g < b ? 6 : 0) : max == g ? (b - r) / d + 2 : (r - g) / d + 4;
+        return (h / 6, s, l);
+    }
+
+    private static Color FromHsl(double h, double s, double l)
+    {
+        double q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+        double Ch(double t)
+        {
+            t = (t % 1 + 1) % 1;
+            return t < 1 / 6.0 ? p + (q - p) * 6 * t : t < 0.5 ? q : t < 2 / 3.0 ? p + (q - p) * (2 / 3.0 - t) * 6 : p;
+        }
+        byte B(double x) => (byte)Math.Round(Math.Clamp(x, 0, 1) * 255);
+        return Color.FromArgb(255, B(Ch(h + 1 / 3.0)), B(Ch(h)), B(Ch(h - 1 / 3.0)));
+    }
+
     private Vector4[] CurrentColors()
     {
         double k = Math.Clamp(_fadeMs / ColorFadeMs, 0, 1);
