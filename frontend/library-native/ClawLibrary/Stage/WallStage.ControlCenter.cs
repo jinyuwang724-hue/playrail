@@ -1,10 +1,12 @@
-// 控制中心（≡ 键）：浮在游戏库墙面上的一层，照 folia 网格主页（Grid3DSlider）的参数自己实现；功能块代替歌单。
-// - 层次照 folia：folia 的首页浮在一直在跑的播放页上面（播放页被模糊 24 px，首页根是 bg-black/20），
-//   这里墙就是下面那层：它一直在、一直是活的，控制中心整层 0.25 s 淡进淡出，墙透过实时模糊 + 20 % 黑露着，卡片直接浮在上面。
+// 控制中心（≡ 键）：照 folia 网格主页（Grid3DSlider）的参数自己实现的一排卡片；功能块代替歌单。
+// - 背景：folia 网格主页底下的「隐现」动态背景（Backdrop，与缝里同一套着色器，这里铺满全屏），取色用游戏库卡上那款游戏的封面；
+//   上面压 4 px 模糊 + 20 % 黑，卡片直接浮在上面。只在控制中心露出来时出帧，关掉就停。
 // - 一行 6 张卡，焦点那张永远水平居中。整行只由一个滚动量 off 决定位置；每张卡的缩放 / 透明度 / 上浮
 //   都是绑在 off 上的表达式动画（合成线程），换焦点只对 off 做一次 350 ms 的关键帧动画。
-// - 游戏库卡 ⇄ 墙上那张卡：打开时墙卡的图刚体缩放平移飞到游戏库卡的封面位，关闭（焦点在游戏库卡上）时飞回去；
-//   墙卡留在原位不动（墙始终完整），全部在合成线程，真卡的显隐都是同一条时间轴上的关键帧。
+// - 控制中心是「首页」，游戏库墙面是压在它上面的集合层；两者之间的出入场照 folia 的「移形换影」：
+//   进（A 在游戏库卡上）：卡片拆成外框 / 封面 / 标题三件，弹簧飞到墙上 hero 卡的位置；墙的底 0.62 s 淡入，其余卡沿径向就位。
+//   出（墙上按 ≡）：墙的底 0.62 s 淡出露出控制中心，hero 三件飞回游戏库卡，其余卡沿径向四散。
+//   全部在合成线程：弹簧预先采样成关键帧，只动盒子（位置 / 尺寸）、透明度、转角、模糊。飞行中按任何键 = 快进到结尾。
 // - 读数（电量、刷新率、手柄）最多每秒刷新一次，变了才重画那一张卡面。没有数据的地方写「—」，不编数字。
 // 尺寸按 1920×1200 物理像素下 folia 的数值（卡宽 312、间距 48），换算成本窗口的 DIP。
 using System.Numerics;
@@ -34,10 +36,6 @@ public sealed partial class WallStage
     /// <summary>滑条上下各 96 px 留白（py-24），信息块 pt-6；整组（滑条 + 信息块）在屏幕上垂直居中。</summary>
     private const float CcRowPadY = 96, CcLabelTop = 24, CcLabelH = 32 + 4 + 16 + 16;
     private const double CcScrollMs = 350, CcCloseMs = 280, CcStepMs = 200;
-    /// <summary>folia 首页整层显隐：0.25 s ease-in-out；墙后的模糊 24 px（设计 px）。</summary>
-    private const double RevealMs = 250;
-    private const float BackdropBlurPx = 24;
-    private static readonly Bezier RevealEase = new(0.42f, 0f, 0.58f, 1f);
     private static readonly Bezier CcScrollEase = new(0.42f, 0f, 0.58f, 1f);
     private static readonly Bezier CcCloseEase = new(0.4f, 0f, 0.2f, 1f);
     private static readonly Color CcText = Gfx.Rgba(0xf4, 0xf4, 0xf5);
@@ -74,7 +72,7 @@ public sealed partial class WallStage
     private ContainerVisual _top = null!;
     private ContainerVisual? _cc, _ccRow;
     private SpriteVisual _ccDim = null!, _ccTitle = null!, _ccLabel = null!;
-    private CompositionEffectBrush? _ccBlurBrush;
+    private Backdrop? _ccBack;
     private CompositionPropertySet _ccP = null!;
     private readonly List<CcBlock> _ccBlocks = new();
     private bool _ccOpen;
@@ -87,6 +85,8 @@ public sealed partial class WallStage
     private DispatcherQueueTimer? _ccTimer;
     private (float k, float dpi) _ccShadowFor;
     private CompositionDrawingSurface? _ccShadowBase, _ccShadowFocus, _ccRingSurface;
+    private bool _ccBackLoop;
+    private long _ccBackLast;
 
     // 移形换影进行中：输入一律当「快进」
     private ContainerVisual? _fx;
@@ -133,10 +133,6 @@ public sealed partial class WallStage
         CcReadData();
         foreach (var b in _ccBlocks) CcPaintCard(b);
         CcPaintLabels();
-        // 第一次真正画出模糊（背景画刷 + 高斯模糊）要编译特效，约 0.1 s：启动后用几乎透明的不透明度先画两帧，按 ≡ 时不再等
-        _cc!.IsVisible = true;
-        _cc.Opacity = 0.004f;
-        After(150, () => { if (!_ccOpen && !MorphBusy) { _cc.IsVisible = false; _cc.Opacity = 1; } });
         Log.Info($"control center prewarmed ({NowMs - t0}ms)");
     }
 
@@ -168,28 +164,38 @@ public sealed partial class WallStage
         _ccP.InsertScalar("off", 0);
         CcOrder();
         CcPaintLabels();
-        // 浮窗（folia 首页浮在播放页上的那一层）：墙一直在下面，控制中心整层 0.25 s 淡进来，墙透过 24 px 模糊 + 20 % 黑露着
-        _cc!.IsVisible = true;
-        _cc.StopAnimation("Opacity");
-        _cc.Opacity = 0;   // 先设起点再开动画：动画进行中直接写这个属性会把动画停掉（之前就是这样一下子跳到终点的）
-        _cc.StartAnimation("Opacity", G.Scalar(0, 1, Reduced ? 1 : RevealMs, RevealEase));
+        _cc!.StopAnimation("Opacity");
+        _cc.Opacity = 1;
+        _cc.IsVisible = true;
+        CcBackStart();
         _ccTimer ??= CcMakeTimer();
         _ccTimer.Start();
-        if (!Reduced) MorphExit();
+
+        if (Reduced || !MorphExit())
+        {
+            // 没有能飞的 hero（或降低动态效果）：墙按原来的 0.28 s 淡出
+            double ms = Reduced ? 1 : CcCloseMs;
+            _root.StartAnimation("Opacity", G.Scalar(1, 0, ms, CcCloseEase));
+            int v = _ccVersion;
+            After(ms + 10, () => { if (v == _ccVersion && _ccOpen) { _root.IsVisible = false; _root.StopAnimation("Opacity"); _root.Opacity = 1; } });
+        }
         Log.Info($"control center open ({NowMs - t0}ms)");
     }
 
-    /// <summary>B / ≡ / A：浮窗整层 0.25 s 淡掉，露出下面一直在的墙。焦点在游戏库卡上时，封面同时飞回墙上那张卡。</summary>
+    /// <summary>B / ≡ / A：回到墙。焦点在游戏库卡上时走进场形变，其余按 0.28 s 淡入墙面。</summary>
     private void CloseControlCenter()
     {
         if (!_ccOpen || _cc == null) return;
         _ccOpen = false;
         int v = ++_ccVersion;
         _ccTimer?.Stop();
-        double ms = Reduced ? 1 : RevealMs;
-        _cc.StartAnimation("Opacity", G.Scalar(1, 0, ms, RevealEase));   // 不再写 Opacity：写了会把动画停掉
-        if (_ccFocus == 0 && !Reduced) MorphEnter();
-        After(ms + 10, () => { if (v == _ccVersion && !MorphBusy) HideControlCenter(); });
+        _root.StopAnimation("Opacity");
+        _root.IsVisible = true;
+        if (_ccFocus == 0 && !Reduced && MorphEnter()) { Log.Info("control center close (morph)"); return; }
+        double ms = Reduced ? 1 : CcCloseMs;
+        _root.Opacity = 0;
+        _root.StartAnimation("Opacity", G.Scalar(0, 1, ms, CcCloseEase));   // 不再写 Opacity：动画进行中写这个属性会把动画停掉
+        After(ms + 10, () => { if (v == _ccVersion) HideControlCenter(); });
         UpdateBackdropRunning();
         Log.Info("control center close");
     }
@@ -200,6 +206,7 @@ public sealed partial class WallStage
         _cc.IsVisible = false;
         _cc.StopAnimation("Opacity");
         _cc.Opacity = 1;
+        CcBackStop();
         foreach (var b in _ccBlocks) CcReleaseCover(b);
     }
 
@@ -322,24 +329,20 @@ public sealed partial class WallStage
     private void EnsureControlCenterVisuals()
     {
         if (_cc != null) return;
-        // 控制中心是浮在墙上面的一层（folia：首页浮在一直在跑的播放页上面）；形变合成层在最上面
+        // 控制中心是首页，在墙（集合层）的下面；形变合成层在两者之上
         _cc = G.Container();
         _cc.IsVisible = false;
-        _top.Children.InsertAbove(_cc, _root);
+        _top.Children.InsertBelow(_cc, _root);
         _fx = G.Container();
-        _top.Children.InsertAbove(_fx, _cc);
+        _top.Children.InsertAbove(_fx, _root);
 
         if (MorphSlow != 1) G.C.GlobalPlaybackRate = (float)(1 / MorphSlow);   // --slow=N（测试）
-        // 底：下面那面墙的实时模糊（folia 首页显示时把播放页模糊 24 px）+ 20 % 黑（Grid3D 的 bg-black/20）
-        var blur = new GaussianBlurEffect { Name = "blur", BlurAmount = 16, BorderMode = EffectBorderMode.Hard, Optimization = EffectOptimization.Balanced, Source = new CompositionEffectSourceParameter("backdrop") };
-        _ccBlurBrush = G.C.CreateEffectFactory(blur, new[] { "blur.BlurAmount" }).CreateBrush();
-        _ccBlurBrush.SetSourceParameter("backdrop", G.C.CreateBackdropBrush());
-        var blurSprite = G.Sprite(_ccBlurBrush);
+        _ccBack = new Backdrop(G) { Dpi = Chrome.Dpi };
         _ccDim = G.Sprite(G.Solid(Gfx.Rgba(0, 0, 0, 0.20)));
         _ccRow = G.Container();
         _ccTitle = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _ccLabel = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
-        foreach (var v in new Visual[] { blurSprite, _ccDim, _ccRow, _ccTitle, _ccLabel }) _cc.Children.InsertAtTop(v);
+        foreach (var v in new Visual[] { _ccBack.Root, _ccDim, _ccRow, _ccTitle, _ccLabel }) _cc.Children.InsertAtTop(v);
 
         _ccP = G.C.CreatePropertySet();
         foreach (var n in new[] { "off", "vw", "pitch", "padx", "half", "r", "lift", "top" }) _ccP.InsertScalar(n, 0);
@@ -409,7 +412,10 @@ public sealed partial class WallStage
             b.Cover.Offset = new Vector3(CcPad * _ccK, CcPad * _ccK, 0);
             b.Cover.Clip = G.C.CreateGeometricClip(RoundRect(img, img, CcImgRadius * _ccK));
         }
-        _ccBlurBrush!.Properties.InsertScalar("blur.BlurAmount", BackdropBlurPx * _ccK);
+        _ccBack!.Dpi = Chrome.Dpi;
+        _ccBack.BlurDip = 24 * _ccK;   // folia：首页显示时把下面的播放页（动态壁纸）模糊 24 px
+        _ccBack.Build(vw, vh);
+        _ccBack.SetStrip(0, vw);
         CcPaintShadows();
         CcPaintTitle();
     }
@@ -586,6 +592,61 @@ public sealed partial class WallStage
         b.Cover.Brush = null;
         Images.Release(b.CoverRef);
         b.CoverRef = null;
+    }
+
+    // ---------------- 动态背景（folia「隐现」，铺满全屏） ----------------
+
+    private void CcBackStart()
+    {
+        if (_ccBack == null) return;
+        var cover = _ccBlocks[0].CoverPath;
+        // 控制中心还没露出来（被墙和背景板盖着）：直接换成这款游戏的颜色，不做渐变 —— 渐变期间每帧都要在 UI 线程上重画
+        // 整张着色器 + 模糊，正好压在起飞那几帧上（实测每次起飞都掉一帧）
+        _ccBack.InstantColors = true;
+        _ccBack.SetCover(cover, a => _dq.TryEnqueue(() => { a(); CcBackLoop(); }));
+        CcBackRun();
+    }
+
+    /// <summary>「动态背景」关掉或降低动态效果时只画一帧静止的；窗口不在前台也停。</summary>
+    private void CcBackRun()
+    {
+        if (_ccBack == null) return;
+        bool visible = _cc?.IsVisible == true && (_ccOpen || MorphBusy);
+        // 形变期间动态背景停在一帧（它在背景板下面，看不出来）：起飞那几帧 GPU 留给飞的图
+        bool pauseForMorph = MorphBusy && !Program.Args.Contains("--back-during-morph");
+        _ccBack.Run(visible && _backdropOn && !Reduced && _windowActive && !pauseForMorph);
+        CcBackLoop();
+    }
+
+    private void CcBackStop()
+    {
+        _ccBack?.Run(false);
+    }
+
+    private void CcBackLoop()
+    {
+        if (_ccBackLoop || _ccBack == null || !_ccBack.NeedsFrames) return;
+        _ccBackLoop = true;
+        _ccBackLast = 0;
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += OnCcBackFrame;
+    }
+
+    private void OnCcBackFrame(object? sender, object e)
+    {
+        try
+        {
+            long now = NowMs;
+            double dt = _ccBackLast == 0 ? 16.7 : Math.Min(100, now - _ccBackLast);
+            _ccBackLast = now;
+            bool shown = _cc?.IsVisible == true;
+            if (shown) _ccBack!.FrameNow(dt);
+            if (!shown || !_ccBack!.NeedsFrames)
+            {
+                Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnCcBackFrame;
+                _ccBackLoop = false;
+            }
+        }
+        catch (Exception ex) { Log.Error("control center backdrop", ex); }
     }
 
     // ---------------- 移形换影 ----------------
@@ -828,12 +889,34 @@ public sealed partial class WallStage
     private float HomeFrameRadius => CcRadius * _ccK * CcMaxScale;
     private float HomeCoverRadius => CcImgRadius * _ccK * CcMaxScale;
 
+    /// <summary>
+    /// 背景板：控制中心（首页）之上、墙之下的一块主题底色。folia 打开集合时它 0.62 s 淡入盖住首页，
+    /// 返回时 0.62 s 淡出露出首页。
+    /// </summary>
+    private SpriteVisual Plate()
+    {
+        if (_plate == null)
+        {
+            _plate = G.Sprite(G.Solid(Theme.Bg));
+            _plate.IsVisible = false;
+            _top.Children.InsertAbove(_plate, _cc!);
+        }
+        return _plate;
+    }
+
+    private SpriteVisual? _plate;
 
 
     /// <summary>
-    /// 打开（墙上按 ≡）：浮窗整层 0.25 s 淡进来盖在墙上（墙一直在，透过模糊看得见）；同时墙上焦点那张卡的图
-    /// 刚体缩放平移飞到游戏库卡的封面位。飞的期间那张墙卡藏着，落定后在模糊下面原样回来。
-    /// 返回 false = 屏上没有可飞的卡（只做淡入）。
+    /// 出场（墙 → 控制中心，= folia 从歌单里返回首页）：
+    /// - 首页（控制中心）立刻出现在最底下，焦点在游戏库卡上（1.2×、上浮 6 px），不做自己的开场动画；
+    /// - 它上面一块主题底色的背景板 1 → 0（0.62 s，cubic-bezier(0.32,0.72,0,1)）；墙整层 0.3 s 淡掉；
+    /// - hero 卡的外框 / 封面 / 标题弹簧（response 0.36、bounce 0.2）飞回游戏库卡此刻的真实矩形：外框收到 0.985，
+    ///   封面转角 0 → 5° → 1.6°、模糊 0 → 1 → 8 px，标题模糊 0 → 1 → 8 px，三件透明度 1 / 1 / 0（0、0.72、1 处，0.5 s ease-out）；
+    ///   游戏库卡自己的封面和标题从一开始就在飞行的那一层上 0.35 s 淡进来（同一张图、同样的裁切），所以最后几帧是
+    ///   卡片自己那张图的一份微斜、变糊、正在淡掉的拷贝叠在真卡片上 —— 真卡片自始至终不藏；
+    /// - 其余屏上的卡变成幽灵四散（离 hero 越远越晚越快）。
+    /// 返回 false = 没有可飞的 hero，交给普通淡出。
     /// </summary>
     private bool MorphExit()
     {
@@ -845,15 +928,52 @@ public sealed partial class WallStage
         var hero = FocusKey is { } fk && tiles.FirstOrDefault(x => x.tile.Slot.Key == fk) is { tile: not null } f ? f
             : tiles.OrderBy(x => Vector2.Distance(x.box.Center, mid)).First();
         var heroItem = ItemFor(hero.tile.Slot) is { } hid ? Lookup(hid) : null;
-        var (_, homeCover, _) = HomeCardBoxes();
+        var (homeFrame, homeCover, homeTitle) = HomeCardBoxes();
+        float k = _ccK, s = (float)View.Scale;
+
+        // 背景板 1 → 0，墙整层 0.3 s 淡掉
+        var plate = Plate();
+        plate.IsVisible = true;
+        plate.StartAnimation("Opacity", G.Scalar(1, 0, ExitBackdropMs, ExitEase));
+        // 墙的底（底色、动态背景、暗角、竖条）0.3 s 淡掉；墙卡本身不跟着整层淡，由下面各自四散淡出
+        _cam.StopAnimation("fade");
+        _cam.StartAnimation("fade", G.Scalar(1, 0, WallFadeMs, CcCloseEase));
+
+        // 幽灵四散（最多 16 张，离 hero 最近的）
+        float reach = MathF.Min(MathF.Min((float)View.Width, (float)View.Height) / k * 0.3f, 220) * k;
+        var squad = tiles.Where(x => x.tile != hero.tile).OrderBy(x => Vector2.Distance(x.box.Center, hero.box.Center)).ToList();   // 屏上所有墙卡都散（真卡自己散：只动内层，不另外画实时画面，起飞那一帧不掉帧）
+        float maxDist = MathF.Max(1, squad.Count == 0 ? 1 : squad.Max(x => Vector2.Distance(x.box.Center, mid)));
+        double longest = ExitBackdropMs;
+        var outEase = new Bezier(0.22f, 1f, 0.36f, 1f);
+        var inOut = new Bezier(0.42f, 0f, 0.58f, 1f);
+        foreach (var (t, b) in squad)
+        {
+            var d = b.Center - mid;
+            float dist = d.Length();
+            var dir = dist > 1 ? d / dist : new Vector2(0, -1);
+            uint seed = (uint)(((int)MathF.Round(b.X) * 73856093) ^ ((int)MathF.Round(b.Y) * 19349663));
+            double jitter = ((seed % 1000) / 1000.0 - 0.5) * 0.08;
+            double n = Math.Min(dist / maxDist, 1);
+            double dur = (0.46 + n * 0.3) * 1000, delay = Math.Max(0, (0.04 + n * 0.26 + jitter) * 1000);
+            float rot = (seed % 2 == 0 ? 1 : -1) * (1.8f + (seed % 3) * 0.8f);
+            // 实测：每张幽灵卡用一份墙卡的实时画面（VisualSurface）时，十几张一起在起飞那一帧渲染，每次都掉一帧；
+            // 改成墙卡自己散开（只动卡的内层：位移、缩放、转角、透明度），不多画任何东西
+            t.MorphScatter(dir * reach / s, rot, dur, delay);
+            longest = Math.Max(longest, dur + delay);
+        }
+
+        // hero：只有一张图在飞 —— 墙卡和游戏库卡用的是同一张图（同一份解码好的表面、同样从正中裁），
+        // 起点盒子 = 墙卡此刻看得见的图（焦点放大后的矩形），终点 = 游戏库卡的封面（1.2×、上浮后的矩形、圆角）。
+        // 真卡的显隐全部是合成线程上的关键帧（和飞行同一批提交、同一时间轴），不在 UI 线程上切，所以不会有空帧或双影。
         var heroArt = HeroBox(hero.tile, now, 0);
         var heroVis = HeroBox(hero.tile, now);
         var b0 = _ccBlocks[0];
         // 墙卡上的字、角标、焦点环：盖一层墙卡卡面的实时画面，跟着图一起刚体缩放平移，起飞后 0.12 s 淡掉
-        var img = RigidFly(FlyerSurface(b0, hero.tile), heroArt, homeCover, 0, HomeCoverRadius, HandMs, (hero.tile, heroVis));
+        var img = RigidFly(FlyerSurface(b0, hero.tile), heroArt, homeCover, 0, HomeCoverRadius, HandMs, Program.Args.Contains("--no-overlay") ? null : (hero.tile, heroVis));
         double land = HandMs + FlyMs, total = land + HandoffMs;
         img.Over?.StartAnimation("Opacity", Keys(HandMs + 120, (0, 1, null), ((float)(HandMs / (HandMs + 120)), 1, null), (1, 0, EaseCss)));
-        // 墙卡留在原位不藏：浮窗下面的墙始终完整（藏了会在模糊下面留一个黑洞）
+        // 真墙卡（hero 和幽灵的原卡）在飞的那份已经画出来之后（HandMs）才藏
+        hero.tile.MorphHideAt(HandMs);
 
         // 游戏库卡：卡底、字、投影、焦点环在原位淡进来；它的封面在落定那一刻、在飞的图下面直接出现，飞的图再淡掉
         var card = b0.Gate;
@@ -864,23 +984,39 @@ public sealed partial class WallStage
         else cardCover.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)(land / total), 0, null), ((float)(land / total) + 0.0005f, 1, null), (1, 1, null)));
         if (!hold) img.Box.StartAnimation("Opacity", Delayed(Keys(HandoffMs, (0, 1, null), (1, 0, null)), land));
 
-        BeginMorph(Math.Max(total, land + 200) + 30 + (hold ? 2500 : 0), () =>
+        int v0 = _ccVersion;
+        BeginMorph(Math.Max(longest, total) + 30 + (hold ? 2500 : 0), () =>
         {
             DisposeFlyers();
             card.StopAnimation("Opacity");
             card.Opacity = 1;
             cardCover.StopAnimation("Opacity");
             cardCover.Opacity = 1;
-            hero.tile.Cancel();
+            plate.StopAnimation("Opacity");
+            plate.IsVisible = false;
+            _root.StopAnimation("Opacity");
+            _root.Opacity = 1;
+            if (_ccOpen && v0 == _ccVersion) _root.IsVisible = false;
+            // 墙藏好之后再把墙卡和墙的底复原（同一次提交，看不见中间状态）
+            foreach (var t in _tiles.Values) t.Cancel();
+            _cam.StopAnimation("fade");
+            _cam.InsertScalar("fade", 1);
+            if (_ccBack != null) _ccBack.InstantColors = false;
+            CcBackRun();   // 形变完了动态背景再动起来
         }, fastForwardMs: 120);
-        Log.Info($"morph exit: hero {heroItem?.Title} art {heroArt.X:F1},{heroArt.Y:F1} {heroArt.W:F1}x{heroArt.H:F1} -> cover {homeCover.X:F1},{homeCover.Y:F1} {homeCover.W:F1}x{homeCover.H:F1}");
+        CcBackRun();   // 形变期间停在一帧
+        Log.Info($"morph exit: hero {heroItem?.Title} art {heroArt.X:F1},{heroArt.Y:F1} {heroArt.W:F1}x{heroArt.H:F1} -> cover {homeCover.X:F1},{homeCover.Y:F1} {homeCover.W:F1}x{homeCover.H:F1}, {squad.Count} ghosts");
         return true;
     }
 
     /// <summary>
-    /// 关闭时焦点在游戏库卡上（A / B / ≡）：浮窗整层 0.25 s 淡掉露出下面一直在的墙；同时游戏库卡的封面刚体缩放平移
-    /// 飞回墙上那张卡（焦点停过的那款）。那张墙卡飞的期间藏着，落定那一刻在飞的图下面出现；墙卡卡面（暗角、标题、
-    /// 角标、焦点环）在飞行最后 0.18 s 跟着图淡进来，落定那一帧已经一模一样，再 0.1 s 交接给真卡。
+    /// 进场（控制中心 → 墙，= folia 从首页打开歌单）：
+    /// - 游戏库卡的外框 / 封面 / 标题从卡片此刻的真实矩形起飞（外框 0.97、封面 0.96 + 2.4° + 6 px 模糊、标题 3.5 px 模糊），
+    ///   弹簧（response 0.34、bounce 0.16）落到墙上 hero 卡（焦点停过的那款）的矩形；
+    /// - 目标量到之后 +140 ms 进入交叉淡化（0.28 s）：封面换成 hero 卡面的实时画面，标题淡掉（卡面上有自己的标题）；
+    ///   再 +240 ms 合成层 0.18 s 淡出；
+    /// - hero 卡先藏起来，0.12 s 后揭晓（透明度 0.3 s ease-out，尺度 0.985 → 1，0.42 s）；其余屏上的卡沿径向就位；
+    /// - 背景板 0 → 1（0.62 s，cubic-bezier(0.22,1,0.36,1)）盖住首页，墙整层 0.3 s 淡入；完了首页藏到下面。
     /// </summary>
     private bool MorphEnter()
     {
@@ -896,36 +1032,84 @@ public sealed partial class WallStage
         if (_railFocused) ExitRail(false);
         Focus(hero.tile.Slot.Key, false);
         var heroItem = ItemFor(hero.tile.Slot) is { } hid ? Lookup(hid) : null;
-        var (_, homeCover, _) = HomeCardBoxes();
+        var (homeFrame, homeCover, homeTitle) = HomeCardBoxes();
+        float k = _ccK, s = (float)View.Scale;
 
+        // 背景板盖住首页，墙整层淡入
+        var plate = Plate();
+        plate.IsVisible = true;
+        plate.StartAnimation("Opacity", G.Scalar(0, 1, EnterMs, EnterBackdropEase));
+        _root.Opacity = 0;
+        _root.StartAnimation("Opacity", G.Scalar(0, 1, WallFadeMs, CcCloseEase));   // 不再写 Opacity：动画进行中写这个属性会把动画停掉（之前墙一下子就实了）
+
+        // 其余的卡：径向就位
+        float reach = MathF.Min(MathF.Min((float)View.Width, (float)View.Height) / k * 0.32f, 260) * k;
+        float spacing = (float)(Engine.Geometry.Pitch * 2 * View.Scale);
+        foreach (var (t, b) in tiles)
+        {
+            if (t == hero.tile) continue;
+            var d = b.Center - hero.box.Center;
+            float dist = d.Length();
+            var dir = dist > 1 ? d / dist : new Vector2(0, -1);
+            double nn = Math.Min(dist / (spacing * 14), 1);
+            double eased = nn * nn * (3 - 2 * nn);
+            double seed = Seed(ItemFor(t.Slot) ?? t.Slot.Key.ToString());
+            double delay = Math.Min(0.04 + eased * 0.34 + seed * 0.04, 0.32) * 1000;
+            if (!Program.Args.Contains("--no-flyin")) t.MorphFlyIn(dir * reach / s, delay);
+        }
+
+        // hero：只有一张图在飞（游戏库卡的封面 = 墙卡同一张图），从卡的封面位飞到墙卡此刻看得见的图的位置。
+        // 游戏库卡的封面在飞的图画出来之后（HandMs）才藏；卡底、字、投影在原位淡掉。
+        // 墙卡一直藏着，落定那一刻在飞的图下面直接出现，飞的图再 0.15 s 淡掉，露出卡上的字、角标、焦点环。
         bool hold = Program.Args.Contains("--morph-hold");   // 测试：落定后停住不交接，截图对比
         var heroArt = HeroBox(hero.tile, now, 0);
-        var heroVis = HeroBox(hero.tile, now);
         var b0 = _ccBlocks[0];
-        var img = RigidFly(FlyerSurface(b0, hero.tile), homeCover, heroArt, HomeCoverRadius, 0, HandMs, (hero.tile, heroVis), overlayAtEnd: true);
+        // 墙卡卡面（底部暗角、标题、角标、焦点环）钉在终点、跟着图一起等比缩放平移，飞行最后 0.18 s 淡进来：
+        // 落定那一帧合成层就已经和墙卡一模一样，交接时什么都不用再变（之前是落定后再淡出，暗角和标题在「到了之后」才盖上来）
+        var heroVis = HeroBox(hero.tile, now);
+        var img = RigidFly(FlyerSurface(b0, hero.tile), homeCover, heroArt, HomeCoverRadius, 0, HandMs, Program.Args.Contains("--no-overlay") ? null : (hero.tile, heroVis), overlayAtEnd: true);
         double land = HandMs + FlyMs;
         img.Over?.StartAnimation("Opacity", Keys(land, (0, 0, null), ((float)((land - 180) / land), 0, null), (1, 1, EaseCss)));
-        // 游戏库卡的封面在飞的图画出来之后（HandMs）才藏；卡的其余部分随浮窗整层淡掉
+        var card = b0.Gate;
         var cardCover = b0.Cover;
         cardCover.StartAnimation("Opacity", Keys(HandMs + 1, (0, 1, null), ((float)(HandMs / (HandMs + 1)), 1, null), (1, 0, null)));
-        // 墙卡一直在原位（浮窗淡掉后就露出来），飞的图落在它正上方：落定那一帧两者一样，再交接
+        card.StartAnimation("Opacity", Keys(HandMs + 200, (0, 1, null), ((float)(HandMs / (HandMs + 200)), 1, null), (1, 0, EaseCss)));
+        // 控制中心正被背景板盖住：它的动态背景（全屏着色器 + 模糊，在 UI 线程上逐帧画）现在就停，别和飞行抢帧
+        CcBackStop();
+        hero.tile.MorphHide();
         if (!hold)
         {
-            img.Box.StartAnimation("Opacity", Keys(land + 34, (0, 1, null), ((float)((land + 33) / (land + 34)), 1, null), (1, 0, null)));
+            // 落定：墙卡在合成层下面出现，两帧后合成层撤掉（两者此刻画面相同，不做淡出）
+            hero.tile.MorphShowAt(land, 1);
+            var gone = Keys(land + 34, (0, 1, null), ((float)((land + 33) / (land + 34)), 1, null), (1, 0, null));
+            img.Box.StartAnimation("Opacity", gone);
+            // 卡面那层（不透明，盖住了下面的图）最后 0.1 s 淡掉露出真墙卡：两者几何完全一样，只是实时画面的栅格化略软，
+            // 这样换手只是一次很轻的清晰度过渡；下面的图在 land + 33 已经撤掉，卡面层淡出时不会透出没有暗角的原图
             double tail = land + 33 + 100;
             img.Over?.StartAnimation("Opacity", Keys(tail, (0, 0, null), ((float)((land - 180) / tail), 0, null), ((float)(land / tail), 1, EaseCss), ((float)((land + 33) / tail), 1, null), (1, 0, EaseCss)));
         }
 
-        BeginMorph(land + 140 + 30 + (hold ? 2500 : 0), () =>
+        WallBusy(EnterMs);
+        BeginMorph(Math.Max(land + 140, EnterMs) + 30 + (hold ? 2500 : 0), () =>
         {
             if (hold) hero.tile.Cancel();
+            card.StopAnimation("Opacity");
+            card.Opacity = 1;
             cardCover.StopAnimation("Opacity");
             cardCover.Opacity = 1;
             DisposeFlyers();
+            plate.StopAnimation("Opacity");
+            plate.IsVisible = false;
+            _root.StopAnimation("Opacity");
+            _root.Opacity = 1;
             if (!_ccOpen) HideControlCenter();
             UpdateBackdropRunning();
-        }, fastForwardMs: 260, fastForward: () => hero.tile.Cancel());
-        Log.Info($"morph enter: hero {heroItem?.Title} cover {homeCover.X:F1},{homeCover.Y:F1} {homeCover.W:F1}x{homeCover.H:F1} -> art {heroArt.X:F1},{heroArt.Y:F1} {heroArt.W:F1}x{heroArt.H:F1}");
+        }, fastForwardMs: 260, fastForward: () =>
+        {
+            foreach (var t in _tiles.Values) t.Cancel();
+        });
+        UpdateBackdropRunning();
+        Log.Info($"morph enter: hero {heroItem?.Title} cover {homeCover.X:F1},{homeCover.Y:F1} {homeCover.W:F1}x{homeCover.H:F1} -> art {heroArt.X:F1},{heroArt.Y:F1} {heroArt.W:F1}x{heroArt.H:F1}, {tiles.Count - 1} fly-ins");
         return true;
     }
 
@@ -995,6 +1179,7 @@ public sealed partial class WallStage
                 CcReadData();
                 foreach (var b in _ccBlocks) CcPaintCard(b);
                 if (_ccBlocks[_ccFocus].Summary != before) CcPaintLabels();
+                CcBackRun();
             }
             catch (Exception ex) { Log.Error("control center timer", ex); }
         };
