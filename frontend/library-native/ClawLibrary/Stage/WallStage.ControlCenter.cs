@@ -33,6 +33,8 @@ public sealed partial class WallStage
     private const float CcCardW = 312, CcGap = 48, CcPad = 16, CcImgRadius = 8, CcRadius = 12;
     private const float CcTextTop = 8, CcTitleLh = 20, CcSecondLh = 16, CcSummaryLh = 14;
     private const float CcFalloff = 600, CcMaxScale = 1.2f;
+    /// <summary>掌机放大：folia 的数值是桌面 1920×1200 下 1:1 物理像素，8 英寸屏上字太小；整组（卡、字、间距、衰减）一起放大。</summary>
+    private const float CcBoost = 1.5f;
     /// <summary>滑条上下各 96 px 留白（py-24），信息块 pt-6；整组（滑条 + 信息块）在屏幕上垂直居中。</summary>
     private const float CcRowPadY = 96, CcLabelTop = 24, CcLabelH = 32 + 4 + 16 + 16;
     private const double CcScrollMs = 350, CcCloseMs = 280, CcStepMs = 200;
@@ -168,6 +170,7 @@ public sealed partial class WallStage
         _cc.Opacity = 1;
         _cc.IsVisible = true;
         CcBackStart();
+        CcStagger(120);   // 其余几张卡依次出现
         _ccTimer ??= CcMakeTimer();
         _ccTimer.Start();
 
@@ -207,7 +210,15 @@ public sealed partial class WallStage
         _cc.StopAnimation("Opacity");
         _cc.Opacity = 1;
         CcBackStop();
-        foreach (var b in _ccBlocks) CcReleaseCover(b);
+        foreach (var b in _ccBlocks)
+        {
+            CcReleaseCover(b);
+            // 依次出现的动画收尾：下次打开从干净的状态开始
+            foreach (var prop in new[] { "Opacity", "Offset", "Scale" }) b.Gate.StopAnimation(prop);
+            b.Gate.Opacity = 1;
+            b.Gate.Offset = Vector3.Zero;
+            b.Gate.Scale = Vector3.One;
+        }
     }
 
     // ---------------- 输入 ----------------
@@ -391,7 +402,7 @@ public sealed partial class WallStage
     {
         float vw = (float)View.Width, vh = (float)View.Height;
         // 设计 px → DIP：1920×1200 物理像素下 1:1
-        _ccK = MathF.Min(vw * Chrome.Dpi / 1920f, vh * Chrome.Dpi / 1200f) / Chrome.Dpi;
+        _ccK = MathF.Min(vw * Chrome.Dpi / 1920f, vh * Chrome.Dpi / 1200f) / Chrome.Dpi * CcBoost;
         _ccH = CcPad + (CcCardW - 2 * CcPad) + CcPad + CcTextTop + CcTitleLh + 4 + CcSecondLh + 8 + 2 * CcSummaryLh + CcPad;
         float w = CcCardW * _ccK, h = _ccH * _ccK;
         _ccP.InsertScalar("vw", vw);
@@ -413,7 +424,7 @@ public sealed partial class WallStage
             b.Cover.Clip = G.C.CreateGeometricClip(RoundRect(img, img, CcImgRadius * _ccK));
         }
         _ccBack!.Dpi = Chrome.Dpi;
-        _ccBack.BlurDip = 24 * _ccK;   // folia：首页显示时把下面的播放页（动态壁纸）模糊 24 px
+        _ccBack.BlurDip = 24 * _ccK / CcBoost;   // folia：首页显示时把下面的播放页（动态壁纸）模糊 24 px
         _ccBack.Build(vw, vh);
         _ccBack.SetStrip(0, vw);
         CcPaintShadows();
@@ -867,6 +878,130 @@ public sealed partial class WallStage
 
     private static float Lerp(float a, float b, double t) => (float)(a + (b - a) * t);
 
+    // ---------------- 飞的外框（folia MorphFlightLayer / MorphExitLayer 的 frame 层） ----------------
+
+    /// <summary>folia 外框：rounded-2xl（16 px）、1 px 描边、底色 = 主题底色、投影 0 10 28 rgba(0,0,0,.3)。</summary>
+    private const float FrameRadiusPx = 16, FrameShadowBlurPx = 28, FrameShadowDyPx = 10;
+    private CompositionSurfaceBrush? _frameShadowSrc;
+    private float _frameShadowFor;
+
+    /// <summary>投影的九宫格底图（圆角矩形的模糊阴影，按九宫格拉伸到任意大小，不随盒子变形发虚）。</summary>
+    private CompositionNineGridBrush FrameShadowBrush(out float margin)
+    {
+        float k = _ccK, m = MathF.Ceiling(FrameShadowBlurPx * k * 1.5f), r = FrameRadiusPx * k;
+        margin = m;
+        if (_frameShadowSrc == null || _frameShadowFor != k)
+        {
+            _frameShadowFor = k;
+            float side = 2 * (m + r) + 2;
+            var surface = CcDraw(side, side, Chrome.Dpi, ds =>
+            {
+                using var cl = new CanvasCommandList(ds);
+                using (var c = cl.CreateDrawingSession()) c.FillRoundedRectangle(m, m, side - 2 * m, side - 2 * m, r, r, Colors.Black);
+                using var sh = new ShadowEffect { Source = cl, BlurAmount = FrameShadowBlurPx * k / 2, ShadowColor = Gfx.Rgba(0, 0, 0, 0.3) };
+                ds.DrawImage(sh);
+            });
+            _frameShadowSrc = G.C.CreateSurfaceBrush(surface);
+            _frameShadowSrc.Stretch = CompositionStretch.Fill;
+        }
+        var nine = G.C.CreateNineGridBrush();
+        nine.Source = _frameShadowSrc;
+        nine.SetInsets((m + r) * Chrome.Dpi);
+        nine.SetInsetScales(1f / Chrome.Dpi);
+        return nine;
+    }
+
+    /// <summary>
+    /// 外框从 a 飞到 b：盒子（位置、尺寸、圆角）与封面同一条曲线、同一个起飞延迟；只是一个圆角形状 + 投影，
+    /// 盒子怎么变形都不会把内容拉伸。scale：外框绕中心的等比缩放（folia 打开时 0.97 → 1）。
+    /// </summary>
+    private ContainerVisual FlyFrame(Box a, Box b, float ra, float rb, double delayMs, float scaleFrom = 1, float scaleTo = 1)
+    {
+        var box = G.C.CreateContainerVisual();
+        var shadow = G.Sprite(FrameShadowBrush(out float m), relative: false);
+        float dy = FrameShadowDyPx * _ccK;
+        shadow.RelativeSizeAdjustment = Vector2.One;
+        shadow.Size = new Vector2(2 * m, 2 * m);
+        shadow.Offset = new Vector3(-m, -m + dy, 0);
+        var geo = RoundRect(a.W, a.H, ra);
+        var shape = G.C.CreateSpriteShape(geo);
+        shape.FillBrush = G.Solid(Theme.Bg);
+        shape.StrokeBrush = G.Solid(Gfx.WithAlpha(CcText, 0.10));
+        shape.StrokeThickness = 1;
+        var sv = G.C.CreateShapeVisual();
+        sv.Shapes.Add(shape);
+        sv.RelativeSizeAdjustment = Vector2.One;
+        box.Children.InsertAtTop(shadow);
+        box.Children.InsertAtTop(sv);
+        _fx!.Children.InsertAtBottom(box);   // 在飞的封面下面
+
+        box.Offset = a.Pos; box.Size = a.Size;
+        box.CenterPoint = new Vector3(a.W / 2, a.H / 2, 0);
+        box.Scale = new Vector3(scaleFrom, scaleFrom, 1);
+        KeyFrameAnimation D(KeyFrameAnimation k)
+        {
+            k.Duration = Gfx.Ms(FlyMs);
+            k.DelayTime = Gfx.Ms(delayMs);
+            k.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+            return k;
+        }
+        box.StartAnimation("Offset", D(G.SampledV3(a.Pos, b.Pos, FlyMs, FlyCurve)));
+        box.StartAnimation("Size", D(G.SampledV2(a.Size, b.Size, FlyMs, FlyCurve)));
+        box.StartAnimation("CenterPoint", D(G.SampledV3(new Vector3(a.W / 2, a.H / 2, 0), new Vector3(b.W / 2, b.H / 2, 0), FlyMs, FlyCurve)));
+        geo.StartAnimation("Size", D(G.SampledV2(a.Size, b.Size, FlyMs, FlyCurve)));
+        geo.StartAnimation("CornerRadius", D(G.SampledV2(new Vector2(ra, ra), new Vector2(rb, rb), FlyMs, FlyCurve)));
+        if (scaleFrom != scaleTo) box.StartAnimation("Scale", D(G.SampledV3(new Vector3(scaleFrom, scaleFrom, 1), new Vector3(scaleTo, scaleTo, 1), FlyMs, FlyCurve)));
+        _frameFlyers.Add(box);
+        return box;
+    }
+
+    private readonly List<ContainerVisual> _frameFlyers = new();
+
+    private void DisposeFrames()
+    {
+        foreach (var f in _frameFlyers) { _fx?.Children.Remove(f); f.Dispose(); }
+        _frameFlyers.Clear();
+    }
+
+    // ---------------- 控制中心其余卡依次出现 ----------------
+
+    /// <summary>
+    /// 打开时游戏库卡以外的几张卡依次出现：参数取 folia 集合层卡片就位的那一套（0.5 s cubic-bezier(0.32,0.72,0,1)，
+    /// 透明度 0 → 1、尺度 0.94 → 1、从外侧短距离推进），按离游戏库卡的远近错峰（每张 +0.06 s）。只动卡内层（Gate），
+    /// 滑条的缩放 / 透明度表达式不受影响。
+    /// </summary>
+    private void CcStagger(double startMs)
+    {
+        if (Reduced) return;
+        var ease = new Bezier(0.32f, 0.72f, 0f, 1f);
+        float push = 40 * _ccK;
+        for (int i = 1; i < _ccBlocks.Count; i++)
+        {
+            var g = _ccBlocks[i].Gate;
+            double delay = startMs + (i - 1) * 60;
+            float w = CcCardW * _ccK, h = _ccH * _ccK;
+            g.CenterPoint = new Vector3(w / 2, h / 2, 0);
+            var op = G.C.CreateScalarKeyFrameAnimation();
+            op.InsertKeyFrame(0, 0, G.Linear);
+            op.InsertKeyFrame(1, 1, G.Ease(ease));
+            var off = G.C.CreateVector3KeyFrameAnimation();
+            off.InsertKeyFrame(0, new Vector3(push, 0, 0), G.Linear);
+            off.InsertKeyFrame(1, Vector3.Zero, G.Ease(ease));
+            var sc = G.C.CreateVector3KeyFrameAnimation();
+            sc.InsertKeyFrame(0, new Vector3(0.94f, 0.94f, 1), G.Linear);
+            sc.InsertKeyFrame(1, Vector3.One, G.Ease(ease));
+            foreach (var a in new KeyFrameAnimation[] { op, off, sc })
+            {
+                a.Duration = Gfx.Ms(500);
+                a.DelayTime = Gfx.Ms(delay);
+                a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+            }
+            g.StartAnimation("Opacity", op);
+            g.StartAnimation("Offset", off);
+            g.StartAnimation("Scale", sc);
+        }
+    }
+
     private ScalarKeyFrameAnimation Keys(double ms, params (float at, float value, Bezier? ease)[] keys)
     {
         var a = G.C.CreateScalarKeyFrameAnimation();
@@ -969,6 +1104,9 @@ public sealed partial class WallStage
         var heroVis = HeroBox(hero.tile, now);
         var b0 = _ccBlocks[0];
         // 墙卡上的字、角标、焦点环：盖一层墙卡卡面的实时画面，跟着图一起刚体缩放平移，起飞后 0.12 s 淡掉
+        // 外框（folia frame 层）：从墙卡的矩形飞到游戏库卡的外框，收到 0.985，透明度 1 / 1 / 0（0、0.72、1 处）—— 真卡在它下面淡进来
+        var frame = FlyFrame(heroArt, homeFrame, 0, HomeFrameRadius, HandMs, 1, 0.985f);
+        frame.StartAnimation("Opacity", Keys(HandMs + FlyMs, (0, 1, null), ((float)((HandMs + FlyMs * 0.72) / (HandMs + FlyMs)), 1, EaseOutCss), (1, 0, EaseOutCss)));
         var img = RigidFly(FlyerSurface(b0, hero.tile), heroArt, homeCover, 0, HomeCoverRadius, HandMs, Program.Args.Contains("--no-overlay") ? null : (hero.tile, heroVis));
         double land = HandMs + FlyMs, total = land + HandoffMs;
         img.Over?.StartAnimation("Opacity", Keys(HandMs + 120, (0, 1, null), ((float)(HandMs / (HandMs + 120)), 1, null), (1, 0, EaseCss)));
@@ -987,7 +1125,7 @@ public sealed partial class WallStage
         int v0 = _ccVersion;
         BeginMorph(Math.Max(longest, total) + 30 + (hold ? 2500 : 0), () =>
         {
-            DisposeFlyers();
+            DisposeFlyers(); DisposeFrames();
             card.StopAnimation("Opacity");
             card.Opacity = 1;
             cardCover.StopAnimation("Opacity");
@@ -1067,6 +1205,9 @@ public sealed partial class WallStage
         // 墙卡卡面（底部暗角、标题、角标、焦点环）钉在终点、跟着图一起等比缩放平移，飞行最后 0.18 s 淡进来：
         // 落定那一帧合成层就已经和墙卡一模一样，交接时什么都不用再变（之前是落定后再淡出，暗角和标题在「到了之后」才盖上来）
         var heroVis = HeroBox(hero.tile, now);
+        // 外框（folia frame 层）：从游戏库卡的外框飞到墙卡的矩形，起飞 0.97 → 1，落定前 0.18 s 淡掉（墙卡没有外框）
+        var frame = FlyFrame(homeFrame, heroArt, HomeFrameRadius, 0, HandMs, 0.97f, 1);
+        frame.StartAnimation("Opacity", Keys(HandMs + FlyMs, (0, 1, null), ((float)((HandMs + FlyMs - 180) / (HandMs + FlyMs)), 1, null), (1, 0, EaseOutCss)));
         var img = RigidFly(FlyerSurface(b0, hero.tile), homeCover, heroArt, HomeCoverRadius, 0, HandMs, Program.Args.Contains("--no-overlay") ? null : (hero.tile, heroVis), overlayAtEnd: true);
         double land = HandMs + FlyMs;
         img.Over?.StartAnimation("Opacity", Keys(land, (0, 0, null), ((float)((land - 180) / land), 0, null), (1, 1, EaseCss)));
@@ -1097,7 +1238,7 @@ public sealed partial class WallStage
             card.Opacity = 1;
             cardCover.StopAnimation("Opacity");
             cardCover.Opacity = 1;
-            DisposeFlyers();
+            DisposeFlyers(); DisposeFrames();
             plate.StopAnimation("Opacity");
             plate.IsVisible = false;
             _root.StopAnimation("Opacity");
