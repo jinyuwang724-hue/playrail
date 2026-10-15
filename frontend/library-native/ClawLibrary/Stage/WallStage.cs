@@ -117,9 +117,13 @@ public sealed partial class WallStage : IDisposable
         G = new Gfx(host.Compositor);
         Text = new CardText(G);
         Chrome = new Chrome(G);
+        // _top：墙（_root）之上还有控制中心与提示条；控制中心对 _root 拍快照，所以它们不能在 _root 里
+        _top = G.C.CreateContainerVisual();
+        _top.RelativeSizeAdjustment = Vector2.One;
         _root = G.C.CreateContainerVisual();
         _root.RelativeSizeAdjustment = Vector2.One;
-        ElementCompositionPreview.SetElementChildVisual(rootEl.Surface, _root);
+        _top.Children.InsertAtTop(_root);
+        ElementCompositionPreview.SetElementChildVisual(rootEl.Surface, _top);
         _field = G.Container();
         _field.Clip = G.C.CreateInsetClip();
         _worlds[0] = G.C.CreateContainerVisual();
@@ -226,6 +230,7 @@ public sealed partial class WallStage : IDisposable
         Measure();
         if (old.Width == View.Width && old.Height == View.Height && Math.Abs(oldRs - G.RasterScale) < 1e-4) return;
         Log.Info($"resize {View.Width}x{View.Height} scale {View.Scale}");
+        if (_ccOpen) CloseControlCenter();
         LayoutChrome();
         if (Math.Abs(oldRs - G.RasterScale) > 1e-4) { Text.Clear(); foreach (var t in _tiles.Values) t.Redraw(); }
         RenderSeamContent();
@@ -415,10 +420,10 @@ public sealed partial class WallStage : IDisposable
 
         _toast = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _toast.Opacity = 0;
-        _root.Children.InsertAtTop(_toast);
+        _top.Children.InsertAtTop(_toast);
         _hud = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _hud.IsVisible = false;
-        _root.Children.InsertAtTop(_hud);
+        _top.Children.InsertAtTop(_hud);
         LayoutChrome();
     }
 
@@ -557,6 +562,7 @@ public sealed partial class WallStage : IDisposable
         double dt = _lastFrame == 0 ? 16 : Math.Min(50, now - _lastFrame);
         _lastFrame = now;
         _pad?.ApplyPan(this);
+        if (_ccOpen) { PanVelocity = Vector2.Zero; _glide = Vector2.Zero; }
         var v = PanVelocity + _glide;
         if (v.X != 0 || v.Y != 0)
         {
@@ -589,6 +595,7 @@ public sealed partial class WallStage : IDisposable
     /// <summary>拖动：直接平移相机（屏幕 px）。</summary>
     public void PanBy(double dx, double dy)
     {
+        if (_ccOpen) return;
         MarkInput();
         Sync();
         _camX = _camY = null;
@@ -716,6 +723,7 @@ public sealed partial class WallStage : IDisposable
     public void Move(Direction dir)
     {
         MarkInput();
+        if (_ccOpen) { CcMove(dir); return; }
         if (RailMove(dir)) return;
         if (EnsureFocusOnScreen()) return;
         var from = SlotByKey(FocusKey!.Value);
@@ -731,6 +739,7 @@ public sealed partial class WallStage : IDisposable
     public void Activate()
     {
         MarkInput();
+        if (_ccOpen) { CcActivate(); return; }
         if (RailActivate()) return;
         if (EnsureFocusOnScreen()) return;
         var slot = SlotByKey(FocusKey!.Value);
@@ -772,6 +781,7 @@ public sealed partial class WallStage : IDisposable
     public void Back()
     {
         MarkInput();
+        if (_ccOpen) { CloseControlCenter(); return; }
         if (RailBack()) return;
         if (_expandedKey != null) { Collapse(true); return; }
         if (_stack.Count > 1) Pop();
@@ -984,7 +994,7 @@ public sealed partial class WallStage : IDisposable
     public void SwitchTab(int delta)
     {
         MarkInput();
-        if (_stack.Count > 1) return;
+        if (_stack.Count > 1 || _ccOpen) return;
         if (_expandedKey != null) Collapse(false);
         if (_searchOpen) CloseSearch();
         _tabIndex = (_tabIndex + delta + _lib.HomeTabs.Count) % _lib.HomeTabs.Count;
@@ -1071,6 +1081,7 @@ public sealed partial class WallStage : IDisposable
 
     public void ToggleTitleStyle()
     {
+        if (_ccOpen) return;
         Style = Style == TitleStyle.B ? TitleStyle.D : TitleStyle.B;
         foreach (var t in _tiles.Values) t.Show(t.Target);
         Toast(Style == TitleStyle.B ? "标题样式：极简黑体" : "标题样式：电影字幕");
@@ -1085,6 +1096,7 @@ public sealed partial class WallStage : IDisposable
     /// <summary>鼠标：点卡 = 聚焦并激活。</summary>
     public void ClickAt(double sx, double sy)
     {
+        if (_ccOpen) { CcClick(sx, sy); return; }
         if (RailClick(sx, sy)) return;
         Sync();
         var geo = SeamGeometry(_anchorX, _center, _openWidth, View);
@@ -1180,6 +1192,8 @@ public sealed partial class WallStage : IDisposable
                 {
                     case VirtualKey.Enter: case VirtualKey.Space: Activate(); break;
                     case VirtualKey.Escape: case VirtualKey.Back: Back(); break;
+                    case VirtualKey.M: case VirtualKey.Application: ToggleControlCenter(); break;
+                    case VirtualKey.Y: PadY(); break;
                     case VirtualKey.Q: case VirtualKey.PageUp: SwitchTab(-1); break;
                     case VirtualKey.E: case VirtualKey.PageDown: SwitchTab(1); break;
                     case VirtualKey.F: ToggleHud(); break;
@@ -1226,7 +1240,7 @@ public sealed partial class WallStage : IDisposable
         if ((pt.Timestamp - d.t) / 1000.0 > 80) return;
         // 惯性：滑行距离 = 松手速度 × 0.3（power），按时间常数 280ms 指数衰减；速度上限 4000 px/s
         double speed = Math.Sqrt(d.vx * d.vx + d.vy * d.vy);
-        if (speed < 40) return;
+        if (speed < 40 || _ccOpen) return;
         double k = Math.Min(speed, 4000) / speed * (0.3 / 0.28);
         // 注意方向：拖动是「把墙往手指方向推」，相机反向
         _glide = new Vector2((float)(-d.vx * k), (float)(-d.vy * k));

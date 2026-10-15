@@ -578,7 +578,7 @@ public sealed partial class WallStage
         catch { seamOpen = true; }
         _backdrop.Visible = _backdropOn;
         bool recent = NowMs - _lastInput < BackdropIdleMs;
-        bool run = _backdropOn && _windowActive && !Reduced && seamOpen && recent;
+        bool run = _backdropOn && _windowActive && !Reduced && seamOpen && recent && !_ccOpen;   // 控制中心开着时墙冻住
         _backdrop.Run(run);
         EnsureBackdropLoop();
         // 背景在动时，角落里那个 1 px 的点也一起动：实测只有缝里一条在动时，展开 / 换页签时 DWM 会隔帧合成（约 8 % 的帧 33 ms），

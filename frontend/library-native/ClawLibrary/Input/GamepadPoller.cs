@@ -1,6 +1,6 @@
 // 手柄：XInput 在独立线程上 250 Hz 轮询（照 src/input.ts 的映射与手感参数）。
 // 十字键 / 左摇杆 = 方向导航（按住按间隔连走），右摇杆 = 平移相机，A 打开，B 返回，LB / RB 换页签，
-// X 切换标题样式，Y 游戏设置（占位），视图键开性能读数。只在本窗口在前台时响应。
+// X 切换标题样式，Y 游戏设置（占位；控制中心里 = 设为主页），≡ 开关控制中心，视图键开性能读数。只在本窗口在前台时响应。
 using System.Numerics;
 using System.Runtime.InteropServices;
 using ClawLibrary.Engine;
@@ -37,7 +37,7 @@ public sealed unsafe class GamepadPoller : IDisposable
     private static extern uint XInputGetState(uint index, XInputState* state);
 
     private const ushort DpadUp = 0x0001, DpadDown = 0x0002, DpadLeft = 0x0004, DpadRight = 0x0008;
-    private const ushort Back = 0x0020, LB = 0x0100, RB = 0x0200, A = 0x1000, B = 0x2000, X = 0x4000, Y = 0x8000;
+    private const ushort Menu = 0x0010, Back = 0x0020, LB = 0x0100, RB = 0x0200, A = 0x1000, B = 0x2000, X = 0x4000, Y = 0x8000;
 
     private readonly DispatcherQueue _dq;
     private readonly WallStage _stage;
@@ -52,6 +52,8 @@ public sealed unsafe class GamepadPoller : IDisposable
     private readonly object _gate = new();
     private bool _wasPanning;
     public volatile bool Panning;
+    /// <summary>有手柄连着（控制中心「手柄」卡的读数）。</summary>
+    public bool Connected => _index >= 0;
 
     public GamepadPoller(DispatcherQueue dq, WallStage stage, Func<bool> foreground)
     {
@@ -134,7 +136,8 @@ public sealed unsafe class GamepadPoller : IDisposable
         if (Edge(B)) Post(_stage.Back);
         if (Edge(LB)) Post(() => _stage.SwitchTab(-1));
         if (Edge(RB)) Post(() => _stage.SwitchTab(1));
-        if (Edge(Y)) Post(() => _stage.Toast("游戏设置（原型里还没有）"));
+        if (Edge(Y)) Post(_stage.PadY);
+        if (Edge(Menu)) Post(_stage.ToggleControlCenter);
         if (Edge(X)) Post(_stage.ToggleTitleStyle);
         if (Edge(Back)) Post(_stage.ToggleHud);
         _prev = b;
