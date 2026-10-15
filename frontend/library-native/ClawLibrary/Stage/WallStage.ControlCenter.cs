@@ -112,6 +112,17 @@ public sealed partial class WallStage
         if (_ccOpen) CloseControlCenter(); else OpenControlCenter();
     }
 
+    /// <summary>测试用：游戏库卡封面此刻的状态（有没有图、解码好没有、可见不可见）。</summary>
+    internal (bool ok, string info) CcCoverState()
+    {
+        if (_ccBlocks.Count == 0) return (false, "no blocks");
+        var b = _ccBlocks[0];
+        bool hasBrush = b.Cover.Brush is CompositionSurfaceBrush { Surface: not null };
+        bool loaded = b.CoverRef != null && Images.IsLoaded(b.CoverRef);
+        bool ok = b.CoverPath == null || (hasBrush && loaded && b.Cover.Opacity > 0.99f && b.Gate.Opacity > 0.99f && b.Cover.IsVisible);
+        return (ok, $"path={Path.GetFileName(Path.GetDirectoryName(b.CoverPath ?? ""))}/{Path.GetFileName(b.CoverPath ?? "-")} brush={hasBrush} loaded={loaded} coverOp={b.Cover.Opacity:F2} gateOp={b.Gate.Opacity:F2} open={_ccOpen} morph={MorphBusy}");
+    }
+
     /// <summary>启动后空闲时把控制中心的视觉先建好、卡面先画好（藏着），按 ≡ 时只刷新读数，第一帧不卡。</summary>
     public void PrewarmControlCenter()
     {
@@ -143,6 +154,8 @@ public sealed partial class WallStage
         CcMeasure();
         CcReadData();
         foreach (var b in _ccBlocks) CcPaintCard(b);   // 内容没变的卡不重画（启动后已经预热画过一遍）
+        // 关的时候封面引用已经还给图片缓存（CcReleaseCover）；卡面没变就不会重画，所以这里必须显式重新拿封面
+        if (!Program.Args.Contains("--no-cover-fix")) foreach (var b in _ccBlocks) CcSetCover(b);   // --no-cover-fix：测试用，复现旧 bug
         // folia：从集合层返回时首页停在来时的那张卡上 —— 墙是从游戏库卡进来的
         _ccFocus = 0;
         _ccOff = null;
@@ -558,7 +571,8 @@ public sealed partial class WallStage
         if (b.CoverPath == null) { CcReleaseCover(b); return; }
         if (b.CoverRef != null) return;
         // 竖封面按宽解码，UniformToFill 居中裁成方的
-        var s = Images.AcquireReuse(b.CoverPath, CoverPx, CoverPx * 3 / 2);
+        // 解码上限取正方形 2× 封面边长：铺满裁剪时短边也够封面边长（横图按宽解码会只剩一半高度，放大发糊）
+        var s = Images.AcquireReuse(b.CoverPath, CoverPx * 2, CoverPx * 2);
         if (s == null) return;
         b.CoverRef = s;
         b.Cover.Brush = CoverBrush(s);
@@ -710,33 +724,28 @@ public sealed partial class WallStage
     /// </summary>
     private const double HandMs = 33;
 
-    /// <summary>飞的东西：一个带圆角裁切的容器，里面只放一个精灵（容器淡出时没有别的子视觉会透出来）。</summary>
+    /// <summary>
+    /// 飞的东西：一张**整图**按等比缩放平移（内容永远不被拉伸、也不会每帧重新裁），外面一个圆角裁切窗口
+    /// 从起点的矩形走到终点的矩形。两头都是「同一张图、从正中按铺满裁」：起点那一帧和起点的卡一样，终点那一帧和终点的卡一样，
+    /// 中间只是窗口在变、图在等比缩放，看起来就是一张图一步到位地挪过去。
+    /// </summary>
     private sealed class Flyer
     {
         public ContainerVisual Box = null!;
         public CompositionRoundedRectangleGeometry Geo = null!;
+        public SpriteVisual Img = null!;
+        public SpriteVisual? Over;
         public IDisposable? Own;
     }
 
     private readonly List<Flyer> _flyers = new();
-
-    private Flyer MakeFlyer((CompositionBrush brush, IDisposable? own) src, float radius)
-    {
-        var f = new Flyer { Own = src.own };
-        f.Box = G.C.CreateContainerVisual();
-        f.Geo = RoundRect(1, 1, radius);
-        f.Box.Clip = G.C.CreateGeometricClip(f.Geo);
-        f.Box.Children.InsertAtTop(G.Sprite(src.brush));
-        _fx!.Children.InsertAtTop(f.Box);
-        _flyers.Add(f);
-        return f;
-    }
 
     private void DisposeFlyers()
     {
         foreach (var f in _flyers)
         {
             _fx?.Children.Remove(f.Box);
+            if (f.Over != null) _fx?.Children.Remove(f.Over);
             f.Own?.Dispose();
             f.Box.Dispose();
         }
@@ -744,45 +753,107 @@ public sealed partial class WallStage
     }
 
     /// <summary>
-    /// 飞的那张图：游戏库卡封面已经解码好就用它（落在卡上时就是同一份像素），否则用墙卡正在显示的那份
-    /// （同一张图文件，墙卡上一直在画，肯定已经解码）。都从正中按 UniformToFill 裁，和两边的裁法一样。
+    /// 飞的那张图：游戏库卡的封面和墙卡显示的是同一张图文件；挑已经解码好、分辨率更高的那一份
+    /// （起点、终点都不会因为换了分辨率而变糊 / 变清楚）。
     /// </summary>
-    private (CompositionBrush, IDisposable?) FlyerSource(CcBlock card, Tile tile)
+    private LoadedImageSurface? FlyerSurface(CcBlock card, Tile tile)
     {
-        ICompositionSurface? s = card.CoverRef != null && Images.IsLoaded(card.CoverRef) ? card.CoverRef : tile.ArtSurface ?? (ICompositionSurface?)card.CoverRef;
-        if (s == null) return (G.Solid(Gfx.Rgba(0x27, 0x27, 0x2a, 1)), null);
-        return (CoverBrush(s), null);
+        LoadedImageSurface? best = null;
+        foreach (var s in new[] { card.CoverRef, tile.ArtSurface })
+            if (s != null && Images.IsLoaded(s) && (best == null || s.DecodedPhysicalSize.Height > best.DecodedPhysicalSize.Height)) best = s;
+        return best ?? card.CoverRef ?? tile.ArtSurface;
     }
 
-    /// <summary>墙卡卡面的实时画面（含焦点环那一圈），按盒子铺满。</summary>
-    private (CompositionBrush, IDisposable?) FaceSource(Tile t)
+    /// <summary>
+    /// 从 r0 飞到 r1（屏幕 DIP）：整图等比缩放（对数插值）+ 平移，裁切窗口（含圆角）单独插值；三者同一条曲线、同一组采样点。
+    /// overlay：起飞时盖在图上的墙卡卡面（字、角标、焦点环），和图一起刚体缩放平移（不拉伸），由调用方淡掉。
+    /// </summary>
+    private Flyer RigidFly(LoadedImageSurface? surf, Box r0, Box r1, float rad0, float rad1, double delayMs, (Tile tile, Box vis)? overlay = null)
     {
-        if (t.FaceRoot is not { } face) return (G.Solid(Gfx.Rgba(0, 0, 0, 0)), null);
-        var vs = G.C.CreateVisualSurface();
-        vs.SourceVisual = face;
-        vs.SourceOffset = new Vector2(-RingMargin, -RingMargin);
-        vs.SourceSize = t.El.Size + new Vector2(2 * RingMargin);
-        var b = G.C.CreateSurfaceBrush(vs);
-        b.Stretch = CompositionStretch.Fill;
-        return (b, vs);
-    }
+        var f = new Flyer();
+        var sz = surf?.DecodedPhysicalSize ?? default;
+        double iw = sz.Width > 0 ? sz.Width : r0.W, ih = sz.Height > 0 ? sz.Height : r0.H;
+        double Cover(Box r) => Math.Max(r.W / iw, r.H / ih);
+        double s0 = Cover(r0), s1 = Cover(r1);
+        Vector2 c0 = r0.Center, c1 = r1.Center;
 
-    /// <summary>盒子（位置、尺寸、圆角）从 a 到 b：定长 ease-out，到点正好停在目标上；delay 之前停在 a。</summary>
-    private void Fly(Flyer f, Box a, Box b, float ra, float rb, double delayMs)
-    {
-        KeyFrameAnimation D(KeyFrameAnimation k)
+        f.Box = G.C.CreateContainerVisual();
+        f.Box.Size = new Vector2((float)View.Width, (float)View.Height);
+        f.Geo = RoundRect(r0.W, r0.H, rad0);
+        f.Geo.Offset = new Vector2(r0.X, r0.Y);
+        f.Box.Clip = G.C.CreateGeometricClip(f.Geo);
+        var brush = surf != null ? (CompositionBrush)G.C.CreateSurfaceBrush(surf) : G.Solid(Gfx.Rgba(0x27, 0x27, 0x2a, 1));
+        if (brush is CompositionSurfaceBrush sb) sb.Stretch = CompositionStretch.Fill;   // 精灵的宽高比 = 图的宽高比，Fill 不会拉伸
+        f.Img = G.Sprite(brush, relative: false);
+        f.Box.Children.InsertAtTop(f.Img);
+        _fx!.Children.InsertAtTop(f.Box);
+
+        const int N = 48;
+        var imgOff = G.C.CreateVector3KeyFrameAnimation();
+        var imgSize = G.C.CreateVector2KeyFrameAnimation();
+        var clipOff = G.C.CreateVector2KeyFrameAnimation();
+        var clipSize = G.C.CreateVector2KeyFrameAnimation();
+        var clipRad = G.C.CreateVector2KeyFrameAnimation();
+        Vector3KeyFrameAnimation? ovOff = null;
+        Vector2KeyFrameAnimation? ovSize = null;
+        if (overlay is { } ov && ov.tile.FaceRoot is { } face)
         {
-            k.DelayTime = Gfx.Ms(delayMs);
-            k.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
-            return k;
+            var vs = G.C.CreateVisualSurface();
+            vs.SourceVisual = face;
+            vs.SourceOffset = new Vector2(-RingMargin, -RingMargin);
+            vs.SourceSize = ov.tile.El.Size + new Vector2(2 * RingMargin);
+            var ob = G.C.CreateSurfaceBrush(vs);
+            ob.Stretch = CompositionStretch.Fill;
+            f.Over = G.Sprite(ob, relative: false);
+            f.Own = vs;
+            _fx.Children.InsertAtTop(f.Over);
+            ovOff = G.C.CreateVector3KeyFrameAnimation();
+            ovSize = G.C.CreateVector2KeyFrameAnimation();
         }
-        f.Box.Offset = a.Pos; f.Box.Size = a.Size;
-        f.Geo.Size = a.Size; f.Geo.CornerRadius = new Vector2(ra, ra);
-        f.Box.StartAnimation("Offset", D(G.SampledV3(a.Pos, b.Pos, FlyMs, FlyCurve)));
-        f.Box.StartAnimation("Size", D(G.SampledV2(a.Size, b.Size, FlyMs, FlyCurve)));
-        f.Geo.StartAnimation("Size", D(G.SampledV2(a.Size, b.Size, FlyMs, FlyCurve)));
-        f.Geo.StartAnimation("CornerRadius", D(G.SampledV2(new Vector2(ra, ra), new Vector2(rb, rb), FlyMs, FlyCurve)));
+        for (int i = 0; i <= N; i++)
+        {
+            float u = i / (float)N;
+            double e = FlyCurve(u);
+            var r = new Box(Lerp(r0.X, r1.X, e), Lerp(r0.Y, r1.Y, e), Lerp(r0.W, r1.W, e), Lerp(r0.H, r1.H, e));
+            double s = Math.Max(Math.Exp(Math.Log(s0) + (Math.Log(s1) - Math.Log(s0)) * e), Cover(r));
+            var c = Vector2.Lerp(c0, c1, (float)e);
+            var d = new Vector2((float)(iw * s), (float)(ih * s));
+            imgOff.InsertKeyFrame(u, new Vector3(c - d / 2, 0), G.Linear);
+            imgSize.InsertKeyFrame(u, d, G.Linear);
+            clipOff.InsertKeyFrame(u, new Vector2(r.X, r.Y), G.Linear);
+            clipSize.InsertKeyFrame(u, r.Size, G.Linear);
+            float rad = (float)(rad0 + (rad1 - rad0) * e);
+            clipRad.InsertKeyFrame(u, new Vector2(rad, rad), G.Linear);
+            if (overlay is { } o && ovOff != null && ovSize != null)
+            {
+                float k = (float)(s / s0);
+                ovOff.InsertKeyFrame(u, new Vector3(c + (new Vector2(o.vis.X, o.vis.Y) - c0) * k, 0), G.Linear);
+                ovSize.InsertKeyFrame(u, o.vis.Size * k, G.Linear);
+            }
+        }
+        // 起点值先摆好（延迟期间就是这一帧）
+        var dd0 = new Vector2((float)(iw * s0), (float)(ih * s0));
+        f.Img.Offset = new Vector3(c0 - dd0 / 2, 0);
+        f.Img.Size = dd0;
+        if (f.Over != null && overlay is { } o0) { f.Over.Offset = o0.vis.Pos; f.Over.Size = o0.vis.Size; }
+        void Go(CompositionObject target, string prop, KeyFrameAnimation a)
+        {
+            a.Duration = Gfx.Ms(FlyMs);
+            a.DelayTime = Gfx.Ms(delayMs);
+            a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+            target.StartAnimation(prop, a);
+        }
+        Go(f.Img, "Offset", imgOff);
+        Go(f.Img, "Size", imgSize);
+        Go(f.Geo, "Offset", clipOff);
+        Go(f.Geo, "Size", clipSize);
+        Go(f.Geo, "CornerRadius", clipRad);
+        if (f.Over != null) { Go(f.Over, "Offset", ovOff!); Go(f.Over, "Size", ovSize!); }
+        _flyers.Add(f);
+        return f;
     }
+
+    private static float Lerp(float a, float b, double t) => (float)(a + (b - a) * t);
 
     private ScalarKeyFrameAnimation Keys(double ms, params (float at, float value, Bezier? ease)[] keys)
     {
@@ -956,14 +1027,10 @@ public sealed partial class WallStage
         var heroArt = HeroBox(hero.tile, now, 0);
         var heroVis = HeroBox(hero.tile, now);
         var b0 = _ccBlocks[0];
-        var img = MakeFlyer(FlyerSource(b0, hero.tile), 0);
-        // 墙卡上的字、角标、焦点环：盖一层墙卡卡面的实时画面，起飞后 0.12 s 淡掉（只有它一个子视觉，淡出不会透出别的）
-        var overlay = MakeFlyer(FaceSource(hero.tile), 0);
-        var fly = FlyCurve;
-        Fly(img, heroArt, homeCover, 0, HomeCoverRadius, HandMs);
-        Fly(overlay, heroVis, homeCover, 0, HomeCoverRadius, HandMs);
+        // 墙卡上的字、角标、焦点环：盖一层墙卡卡面的实时画面，跟着图一起刚体缩放平移，起飞后 0.12 s 淡掉
+        var img = RigidFly(FlyerSurface(b0, hero.tile), heroArt, homeCover, 0, HomeCoverRadius, HandMs, (hero.tile, heroVis));
         double land = HandMs + FlyMs, total = land + HandoffMs;
-        overlay.Box.StartAnimation("Opacity", Keys(HandMs + 120, (0, 1, null), ((float)(HandMs / (HandMs + 120)), 1, null), (1, 0, EaseCss)));
+        img.Over?.StartAnimation("Opacity", Keys(HandMs + 120, (0, 1, null), ((float)(HandMs / (HandMs + 120)), 1, null), (1, 0, EaseCss)));
         // 真墙卡（hero 和幽灵的原卡）在飞的那份已经画出来之后（HandMs）才藏
         hero.tile.MorphHideAt(HandMs);
         foreach (var (t, _) in squad) t.MorphHideAt(HandMs);
@@ -1051,8 +1118,7 @@ public sealed partial class WallStage
         bool hold = Program.Args.Contains("--morph-hold");   // 测试：落定后停住不交接，截图对比
         var heroArt = HeroBox(hero.tile, now, 0);
         var b0 = _ccBlocks[0];
-        var img = MakeFlyer(FlyerSource(b0, hero.tile), HomeCoverRadius);
-        Fly(img, homeCover, heroArt, HomeCoverRadius, 0, HandMs);
+        var img = RigidFly(FlyerSurface(b0, hero.tile), homeCover, heroArt, HomeCoverRadius, 0, HandMs);
         double land = HandMs + FlyMs;
         var card = b0.Gate;
         var cardCover = b0.Cover;

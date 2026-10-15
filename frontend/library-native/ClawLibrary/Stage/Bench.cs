@@ -142,6 +142,37 @@ public static class Bench
     }
 
     /// <summary>把墙摆到某个状态（截图用）。</summary>
+    /// <summary>压力测试：经手柄投递路径反复 墙 ⇄ 控制中心，换焦点、快速连按、动画中途按；每次打开控制中心后检查游戏库卡封面。</summary>
+    private static async Task CycleAsync(WallStage s)
+    {
+        await Task.Delay(1500);
+        var pad = s.Pad;
+        if (pad == null) { Log.Warn("cycle: no pad"); return; }
+        var rnd = new Random(7);
+        int bad = 0, runs = 0;
+        for (int i = 0; i < 100; i++)
+        {
+            // 墙上换焦点（偶尔走远一点，让卡被回收 / 重建）
+            int steps = rnd.Next(0, i % 10 == 9 ? 14 : 4);
+            for (int k = 0; k < steps; k++) { s.Move((Direction)rnd.Next(0, 4)); await Task.Delay(140); }
+            await Task.Delay(rnd.Next(50, 400));
+            pad.InjectPress(Input.GamepadPoller.PadMenu);           // 出场：墙 → 控制中心
+            int mode = i % 4;
+            if (mode == 1) { await Task.Delay(rnd.Next(60, 300)); pad.InjectPress(Input.GamepadPoller.PadB); }   // 动画中途按一下（快进）
+            await Task.Delay(1300);
+            if (!s.ControlCenterOpen) { pad.InjectPress(Input.GamepadPoller.PadMenu); await Task.Delay(1300); }
+            var (ok, info) = s.CcCoverState();
+            runs++;
+            if (!ok) bad++;
+            Log.Info($"cycle {i}: {(ok ? "ok" : "MISSING")} {info}");
+            // 回墙：A（进场）或 B；偶尔动画中途再按 ≡ 打断
+            pad.InjectPress(mode == 2 ? Input.GamepadPoller.PadB : Input.GamepadPoller.PadA);
+            if (mode == 3) { await Task.Delay(rnd.Next(40, 250)); pad.InjectPress(Input.GamepadPoller.PadMenu); await Task.Delay(1300); pad.InjectPress(Input.GamepadPoller.PadA); }
+            await Task.Delay(1200);
+        }
+        Log.Info($"cycle done: {runs} opens, {bad} missing covers");
+    }
+
     /// <summary>录真实速度的每一帧：经手柄投递路径按 ≡（出场）/ A（进场），各录 1.6 s。</summary>
     private static async Task RecordAsync(WallStage s, string state)
     {
@@ -179,6 +210,7 @@ public static class Bench
                 case "styleb": s.ToggleTitleStyle(); break;
                 case "tab": s.SwitchTab(1); break;
                 case "control": s.ToggleControlCenter(); break;
+                case "cycle": await CycleAsync(s); break;
                 case "recexit" or "recenter" or "recboth": await RecordAsync(s, state); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
                 case "ccenter": s.ToggleControlCenter(); await Task.Delay(2500); Log.Info("state ccenter now"); s.Activate(); break;
