@@ -397,11 +397,25 @@ public sealed partial class WallStage
 
     private void CcChromeFocus(bool instant = false)
     {
+        CcAway(_ccZone == CcZone.Row ? 0 : 1, instant);
         for (int i = 0; i < _ccDock.Count; i++)
             CcFocusVisual(_ccDock[i], (_ccZone == CcZone.Dock && i == _ccDockFocus) || (i == 0 && _ccPowerOpen), instant);
         for (int i = 0; i < _ccPower.Count; i++)
             CcFocusVisual(_ccPower[i], _ccZone == CcZone.Power && i == _ccPowerFocus, instant);
         if (_ccBlocks.Count > 0 && _ccLabel != null) CcPaintLabels();
+    }
+
+    private float _ccAway;
+
+    /// <summary>焦点离开 / 回到滑条：焦点卡用和滑条滚动同一条曲线（0.35 s ease-in-out）缩回 1× 或放大回 1.2×。</summary>
+    private void CcAway(float to, bool instant)
+    {
+        if (_ccP == null) return;
+        if (!instant && to == _ccAway) return;
+        float from = _ccAway;
+        _ccAway = to;
+        if (instant || Reduced) { _ccP.StopAnimation("away"); _ccP.InsertScalar("away", to); return; }
+        _ccP.StartAnimation("away", G.Scalar(from, to, CcScrollMs, CcScrollEase));
     }
 
     private void CcFocusVisual(CcButton b, bool on, bool instant)

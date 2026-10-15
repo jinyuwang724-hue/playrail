@@ -238,7 +238,7 @@ public sealed partial class WallStage
         _ccTimer?.Stop();
         _root.StopAnimation("Opacity");
         _root.IsVisible = true;
-        if (_ccFocus == 0 && !Reduced && MorphEnter()) { Log.Info("control center close (morph)"); return; }
+        if (_ccFocus == 0 && _ccZone == CcZone.Row && !Reduced && MorphEnter()) { Log.Info("control center close (morph)"); return; }
         double ms = Reduced ? 1 : CcCloseMs;
         _root.Opacity = 0;
         _root.StartAnimation("Opacity", G.Scalar(0, 1, ms, CcCloseEase));   // 不再写 Opacity：动画进行中写这个属性会把动画停掉
@@ -407,7 +407,7 @@ public sealed partial class WallStage
         foreach (var v in new Visual[] { _ccBack.Root, _ccDim, _ccRow, _ccTitle, _ccLabel }) _cc.Children.InsertAtTop(v);
 
         _ccP = G.C.CreatePropertySet();
-        foreach (var n in new[] { "off", "vw", "pitch", "padx", "half", "r", "lift", "top" }) _ccP.InsertScalar(n, 0);
+        foreach (var n in new[] { "off", "vw", "pitch", "padx", "half", "r", "lift", "top", "away" }) _ccP.InsertScalar(n, 0);
 
         var defs = new (string Name, string Icon, Color Accent)[]
         {
@@ -430,12 +430,14 @@ public sealed partial class WallStage
             foreach (var v in new Visual[] { b.ShadowBase, b.ShadowFocus, b.Face, b.Cover, b.Ring }) b.Body.Children.InsertAtTop(v);
             // folia updateCardTransforms：t = min(|卡中心 − 视口中心| / 600, 1)；scale 1.2 → 0.5，opacity 1 → 0.15，上浮 6 px
             string T = $"Min(Abs(p.padx + {i} * p.pitch + p.half - p.off - p.vw / 2) / p.r, 1)";
-            CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off, p.top - p.lift * (1 - {T}), 0)");
-            CcExpr(b.El, "Scale", $"Vector3({CcMaxScale} - 0.7 * {T}, {CcMaxScale} - 0.7 * {T}, 1)");
+            CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off, p.top - p.lift * (1 - {T}) * (1 - p.away), 0)");
+            // away：焦点离开滑条（去了左下图标 / 电源菜单 / 头像）时 0 → 1，焦点卡从 1.2× 缩回 1×、落回原位、焦点投影换成普通投影
+            string S = $"({CcMaxScale} - 0.7 * {T} - 0.2 * p.away * (1 - {T}))";
+            CcExpr(b.El, "Scale", $"Vector3({S}, {S}, 1)");
             CcExpr(b.El, "Opacity", $"Max(0.15, 1 - 0.85 * {T})");
             // 不画焦点描边：焦点卡本来就放大到 1.2×，视觉焦点已经锁定；Ring 只在卡片样式下当 1 px 的淡边用（folia 铺满卡的 border），焦点投影只在中间附近出现
-            CcExpr(b.ShadowFocus, "Opacity", $"Max(0, 1 - 1.6 * {T})");
-            CcExpr(b.ShadowBase, "Opacity", $"Min(1, 1.6 * {T})");
+            CcExpr(b.ShadowFocus, "Opacity", $"Max(0, 1 - 1.6 * {T}) * (1 - p.away)");
+            CcExpr(b.ShadowBase, "Opacity", $"Max(Min(1, 1.6 * {T}), p.away)");
             _ccRow.Children.InsertAtTop(b.El);
             _ccBlocks.Add(b);
         }
@@ -472,7 +474,7 @@ public sealed partial class WallStage
             w = dw * _ccK;
             var inset = CcInset(b) * _ccK;
             string T = $"Min(Abs(p.padx + {i} * p.pitch + p.half - p.off - p.vw / 2) / p.r, 1)";
-            CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off + {inset.X}, p.top - p.lift * (1 - {T}) + {inset.Y}, 0)");
+            CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off + {inset.X}, p.top - p.lift * (1 - {T}) * (1 - p.away) + {inset.Y}, 0)");
             b.El.Size = new Vector2(w, h);
             b.El.CenterPoint = new Vector3(w / 2, h / 2, 0);
             b.Face.Size = new Vector2(w, h);
