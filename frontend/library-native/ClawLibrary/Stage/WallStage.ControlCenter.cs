@@ -578,8 +578,9 @@ public sealed partial class WallStage
         var b = _ccBlocks[_ccFocus];
         float raster = _ccK * Chrome.Dpi;
         float maxW = (float)View.Width / _ccK - 64;
-        using var name = TextKit.Layout(G.Device, b.Name, TextKit.Ui(700), 24, maxW, CanvasHorizontalAlignment.Center, 0, 32);
-        string line = string.IsNullOrEmpty(b.Summary) ? b.Second : $"{b.Second} • {b.Summary}";
+        var chrome = CcChromeLabel();   // 焦点在左下图标 / 电源菜单 / 头像上：写它的名字和说明
+        using var name = TextKit.Layout(G.Device, chrome?.name ?? b.Name, TextKit.Ui(700), 24, maxW, CanvasHorizontalAlignment.Center, 0, 32);
+        string line = chrome?.line ?? (string.IsNullOrEmpty(b.Summary) ? b.Second : $"{b.Second} • {b.Summary}");
         using var mono = TextKit.Layout(G.Device, line, new FontSpec(CcMonoFont, 400), 12, maxW, CanvasHorizontalAlignment.Center, 0, 16);
         CcSet(_ccLabel, CcDraw(maxW, CcLabelH, raster, ds =>
         {

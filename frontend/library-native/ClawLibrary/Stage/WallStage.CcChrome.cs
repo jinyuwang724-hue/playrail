@@ -30,7 +30,7 @@ public sealed partial class WallStage
 
     // 设计 px（× _ccK）
     private const float CcEdgeX = 40, CcEdgeBottom = 32, CcDockBtn = 48, CcDockGap = 10, CcDockIcon = 20;
-    private const float CcPowerH = 44, CcPowerW = 128, CcPowerGap = 10;
+    private const float CcPowerGap = 6;
     private const float CcAvatar = 38, CcPillPad = 5;
     private const float CcStatusH = 36;
     private const string CcSnowflake = "❄";
@@ -77,6 +77,23 @@ public sealed partial class WallStage
         foreach (var (id, glyph, label) in items) _ccPower.Add(CcMakeButton(id, glyph, label, _ccPowerLayer));
     }
 
+    /// <summary>功能坞、电源菜单、头像选中时，滑条下面信息块的第二行。</summary>
+    private static readonly Dictionary<string, string> CcChromeDesc = new()
+    {
+        ["power"] = "睡眠、休眠、重启、关机", ["files"] = "打开资源管理器", ["browser"] = "打开默认浏览器",
+        ["shots"] = "截图管理（页面还没做）", ["avatar"] = "打开 Windows 设置",
+        ["sleep"] = "关屏，进入低电量待机", ["hibernate"] = "保存现场后断电，下次开机原样恢复",
+        ["restart"] = "立即重启", ["shutdown"] = "立即关机",
+    };
+
+    /// <summary>焦点在外围时信息块写什么（名字, 说明）；焦点在滑条上 = null。</summary>
+    private (string name, string line)? CcChromeLabel()
+    {
+        var b = _ccZone switch { CcZone.Dock => _ccDock[_ccDockFocus], CcZone.Power => _ccPower[_ccPowerFocus], _ => null };
+        if (b == null) return null;
+        return (b.Id == "avatar" ? "账户" : b.Label, CcChromeDesc.GetValueOrDefault(b.Id, ""));
+    }
+
     private CcButton CcMakeButton(string id, string glyph, string label, ContainerVisual parent)
     {
         var b = new CcButton { Id = id, Glyph = glyph, Label = label };
@@ -111,18 +128,18 @@ public sealed partial class WallStage
         av.Size = new Vector2(pillW * k, CcDockBtn * k);
         av.Pos = new Vector2(vw - (CcEdgeX + pillW) * k, y);
         // 电源菜单：从电源按钮正上方一格一格往上排（离按钮最近的是睡眠）
-        float px = (CcEdgeX + (CcDockBtn - CcPowerH) / 2) * k;
+        float px = CcEdgeX * k;
         for (int i = 0; i < _ccPower.Count; i++)
         {
-            _ccPower[i].Size = new Vector2(CcPowerW * k, CcPowerH * k);
-            _ccPower[i].Pos = new Vector2(px, y + (CcDockBtn - CcPowerH) / 2 * k - (i + 1) * (CcPowerH + CcPowerGap) * k);
+            _ccPower[i].Size = new Vector2(CcDockBtn * k);
+            _ccPower[i].Pos = new Vector2(px, y - (i + 1) * (CcDockBtn + CcPowerGap) * k);
         }
         foreach (var b in _ccDock.Concat(_ccPower))
         {
             b.El.Size = b.Size;
             b.El.Offset = new Vector3(b.Pos, 0);
             // 胶囊绕左边那个圆的中心放大（电源菜单），其余绕中心
-            b.El.CenterPoint = _ccPower.Contains(b) ? new Vector3(b.Size.Y / 2, b.Size.Y / 2, 0) : new Vector3(b.Size / 2, 0);
+            b.El.CenterPoint = new Vector3(b.Size / 2, 0);
         }
         string key = $"{k}|{Chrome.Dpi}|{_ccUser}|{_railModel.Avatar != null}";
         if (key != _ccChromeDrawn)
@@ -144,14 +161,23 @@ public sealed partial class WallStage
         CcSet(b.Focused, CcDraw(w, h, raster, ds => CcDrawChip(ds, b, w, h, true)));
     }
 
-    /// <summary>按钮：平时 zinc-950 半透、白字，不描边；焦点 = 白底黑字（folia 首页选中页签的白胶囊）。</summary>
+    /// <summary>
+    /// 功能坞与电源菜单只有图标，没有底：平时白 60 %，焦点 = 纯白 + 放大 1.08 + 图标下面一个小圆点（名字写在滑条下面的信息块里）。
+    /// 头像是整个界面里唯一的胶囊按钮：zinc-950 半透，焦点 = 白底黑字（folia 首页选中页签的白胶囊）。
+    /// </summary>
     private void CcDrawChip(CanvasDrawingSession ds, CcButton b, float w, float h, bool focus)
     {
-        var fill = focus ? Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.96) : _ccPower.Contains(b) ? Gfx.WithAlpha(CcChip, 0.96) : CcChip;   // 电源菜单浮在卡上，不透字
+        if (b.Id != "avatar")
+        {
+            var c = focus ? CcText : Gfx.WithAlpha(CcText, 0.6);
+            CcGlyph(ds, b.Glyph, w / 2, h / 2 - 2, CcDockIcon, c);
+            if (focus) ds.FillCircle(w / 2, h - 5, 2, CcText);
+            return;
+        }
+        var fill = focus ? Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.96) : CcChip;
         var fg = focus ? Theme.Bg : Gfx.WithAlpha(CcText, 0.92);
         float r = h / 2;
         ds.FillRoundedRectangle(0, 0, w, h, r, r, fill);
-        if (b.Id == "avatar")
         {
             float a = CcAvatar, ax = CcPillPad, ay = (h - a) / 2;
             using (var circle = CanvasGeometry.CreateCircle(ds, ax + a / 2, ay + a / 2, a / 2))
@@ -167,22 +193,14 @@ public sealed partial class WallStage
             float dx = ax + a + 8;
             ds.FillRectangle(dx, h / 2 - 9, 1, 18, focus ? Gfx.WithAlpha(Theme.Bg, 0.15) : Gfx.WithAlpha(CcText, 0.15));
             CcGlyph(ds, "", dx + 1 + 15, h / 2, 16, fg);
-            return;
         }
-        if (_ccPower.Contains(b))
-        {
-            CcGlyph(ds, b.Glyph, h / 2, h / 2, 18, fg);
-            using var label = TextKit.Layout(ds, b.Label, TextKit.Ui(600), 15, w - h - 12, CanvasHorizontalAlignment.Left);
-            ds.DrawTextLayout(label, h - 4, (h - (float)label.LayoutBounds.Height) / 2 - (float)label.LayoutBounds.Y, fg);
-            return;
-        }
-        CcGlyph(ds, b.Glyph, w / 2, h / 2, CcDockIcon, fg);
     }
 
     /// <summary>一个图标字形，按墨迹框居中放在 (cx, cy)。雪花用 Segoe UI Symbol（图标字体里没有）。</summary>
     private static void CcGlyph(CanvasDrawingSession ds, string glyph, float cx, float cy, float size, Color c)
     {
         var font = glyph == CcSnowflake ? new FontSpec("Segoe UI Symbol", 400) : new FontSpec(CcIconFont, 400);
+        if (glyph == CcSnowflake) size *= 1.3f;   // 雪花在 Segoe UI Symbol 里墨迹偏小，放大到和图标字体同样大
         using var l = TextKit.Layout(ds, glyph, font, size, 400, CanvasHorizontalAlignment.Left);
         var ib = l.DrawBounds;
         ds.DrawTextLayout(l, cx - (float)(ib.X + ib.Width / 2), cy - (float)(ib.Y + ib.Height / 2), c);
@@ -193,8 +211,8 @@ public sealed partial class WallStage
     private const float CcIcon = 18, CcIconStroke = 1.6f;
 
     /// <summary>
-    /// 右上状态栏：一整个胶囊 [Wi-Fi 蓝牙 电池 电量 │ 日期 时间]。图标是同一套线框画法（18 px 格、1.6 px 圆头线），
-    /// 文字同一个字号、同一个字重。内容（到分钟）没变就不重画。
+    /// 右上状态栏：没有底，元素平铺在「控制中心」标题的同一行上 —— 同字体、同字号（24 px 粗体）、同颜色、同一条基线；
+    /// 图标是同一套线框画法，放大到 24 px 跟字一样高。从右往左：时间、日期、电量、电池、蓝牙、Wi-Fi。内容（到分钟）没变就不重画。
     /// </summary>
     private void CcPaintStatus(bool force = false)
     {
@@ -210,39 +228,47 @@ public sealed partial class WallStage
         if (_ccBt is bool bt) icons.Add((ds, c) => CcIconBluetooth(ds, bt ? c : Gfx.WithAlpha(c, 0.32)));
         if (bat.HasBattery) icons.Add((ds, c) => CcIconBattery(ds, c, bat));
 
-        const float padX = 14, iconGap = 12, font = 14;
-        var text = Gfx.WithAlpha(CcText, 0.92);
-        string pct = bat.HasBattery ? $"{bat.Percent}%" : "";
-        string clock = $"{now.Month}月{now.Day}日 周{"日一二三四五六"[(int)now.DayOfWeek]}  {now:HH:mm}";
-        using var pctL = TextKit.Layout(G.Device, pct, TextKit.Ui(500), font, 200, CanvasHorizontalAlignment.Left);
-        using var clockL = TextKit.Layout(G.Device, clock, TextKit.Ui(500), font, 400, CanvasHorizontalAlignment.Left);
-        float pctW = pct.Length > 0 ? (float)pctL.LayoutBounds.Width + 5 : 0;
-        float clockW = (float)clockL.LayoutBounds.Width;
-        float W = padX + icons.Count * CcIcon + (icons.Count - 1) * iconGap + pctW + 12 + 1 + 12 + clockW + padX, H = CcStatusH;
-        float raster = _ccK * Chrome.Dpi;
-        CcSet(_ccStatus, CcDraw(W, H, raster, ds =>
+        const float font = 24, icon = 24, iconGap = 16, groupGap = 24, pctGap = 8;
+        var spec = TextKit.Ui(700);   // 和 CcPaintTitle 同一个字
+        var texts = new List<string>();
+        if (bat.HasBattery) texts.Add($"{bat.Percent}%");
+        texts.Add($"{now.Month}月{now.Day}日 周{"日一二三四五六"[(int)now.DayOfWeek]}");
+        texts.Add(now.ToString("HH:mm"));
+        var layouts = texts.Select(t => TextKit.Layout(G.Device, t, spec, font, 1000, CanvasHorizontalAlignment.Left)).ToList();
+        try
         {
-            ds.FillRoundedRectangle(0, 0, W, H, H / 2, H / 2, CcChip);
-            float x = padX, iy = (H - CcIcon) / 2;
-            var t0 = ds.Transform;
-            foreach (var draw in icons)
+            var lb = layouts[^1].LayoutBounds;
+            float H = (float)lb.Height + 4, top = -(float)lb.Y;   // 和标题一样：精灵高 = 字高 + 4，字画在 -bb.Y
+            float iconsW = icons.Count * icon + (icons.Count - 1) * iconGap;
+            float W = iconsW;
+            for (int i = 0; i < layouts.Count; i++) W += (i == 0 && bat.HasBattery ? pctGap : groupGap) + (float)layouts[i].LayoutBounds.Width;
+            W += 2;
+            float raster = _ccK * Chrome.Dpi;
+            CcSet(_ccStatus, CcDraw(W, H, raster, ds =>
             {
-                ds.Transform = Matrix3x2.CreateTranslation(x, iy) * t0;
-                draw(ds, text);
-                x += CcIcon + iconGap;
-            }
-            ds.Transform = t0;
-            x -= iconGap;
-            if (pctW > 0) { ds.DrawTextLayout(pctL, x + 5, (H - (float)pctL.LayoutBounds.Height) / 2 - (float)pctL.LayoutBounds.Y, text); x += pctW; }
-            x += 12;
-            ds.FillRectangle(x, H / 2 - 8, 1, 16, Gfx.WithAlpha(CcText, 0.18));
-            x += 1 + 12;
-            ds.DrawTextLayout(clockL, x, (H - (float)clockL.LayoutBounds.Height) / 2 - (float)clockL.LayoutBounds.Y, text);
-        }));
-        float k = _ccK;
-        _ccStatus.Size = new Vector2(W * k, H * k);
-        // 和左上「控制中心」标题（24 px 粗体，上沿 32）同一条中线
-        _ccStatus.Offset = new Vector3((float)View.Width - (CcEdgeX + W) * k, (32 + 16 - H / 2) * k, 0);
+                float x = 0, iy = (H - 4) / 2 - icon / 2 + 1;
+                var t0 = ds.Transform;
+                foreach (var draw in icons)
+                {
+                    ds.Transform = Matrix3x2.CreateScale(icon / CcIcon) * Matrix3x2.CreateTranslation(x, iy) * t0;
+                    draw(ds, CcText);
+                    x += icon + iconGap;
+                }
+                ds.Transform = t0;
+                x -= iconGap;
+                for (int i = 0; i < layouts.Count; i++)
+                {
+                    x += i == 0 && bat.HasBattery ? pctGap : groupGap;
+                    var b = layouts[i].LayoutBounds;
+                    ds.DrawTextLayout(layouts[i], x - (float)b.X, top, CcText);
+                    x += (float)b.Width;
+                }
+            }));
+            float k = _ccK;
+            _ccStatus.Size = new Vector2(W * k, H * k);
+            _ccStatus.Offset = new Vector3((float)View.Width - (CcEdgeX + W) * k, 32 * k, 0);   // 标题上沿 32
+        }
+        finally { foreach (var l in layouts) l.Dispose(); }
     }
 
     private static readonly CanvasStrokeStyle CcRound = new()
@@ -377,6 +403,7 @@ public sealed partial class WallStage
             CcFocusVisual(_ccDock[i], (_ccZone == CcZone.Dock && i == _ccDockFocus) || (i == 0 && _ccPowerOpen), instant);
         for (int i = 0; i < _ccPower.Count; i++)
             CcFocusVisual(_ccPower[i], _ccZone == CcZone.Power && i == _ccPowerFocus, instant);
+        if (_ccBlocks.Count > 0 && _ccLabel != null) CcPaintLabels();
     }
 
     private void CcFocusVisual(CcButton b, bool on, bool instant)
