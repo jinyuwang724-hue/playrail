@@ -112,6 +112,19 @@ public sealed partial class WallStage
         if (_ccOpen) CloseControlCenter(); else OpenControlCenter();
     }
 
+    /// <summary>启动后空闲时把控制中心的视觉先建好、卡面先画好（藏着），按 ≡ 时只刷新读数，第一帧不卡。</summary>
+    public void PrewarmControlCenter()
+    {
+        if (_ccOpen || _stack.Count == 0) return;
+        long t0 = NowMs;
+        EnsureControlCenterVisuals();
+        CcMeasure();
+        CcReadData();
+        foreach (var b in _ccBlocks) CcPaintCard(b);
+        CcPaintLabels();
+        Log.Info($"control center prewarmed ({NowMs - t0}ms)");
+    }
+
     // ---------------- 开 / 关 ----------------
 
     private void OpenControlCenter()
@@ -129,7 +142,7 @@ public sealed partial class WallStage
         EnsureControlCenterVisuals();
         CcMeasure();
         CcReadData();
-        foreach (var b in _ccBlocks) CcPaintCard(b, force: true);
+        foreach (var b in _ccBlocks) CcPaintCard(b);   // 内容没变的卡不重画（启动后已经预热画过一遍）
         // folia：从集合层返回时首页停在来时的那张卡上 —— 墙是从游戏库卡进来的
         _ccFocus = 0;
         _ccOff = null;
@@ -659,32 +672,19 @@ public sealed partial class WallStage
     /// 墙卡此刻**看得见**的样子在屏幕上的盒子：卡的矩形四边外扩 RingMargin（焦点环），有焦点时再按焦点放大
     /// （透视层 scale = 1 + 16 / 尺寸，绕卡中心）。形变落点 / 起点用它，画面才和真卡逐像素对得上。
     /// </summary>
-    private Box HeroBox(Tile t, long now)
+    private Box HeroBox(Tile t, long now, float margin = RingMargin)
     {
         var b = TileScreenBox(t, now);
         double s = View.Scale;
         var r = t.CurrentRect(now);
         double sx = t.Focused && !t.Expanded ? 1 + 16 / Math.Max(1, r.Width) : 1;
         double sy = t.Focused && !t.Expanded ? 1 + 16 / Math.Max(1, r.Height) : 1;
-        double hw = (r.Width / 2 + RingMargin) * sx * s, hh = (r.Height / 2 + RingMargin) * sy * s;
+        double hw = (r.Width / 2 + margin) * sx * s, hh = (r.Height / 2 + margin) * sy * s;
         var c = b.Center;
         return new Box((float)(c.X - hw), (float)(c.Y - hh), (float)(hw * 2), (float)(hh * 2));
     }
 
     private bool OnScreen(Box b) => b.X + b.W > 0 && b.X < View.Width && b.Y + b.H > 0 && b.Y < View.Height && b.W > 4;
-
-    /// <summary>墙卡的标题大致所在（电影字幕：靠下居中）。</summary>
-    private static Box TileTitleBox(Box f) => new(f.X + f.W * 0.1f, f.Y + f.H * 0.66f, f.W * 0.8f, MathF.Max(18, f.H * 0.08f));
-
-    /// <summary>与墙卡同一张封面：竖卡用竖封面，近方的用大方图，横的用背景图。</summary>
-    private static string? TileArtPath(LibraryItem? it, Box f)
-    {
-        if (it?.Art is not { } art) return null;
-        float ratio = f.W / Math.Max(1, f.H);
-        char[] order = ratio < 0.8f ? new[] { 'q', 'p', 'v', 'x' } : ratio < 1.3f ? new[] { 'x', 's', 'q', 'p' } : new[] { 'h', 'x', 'q', 'p' };
-        foreach (var k in order) if (art.Has(k)) return art.File(k);
-        return null;
-    }
 
     /// <summary>屏上的墙卡（Sync 之后调用）。</summary>
     private List<(Tile tile, Box box)> VisibleTiles(long now)
@@ -699,174 +699,89 @@ public sealed partial class WallStage
         return list;
     }
 
-    /// <summary>Apple / SwiftUI 签名的弹簧（response、bounce），按 0..1 归一化时间采样。</summary>
-    private static Func<double, double> Spring(double responseS, double bounce, double durS)
-    {
-        double z = 1 - bounce, w0 = 2 * Math.PI / responseS, wd = w0 * Math.Sqrt(1 - z * z);
-        return u =>
-        {
-            if (u >= 1) return 1;
-            double t = u * durS;
-            return 1 - Math.Exp(-z * w0 * t) * (Math.Cos(wd * t) + z * w0 / wd * Math.Sin(wd * t));
-        };
-    }
-
     /// <summary>位置 / 尺寸的飞行：定长 ease-out，到点正好停在目标上（不用会过冲的弹簧）；落定后 0.1 s 交接给真卡片。</summary>
     private const double FlyMs = 500, HandoffMs = 100;
     private static readonly Bezier FlyEase = new(0.22f, 1f, 0.36f, 1f);
     private static readonly Func<double, double> FlyCurve = t => FlyEase.Ease(t);
 
-    /// <summary>形变合成层的三件套：外框（底色 + 描边 + 投影）、封面（两张图交叉淡化 + 模糊 + 转角）、标题（两行字交叉淡化 + 模糊）。</summary>
-    private sealed class Composite
+    /// <summary>
+    /// 飞的那张图在动之前先停这么久（两帧）：让它先被合成出来，再在同一条时间轴上藏真卡 ——
+    /// 真卡的显隐都是合成线程上的关键帧，和飞行同一批提交，不会出现「两份都不在」或「两份都在」的那一帧。
+    /// </summary>
+    private const double HandMs = 33;
+
+    /// <summary>飞的东西：一个带圆角裁切的容器，里面只放一个精灵（容器淡出时没有别的子视觉会透出来）。</summary>
+    private sealed class Flyer
     {
-        public ContainerVisual Frame = null!;
-        public CompositionRoundedRectangleGeometry FrameGeo = null!;
-        public ContainerVisual Cover = null!;
-        public CompositionRoundedRectangleGeometry CoverGeo = null!;
-        public SpriteVisual CoverA = null!, CoverB = null!;
-        public CompositionEffectBrush CoverBlurA = null!;
-        public ContainerVisual Title = null!;
-        public SpriteVisual TitleA = null!, TitleB = null!;
-        public CompositionEffectBrush TitleBlurA = null!, TitleBlurB = null!;
-        public List<LoadedImageSurface> Images = new();
-        public List<IDisposable> Surfaces = new();
+        public ContainerVisual Box = null!;
+        public CompositionRoundedRectangleGeometry Geo = null!;
+        public IDisposable? Own;
     }
 
-    private Composite? _composite;
+    private readonly List<Flyer> _flyers = new();
 
-    private CompositionEffectBrush Blurred(CompositionBrush source)
+    private Flyer MakeFlyer((CompositionBrush brush, IDisposable? own) src, float radius)
     {
-        var fx = new GaussianBlurEffect { Name = "b", BlurAmount = 0, BorderMode = EffectBorderMode.Soft, Source = new CompositionEffectSourceParameter("s") };
-        var brush = G.C.CreateEffectFactory(fx, new[] { "b.BlurAmount" }).CreateBrush();
-        brush.SetSourceParameter("s", source);
-        return brush;
+        var f = new Flyer { Own = src.own };
+        f.Box = G.C.CreateContainerVisual();
+        f.Geo = RoundRect(1, 1, radius);
+        f.Box.Clip = G.C.CreateGeometricClip(f.Geo);
+        f.Box.Children.InsertAtTop(G.Sprite(src.brush));
+        _fx!.Children.InsertAtTop(f.Box);
+        _flyers.Add(f);
+        return f;
     }
 
-    private (CompositionDrawingSurface surface, Vector2 size) TitleText(string text, float sizeDip)
+    private void DisposeFlyers()
     {
-        float raster = Chrome.Dpi;
-        using var l = TextKit.Layout(G.Device, text, TextKit.Ui(700), sizeDip, 100000, CanvasHorizontalAlignment.Left);
-        var bb = l.LayoutBounds;
-        float w = (float)bb.Width + 8, h = (float)bb.Height + 8;
-        var s = CcDraw(w, h, raster, ds =>
+        foreach (var f in _flyers)
         {
-            using var cl = new CanvasCommandList(ds);
-            using (var c = cl.CreateDrawingSession()) c.DrawTextLayout(l, 2 - (float)bb.X, 3 - (float)bb.Y, Colors.Black);
-            using var sh = new ShadowEffect { Source = cl, BlurAmount = 1, ShadowColor = Gfx.Rgba(0, 0, 0, 0.55) };
-            ds.DrawImage(sh);
-            ds.DrawTextLayout(l, 2 - (float)bb.X, 2 - (float)bb.Y, CcText);
-        });
-        return (s, new Vector2(w, h));
+            _fx?.Children.Remove(f.Box);
+            f.Own?.Dispose();
+            f.Box.Dispose();
+        }
+        _flyers.Clear();
     }
 
-    /// <summary>coverA / coverB：封面图的路径，或一张墙卡（用它卡面的实时画面，起落帧与卡片逐像素一致）。</summary>
-    private Composite BuildComposite(object? coverA, object? coverB, string titleA, string titleB, float titleSize, float frameRadiusA, float coverRadiusA)
+    /// <summary>
+    /// 飞的那张图：游戏库卡封面已经解码好就用它（落在卡上时就是同一份像素），否则用墙卡正在显示的那份
+    /// （同一张图文件，墙卡上一直在画，肯定已经解码）。都从正中按 UniformToFill 裁，和两边的裁法一样。
+    /// </summary>
+    private (CompositionBrush, IDisposable?) FlyerSource(CcBlock card, Tile tile)
     {
-        var c = new Composite();
-        // 外框：游戏库卡本身的实时画面（卡底、描边、投影、标题、两行小字都和真卡一样），落在卡上时逐像素一致。
-        // 卡的内容画在 0..W、投影向外 80 px：源区域带上这圈，精灵按比例往外扩。
-        c.Frame = G.C.CreateContainerVisual();
-        c.FrameGeo = RoundRect(1, 1, frameRadiusA);
-        {
-            float w = CcCardW * _ccK, h = _ccH * _ccK, m = 80 * _ccK;
-            var vs = G.C.CreateVisualSurface();
-            vs.SourceVisual = _ccBlocks[0].Body;
-            vs.SourceOffset = new Vector2(-m, -m);
-            vs.SourceSize = new Vector2(w + 2 * m, h + 2 * m);
-            c.Surfaces.Add(vs);
-            var br = G.C.CreateSurfaceBrush(vs);
-            br.Stretch = CompositionStretch.UniformToFill;
-            var sp = G.Sprite(br, relative: false);
-            sp.RelativeSizeAdjustment = new Vector2((w + 2 * m) / w, (h + 2 * m) / h);
-            sp.RelativeOffsetAdjustment = new Vector3(-m / w, -m / h, 0);
-            c.Frame.Children.InsertAtTop(sp);
-        }
-        // 封面：rounded-xl 裁切，两张图叠着交叉淡化，各自带可动画的模糊
-        c.Cover = G.C.CreateContainerVisual();
-        c.CoverGeo = RoundRect(1, 1, coverRadiusA);
-        c.Cover.Clip = G.C.CreateGeometricClip(c.CoverGeo);
-        SpriteVisual Img(object? from, bool blurrable, out CompositionEffectBrush? blur)
-        {
-            CompositionBrush? src = null;
-            if (from is Tile t && t.FaceRoot is { } face)
-            {
-                // 墙卡：直接拿它卡面的实时画面（图的裁切、标题、角标、焦点环都和卡片本身一样）；
-                // 源区域四边多带 RingMargin（焦点环画在卡外），落点盒子 HeroBox 也按同样的外扩算
-                var vs = G.C.CreateVisualSurface();
-                vs.SourceVisual = face;
-                vs.SourceOffset = new Vector2(-RingMargin, -RingMargin);
-                vs.SourceSize = t.El.Size + new Vector2(2 * RingMargin);
-                c.Surfaces.Add(vs);
-                var b = G.C.CreateSurfaceBrush(vs);
-                b.Stretch = CompositionStretch.Fill;   // 焦点放大横竖不等比（1 + 16 / 宽、1 + 16 / 高），落点要逐像素一致只能按盒子铺满
-                src = b;
-            }
-            else if (from is string path && Images.AcquireReuse(path, CoverPx, CoverPx * 3 / 2) is { } s) { c.Images.Add(s); src = CoverBrush(s); }
-            src ??= G.Solid(Gfx.Rgba(0x27, 0x27, 0x2a, 0.4));
-            // 落点那一张不套模糊特效：落定时就是原图本身（特效哪怕模糊量是 0 也会重采样、发暗）
-            blur = blurrable ? Blurred(src) : null;
-            return G.Sprite(blur ?? src);
-        }
-        c.CoverA = Img(coverA, true, out var blurA);
-        c.CoverBlurA = blurA!;
-        c.CoverB = Img(coverB, false, out _);
-        c.CoverB.Opacity = 0;
-        c.Cover.Children.InsertAtTop(c.CoverA);
-        c.Cover.Children.InsertAtTop(c.CoverB);
-        // 标题：两行字叠在同一处，纯交叉淡化
-        c.Title = G.C.CreateContainerVisual();
-        SpriteVisual Text(string text, out CompositionEffectBrush blur)
-        {
-            var (s, size) = TitleText(text, titleSize);
-            c.Surfaces.Add(s);
-            var src = G.C.CreateSurfaceBrush(s);
-            src.Stretch = CompositionStretch.Fill;
-            blur = Blurred(src);
-            var v = G.Sprite(blur, relative: false);
-            v.Size = size;
-            v.Offset = new Vector3(-2, -2, 0);
-            return v;
-        }
-        c.TitleA = Text(titleA, out c.TitleBlurA);
-        c.TitleB = Text(titleB, out c.TitleBlurB);
-        c.TitleB.Opacity = 0;
-        c.Title.Children.InsertAtTop(c.TitleA);
-        c.Title.Children.InsertAtTop(c.TitleB);
-        foreach (var v in new Visual[] { c.Frame, c.Cover, c.Title })
-        {
-            _fx!.Children.InsertAtTop(v);
-            // 等比缩放 / 转角都绕盒子中心
-            var e = G.C.CreateExpressionAnimation("Vector3(this.Target.Size.X / 2, this.Target.Size.Y / 2, 0)");
-            v.StartAnimation("CenterPoint", e);
-        }
-        return c;
+        ICompositionSurface? s = card.CoverRef != null && Images.IsLoaded(card.CoverRef) ? card.CoverRef : tile.ArtSurface ?? (ICompositionSurface?)card.CoverRef;
+        if (s == null) return (G.Solid(Gfx.Rgba(0x27, 0x27, 0x2a, 1)), null);
+        return (CoverBrush(s), null);
     }
 
-    private void DisposeComposite()
+    /// <summary>墙卡卡面的实时画面（含焦点环那一圈），按盒子铺满。</summary>
+    private (CompositionBrush, IDisposable?) FaceSource(Tile t)
     {
-        if (_composite is not { } c) return;
-        _composite = null;
-        foreach (var v in new Visual[] { c.Frame, c.Cover, c.Title }) _fx?.Children.Remove(v);
-        foreach (var s in c.Images) Images.Release(s);
-        foreach (var s in c.Surfaces) s.Dispose();
-        foreach (var b in new CompositionBrush[] { c.CoverBlurA, c.TitleBlurA, c.TitleBlurB }) b.Dispose();
-        c.Frame.Dispose(); c.Cover.Dispose(); c.Title.Dispose();
+        if (t.FaceRoot is not { } face) return (G.Solid(Gfx.Rgba(0, 0, 0, 0)), null);
+        var vs = G.C.CreateVisualSurface();
+        vs.SourceVisual = face;
+        vs.SourceOffset = new Vector2(-RingMargin, -RingMargin);
+        vs.SourceSize = t.El.Size + new Vector2(2 * RingMargin);
+        var b = G.C.CreateSurfaceBrush(vs);
+        b.Stretch = CompositionStretch.Fill;
+        return (b, vs);
     }
 
-    /// <summary>盒子（位置 + 尺寸）按弹簧从 a 走到 b；外框 / 封面的圆角裁切几何（尺寸和圆角）跟着同一条曲线。</summary>
-    private void FlyBox(Visual v, Box a, Box b, Func<double, double> curve, CompositionRoundedRectangleGeometry? geo = null, float ra = 0, float rb = 0)
+    /// <summary>盒子（位置、尺寸、圆角）从 a 到 b：定长 ease-out，到点正好停在目标上；delay 之前停在 a。</summary>
+    private void Fly(Flyer f, Box a, Box b, float ra, float rb, double delayMs)
     {
-        double ms = FlyMs;
-        v.Offset = a.Pos; v.Size = a.Size;
-        v.StartAnimation("Offset", G.SampledV3(a.Pos, b.Pos, ms, curve));
-        v.StartAnimation("Size", G.SampledV2(a.Size, b.Size, ms, curve));
-        if (geo != null)
+        KeyFrameAnimation D(KeyFrameAnimation k)
         {
-            geo.Size = a.Size;
-            geo.StartAnimation("Size", G.SampledV2(a.Size, b.Size, ms, curve));
-            geo.CornerRadius = new Vector2(ra, ra);
-            geo.StartAnimation("CornerRadius", G.SampledV2(new Vector2(ra, ra), new Vector2(rb, rb), ms, curve));
+            k.DelayTime = Gfx.Ms(delayMs);
+            k.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+            return k;
         }
+        f.Box.Offset = a.Pos; f.Box.Size = a.Size;
+        f.Geo.Size = a.Size; f.Geo.CornerRadius = new Vector2(ra, ra);
+        f.Box.StartAnimation("Offset", D(G.SampledV3(a.Pos, b.Pos, FlyMs, FlyCurve)));
+        f.Box.StartAnimation("Size", D(G.SampledV2(a.Size, b.Size, FlyMs, FlyCurve)));
+        f.Geo.StartAnimation("Size", D(G.SampledV2(a.Size, b.Size, FlyMs, FlyCurve)));
+        f.Geo.StartAnimation("CornerRadius", D(G.SampledV2(new Vector2(ra, ra), new Vector2(rb, rb), FlyMs, FlyCurve)));
     }
 
     private ScalarKeyFrameAnimation Keys(double ms, params (float at, float value, Bezier? ease)[] keys)
@@ -985,7 +900,6 @@ public sealed partial class WallStage
             : tiles.OrderBy(x => Vector2.Distance(x.box.Center, mid)).First();
         var heroItem = ItemFor(hero.tile.Slot) is { } hid ? Lookup(hid) : null;
         var (homeFrame, homeCover, homeTitle) = HomeCardBoxes();
-        var heroTitle = TileTitleBox(hero.box);
         float k = _ccK, s = (float)View.Scale;
 
         // 背景板 1 → 0，墙整层 0.3 s 淡掉
@@ -1036,47 +950,36 @@ public sealed partial class WallStage
             longest = Math.Max(longest, dur + delay);
         }
 
-        // hero 三件套飞回游戏库卡：hero 卡面的实时画面 → 游戏库卡自己的那张图（同一张、同样 UniformToFill 居中裁）
+        // hero：只有一张图在飞 —— 墙卡和游戏库卡用的是同一张图（同一份解码好的表面、同样从正中裁），
+        // 起点盒子 = 墙卡此刻看得见的图（焦点放大后的矩形），终点 = 游戏库卡的封面（1.2×、上浮后的矩形、圆角）。
+        // 真卡的显隐全部是合成线程上的关键帧（和飞行同一批提交、同一时间轴），不在 UI 线程上切，所以不会有空帧或双影。
+        var heroArt = HeroBox(hero.tile, now, 0);
         var heroVis = HeroBox(hero.tile, now);
-        var c = _composite = BuildComposite(hero.tile, _ccBlocks[0].CoverPath, "", "", 14 * k * CcMaxScale, 0, 0);
-        // folia：返回时详情网格立刻卸掉 —— hero 和幽灵的原卡在墙上藏起来，只剩飞的那份
-        hero.tile.MorphHide();
-        foreach (var (t, _) in squad) t.MorphHide();
-        // 落点必须和真卡片一模一样，交接才看不出来（用户反馈「最后歪一下再被强制回正」）：
-        // - 位置 / 尺寸用定长的 ease-out 曲线，到点正好停在目标上（弹簧有过冲，没停稳就交接会被拽回去）；
-        // - 转角、模糊在落定之前回到 0，外框不缩（folia 原版收在 1.6° / 8 px / 0.985，这正是「歪一下」）；
-        // - 飞行期间游戏库卡本身藏着，落定后两者 0.1 s 交叉淡化（此刻画面相同）。
+        var b0 = _ccBlocks[0];
+        var img = MakeFlyer(FlyerSource(b0, hero.tile), 0);
+        // 墙卡上的字、角标、焦点环：盖一层墙卡卡面的实时画面，起飞后 0.12 s 淡掉（只有它一个子视觉，淡出不会透出别的）
+        var overlay = MakeFlyer(FaceSource(hero.tile), 0);
         var fly = FlyCurve;
-        FlyBox(c.Frame, heroVis, homeFrame, fly, c.FrameGeo, 0, HomeFrameRadius);
-        FlyBox(c.Cover, heroVis, homeCover, fly, c.CoverGeo, 0, HomeCoverRadius);
-        FlyBox(c.Title, heroTitle, homeTitle, fly);
-        var fadeOut = new Bezier(0f, 0f, 0.58f, 1f);
+        Fly(img, heroArt, homeCover, 0, HomeCoverRadius, HandMs);
+        Fly(overlay, heroVis, homeCover, 0, HomeCoverRadius, HandMs);
+        double land = HandMs + FlyMs, total = land + HandoffMs;
+        overlay.Box.StartAnimation("Opacity", Keys(HandMs + 120, (0, 1, null), ((float)(HandMs / (HandMs + 120)), 1, null), (1, 0, EaseCss)));
+        // 真墙卡（hero 和幽灵的原卡）在飞的那份已经画出来之后（HandMs）才藏
+        hero.tile.MorphHideAt(HandMs);
+        foreach (var (t, _) in squad) t.MorphHideAt(HandMs);
+        // 游戏库卡：卡底、字、投影、焦点环在原位淡进来；它的封面在落定那一刻、在飞的图下面直接出现，飞的图再淡掉
+        var card = b0.Gate;
+        var cardCover = b0.Cover;
         bool hold = Program.Args.Contains("--morph-hold");
-        c.Cover.StartAnimation("RotationAngleInDegrees", Keys(FlyMs * 0.7, (0, 0, null), (0.45f, 3, EaseCss), (1, 0, EaseCss)));
-        foreach (var b in new[] { c.CoverBlurA, c.TitleBlurA, c.TitleBlurB })
-            b.Properties.StartAnimation("b.BlurAmount", Keys(FlyMs * 0.7, (0, 0, null), (0.45f, 1.5f, EaseCss), (1, 0, EaseCss)));
-        // 游戏库卡的那张图（和墙卡同一张）/ 标题在飞行前段淡进来
-        c.CoverB.StartAnimation("Opacity", Keys(FlyMs * 0.7, (0, 0, null), (1, 1, fadeOut)));
-        c.TitleB.StartAnimation("Opacity", Keys(FlyMs * 0.7, (0, 0, null), (1, 1, fadeOut)));
-        // 交接：游戏库卡藏到落定，然后与合成层 0.1 s 交叉淡化
-        var card = _ccBlocks[0].Gate;
-        card.Opacity = 1;
-        if (hold) card.Opacity = 0; else card.StartAnimation("Opacity", Keys(FlyMs + HandoffMs, (0, 0, null), ((float)(FlyMs / (FlyMs + HandoffMs)), 0, null), (1, 1, null)));
-        var cardCover = _ccBlocks[0].Cover;   // 外框是卡的实时画面：飞行中把卡自己的封面藏掉，免得和飞的封面叠成两张；落定那一刻显出来
-        if (hold) cardCover.Opacity = 0; else cardCover.StartAnimation("Opacity", Keys(FlyMs + HandoffMs, (0, 0, null), ((float)(FlyMs / (FlyMs + HandoffMs)), 0, null), ((float)(FlyMs / (FlyMs + HandoffMs)) + 0.001f, 1, null), (1, 1, null)));
-        // 外框（游戏库卡的画面）在墙卡那头没有对应物：起飞后前 60 % 淡进来，起点画面就是墙卡本身
-        float fe = (float)(FlyMs * 0.6 / (FlyMs + HandoffMs)), fl = (float)(FlyMs / (FlyMs + HandoffMs));
-        c.Frame.StartAnimation("Opacity", hold
-            ? Keys(FlyMs, (0, 0, null), (0.6f, 1, EaseCss), (1, 1, null))
-            : Keys(FlyMs + HandoffMs, (0, 0, null), (fe, 1, EaseCss), (fl, 1, null), (1, 0, null)));
-        if (!hold)
-            foreach (var v in new Visual[] { c.Cover, c.Title })
-                v.StartAnimation("Opacity", Delayed(Keys(HandoffMs, (0, 1, null), (1, 0, null)), FlyMs));
+        card.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)((HandMs + FlyMs * 0.3) / total), 0, null), ((float)((HandMs + FlyMs * 0.9) / total), 1, EaseCss), (1, 1, null)));
+        if (hold) cardCover.Opacity = 0;
+        else cardCover.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)(land / total), 0, null), ((float)(land / total) + 0.0005f, 1, null), (1, 1, null)));
+        if (!hold) img.Box.StartAnimation("Opacity", Delayed(Keys(HandoffMs, (0, 1, null), (1, 0, null)), land));
 
         int v0 = _ccVersion;
-        BeginMorph(Math.Max(longest, FlyMs + HandoffMs) + 30 + (hold ? 2500 : 0), () =>
+        BeginMorph(Math.Max(longest, total) + 30 + (hold ? 2500 : 0), () =>
         {
-            DisposeComposite();
+            DisposeFlyers();
             ClearGhosts();
             card.StopAnimation("Opacity");
             card.Opacity = 1;
@@ -1088,7 +991,7 @@ public sealed partial class WallStage
             _root.Opacity = 1;
             if (_ccOpen && v0 == _ccVersion) _root.IsVisible = false;
         }, fastForwardMs: 120);
-        Log.Info($"morph exit: hero {heroItem?.Title}, {squad.Count} ghosts; target frame {homeFrame} cover {homeCover} (k {_ccK}, dpi {Chrome.Dpi})");
+        Log.Info($"morph exit: hero {heroItem?.Title} art {heroArt.X:F1},{heroArt.Y:F1} {heroArt.W:F1}x{heroArt.H:F1} -> cover {homeCover.X:F1},{homeCover.Y:F1} {homeCover.W:F1}x{homeCover.H:F1}, {squad.Count} ghosts");
         return true;
     }
 
@@ -1116,7 +1019,6 @@ public sealed partial class WallStage
         Focus(hero.tile.Slot.Key, false);
         var heroItem = ItemFor(hero.tile.Slot) is { } hid ? Lookup(hid) : null;
         var (homeFrame, homeCover, homeTitle) = HomeCardBoxes();
-        var heroTitle = TileTitleBox(hero.box);
         float k = _ccK, s = (float)View.Scale;
 
         // 背景板盖住首页，墙整层淡入
@@ -1143,44 +1045,35 @@ public sealed partial class WallStage
             t.MorphFlyIn(dir * reach / s, delay);
         }
 
-        // hero：飞行期间藏着，落定后与合成层 0.1 s 交叉淡化（此刻合成层显示的就是它卡面的实时画面，尺寸、圆角都一样）
+        // hero：只有一张图在飞（游戏库卡的封面 = 墙卡同一张图），从卡的封面位飞到墙卡此刻看得见的图的位置。
+        // 游戏库卡的封面在飞的图画出来之后（HandMs）才藏；卡底、字、投影在原位淡掉。
+        // 墙卡一直藏着，落定那一刻在飞的图下面直接出现，飞的图再 0.15 s 淡掉，露出卡上的字、角标、焦点环。
         bool hold = Program.Args.Contains("--morph-hold");   // 测试：落定后停住不交接，截图对比
+        var heroArt = HeroBox(hero.tile, now, 0);
+        var b0 = _ccBlocks[0];
+        var img = MakeFlyer(FlyerSource(b0, hero.tile), HomeCoverRadius);
+        Fly(img, homeCover, heroArt, HomeCoverRadius, 0, HandMs);
+        double land = HandMs + FlyMs;
+        var card = b0.Gate;
+        var cardCover = b0.Cover;
+        cardCover.StartAnimation("Opacity", Keys(HandMs + 1, (0, 1, null), ((float)(HandMs / (HandMs + 1)), 1, null), (1, 0, null)));
+        card.StartAnimation("Opacity", Keys(HandMs + 200, (0, 1, null), ((float)(HandMs / (HandMs + 200)), 1, null), (1, 0, EaseCss)));
         hero.tile.MorphHide();
-        if (!hold) hero.tile.MorphShowAt(FlyMs, HandoffMs);
-        var heroVis = HeroBox(hero.tile, now);
-        // 游戏库卡在合成层起飞的那一刻藏起来（外框就是它的实时画面），收尾时恢复
-        var card = _ccBlocks[0].Gate;
-        card.Opacity = 0;
-        var cardCover = _ccBlocks[0].Cover;   // 外框（卡的实时画面）里不带卡自己的封面，免得和飞的封面叠成两张
-        cardCover.Opacity = 0;
-        var c = _composite = BuildComposite(_ccBlocks[0].CoverPath, hero.tile, "", "", 14 * k * CcMaxScale, HomeFrameRadius, HomeCoverRadius);
-        var fly = FlyCurve;
-        FlyBox(c.Frame, homeFrame, heroVis, fly, c.FrameGeo, HomeFrameRadius, 0);
-        FlyBox(c.Cover, homeCover, heroVis, fly, c.CoverGeo, HomeCoverRadius, 0);
-        FlyBox(c.Title, homeTitle, heroTitle, fly);
-        // 起飞时外框 0.97、封面 0.96 + 2.4° + 6 px 模糊（folia），都在落定前回到 1 / 0 / 0
-        c.Frame.StartAnimation("Scale", ScaleKeys(FlyMs * 0.7, fly, 0.97f, 1));
-        c.Cover.StartAnimation("Scale", ScaleKeys(FlyMs * 0.7, fly, 0.96f, 1));
-        c.Cover.StartAnimation("RotationAngleInDegrees", Keys(FlyMs * 0.7, (0, 2.4f, null), (1, 0, EnterBackdropEase)));
-        c.CoverBlurA.Properties.StartAnimation("b.BlurAmount", Keys(FlyMs * 0.7, (0, 6, null), (1, 0, EnterBackdropEase)));
-        c.TitleBlurA.Properties.StartAnimation("b.BlurAmount", Keys(FlyMs * 0.7, (0, 3.5f, null), (1, 0, EnterBackdropEase)));
-        // 飞行中段封面交叉淡化成 hero 卡面（同一张图，只是卡面上多了标题和角标），标题淡掉；落定时已经完全是卡面
-        c.CoverB.StartAnimation("Opacity", Delayed(Keys(CrossfadeMs, (0, 0, null), (1, 1, EaseCss)), FlyMs - CrossfadeMs - 20));
-        c.CoverA.StartAnimation("Opacity", Delayed(Keys(CrossfadeMs, (0, 1, null), (1, 0, EaseCss)), FlyMs - CrossfadeMs - 20));
-        c.TitleA.StartAnimation("Opacity", Delayed(Keys(CrossfadeMs, (0, 1, null), (1, 0, EaseCss)), FlyMs - CrossfadeMs - 20));
-        // 外框（游戏库卡的画面）在墙卡那头没有对应物：落定前淡掉，落点只剩卡面本身
-        c.Frame.StartAnimation("Opacity", Keys(FlyMs, (0, 1, null), (0.4f, 1, null), (1, 0, EaseCss)));
         if (!hold)
-            foreach (var v in new Visual[] { c.Cover, c.Title })
-                v.StartAnimation("Opacity", Delayed(Keys(HandoffMs, (0, 1, null), (1, 0, null)), FlyMs));
+        {
+            hero.tile.MorphShowAt(land, 1);
+            img.Box.StartAnimation("Opacity", Delayed(Keys(150, (0, 1, null), (1, 0, EaseCss)), land));
+        }
 
         WallBusy(EnterMs);
-        BeginMorph(Math.Max(FlyMs + HandoffMs, EnterMs) + 30 + (hold ? 2500 : 0), () =>
+        BeginMorph(Math.Max(land + 150, EnterMs) + 30 + (hold ? 2500 : 0), () =>
         {
             if (hold) hero.tile.Cancel();
+            card.StopAnimation("Opacity");
             card.Opacity = 1;
+            cardCover.StopAnimation("Opacity");
             cardCover.Opacity = 1;
-            DisposeComposite();
+            DisposeFlyers();
             plate.StopAnimation("Opacity");
             plate.IsVisible = false;
             _root.StopAnimation("Opacity");
@@ -1192,7 +1085,7 @@ public sealed partial class WallStage
             foreach (var t in _tiles.Values) t.Cancel();
         });
         UpdateBackdropRunning();
-        Log.Info($"morph enter: hero {heroItem?.Title} box {hero.box.X:F1},{hero.box.Y:F1} {hero.box.W:F1}x{hero.box.H:F1}, {tiles.Count - 1} fly-ins");
+        Log.Info($"morph enter: hero {heroItem?.Title} cover {homeCover.X:F1},{homeCover.Y:F1} {homeCover.W:F1}x{homeCover.H:F1} -> art {heroArt.X:F1},{heroArt.Y:F1} {heroArt.W:F1}x{heroArt.H:F1}, {tiles.Count - 1} fly-ins");
         return true;
     }
 

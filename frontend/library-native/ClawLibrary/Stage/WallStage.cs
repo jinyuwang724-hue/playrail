@@ -191,6 +191,7 @@ public sealed partial class WallStage : IDisposable
             CompositionTarget.Rendering -= first;
             FirstFrameLogged = true;
             _dq.TryEnqueue(DispatcherQueuePriority.Low, RenderEdgeTabs);
+            After(1500, () => { try { PrewarmControlCenter(); } catch (Exception ex) { Log.Error("prewarm", ex); } });
             _dq.TryEnqueue(DispatcherQueuePriority.Low, () => { var t = NowMs; Recull(true); Log.Info($"overscan tiles built: {_tiles.Count} ({NowMs - t}ms)"); });
             Log.Info($"first frame: {App.SinceProcessStartMs():F0}ms since process start");
         };
@@ -1297,6 +1298,8 @@ public sealed partial class WallStage : IDisposable
     }
 
     internal int TabIndex => _tabIndex;
+    internal Window HostWindow => _window;
+    internal Input.GamepadPoller? Pad => _pad;
     internal int Depth => _stack.Count;
     internal SlotKey? ExpandedKey => _expandedKey;
 }

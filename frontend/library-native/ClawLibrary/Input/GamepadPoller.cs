@@ -168,6 +168,17 @@ public sealed unsafe class GamepadPoller : IDisposable
         else if (now >= next) { Post(() => _stage.Move(d)); _held[d] = now + (long)RepeatMs; }
     }
 
+    /// <summary>测试用：模拟按下一个键，走和真手柄完全相同的投递路径（Post 到 UI 线程）。</summary>
+    public void InjectPress(ushort button)
+    {
+        if (button == A) Post(_stage.Activate);
+        else if (button == B) Post(_stage.Back);
+        else if (button == Y) Post(_stage.PadY);
+        else if (button == Menu) Post(_stage.ToggleControlCenter);
+    }
+
+    public const ushort PadA = A, PadB = B, PadMenu = Menu;
+
     public void Dispose()
     {
         _stop = true;

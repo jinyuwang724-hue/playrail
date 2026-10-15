@@ -37,6 +37,8 @@ public sealed class Tile : IDisposable
     internal Visual? FaceRoot => _face?.Root;
     /// <summary>卡面此刻用的那张图（控制中心的游戏库卡用同一张，同样从正中裁）。</summary>
     internal string? ArtPath => _face?.BaseArtPath;
+    /// <summary>卡面此刻显示的那份解码好的图（形变飞的那张优先用它，保证已经画得出来）。</summary>
+    internal LoadedImageSurface? ArtSurface => _face?.ArtSurface;
     public bool Focused { get; private set; }
 
     private Face? _face;
@@ -212,6 +214,19 @@ public sealed class Tile : IDisposable
         _pivot.StartAnimation("Opacity", op);
         _pivot.StartAnimation("Scale", sc);
         _animUntil = _s.NowMs + (long)(delayMs + 420) + 50;
+    }
+
+    /// <summary>形变起飞：到 delay 那一刻才藏（合成线程上的关键帧，和飞行同一条时间轴）。</summary>
+    public void MorphHideAt(double delayMs)
+    {
+        Cancel();
+        var op = G.C.CreateScalarKeyFrameAnimation();
+        op.InsertKeyFrame(0, 1, G.Linear);
+        op.InsertKeyFrame(0.999f, 1, G.Linear);
+        op.InsertKeyFrame(1, 0, G.Linear);
+        op.Duration = Gfx.Ms(Math.Max(1, delayMs));
+        _pivot.StartAnimation("Opacity", op);
+        _animUntil = _s.NowMs + (long)delayMs + 50;
     }
 
     /// <summary>形变落定：从 delay 起 dur 毫秒内淡入（不缩放，和合成层的最后一帧逐像素对齐）。</summary>
@@ -503,6 +518,7 @@ public sealed class Tile : IDisposable
         private ContainerVisual? _imgHost;
         public string? ItemId => _item?.Id;
         /// <summary>这张卡用的那张图（按卡在墙上的本来尺寸挑的：竖封面 / 方裁 / 大背景）。</summary>
+        public LoadedImageSurface? ArtSurface => _img?.Surface;
         public string? BaseArtPath => _item?.Art is { } a && _baseKind is char k ? a.File(k) : null;
         private SpriteVisual? _ring1, _ring4, _ring5, _shadowCaster, _stack1, _stack2, _tint, _hilite;
         private ContainerVisual? _ring;

@@ -142,6 +142,30 @@ public static class Bench
     }
 
     /// <summary>把墙摆到某个状态（截图用）。</summary>
+    /// <summary>录真实速度的每一帧：经手柄投递路径按 ≡（出场）/ A（进场），各录 1.6 s。</summary>
+    private static async Task RecordAsync(WallStage s, string state)
+    {
+        await Task.Delay(1500);   // 等控制中心预热完（真实使用时早就预热好了）
+        var pad = s.Pad;
+        void Press(ushort b) { if (pad != null) pad.InjectPress(b); }
+        async Task One(string name, ushort button)
+        {
+            var rec = new FrameRecorder();
+            if (!rec.Start(s.HostWindow)) return;
+            await Task.Delay(300);
+            long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+            Log.Info($"rec {name}: press");
+            Press(button);
+            await Task.Delay(1600);
+            int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", name), mark);
+            Log.Info($"rec {name}: {n} frames");
+        }
+        if (state is "recexit" or "recboth") await One("exit", Input.GamepadPoller.PadMenu);
+        if (state is "recboth") await Task.Delay(1500);
+        if (state is "recenter") { Press(Input.GamepadPoller.PadMenu); await Task.Delay(2500); }
+        if (state is "recenter" or "recboth") await One("enter", Input.GamepadPoller.PadA);
+    }
+
     public static async Task StateAsync(WallStage s, string state)
     {
         try
@@ -155,6 +179,7 @@ public static class Bench
                 case "styleb": s.ToggleTitleStyle(); break;
                 case "tab": s.SwitchTab(1); break;
                 case "control": s.ToggleControlCenter(); break;
+                case "recexit" or "recenter" or "recboth": await RecordAsync(s, state); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
                 case "ccenter": s.ToggleControlCenter(); await Task.Delay(2500); Log.Info("state ccenter now"); s.Activate(); break;
                 case "control2": s.ToggleControlCenter(); await Task.Delay(900); s.Move(Direction.Right); await Task.Delay(260); s.Move(Direction.Right); break;
