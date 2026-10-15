@@ -51,6 +51,9 @@ public sealed class Backdrop : IDisposable
     private string? _coverPath;
     private int _lastX0 = -1, _lastX1 = -1;
     public float Dpi = 1;
+    /// <summary>画完再整体高斯模糊（DIP，标准差；0 = 不模糊）。控制中心铺满全屏时用：folia 网格主页在背景上压 4 px 模糊。</summary>
+    public float BlurDip;
+    private GaussianBlurEffect? _blur;
     private readonly object _gate = new();
     private readonly AutoResetEvent _wake = new(false);
     private Thread? _thread;
@@ -277,7 +280,17 @@ public sealed class Backdrop : IDisposable
             p["ditherFront"] = colors[6];
             p["themeBg"] = ThemeBg;
             using (var ds = _strip.CreateDrawingSession())
-                ds.DrawImage(_effect, 0, 0, new Windows.Foundation.Rect(0, 0, sw, _ch));
+            {
+                ICanvasImage img = _effect;
+                if (BlurDip > 0)
+                {
+                    _blur ??= new GaussianBlurEffect { BorderMode = EffectBorderMode.Hard, Optimization = EffectOptimization.Speed };
+                    _blur.Source = _effect;
+                    _blur.BlurAmount = BlurDip * _pixelRatio;
+                    img = _blur;
+                }
+                ds.DrawImage(img, 0, 0, new Windows.Foundation.Rect(0, 0, sw, _ch));
+            }
             using (var ds = CanvasComposition.CreateDrawingSession(_surface, new Windows.Foundation.Rect(x0, 0, sw, _ch)))
                 ds.DrawImage(_strip, 0, 0, new Windows.Foundation.Rect(0, 0, sw, _ch));   // 更新区域里的坐标从这块的左上角算
         }
@@ -368,6 +381,7 @@ public sealed class Backdrop : IDisposable
         _wake.Set();
         _thread?.Join(500);
         _strip?.Dispose();
+        _blur?.Dispose();
         _effect?.Dispose();
     }
 }

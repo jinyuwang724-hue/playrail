@@ -130,6 +130,8 @@ public sealed partial class WallStage : IDisposable
         _worlds[1] = G.C.CreateContainerVisual();
         _cam = G.C.CreatePropertySet();
         foreach (var n in new[] { "cx", "cy", "open", "anchor", "scale", "lineX", "vw", "vh", "cw", "sx", "sw", "pad", "bhome", "bsw" }) _cam.InsertScalar(n, 0);
+        // fade：墙的底（底色、光、动态背景、暗角、缝）整体的不透明度；控制中心的出入场（folia 集合层的背景板）只动它，卡片另算
+        _cam.InsertScalar("fade", 1);
         G.DeviceReplaced += () => _dq.TryEnqueue(() => { Text.Clear(); foreach (var t in _tiles.Values) t.Redraw(); RenderSeamContent(); });
     }
 
@@ -331,8 +333,11 @@ public sealed partial class WallStage : IDisposable
         Expr(clipR, "LeftInset", "p.sx + p.sw / 2");
         _root.Children.InsertAtTop(wallL);
         _root.Children.InsertAtTop(wallR);
+        Expr(wallL, "Opacity", "p.fade");
+        Expr(wallR, "Opacity", "p.fade");
         _backdrop = new Backdrop(G) { Dpi = Chrome.Dpi };
         _root.Children.InsertAtBottom(_backdrop.Root);
+        Expr(_backdrop.Root, "Opacity", "p.fade");
         // 背景跟着缝走：画布按「缝在首页的位置」来画（bhome / bsw：缝第一次打开时的屏幕位置和宽度；缝越宽越往画布正中靠，
         // 铺满全屏时正好是整张画布），视觉整体平移到缝的实际位置。墙面平移时只是合成线程挪一下，
         // 不会露出没画过的那一块（以前背景钉在屏幕上，缝挪到哪就得现画到哪，停帧时露出旧画面，成了断层）
@@ -359,6 +364,7 @@ public sealed partial class WallStage : IDisposable
         // 暗角：在卡片之上、缝之下
         _vignette = G.Sprite(null);
         _root.Children.InsertAtTop(_vignette);
+        Expr(_vignette, "Opacity", "p.fade");
 
         // 缝：透明的纸条（folia「始终透明」的缝）——底色 64% 的纱 + 上沿一道很淡的主色渐变 + 两侧发丝线 + 两侧投影，
         // 透出后面的动态背景；里面的内容居中、随开口淡入，换层时翻转
@@ -372,7 +378,7 @@ public sealed partial class WallStage : IDisposable
         foreach (var v in new Visual[] { shadowL, shadowR, veil, sheen, hairL, hairR }) _seamHost.Children.InsertAtTop(v);
         Expr(_seamHost, "Offset", "Vector3(p.sx - p.sw / 2, 0, 0)");
         Expr(_seamHost, "Size", "Vector2(p.sw, p.vh)");
-        Expr(_seamHost, "Opacity", "p.sw < 1 ? 0 : 1");
+        Expr(_seamHost, "Opacity", "p.sw < 1 ? 0 : p.fade");
         Expr(veil, "Size", "Vector2(p.sw, p.vh)");
         Expr(sheen, "Size", "Vector2(p.sw, p.vh)");
         Expr(shadowL, "Size", "Vector2(32, p.vh)");
@@ -415,8 +421,8 @@ public sealed partial class WallStage : IDisposable
             e.Shadow = sh;
             _root.Children.InsertAtTop(e);
         }
-        Expr(_edgeLeft, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx < p.lineX) ? 1 : 0");
-        Expr(_edgeRight, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx >= p.lineX) ? 1 : 0");
+        Expr(_edgeLeft, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx < p.lineX) ? p.fade : 0");
+        Expr(_edgeRight, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx >= p.lineX) ? p.fade : 0");
 
         _toast = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _toast.Opacity = 0;
@@ -595,7 +601,7 @@ public sealed partial class WallStage : IDisposable
     /// <summary>拖动：直接平移相机（屏幕 px）。</summary>
     public void PanBy(double dx, double dy)
     {
-        if (_ccOpen) return;
+        if (_ccOpen || MorphBusy) return;
         MarkInput();
         Sync();
         _camX = _camY = null;
@@ -723,6 +729,7 @@ public sealed partial class WallStage : IDisposable
     public void Move(Direction dir)
     {
         MarkInput();
+        if (MorphIntercept()) return;
         if (_ccOpen) { CcMove(dir); return; }
         if (RailMove(dir)) return;
         if (EnsureFocusOnScreen()) return;
@@ -739,6 +746,7 @@ public sealed partial class WallStage : IDisposable
     public void Activate()
     {
         MarkInput();
+        if (MorphIntercept()) return;
         if (_ccOpen) { CcActivate(); return; }
         if (RailActivate()) return;
         if (EnsureFocusOnScreen()) return;
@@ -781,6 +789,7 @@ public sealed partial class WallStage : IDisposable
     public void Back()
     {
         MarkInput();
+        if (MorphIntercept()) return;
         if (_ccOpen) { CloseControlCenter(); return; }
         if (RailBack()) return;
         if (_expandedKey != null) { Collapse(true); return; }
@@ -994,7 +1003,7 @@ public sealed partial class WallStage : IDisposable
     public void SwitchTab(int delta)
     {
         MarkInput();
-        if (_stack.Count > 1 || _ccOpen) return;
+        if (_stack.Count > 1 || _ccOpen || MorphIntercept()) return;
         if (_expandedKey != null) Collapse(false);
         if (_searchOpen) CloseSearch();
         _tabIndex = (_tabIndex + delta + _lib.HomeTabs.Count) % _lib.HomeTabs.Count;
@@ -1081,7 +1090,7 @@ public sealed partial class WallStage : IDisposable
 
     public void ToggleTitleStyle()
     {
-        if (_ccOpen) return;
+        if (_ccOpen || MorphBusy) return;
         Style = Style == TitleStyle.B ? TitleStyle.D : TitleStyle.B;
         foreach (var t in _tiles.Values) t.Show(t.Target);
         Toast(Style == TitleStyle.B ? "标题样式：极简黑体" : "标题样式：电影字幕");
@@ -1096,6 +1105,7 @@ public sealed partial class WallStage : IDisposable
     /// <summary>鼠标：点卡 = 聚焦并激活。</summary>
     public void ClickAt(double sx, double sy)
     {
+        if (MorphIntercept()) return;
         if (_ccOpen) { CcClick(sx, sy); return; }
         if (RailClick(sx, sy)) return;
         Sync();

@@ -186,8 +186,93 @@ public sealed class Tile : IDisposable
     private float _popTarget;
     private float CurrentPop() { _props.TryGetScalar("pop", out float v); return v; }
 
+    // ---------------- 控制中心的「移形换影」（folia 集合层的出入场）：都动内层，外层矩形不动 ----------------
+
+    /// <summary>hero：形变合成层飞行期间先藏起来。</summary>
+    public void MorphHide()
+    {
+        Cancel();
+        _pivot.Opacity = 0;
+    }
+
+    /// <summary>hero 揭晓：透明度 0.3 s ease-out，尺度 0.985 → 1（0.42 s，cubic-bezier(0.32,0.72,0,1)）。</summary>
+    public void MorphReveal(double delayMs)
+    {
+        var op = G.Scalar(0, 1, 300, new Bezier(0f, 0f, 0.58f, 1f), delayMs);
+        var sc = G.C.CreateVector3KeyFrameAnimation();
+        sc.InsertKeyFrame(0, new Vector3(0.985f, 0.985f, 1), G.Linear);
+        sc.InsertKeyFrame(1, Vector3.One, G.Ease(new Bezier(0.32f, 0.72f, 0f, 1f)));
+        sc.Duration = Gfx.Ms(420);
+        sc.DelayTime = Gfx.Ms(delayMs);
+        sc.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+        _pivot.StartAnimation("Opacity", op);
+        _pivot.StartAnimation("Scale", sc);
+        _animUntil = _s.NowMs + (long)(delayMs + 420) + 50;
+    }
+
+    /// <summary>入场：从径向推开的位置（世界坐标）就位，透明度 0 → 1、尺度 0.94 → 1，0.5 s cubic-bezier(0.32,0.72,0,1)。</summary>
+    public void MorphFlyIn(Vector2 from, double delayMs)
+    {
+        Cancel();
+        var ease = new Bezier(0.32f, 0.72f, 0f, 1f);
+        var off = G.C.CreateVector3KeyFrameAnimation();
+        off.InsertKeyFrame(0, new Vector3(from, 0), G.Linear);
+        off.InsertKeyFrame(1, Vector3.Zero, G.Ease(ease));
+        var sc = G.C.CreateVector3KeyFrameAnimation();
+        sc.InsertKeyFrame(0, new Vector3(0.94f, 0.94f, 1), G.Linear);
+        sc.InsertKeyFrame(1, Vector3.One, G.Ease(ease));
+        var op = G.C.CreateScalarKeyFrameAnimation();
+        op.InsertKeyFrame(0, 0, G.Linear);
+        op.InsertKeyFrame(1, 1, G.Ease(ease));
+        foreach (var a in new KeyFrameAnimation[] { off, sc, op })
+        {
+            a.Duration = Gfx.Ms(500);
+            a.DelayTime = Gfx.Ms(delayMs);
+            a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+        }
+        _pivot.StartAnimation("Offset", off);
+        _pivot.StartAnimation("Scale", sc);
+        _pivot.StartAnimation("Opacity", op);
+        _animUntil = _s.NowMs + (long)(delayMs + 500) + 50;
+    }
+
+    /// <summary>出场四散：沿径向挪开（世界坐标）、转一点、缩到 0.9，透明度 1 → 0.72 → 0。</summary>
+    public void MorphScatter(Vector2 to, float rotateDeg, double durMs, double delayMs)
+    {
+        Cancel();
+        var ease = G.Ease(new Bezier(0.22f, 1f, 0.36f, 1f));
+        var off = G.C.CreateVector3KeyFrameAnimation();
+        off.InsertKeyFrame(0, Vector3.Zero, G.Linear);
+        off.InsertKeyFrame(1, new Vector3(to, 0), ease);
+        var sc = G.C.CreateVector3KeyFrameAnimation();
+        sc.InsertKeyFrame(0, Vector3.One, G.Linear);
+        sc.InsertKeyFrame(1, new Vector3(0.9f, 0.9f, 1), ease);
+        var rot = G.C.CreateScalarKeyFrameAnimation();
+        rot.InsertKeyFrame(0, 0, G.Linear);
+        rot.InsertKeyFrame(1, rotateDeg, ease);
+        var inOut = G.Ease(new Bezier(0.42f, 0f, 0.58f, 1f));
+        var op = G.C.CreateScalarKeyFrameAnimation();
+        op.InsertKeyFrame(0, 1, G.Linear);
+        op.InsertKeyFrame(0.5f, 0.72f, inOut);
+        op.InsertKeyFrame(1, 0, inOut);
+        foreach (var a in new KeyFrameAnimation[] { off, sc, rot, op })
+        {
+            a.Duration = Gfx.Ms(durMs);
+            a.DelayTime = Gfx.Ms(delayMs);
+            a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+        }
+        _pivot.StartAnimation("Offset", off);
+        _pivot.StartAnimation("Scale", sc);
+        _pivot.StartAnimation("Opacity", op);
+        // 平面内的转角放在透视层上（_pivot 的转轴是翻牌用的 Y 轴）
+        _persp.StartAnimation("RotationAngleInDegrees", rot);
+        _animUntil = _s.NowMs + (long)(delayMs + durMs) + 50;
+    }
+
     public void Cancel()
     {
+        _persp.StopAnimation("RotationAngleInDegrees");
+        _persp.RotationAngleInDegrees = 0;
         _pivot.StopAnimation("RotationAngleInDegrees");
         _pivot.StopAnimation("Offset");
         _pivot.StopAnimation("Scale");
