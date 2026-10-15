@@ -35,6 +35,8 @@ public sealed class Tile : IDisposable
     public bool Expanded { get; private set; }
     /// <summary>卡面内容的根（控制中心形变用它的实时画面当 hero 的封面，保证起落帧与卡片完全一致）。</summary>
     internal Visual? FaceRoot => _face?.Root;
+    /// <summary>卡面此刻用的那张图（控制中心的游戏库卡用同一张，同样从正中裁）。</summary>
+    internal string? ArtPath => _face?.BaseArtPath;
     public bool Focused { get; private set; }
 
     private Face? _face;
@@ -210,6 +212,19 @@ public sealed class Tile : IDisposable
         _pivot.StartAnimation("Opacity", op);
         _pivot.StartAnimation("Scale", sc);
         _animUntil = _s.NowMs + (long)(delayMs + 420) + 50;
+    }
+
+    /// <summary>形变落定：从 delay 起 dur 毫秒内淡入（不缩放，和合成层的最后一帧逐像素对齐）。</summary>
+    public void MorphShowAt(double delayMs, double durMs)
+    {
+        var op = G.C.CreateScalarKeyFrameAnimation();
+        op.InsertKeyFrame(0, 0, G.Linear);
+        op.InsertKeyFrame(1, 1, G.Linear);
+        op.Duration = Gfx.Ms(durMs);
+        op.DelayTime = Gfx.Ms(delayMs);
+        op.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
+        _pivot.StartAnimation("Opacity", op);
+        _animUntil = _s.NowMs + (long)(delayMs + durMs) + 50;
     }
 
     /// <summary>入场：从径向推开的位置（世界坐标）就位，透明度 0 → 1、尺度 0.94 → 1，0.5 s cubic-bezier(0.32,0.72,0,1)。</summary>
@@ -487,6 +502,8 @@ public sealed class Tile : IDisposable
         private ImageLayer? _img, _incoming;
         private ContainerVisual? _imgHost;
         public string? ItemId => _item?.Id;
+        /// <summary>这张卡用的那张图（按卡在墙上的本来尺寸挑的：竖封面 / 方裁 / 大背景）。</summary>
+        public string? BaseArtPath => _item?.Art is { } a && _baseKind is char k ? a.File(k) : null;
         private SpriteVisual? _ring1, _ring4, _ring5, _shadowCaster, _stack1, _stack2, _tint, _hilite;
         private ContainerVisual? _ring;
         private DropShadow? _shadow;
