@@ -178,6 +178,9 @@ public static class Bench
     {
         await Task.Delay(1500);   // 等控制中心预热完（真实使用时早就预热好了）
         var pad = s.Pad;
+        // --recmoves=RRD…：录之前先在墙上按方向走几步（换不同形状的 hero 卡）
+        if (Program.Args.FirstOrDefault(a => a.StartsWith("--recmoves=")) is { } mv)
+            foreach (char ch in mv[11..]) { s.Move(ch switch { 'L' => Direction.Left, 'U' => Direction.Up, 'D' => Direction.Down, _ => Direction.Right }); await Task.Delay(400); }
         void Press(ushort b) { if (pad != null) pad.InjectPress(b); }
         async Task One(string name, ushort button)
         {
@@ -191,6 +194,7 @@ public static class Bench
             int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", name), mark);
             Log.Info($"rec {name}: {n} frames");
         }
+        if (state is "recidle") { await One("idle", 0); return; }
         if (state is "recexit" or "recboth") await One("exit", Input.GamepadPoller.PadMenu);
         if (state is "recboth") await Task.Delay(1500);
         if (state is "recenter") { Press(Input.GamepadPoller.PadMenu); await Task.Delay(2500); }
@@ -211,7 +215,7 @@ public static class Bench
                 case "tab": s.SwitchTab(1); break;
                 case "control": s.ToggleControlCenter(); break;
                 case "cycle": await CycleAsync(s); break;
-                case "recexit" or "recenter" or "recboth": await RecordAsync(s, state); break;
+                case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
                 case "ccenter": s.ToggleControlCenter(); await Task.Delay(2500); Log.Info("state ccenter now"); s.Activate(); break;
                 case "control2": s.ToggleControlCenter(); await Task.Delay(900); s.Move(Direction.Right); await Task.Delay(260); s.Move(Direction.Right); break;

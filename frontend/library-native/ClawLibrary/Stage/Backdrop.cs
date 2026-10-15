@@ -192,6 +192,9 @@ public sealed class Backdrop : IDisposable
 
     private static double NowMs => Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
 
+    /// <summary>true：换色不做 800 ms 渐变，直接换（看不见的时候用：渐变期间每帧都要重画整张着色器）。</summary>
+    public bool InstantColors;
+
     private void SetPalette(Vector4[] next)
     {
         lock (_gate)
@@ -199,6 +202,7 @@ public sealed class Backdrop : IDisposable
             _from = CurrentColors();
             _to = next;
             _fadeMs = 0;
+            if (InstantColors) { _from = next; _fadeMs = ColorFadeMs + 1; }
             _dirty = true;
         }
         _wake.Set();
