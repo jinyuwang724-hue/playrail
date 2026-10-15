@@ -1,5 +1,5 @@
 // 控制中心（≡ 键）：照 folia 网格主页（Grid3DSlider）的参数自己实现的一排卡片；功能块代替歌单。
-// - 背景：folia 网格主页底下的「隐现」动态背景（Backdrop，与缝里同一套着色器，这里铺满全屏），取色用最近玩过那款的封面；
+// - 背景：folia 网格主页底下的「隐现」动态背景（Backdrop，与缝里同一套着色器，这里铺满全屏），取色用游戏库卡上那款游戏的封面；
 //   上面压 4 px 模糊 + 20 % 黑，卡片直接浮在上面。只在控制中心露出来时出帧，关掉就停。
 // - 一行 6 张卡，焦点那张永远水平居中。整行只由一个滚动量 off 决定位置；每张卡的缩放 / 透明度 / 上浮
 //   都是绑在 off 上的表达式动画（合成线程），换焦点只对 off 做一次 350 ms 的关键帧动画。
@@ -535,7 +535,7 @@ public sealed partial class WallStage
         if (b.CoverPath == null) { CcReleaseCover(b); return; }
         if (b.CoverRef != null) return;
         // 竖封面按宽解码，UniformToFill 居中裁成方的
-        var s = Images.Acquire(b.CoverPath, CoverPx, CoverPx * 3 / 2);
+        var s = Images.AcquireReuse(b.CoverPath, CoverPx, CoverPx * 3 / 2);
         if (s == null) return;
         b.CoverRef = s;
         b.Cover.Brush = CoverBrush(s);
@@ -752,7 +752,7 @@ public sealed partial class WallStage
         SpriteVisual Img(string? path, out CompositionEffectBrush blur)
         {
             CompositionBrush src;
-            var s = path != null ? Images.Acquire(path, CoverPx, CoverPx * 3 / 2) : null;
+            var s = path != null ? Images.AcquireReuse(path, CoverPx, CoverPx * 3 / 2) : null;
             if (s != null) { c.Images.Add(s); src = CoverBrush(s); }
             else src = G.Solid(Gfx.Rgba(0x27, 0x27, 0x2a, 0.4));
             blur = Blurred(src);
@@ -884,19 +884,29 @@ public sealed partial class WallStage
         FlyBox(c.Frame, hero.box, homeFrame, spring, c.FrameGeo);
         FlyBox(c.Cover, hero.box, homeCover, spring, c.CoverGeo);
         FlyBox(c.Title, heroTitle, homeTitle, spring);
-        c.Frame.StartAnimation("Scale", ScaleKeys(SpringDurMs, spring, 1, 0.985f));
+        // 落点必须与游戏库卡真实的外框 / 封面 / 标题完全重合（folia 原版收在 0.985 / 1.6° / 8 px 模糊，落定时会错开一截）：
+        // 外框不缩，封面的转角与模糊在落定前回到 0，只有标题保留最后的模糊淡出
+        c.Frame.Scale = Vector3.One;
         var fadeOut = new Bezier(0f, 0f, 0.58f, 1f);
-        foreach (var v in new Visual[] { c.Frame, c.Cover, c.Title })
-            v.StartAnimation("Opacity", Keys(ExitMs, (0, 1, null), (0.72f, 1, fadeOut), (1, 0, fadeOut)));
-        c.Cover.StartAnimation("RotationAngleInDegrees", Keys(SpringDurMs, (0, 0, null), (0.35f, 5, EaseCss), (1, 1.6f, EaseCss)));
-        foreach (var b in new[] { c.CoverBlurA, c.CoverBlurB, c.TitleBlurA, c.TitleBlurB })
+        // --morph-hold（测试用）：合成层落定后不淡出，截图对比落点与卡片是否重合
+        bool hold = Program.Args.Contains("--morph-hold");
+        if (!hold)
+            foreach (var v in new Visual[] { c.Frame, c.Cover, c.Title })
+                v.StartAnimation("Opacity", Keys(ExitMs, (0, 1, null), (0.72f, 1, fadeOut), (1, 0, fadeOut)));
+        c.Cover.StartAnimation("RotationAngleInDegrees", Keys(ExitMs * 0.72, (0, 0, null), (0.45f, 5, EaseCss), (1, 0, EaseCss)));
+        foreach (var b in new[] { c.CoverBlurA, c.CoverBlurB })
+            b.Properties.StartAnimation("b.BlurAmount", Keys(ExitMs * 0.72, (0, 0, null), (0.5f, 1.5f, EaseCss), (1, 0, EaseCss)));
+        foreach (var b in new[] { c.TitleBlurA, c.TitleBlurB })
             b.Properties.StartAnimation("b.BlurAmount", Keys(ExitMs, (0, 0, null), (0.5f, 1, EaseCss), (1, 8, EaseCss)));
+        Log.Info($"morph exit target: frame {homeFrame} cover {homeCover} title {homeTitle} (k {_ccK}, dpi {Chrome.Dpi})");
         // 落点的封面 / 标题 0.35 s 淡进来
         c.CoverB.StartAnimation("Opacity", Keys(ExitMs * 0.7, (0, 0, null), (1, 1, fadeOut)));
         c.TitleB.StartAnimation("Opacity", Keys(ExitMs * 0.7, (0, 0, null), (1, 1, fadeOut)));
+        c.TitleA.StartAnimation("Opacity", Keys(ExitMs * 0.7, (0, 1, null), (1, 0, fadeOut)));
+        c.CoverA.StartAnimation("Opacity", Keys(ExitMs * 0.7, (0, 1, null), (1, 0, fadeOut)));
 
         int v0 = _ccVersion;
-        BeginMorph(Math.Max(longest, SpringDurMs) + 30, () =>
+        BeginMorph(Math.Max(longest, SpringDurMs) + 30 + (hold ? 2500 : 0), () =>
         {
             DisposeComposite();
             foreach (var t in _tiles.Values) t.Cancel();
@@ -920,8 +930,8 @@ public sealed partial class WallStage
         var tiles = VisibleTiles(now);
         if (tiles.Count == 0) return false;
         Vector2 mid = new((float)View.Width / 2, (float)View.Height / 2);
-        // hero：最近玩过的那款在屏上就用它，否则用墙上的焦点卡，再不行用离屏幕中心最近的
-        string? recentId = _ccBlocks.Count > 0 ? RecentGame()?.Id : null;
+        // hero：游戏库卡上的那款（墙上最后停过焦点的游戏）在屏上就用它，否则用墙上的焦点卡，再不行用离屏幕中心最近的
+        string? recentId = SelectedGame()?.Id;
         var hero = tiles.FirstOrDefault(x => recentId != null && ItemFor(x.tile.Slot) == recentId);
         if (hero.tile == null && FocusKey is { } fk) hero = tiles.FirstOrDefault(x => x.tile.Slot.Key == fk);
         if (hero.tile == null) hero = tiles.OrderBy(x => Vector2.Distance(x.box.Center, mid)).First();
@@ -1062,20 +1072,30 @@ public sealed partial class WallStage
         return t;
     }
 
+    /// <summary>墙上最后停过焦点的游戏（焦点停在合集、竖条上时不变）。每次换焦点只记一个 id。</summary>
+    private string? _ccGameId;
+
+    private void NoteFocusedGame(SlotKey? key)
+    {
+        if (key is { } k && Engine.Geometry.SlotByKey(k) is { } s && ItemFor(s) is { } id && Lookup(id)?.Kind == ItemKind.Game) _ccGameId = id;
+    }
+
+    private LibraryItem? SelectedGame() => (_ccGameId != null ? Lookup(_ccGameId) : null) ?? RecentGame();
+
     private LibraryItem? RecentGame() =>
         _lib.Games.Where(g => g.Kind == ItemKind.Game && g.LastPlayed is > 0).MaxBy(g => g.LastPlayed);
 
     private void CcReadData()
     {
-        // 游戏库：游戏数 + 最近玩过的那款的竖封面
+        // 游戏库：游戏数 + 墙上最后停过焦点的那款游戏的竖封面（还没停过就用最近玩过的）
         var games = _lib.Games.Where(g => g.Kind == ItemKind.Game).ToList();
-        var recent = RecentGame();
+        var recent = SelectedGame();
         var lib = _ccBlocks[0];
         lib.Second = $"{games.Count} 款游戏";
-        lib.Summary = recent != null ? $"最近玩过：{recent.Title}" : "还没有游玩记录";
+        lib.Summary = recent != null ? $"选中的游戏：{recent.Title}" : "还没有游戏";
         string? cover = null;
         if (recent?.Art is { } art)
-            foreach (var k in new[] { 'p', 'q', 'v', 'x', 's' })
+            foreach (var k in new[] { 'q', 'p', 'v', 'x', 's' })   // q 在前：墙上竖卡用的就是它，多半已经解码过
                 if (art.Has(k)) { cover = art.File(k); break; }
         if (cover != lib.CoverPath) { CcReleaseCover(lib); lib.CoverPath = cover; }
 

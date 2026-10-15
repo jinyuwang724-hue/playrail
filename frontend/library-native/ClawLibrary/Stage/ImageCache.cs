@@ -66,6 +66,20 @@ public sealed class ImageCache
         return e.Failed ? null : e.Surface;
     }
 
+    /// <summary>墙上已经解码过同一张图（任意解码尺寸，宽度够用）就直接借来用，不再解码一遍。</summary>
+    public LoadedImageSurface? AcquireReuse(string path, int maxW, int maxH)
+    {
+        string prefix = path + "|";
+        foreach (var e in _map.Values)
+            if (e.Loaded && !e.Failed && e.Key.StartsWith(prefix, StringComparison.Ordinal) && e.Surface.DecodedPhysicalSize.Width >= maxW * 0.9)
+            {
+                e.Refs++;
+                e.LastUse = ++_tick;
+                return e.Surface;
+            }
+        return Acquire(path, maxW, maxH);
+    }
+
     /// <summary>同一张图再多一个引用（卡面重建时把正在显示的图接过去）。</summary>
     public void AddRef(LoadedImageSurface? surface)
     {

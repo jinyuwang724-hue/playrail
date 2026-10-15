@@ -53,6 +53,7 @@ public sealed class Backdrop : IDisposable
     public float Dpi = 1;
     /// <summary>画完再整体高斯模糊（DIP，标准差；0 = 不模糊）。控制中心铺满全屏时用：folia 网格主页在背景上压 4 px 模糊。</summary>
     public float BlurDip;
+    private static readonly Dictionary<string, Vector4[]> ColorCache = new();
     private GaussianBlurEffect? _blur;
     private readonly object _gate = new();
     private readonly AutoResetEvent _wake = new(false);
@@ -174,11 +175,15 @@ public sealed class Backdrop : IDisposable
         if (imagePath == _coverPath) return;
         _coverPath = imagePath;
         if (imagePath == null) { SetPalette(Palette(Array.Empty<Vector4>())); return; }
+        // 同一张封面取过色就直接用（两块背景、反复开关控制中心都不再解码）
+        lock (ColorCache)
+            if (ColorCache.TryGetValue(imagePath, out var known)) { SetPalette(Palette(known)); return; }
         _ = Task.Run(async () =>
         {
             try
             {
                 var colors = await RepresentativeColors(imagePath, 6);
+                lock (ColorCache) ColorCache[imagePath] = colors;
                 post(() => { if (_coverPath == imagePath) SetPalette(Palette(colors)); });
             }
             catch (Exception ex) { Log.Warn($"latent colors {imagePath}: {ex.Message}"); }

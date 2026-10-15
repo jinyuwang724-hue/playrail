@@ -708,6 +708,7 @@ public sealed partial class WallStage : IDisposable
         if (FocusKey is { } old && _tiles.TryGetValue(old, out var ot)) ot.SetFocused(false);
         FocusKey = key;
         UpdateBackdropKey(key, true);
+        NoteFocusedGame(key);
         if (key is { } k)
         {
             if (_tiles.TryGetValue(k, out var t)) { t.SetFocused(!_railFocused); BringToFront(t); }
