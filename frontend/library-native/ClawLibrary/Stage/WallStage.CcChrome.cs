@@ -208,11 +208,11 @@ public sealed partial class WallStage
 
     // ---------------- 状态栏 ----------------
 
-    private const float CcIcon = 18, CcIconStroke = 1.6f;
+    private const float CcIcon = 18, CcIconStroke = 1.35f;
 
     /// <summary>
-    /// 右上状态栏：没有底，元素平铺在「控制中心」标题的同一行上 —— 同字体、同字号（24 px 粗体）、同颜色、同一条基线；
-    /// 图标是同一套线框画法，放大到 24 px 跟字一样高。从右往左：时间、日期、电量、电池、蓝牙、Wi-Fi。内容（到分钟）没变就不重画。
+    /// 右上状态栏：没有底，元素平铺在「控制中心」标题的同一行上 —— 同字号（24 px）、同一条基线，字重用常规（不和标题抢）；
+    /// 只放三样：Wi-Fi、电池 + 电量、时间；图标是同一套细线框，22 px。内容（到分钟）没变就不重画。
     /// </summary>
     private void CcPaintStatus(bool force = false)
     {
@@ -225,14 +225,12 @@ public sealed partial class WallStage
 
         var icons = new List<Action<CanvasDrawingSession, Color>>();
         icons.Add((ds, c) => CcIconNet(ds, c));
-        if (_ccBt is bool bt) icons.Add((ds, c) => CcIconBluetooth(ds, bt ? c : Gfx.WithAlpha(c, 0.32)));
         if (bat.HasBattery) icons.Add((ds, c) => CcIconBattery(ds, c, bat));
 
-        const float font = 24, icon = 24, iconGap = 16, groupGap = 24, pctGap = 8;
-        var spec = TextKit.Ui(700);   // 和 CcPaintTitle 同一个字
+        const float font = 24, icon = 22, iconGap = 26, groupGap = 26, pctGap = 6;
+        var spec = TextKit.Ui(400);   // 和标题同字号、同基线，但用常规字重：右上只是状态，不跟标题抢分量
         var texts = new List<string>();
         if (bat.HasBattery) texts.Add($"{bat.Percent}%");
-        texts.Add($"{now.Month}月{now.Day}日 周{"日一二三四五六"[(int)now.DayOfWeek]}");
         texts.Add(now.ToString("HH:mm"));
         var layouts = texts.Select(t => TextKit.Layout(G.Device, t, spec, font, 1000, CanvasHorizontalAlignment.Left)).ToList();
         try
@@ -251,7 +249,7 @@ public sealed partial class WallStage
                 foreach (var draw in icons)
                 {
                     ds.Transform = Matrix3x2.CreateScale(icon / CcIcon) * Matrix3x2.CreateTranslation(x, iy) * t0;
-                    draw(ds, CcText);
+                    draw(ds, Gfx.WithAlpha(CcText, 0.9));
                     x += icon + iconGap;
                 }
                 ds.Transform = t0;
@@ -260,7 +258,7 @@ public sealed partial class WallStage
                 {
                     x += i == 0 && bat.HasBattery ? pctGap : groupGap;
                     var b = layouts[i].LayoutBounds;
-                    ds.DrawTextLayout(layouts[i], x - (float)b.X, top, CcText);
+                    ds.DrawTextLayout(layouts[i], x - (float)b.X, top, Gfx.WithAlpha(CcText, 0.9));
                     x += (float)b.Width;
                 }
             }));
@@ -323,7 +321,7 @@ public sealed partial class WallStage
     /// <summary>电池：圆角外框 + 正极小头 + 按电量填充（低于 15 % 且没在充电时填红色），充电时中间一道闪电。</summary>
     private static void CcIconBattery(CanvasDrawingSession ds, Color c, BatteryState bat)
     {
-        ds.DrawRoundedRectangle(1, 5, 14.2f, 8.4f, 2.4f, 2.4f, c, 1.4f);
+        ds.DrawRoundedRectangle(1, 5, 14.2f, 8.4f, 2.4f, 2.4f, c, CcIconStroke);
         ds.FillRoundedRectangle(16, 7.6f, 1.6f, 3.2f, 0.8f, 0.8f, c);
         bool plug = bat.Charging || bat.OnAc;
         float full = 14.2f - 3.6f, w = MathF.Max(1.2f, full * Math.Clamp(bat.Percent, 0, 100) / 100f);
