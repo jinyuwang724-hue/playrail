@@ -792,7 +792,7 @@ public sealed partial class WallStage : IDisposable
     {
         MarkInput();
         if (MorphIntercept()) return;
-        if (_ccOpen) { CloseControlCenter(); return; }
+        if (_ccOpen) { if (!CcChromeBack()) CloseControlCenter(); return; }
         if (RailBack()) return;
         if (_expandedKey != null) { Collapse(true); return; }
         if (_stack.Count > 1) Pop();

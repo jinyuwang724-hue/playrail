@@ -14,6 +14,7 @@ using System.Runtime.InteropServices;
 using ClawLibrary.Data;
 using ClawLibrary.Engine;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Brushes;
 using Microsoft.Graphics.Canvas.Effects;
 using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.Graphics.Canvas.Text;
@@ -69,6 +70,9 @@ public sealed partial class WallStage
         public ContainerVisual Gate = null!;
         public SpriteVisual Face = null!, Ring = null!, ShadowBase = null!, ShadowFocus = null!, Cover = null!;
         public LoadedImageSurface? CoverRef;
+        /// <summary>圆角卡（folia 的铺满封面样式 + 白边）：游戏库以外的功能卡；游戏库卡保持拍立得。</summary>
+        public bool Rounded;
+        public Color Accent;
     }
 
     private ContainerVisual _top = null!;
@@ -84,9 +88,17 @@ public sealed partial class WallStage
     private Tween? _ccOff;
     private double _ccOffNow;
     private float _ccK = 1, _ccH;
+    /// <summary>圆角卡的边长（设计 px）：folia「方形卡片」= 拍立得卡面积不变的正方形，边长 √(宽 × 高)。</summary>
+    private float _ccSq = 359;
+
+    /// <summary>卡的设计尺寸：拍立得 312 × 412，圆角卡是正方形。</summary>
+    private (float w, float h) CcDims(CcBlock b) => b.Rounded ? (_ccSq, _ccSq) : (CcCardW, _ccH);
+
+    /// <summary>卡在「拍立得卡位」里的偏移（设计 px）：所有卡同一条中心线、同一个中心点。</summary>
+    private Vector2 CcInset(CcBlock b) { var (w, h) = CcDims(b); return new Vector2((CcCardW - w) / 2, (_ccH - h) / 2); }
     private DispatcherQueueTimer? _ccTimer;
     private (float k, float dpi) _ccShadowFor;
-    private CompositionDrawingSurface? _ccShadowBase, _ccShadowFocus, _ccRingSurface;
+    private CompositionDrawingSurface? _ccShadowBase, _ccShadowFocus, _ccRingSurface, _ccShadowBaseSq, _ccShadowFocusSq;
     private bool _ccBackLoop;
     private long _ccBackLast;
 
@@ -171,6 +183,7 @@ public sealed partial class WallStage
         _cc.IsVisible = true;
         CcBackStart();
         CcStagger(120);   // 其余几张卡依次出现
+        CcChromeOpen();
         _ccTimer ??= CcMakeTimer();
         _ccTimer.Start();
 
@@ -209,6 +222,7 @@ public sealed partial class WallStage
         _cc.IsVisible = false;
         _cc.StopAnimation("Opacity");
         _cc.Opacity = 1;
+        CcChromeHide();
         CcBackStop();
         foreach (var b in _ccBlocks)
         {
@@ -225,6 +239,7 @@ public sealed partial class WallStage
 
     private void CcMove(Direction dir)
     {
+        if (CcChromeMove(dir)) return;
         if (dir is not (Direction.Left or Direction.Right)) return;
         long now = NowMs;
         if (now - _ccLastStep < CcStepMs) return;
@@ -244,6 +259,7 @@ public sealed partial class WallStage
 
     private void CcActivate()
     {
+        if (CcChromeActivate()) return;
         var b = _ccBlocks[_ccFocus];
         switch (_ccFocus)
         {
@@ -283,13 +299,15 @@ public sealed partial class WallStage
     /// <summary>点卡：点到焦点卡 = A，点到别的卡 = 把它移到中间。</summary>
     private void CcClick(double sx, double sy)
     {
-        float w = CcCardW * _ccK, h = _ccH * _ccK;
+        if (CcChromeClick(sx, sy)) return;
+        float h = _ccH * _ccK;
         float top = CcTop;
         if (sy < top - h * 0.1f || sy > top + h * 1.1f) return;
         double off = CcOffNow();
         for (int i = 0; i < _ccBlocks.Count; i++)
         {
-            double left = CcPadX + i * CcPitch - off;
+            float w = CcDims(_ccBlocks[i]).w * _ccK;
+            double left = CcPadX + i * CcPitch - off + CcInset(_ccBlocks[i]).X * _ccK;
             if (sx < left || sx > left + w) continue;
             if (i == _ccFocus) CcActivate(); else CcFocus(i);
             return;
@@ -298,7 +316,8 @@ public sealed partial class WallStage
 
     // ---------------- 滚动量 ----------------
 
-    private float CcPitch => (CcCardW + CcGap) * _ccK;
+    /// <summary>卡心距：按最宽的卡（正方形）+ 48 px 间距排，方卡之间的空隙正好 48。</summary>
+    private float CcPitch => (MathF.Max(CcCardW, _ccSq) + CcGap) * _ccK;
     private float CcPadX => ((float)View.Width - CcCardW * _ccK) / 2;
     /// <summary>卡（未缩放）的上沿：滑条 + 信息块整组垂直居中。</summary>
     private float CcTop => ((float)View.Height - (CcRowPadY * 2 + _ccH + CcLabelTop + CcLabelH) * _ccK) / 2 + CcRowPadY * _ccK;
@@ -358,14 +377,14 @@ public sealed partial class WallStage
         _ccP = G.C.CreatePropertySet();
         foreach (var n in new[] { "off", "vw", "pitch", "padx", "half", "r", "lift", "top" }) _ccP.InsertScalar(n, 0);
 
-        var defs = new (string Name, string Icon)[]
+        var defs = new (string Name, string Icon, Color Accent)[]
         {
-            ("游戏库", ""), ("性能", ""), ("手柄", ""),
-            ("显示与声音", ""), ("系统", ""), ("软件设置", ""),
+            ("游戏库", "", default), ("性能", "", Gfx.Rgba(0xf9, 0x73, 0x16)), ("手柄", "", Gfx.Rgba(0x3b, 0x82, 0xf6)),
+            ("显示与声音", "", Gfx.Rgba(0xa8, 0x55, 0xf7)), ("系统", "", Gfx.Rgba(0x10, 0xb9, 0x81)), ("软件设置", "", Gfx.Rgba(0x94, 0xa3, 0xb8)),
         };
         for (int i = 0; i < defs.Length; i++)
         {
-            var b = new CcBlock { Name = defs[i].Name, Icon = defs[i].Icon };
+            var b = new CcBlock { Name = defs[i].Name, Icon = defs[i].Icon, Rounded = i > 0, Accent = defs[i].Accent };
             b.El = G.C.CreateContainerVisual();
             b.ShadowBase = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
             b.ShadowFocus = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
@@ -382,8 +401,8 @@ public sealed partial class WallStage
             CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off, p.top - p.lift * (1 - {T}), 0)");
             CcExpr(b.El, "Scale", $"Vector3({CcMaxScale} - 0.7 * {T}, {CcMaxScale} - 0.7 * {T}, 1)");
             CcExpr(b.El, "Opacity", $"Max(0.15, 1 - 0.85 * {T})");
-            // 焦点描边（32 %）与焦点投影：只在中间附近出现
-            CcExpr(b.Ring, "Opacity", $"Max(0, 1 - 2.5 * {T})");
+            // 不画焦点描边：焦点卡本来就放大到 1.2×，视觉焦点已经锁定；焦点投影只在中间附近出现
+            b.Ring.IsVisible = false;
             CcExpr(b.ShadowFocus, "Opacity", $"Max(0, 1 - 1.6 * {T})");
             CcExpr(b.ShadowBase, "Opacity", $"Min(1, 1.6 * {T})");
             _ccRow.Children.InsertAtTop(b.El);
@@ -404,7 +423,8 @@ public sealed partial class WallStage
         // 设计 px → DIP：1920×1200 物理像素下 1:1
         _ccK = MathF.Min(vw * Chrome.Dpi / 1920f, vh * Chrome.Dpi / 1200f) / Chrome.Dpi * CcBoost;
         _ccH = CcPad + (CcCardW - 2 * CcPad) + CcPad + CcTextTop + CcTitleLh + 4 + CcSecondLh + 8 + 2 * CcSummaryLh + CcPad;
-        float w = CcCardW * _ccK, h = _ccH * _ccK;
+        _ccSq = MathF.Round(MathF.Sqrt(CcCardW * _ccH));
+        float w = CcCardW * _ccK;
         _ccP.InsertScalar("vw", vw);
         _ccP.InsertScalar("pitch", CcPitch);
         _ccP.InsertScalar("padx", CcPadX);
@@ -412,8 +432,15 @@ public sealed partial class WallStage
         _ccP.InsertScalar("r", CcFalloff * _ccK);
         _ccP.InsertScalar("lift", 6 * _ccK);
         _ccP.InsertScalar("top", CcTop);
-        foreach (var b in _ccBlocks)
+        for (int i = 0; i < _ccBlocks.Count; i++)
         {
+            var b = _ccBlocks[i];
+            var (dw, dh) = CcDims(b);
+            float h = dh * _ccK;
+            w = dw * _ccK;
+            var inset = CcInset(b) * _ccK;
+            string T = $"Min(Abs(p.padx + {i} * p.pitch + p.half - p.off - p.vw / 2) / p.r, 1)";
+            CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off + {inset.X}, p.top - p.lift * (1 - {T}) + {inset.Y}, 0)");
             b.El.Size = new Vector2(w, h);
             b.El.CenterPoint = new Vector3(w / 2, h / 2, 0);
             b.Face.Size = new Vector2(w, h);
@@ -429,6 +456,7 @@ public sealed partial class WallStage
         _ccBack.SetStrip(0, vw);
         CcPaintShadows();
         CcPaintTitle();
+        CcLayoutChrome();
     }
 
     private CompositionRoundedRectangleGeometry RoundRect(float w, float h, float r)
@@ -466,15 +494,17 @@ public sealed partial class WallStage
         if (_ccShadowFor == (_ccK, Chrome.Dpi) && _ccShadowBase != null) { CcPlaceShadows(); return; }
         _ccShadowFor = (_ccK, Chrome.Dpi);
         float raster = _ccK * Chrome.Dpi;
-        CompositionDrawingSurface Shadow(float blur, float dy, double alpha) => CcDraw(CcCardW + 2 * 80, _ccH + 2 * 80, raster, ds =>
+        CompositionDrawingSurface Shadow(float w, float h, float blur, float dy, double alpha) => CcDraw(w + 2 * 80, h + 2 * 80, raster, ds =>
         {
             using var cl = new CanvasCommandList(ds);
-            using (var c = cl.CreateDrawingSession()) c.FillRoundedRectangle(80, 80 + dy, CcCardW, _ccH, CcRadius, CcRadius, Colors.Black);
+            using (var c = cl.CreateDrawingSession()) c.FillRoundedRectangle(80, 80 + dy, w, h, CcRadius, CcRadius, Colors.Black);
             using var sh = new ShadowEffect { Source = cl, BlurAmount = blur, ShadowColor = Gfx.Rgba(0, 0, 0, alpha) };
             ds.DrawImage(sh);
         });
-        _ccShadowBase = Shadow(12, 10, 0.45);
-        _ccShadowFocus = Shadow(26, 24, 0.7);
+        _ccShadowBase = Shadow(CcCardW, _ccH, 12, 10, 0.45);
+        _ccShadowFocus = Shadow(CcCardW, _ccH, 26, 24, 0.7);
+        _ccShadowBaseSq = Shadow(_ccSq, _ccSq, 12, 10, 0.45);
+        _ccShadowFocusSq = Shadow(_ccSq, _ccSq, 26, 24, 0.7);
         _ccRingSurface = CcDraw(CcCardW, _ccH, CcRaster, ds =>
             ds.DrawRoundedRectangle(0.5f, 0.5f, CcCardW - 1, _ccH - 1, CcRadius - 0.5f, CcRadius - 0.5f, Gfx.WithAlpha(CcText, 0.32), 1));
         CcPlaceShadows();
@@ -484,12 +514,13 @@ public sealed partial class WallStage
     {
         foreach (var b in _ccBlocks)
         {
-            ((CompositionSurfaceBrush)b.ShadowBase.Brush).Surface = _ccShadowBase;
-            ((CompositionSurfaceBrush)b.ShadowFocus.Brush).Surface = _ccShadowFocus;
+            ((CompositionSurfaceBrush)b.ShadowBase.Brush).Surface = b.Rounded ? _ccShadowBaseSq : _ccShadowBase;
+            ((CompositionSurfaceBrush)b.ShadowFocus.Brush).Surface = b.Rounded ? _ccShadowFocusSq : _ccShadowFocus;
+            var (dw, dh) = CcDims(b);
             ((CompositionSurfaceBrush)b.Ring.Brush).Surface = _ccRingSurface;
             foreach (var s in new[] { b.ShadowBase, b.ShadowFocus })
             {
-                s.Size = new Vector2((CcCardW + 160) * _ccK, (_ccH + 160) * _ccK);
+                s.Size = new Vector2((dw + 160) * _ccK, (dh + 160) * _ccK);
                 s.Offset = new Vector3(-80 * _ccK, -80 * _ccK, 0);
             }
         }
@@ -531,8 +562,10 @@ public sealed partial class WallStage
         if (!force && key == b.Drawn) return;
         b.Drawn = key;
         float img = CcCardW - 2 * CcPad, textW = img;
-        var surface = CcDraw(CcCardW, _ccH, CcRaster, ds =>
+        var (cw, ch) = CcDims(b);
+        var surface = CcDraw(cw, ch, CcRaster, ds =>
         {
+            if (b.Rounded) { CcPaintRounded(ds, b); return; }
             ds.FillRoundedRectangle(0, 0, CcCardW, _ccH, CcRadius, CcRadius, Gfx.WithAlpha(Theme.Bg, 0.95));
             ds.DrawRoundedRectangle(0.5f, 0.5f, CcCardW - 1, _ccH - 1, CcRadius - 0.5f, CcRadius - 0.5f, Gfx.WithAlpha(CcText, 0.05), 1);
             // 方图区：zinc-800 20 % + 一圈很淡的内阴影
@@ -574,7 +607,58 @@ public sealed partial class WallStage
         CcSetCover(b);
     }
 
-    private int CoverPx => (int)Math.Ceiling((CcCardW - 2 * CcPad) * CcRaster);
+    /// <summary>
+    /// 圆角卡（folia 网格的铺满封面样式）：整张卡是画面（这里是板块颜色的斜向渐变 + 大图标 + 读数），
+    /// 下半截一层由透到黑的渐变（26 % 处 0 → 50 % 处 30 % → 74 % 处 74 % → 底 93 %）托住文字；外面一圈白边。
+    /// </summary>
+    private void CcPaintRounded(CanvasDrawingSession ds, CcBlock b)
+    {
+        var (W, H) = CcDims(b);
+        float r = CcRadius, pad = CcPad;
+        using (var clip = CanvasGeometry.CreateRoundedRectangle(ds, 0, 0, W, H, r, r))
+        using (ds.CreateLayer(1, clip))
+        {
+            using (var grad = new CanvasLinearGradientBrush(ds, Gfx.Mix(Theme.Bg, 0.42, b.Accent), Gfx.Mix(Theme.Bg, 0.90, b.Accent))
+                   { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(W * 0.55f, H) })
+                ds.FillRectangle(0, 0, W, H, grad);
+            // 右上角一团柔光，画面不至于平
+            using (var glow = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(Gfx.Mix(b.Accent, 0.6, Colors.White), 0.35), Gfx.WithAlpha(b.Accent, 0))
+                   { Center = new Vector2(W * 0.85f, H * 0.08f), RadiusX = W * 0.7f, RadiusY = W * 0.7f })
+                ds.FillRectangle(0, 0, W, H, glow);
+            float cy = H * 0.30f;
+            using (var icon = TextKit.Layout(ds, b.Icon, new FontSpec(CcIconFont, 400), 96, 300, CanvasHorizontalAlignment.Left))
+            {
+                var ib = icon.DrawBounds;
+                ds.DrawTextLayout(icon, W / 2 - (float)(ib.X + ib.Width / 2), cy - (float)(ib.Y + ib.Height / 2), Gfx.WithAlpha(CcText, 0.92));
+            }
+            using (var scrim = new CanvasLinearGradientBrush(ds, new[]
+                   {
+                       new CanvasGradientStop { Position = 0.26f, Color = Gfx.Rgba(0, 0, 0, 0) },
+                       new CanvasGradientStop { Position = 0.50f, Color = Gfx.Rgba(0, 0, 0, 0.30) },
+                       new CanvasGradientStop { Position = 0.74f, Color = Gfx.Rgba(0, 0, 0, 0.74) },
+                       new CanvasGradientStop { Position = 1f, Color = Gfx.Rgba(0, 0, 0, 0.93) },
+                   }) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, H) })
+                ds.FillRectangle(0, 0, W, H, scrim);
+            if (b.HasReading)
+            {
+                using var reading = TextKit.Layout(ds, b.Reading, TextKit.Ui(700), 30, W - 2 * pad, CanvasHorizontalAlignment.Center);
+                ds.DrawTextLayout(reading, pad, cy + 64 - (float)reading.LayoutBounds.Y, Gfx.WithAlpha(CcText, 0.9));
+            }
+            // 文字从下往上排：摘要（两行）、第二行、标题
+            float tw = W - 2 * pad, y = H - pad - 2 * 16;
+            using var summary = TextKit.Layout(ds, b.Summary, TextKit.Ui(400), 12, tw, CanvasHorizontalAlignment.Left, 0, 16, maxLines: 2);
+            ds.DrawTextLayout(summary, pad, y, Gfx.WithAlpha(CcText, 0.55));
+            y -= 6 + 18;
+            using var second = TextKit.Layout(ds, b.Second, TextKit.Ui(500), 14, tw, CanvasHorizontalAlignment.Left, 0, 18);
+            ds.DrawTextLayout(second, pad, y, Gfx.WithAlpha(CcText, 0.72));
+            y -= 4 + 28;
+            using var title = TextKit.Layout(ds, b.Name, TextKit.Ui(700), 22, tw, CanvasHorizontalAlignment.Left, 0, 28);
+            ds.DrawTextLayout(title, pad, y, CcText);
+        }
+        ds.DrawRoundedRectangle(1.25f, 1.25f, W - 2.5f, H - 2.5f, r - 1.25f, r - 1.25f, Gfx.WithAlpha(Colors.White, 0.88), 2.5f);
+    }
+
+    private int CoverPx =>(int)Math.Ceiling((CcCardW - 2 * CcPad) * CcRaster);
 
     private void CcSetCover(CcBlock b)
     {
@@ -979,7 +1063,8 @@ public sealed partial class WallStage
         {
             var g = _ccBlocks[i].Gate;
             double delay = startMs + (i - 1) * 60;
-            float w = CcCardW * _ccK, h = _ccH * _ccK;
+            var (dw, dh) = CcDims(_ccBlocks[i]);
+            float w = dw * _ccK, h = dh * _ccK;
             g.CenterPoint = new Vector3(w / 2, h / 2, 0);
             var op = G.C.CreateScalarKeyFrameAnimation();
             op.InsertKeyFrame(0, 0, G.Linear);
@@ -1321,6 +1406,7 @@ public sealed partial class WallStage
                 foreach (var b in _ccBlocks) CcPaintCard(b);
                 if (_ccBlocks[_ccFocus].Summary != before) CcPaintLabels();
                 CcBackRun();
+                CcChromeTick();
             }
             catch (Exception ex) { Log.Error("control center timer", ex); }
         };

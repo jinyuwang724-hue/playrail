@@ -173,6 +173,30 @@ public static class Bench
         Log.Info($"cycle done: {runs} opens, {bad} missing covers");
     }
 
+    /// <summary>控制中心外围：开 → 滑条右两格（圆角卡）→ ↓ 功能坞 → → ← → A 电源菜单 → ↑ → B → 一路右到头像。配合 --power-dry。</summary>
+    private static async Task RecChromeAsync(WallStage s)
+    {
+        await Task.Delay(1500);
+        var rec = new FrameRecorder();
+        if (!rec.Start(s.HostWindow)) return;
+        await Task.Delay(300);
+        long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+        async Task Step(int ms, Action a) { a(); await Task.Delay(ms); }
+        await Step(1500, s.ToggleControlCenter);
+        await Step(500, () => s.Move(Direction.Right));
+        await Step(800, () => s.Move(Direction.Right));
+        await Step(600, () => s.Move(Direction.Down));
+        await Step(500, () => s.Move(Direction.Right));
+        await Step(500, () => s.Move(Direction.Left));
+        await Step(800, s.Activate);
+        await Step(800, () => s.Move(Direction.Up));
+        await Step(600, s.Back);
+        for (int i = 0; i < 4; i++) await Step(300, () => s.Move(Direction.Right));
+        await Task.Delay(600);
+        int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "chrome"), mark);
+        Log.Info($"rec chrome: {n} frames");
+    }
+
     /// <summary>录真实速度的每一帧：经手柄投递路径按 ≡（出场）/ A（进场），各录 1.6 s。</summary>
     private static async Task RecordAsync(WallStage s, string state)
     {
@@ -215,6 +239,7 @@ public static class Bench
                 case "tab": s.SwitchTab(1); break;
                 case "control": s.ToggleControlCenter(); break;
                 case "cycle": await CycleAsync(s); break;
+                case "recchrome": await RecChromeAsync(s); break;
                 case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
                 case "ccenter": s.ToggleControlCenter(); await Task.Delay(2500); Log.Info("state ccenter now"); s.Activate(); break;
