@@ -91,6 +91,36 @@ public sealed partial class WallStage
     /// <summary>圆角卡的边长（设计 px）：folia「方形卡片」= 拍立得卡面积不变的正方形，边长 √(宽 × 高)。</summary>
     private float _ccSq = 359;
 
+    /// <summary>控制中心卡片样式：false = 拍立得（folia 默认），true = 卡片（铺满封面的方卡）。全部卡一起换，存在 controlcenter.ini。</summary>
+    private bool _ccCards = LoadCcCards();
+
+    private static string CcPrefsPath => Path.Combine(App.CacheDir, "controlcenter.ini");
+
+    private static bool LoadCcCards()
+    {
+        try { return File.Exists(CcPrefsPath) && File.ReadAllLines(CcPrefsPath).Contains("cards=true"); }
+        catch { return false; }
+    }
+
+    /// <summary>换卡片样式：存下来；控制中心建好了就当场重排、重画（封面按新尺寸重新取）。</summary>
+    private void SetCcCardStyle(bool cards)
+    {
+        _ccCards = cards;
+        try { Directory.CreateDirectory(App.CacheDir); File.WriteAllText(CcPrefsPath, $"cards={(cards ? "true" : "false")}"); }
+        catch (Exception ex) { Log.Warn($"control center prefs: {ex.Message}"); }
+        if (_cc == null) return;
+        CcMeasure();
+        foreach (var b in _ccBlocks)
+        {
+            CcReleaseCover(b);
+            CcPaintCard(b, force: true);
+        }
+        _ccOff = null; _ccOffNow = _ccFocus * CcPitch;
+        _ccP.StopAnimation("off"); _ccP.InsertScalar("off", (float)_ccOffNow);
+        CcPaintLabels();
+        Log.Info($"control center cards: {(cards ? "卡片" : "拍立得")}");
+    }
+
     /// <summary>卡的设计尺寸：拍立得 312 × 412，圆角卡是正方形。</summary>
     private (float w, float h) CcDims(CcBlock b) => b.Rounded ? (_ccSq, _ccSq) : (CcCardW, _ccH);
 
@@ -277,12 +307,12 @@ public sealed partial class WallStage
         }
     }
 
-    /// <summary>Y：控制中心里 = 设为主页（还不支持，给提示）；墙上仍是游戏设置的占位提示。</summary>
+    /// <summary>Y：控制中心里 = 拍立得 ⇄ 卡片 切换卡片样式；墙上仍是游戏设置的占位提示。</summary>
     public void PadY()
     {
         MarkInput();
         if (MorphIntercept()) return;
-        if (_ccOpen) Toast("还不支持把板块设为主页");
+        if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
         else Toast("游戏设置（原型里还没有）");
     }
 
@@ -318,7 +348,7 @@ public sealed partial class WallStage
     // ---------------- 滚动量 ----------------
 
     /// <summary>卡心距：按最宽的卡（正方形）+ 48 px 间距排，方卡之间的空隙正好 48。</summary>
-    private float CcPitch => (MathF.Max(CcCardW, _ccSq) + CcGap) * _ccK;
+    private float CcPitch => (CcDims(_ccBlocks[0]).w + CcGap) * _ccK;
     private float CcPadX => ((float)View.Width - CcCardW * _ccK) / 2;
     /// <summary>卡（未缩放）的上沿：滑条 + 信息块整组垂直居中。</summary>
     private float CcTop => ((float)View.Height - (CcRowPadY * 2 + _ccH + CcLabelTop + CcLabelH) * _ccK) / 2 + CcRowPadY * _ccK;
@@ -386,7 +416,7 @@ public sealed partial class WallStage
         };
         for (int i = 0; i < defs.Length; i++)
         {
-            var b = new CcBlock { Name = defs[i].Name, Icon = defs[i].Icon, Rounded = i > 0, Accent = defs[i].Accent };
+            var b = new CcBlock { Name = defs[i].Name, Icon = defs[i].Icon, Rounded = _ccCards, Accent = defs[i].Accent };
             b.El = G.C.CreateContainerVisual();
             b.ShadowBase = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
             b.ShadowFocus = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
@@ -403,8 +433,7 @@ public sealed partial class WallStage
             CcExpr(b.El, "Offset", $"Vector3(p.padx + {i} * p.pitch - p.off, p.top - p.lift * (1 - {T}), 0)");
             CcExpr(b.El, "Scale", $"Vector3({CcMaxScale} - 0.7 * {T}, {CcMaxScale} - 0.7 * {T}, 1)");
             CcExpr(b.El, "Opacity", $"Max(0.15, 1 - 0.85 * {T})");
-            // 不画焦点描边：焦点卡本来就放大到 1.2×，视觉焦点已经锁定；焦点投影只在中间附近出现
-            b.Ring.IsVisible = false;
+            // 不画焦点描边：焦点卡本来就放大到 1.2×，视觉焦点已经锁定；Ring 只在卡片样式下当 1 px 的淡边用（folia 铺满卡的 border），焦点投影只在中间附近出现
             CcExpr(b.ShadowFocus, "Opacity", $"Max(0, 1 - 1.6 * {T})");
             CcExpr(b.ShadowBase, "Opacity", $"Min(1, 1.6 * {T})");
             _ccRow.Children.InsertAtTop(b.El);
@@ -426,6 +455,7 @@ public sealed partial class WallStage
         _ccK = MathF.Min(vw * Chrome.Dpi / 1920f, vh * Chrome.Dpi / 1200f) / Chrome.Dpi * CcBoost;
         _ccH = CcPad + (CcCardW - 2 * CcPad) + CcPad + CcTextTop + CcTitleLh + 4 + CcSecondLh + 8 + 2 * CcSummaryLh + CcPad;
         _ccSq = MathF.Round(MathF.Sqrt(CcCardW * _ccH));
+        foreach (var cb in _ccBlocks) cb.Rounded = _ccCards;
         float w = CcCardW * _ccK;
         _ccP.InsertScalar("vw", vw);
         _ccP.InsertScalar("pitch", CcPitch);
@@ -447,13 +477,15 @@ public sealed partial class WallStage
             b.El.CenterPoint = new Vector3(w / 2, h / 2, 0);
             b.Face.Size = new Vector2(w, h);
             b.Ring.Size = new Vector2(w, h);
-            float img = (CcCardW - 2 * CcPad) * _ccK;
+            b.Ring.IsVisible = b.Rounded;
+            // 拍立得：方图区在卡内（16 px 边）；卡片样式：封面铺满整张卡
+            float img = b.Rounded ? w : (CcCardW - 2 * CcPad) * _ccK, pad = b.Rounded ? 0 : CcPad * _ccK;
             b.Cover.Size = new Vector2(img, img);
-            b.Cover.Offset = new Vector3(CcPad * _ccK, CcPad * _ccK, 0);
-            b.Cover.Clip = G.C.CreateGeometricClip(RoundRect(img, img, CcImgRadius * _ccK));
+            b.Cover.Offset = new Vector3(pad, pad, 0);
+            b.Cover.Clip = G.C.CreateGeometricClip(RoundRect(img, img, (b.Rounded ? CcRadius : CcImgRadius) * _ccK));
         }
         _ccBack!.Dpi = Chrome.Dpi;
-        _ccBack.BlurDip = 24 * _ccK / CcBoost;   // folia：首页显示时把下面的播放页（动态壁纸）模糊 24 px
+        _ccBack.BlurDip = 0;   // 背景就是软件背景：控制中心里也要看得清选的是哪种（folia 首页这里模糊 24 px，会把像素 / 纸纹 / 镜头都糊成一片）
         _ccBack.Build(vw, vh);
         _ccBack.SetStrip(0, vw);
         CcPaintShadows();
@@ -507,8 +539,9 @@ public sealed partial class WallStage
         _ccShadowFocus = Shadow(CcCardW, _ccH, 26, 24, 0.7);
         _ccShadowBaseSq = Shadow(_ccSq, _ccSq, 12, 10, 0.45);
         _ccShadowFocusSq = Shadow(_ccSq, _ccSq, 26, 24, 0.7);
-        _ccRingSurface = CcDraw(CcCardW, _ccH, CcRaster, ds =>
-            ds.DrawRoundedRectangle(0.5f, 0.5f, CcCardW - 1, _ccH - 1, CcRadius - 0.5f, CcRadius - 0.5f, Gfx.WithAlpha(CcText, 0.32), 1));
+        // 卡片样式的边：folia 铺满卡的 1 px 淡边（不是选中框，每张卡都一样）
+        _ccRingSurface = CcDraw(_ccSq, _ccSq, CcRaster, ds =>
+            ds.DrawRoundedRectangle(0.5f, 0.5f, _ccSq - 1, _ccSq - 1, CcRadius - 0.5f, CcRadius - 0.5f, Gfx.WithAlpha(CcText, 0.10), 1));
         CcPlaceShadows();
     }
 
@@ -560,7 +593,7 @@ public sealed partial class WallStage
     /// <summary>卡面（folia polaroid）：底 #09090b 95 %、1 px 描边 5 %、方图区 + 文字块。内容没变就不重画。</summary>
     private void CcPaintCard(CcBlock b, bool force = false)
     {
-        string key = $"{b.Second}|{b.Summary}|{b.Reading}|{b.HasReading}|{b.CoverPath}|{_ccK}|{Chrome.Dpi}";
+        string key = $"{b.Rounded}|{b.Second}|{b.Summary}|{b.Reading}|{b.HasReading}|{b.CoverPath}|{_ccK}|{Chrome.Dpi}";
         if (!force && key == b.Drawn) return;
         b.Drawn = key;
         float img = CcCardW - 2 * CcPad, textW = img;
@@ -610,57 +643,29 @@ public sealed partial class WallStage
     }
 
     /// <summary>
-    /// 圆角卡（folia 网格的铺满封面样式）：整张卡是画面（这里是板块颜色的斜向渐变 + 大图标 + 读数），
-    /// 下半截一层由透到黑的渐变（26 % 处 0 → 50 % 处 30 % → 74 % 处 74 % → 底 93 %）托住文字；外面一圈白边。
+    /// 卡片样式（folia 网格的铺满封面卡，方形）：整张卡就是画面，卡里不放字（名字在滑条下面）。
+    /// 游戏库卡是封面本身（Cover 盖在上面）；功能卡是板块颜色的斜向渐变 + 右上一团柔光 + 居中的大图标。
+    /// 外面那圈 1 px 淡边画在 Ring 上（盖在封面之上）。
     /// </summary>
     private void CcPaintRounded(CanvasDrawingSession ds, CcBlock b)
     {
         var (W, H) = CcDims(b);
-        float r = CcRadius, pad = CcPad;
-        using (var clip = CanvasGeometry.CreateRoundedRectangle(ds, 0, 0, W, H, r, r))
-        using (ds.CreateLayer(1, clip))
-        {
-            using (var grad = new CanvasLinearGradientBrush(ds, Gfx.Mix(Theme.Bg, 0.42, b.Accent), Gfx.Mix(Theme.Bg, 0.90, b.Accent))
-                   { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(W * 0.55f, H) })
-                ds.FillRectangle(0, 0, W, H, grad);
-            // 右上角一团柔光，画面不至于平
-            using (var glow = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(Gfx.Mix(b.Accent, 0.6, Colors.White), 0.35), Gfx.WithAlpha(b.Accent, 0))
-                   { Center = new Vector2(W * 0.85f, H * 0.08f), RadiusX = W * 0.7f, RadiusY = W * 0.7f })
-                ds.FillRectangle(0, 0, W, H, glow);
-            float cy = H * 0.30f;
-            using (var icon = TextKit.Layout(ds, b.Icon, new FontSpec(CcIconFont, 400), 96, 300, CanvasHorizontalAlignment.Left))
-            {
-                var ib = icon.DrawBounds;
-                ds.DrawTextLayout(icon, W / 2 - (float)(ib.X + ib.Width / 2), cy - (float)(ib.Y + ib.Height / 2), Gfx.WithAlpha(CcText, 0.92));
-            }
-            using (var scrim = new CanvasLinearGradientBrush(ds, new[]
-                   {
-                       new CanvasGradientStop { Position = 0.26f, Color = Gfx.Rgba(0, 0, 0, 0) },
-                       new CanvasGradientStop { Position = 0.50f, Color = Gfx.Rgba(0, 0, 0, 0.30) },
-                       new CanvasGradientStop { Position = 0.74f, Color = Gfx.Rgba(0, 0, 0, 0.74) },
-                       new CanvasGradientStop { Position = 1f, Color = Gfx.Rgba(0, 0, 0, 0.93) },
-                   }) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, H) })
-                ds.FillRectangle(0, 0, W, H, scrim);
-            if (b.HasReading)
-            {
-                using var reading = TextKit.Layout(ds, b.Reading, TextKit.Ui(700), 30, W - 2 * pad, CanvasHorizontalAlignment.Center);
-                ds.DrawTextLayout(reading, pad, cy + 64 - (float)reading.LayoutBounds.Y, Gfx.WithAlpha(CcText, 0.9));
-            }
-            // 文字从下往上排：摘要（两行）、第二行、标题
-            float tw = W - 2 * pad, y = H - pad - 2 * 16;
-            using var summary = TextKit.Layout(ds, b.Summary, TextKit.Ui(400), 12, tw, CanvasHorizontalAlignment.Left, 0, 16, maxLines: 2);
-            ds.DrawTextLayout(summary, pad, y, Gfx.WithAlpha(CcText, 0.55));
-            y -= 6 + 18;
-            using var second = TextKit.Layout(ds, b.Second, TextKit.Ui(500), 14, tw, CanvasHorizontalAlignment.Left, 0, 18);
-            ds.DrawTextLayout(second, pad, y, Gfx.WithAlpha(CcText, 0.72));
-            y -= 4 + 28;
-            using var title = TextKit.Layout(ds, b.Name, TextKit.Ui(700), 22, tw, CanvasHorizontalAlignment.Left, 0, 28);
-            ds.DrawTextLayout(title, pad, y, CcText);
-        }
-        ds.DrawRoundedRectangle(1.25f, 1.25f, W - 2.5f, H - 2.5f, r - 1.25f, r - 1.25f, Gfx.WithAlpha(Colors.White, 0.88), 2.5f);
+        float r = CcRadius;
+        using var clip = CanvasGeometry.CreateRoundedRectangle(ds, 0, 0, W, H, r, r);
+        using var layer = ds.CreateLayer(1, clip);
+        if (b.CoverPath != null || b.Accent.A == 0) { ds.FillRectangle(0, 0, W, H, Gfx.Rgba(0x27, 0x27, 0x2a)); return; }
+        using (var grad = new CanvasLinearGradientBrush(ds, Gfx.Mix(Theme.Bg, 0.42, b.Accent), Gfx.Mix(Theme.Bg, 0.90, b.Accent))
+               { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(W * 0.55f, H) })
+            ds.FillRectangle(0, 0, W, H, grad);
+        using (var glow = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(Gfx.Mix(b.Accent, 0.6, Colors.White), 0.35), Gfx.WithAlpha(b.Accent, 0))
+               { Center = new Vector2(W * 0.85f, H * 0.08f), RadiusX = W * 0.7f, RadiusY = W * 0.7f })
+            ds.FillRectangle(0, 0, W, H, glow);
+        using var icon = TextKit.Layout(ds, b.Icon, new FontSpec(CcIconFont, 400), 120, 300, CanvasHorizontalAlignment.Left);
+        var ib = icon.DrawBounds;
+        ds.DrawTextLayout(icon, W / 2 - (float)(ib.X + ib.Width / 2), H / 2 - (float)(ib.Y + ib.Height / 2), Gfx.WithAlpha(CcText, 0.92));
     }
 
-    private int CoverPx =>(int)Math.Ceiling((CcCardW - 2 * CcPad) * CcRaster);
+    private int CoverPx => (int)Math.Ceiling((_ccCards ? _ccSq : CcCardW - 2 * CcPad) * CcRaster);
 
     private void CcSetCover(CcBlock b)
     {
@@ -761,6 +766,13 @@ public sealed partial class WallStage
         float s = CcMaxScale, k = _ccK;
         float w = CcCardW * k * s, h = _ccH * k * s;
         float cx = (float)View.Width / 2, cy = CcTop + _ccH * k / 2 - 6 * k;
+        if (_ccCards)
+        {
+            // 卡片样式：封面铺满整张方卡，外框 = 封面
+            float side = _ccSq * k * s;
+            var card = new Box(cx - side / 2, cy - side / 2, side, side);
+            return (card, card, card);
+        }
         var frame = new Box(cx - w / 2, cy - h / 2, w, h);
         float img = (CcCardW - 2 * CcPad) * k * s, pad = CcPad * k * s;
         var cover = new Box(frame.X + pad, frame.Y + pad, img, img);
@@ -1109,7 +1121,7 @@ public sealed partial class WallStage
 
     /// <summary>首页卡的圆角（卡 12、图 8，焦点卡放大 1.2×）。墙卡是直角。</summary>
     private float HomeFrameRadius => CcRadius * _ccK * CcMaxScale;
-    private float HomeCoverRadius => CcImgRadius * _ccK * CcMaxScale;
+    private float HomeCoverRadius => (_ccCards ? CcRadius : CcImgRadius) * _ccK * CcMaxScale;
 
     /// <summary>
     /// 背景板：控制中心（首页）之上、墙之下的一块主题底色。folia 打开集合时它 0.62 s 淡入盖住首页，
@@ -1453,7 +1465,7 @@ public sealed partial class WallStage
         var recent = SelectedGame();
         var lib = _ccBlocks[0];
         lib.Second = $"{games.Count} 款游戏";
-        lib.Summary = recent != null ? $"选中的游戏：{recent.Title}" : "还没有游戏";
+        lib.Summary = recent != null ? "" : "还没有游戏";
         string? cover = recent != null && recent.Id == _ccGameId ? HiRes(_ccGameArt) : null;
         if (cover == null && recent?.Art is { } art)
             foreach (var k in new[] { 'q', 'p', 'v', 'x', 's' })

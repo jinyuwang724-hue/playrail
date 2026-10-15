@@ -106,6 +106,7 @@ public sealed partial class WallStage
         {
             ("标题样式", Style == TitleStyle.B ? "极简黑体" : "电影字幕"),
             ("背景样式", _backgroundSettings.Name),
+            ("控制中心卡片", _ccCards ? "卡片" : "拍立得"),
             ("动态背景", _backdropOn ? "开" : "关"),
             ("降低动态效果", _reducedLocal ? "开" : "关"),
             ("性能读数", _hudOn ? "开" : "关"),
@@ -308,10 +309,11 @@ public sealed partial class WallStage
         {
             case 0: ToggleTitleStyle(); break;
             case 1: SetBackgroundPreview(true); _railFocus = 0; break;
-            case 2: _backdropOn = !_backdropOn; UpdateBackdropRunning(); Toast(_backdropOn ? "动态背景：开" : "动态背景：关"); break;
-            case 3: ToggleReducedMotion(); UpdateBackdropRunning(); break;
-            case 4: ToggleHud(); break;
-            case 5:
+            case 2: SetCcCardStyle(!_ccCards); break;
+            case 3: _backdropOn = !_backdropOn; UpdateBackdropRunning(); Toast(_backdropOn ? "动态背景：开" : "动态背景：关"); break;
+            case 4: ToggleReducedMotion(); UpdateBackdropRunning(); break;
+            case 5: ToggleHud(); break;
+            case 6:
                 _railModel.SettingsOpen = false;
                 RepaintRail();
                 _railFocus = _rail.Items.FindIndex(it => it.Kind == RailKind.Settings);

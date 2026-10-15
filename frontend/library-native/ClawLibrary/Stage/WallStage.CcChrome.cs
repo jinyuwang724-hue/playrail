@@ -29,10 +29,10 @@ public sealed partial class WallStage
     }
 
     // 设计 px（× _ccK）
-    private const float CcEdgeX = 40, CcEdgeBottom = 36, CcDockBtn = 60, CcDockGap = 14, CcDockIcon = 24;
-    private const float CcPowerH = 56, CcPowerW = 164, CcPowerGap = 12;
-    private const float CcAvatar = 48, CcPillPad = 6;
-    private const float CcStatusH = 40, CcStatusPillH = 36;
+    private const float CcEdgeX = 40, CcEdgeBottom = 32, CcDockBtn = 48, CcDockGap = 10, CcDockIcon = 20;
+    private const float CcPowerH = 44, CcPowerW = 128, CcPowerGap = 10;
+    private const float CcAvatar = 38, CcPillPad = 5;
+    private const float CcStatusH = 36;
     private const string CcSnowflake = "❄";
     /// <summary>folia 账户按钮的底：zinc-950；按钮稍微透一点，下面的动态背景能透出来。</summary>
     private static readonly Color CcChip = Gfx.Rgba(9, 9, 11, 0.78);
@@ -133,13 +133,8 @@ public sealed partial class WallStage
         CcPaintStatus(force: true);
     }
 
-    /// <summary>头像胶囊：p-1.5 + 头像 + 名字（最多 120）+ 分隔线 + 返回箭头那一格（folia 的 ChevronRight）。</summary>
-    private float CcAvatarPillW()
-    {
-        using var l = TextKit.Layout(G.Device, _ccUser ?? "", TextKit.Ui(600), 15, 120, CanvasHorizontalAlignment.Left);
-        float nameW = MathF.Min(120, (float)l.LayoutBounds.Width);
-        return CcPillPad + CcAvatar + 10 + nameW + 12 + 1 + CcAvatar + CcPillPad;
-    }
+    /// <summary>头像胶囊：头像 + 分隔线 + 返回箭头那一格（folia 账户按钮的样子，不写名字）。</summary>
+    private float CcAvatarPillW() => CcPillPad + CcAvatar + 8 + 1 + 30 + CcPillPad;
 
     private void CcPaintButton(CcButton b)
     {
@@ -149,14 +144,13 @@ public sealed partial class WallStage
         CcSet(b.Focused, CcDraw(w, h, raster, ds => CcDrawChip(ds, b, w, h, true)));
     }
 
-    /// <summary>按钮：平时 zinc-950 半透 + 1 px 白 10 % 描边、白字；焦点 = 白底黑字（folia 首页选中页签的白胶囊）。</summary>
+    /// <summary>按钮：平时 zinc-950 半透、白字，不描边；焦点 = 白底黑字（folia 首页选中页签的白胶囊）。</summary>
     private void CcDrawChip(CanvasDrawingSession ds, CcButton b, float w, float h, bool focus)
     {
         var fill = focus ? Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.96) : _ccPower.Contains(b) ? Gfx.WithAlpha(CcChip, 0.96) : CcChip;   // 电源菜单浮在卡上，不透字
         var fg = focus ? Theme.Bg : Gfx.WithAlpha(CcText, 0.92);
         float r = h / 2;
         ds.FillRoundedRectangle(0, 0, w, h, r, r, fill);
-        if (!focus) ds.DrawRoundedRectangle(0.5f, 0.5f, w - 1, h - 1, r - 0.5f, r - 0.5f, Gfx.WithAlpha(CcText, 0.10), 1);
         if (b.Id == "avatar")
         {
             float a = CcAvatar, ax = CcPillPad, ay = (h - a) / 2;
@@ -167,21 +161,18 @@ public sealed partial class WallStage
                 else
                 {
                     ds.FillRectangle(ax, ay, a, a, Gfx.Rgba(0x3f, 0x3f, 0x46));
-                    CcGlyph(ds, "", ax + a / 2, ay + a / 2, 22, Gfx.WithAlpha(CcText, 0.8));   // Contact
+                    CcGlyph(ds, "", ax + a / 2, ay + a / 2, 18, Gfx.WithAlpha(CcText, 0.8));   // Contact
                 }
             }
-            using var name = TextKit.Layout(ds, _ccUser ?? "", TextKit.Ui(600), 15, 120, CanvasHorizontalAlignment.Left);
-            float nx = ax + a + 10;
-            ds.DrawTextLayout(name, nx, (h - (float)name.LayoutBounds.Height) / 2 - (float)name.LayoutBounds.Y, fg);
-            float dx = w - CcPillPad - CcAvatar - 1;
-            ds.FillRectangle(dx, h / 2 - 12, 1, 24, focus ? Gfx.WithAlpha(Theme.Bg, 0.15) : Gfx.WithAlpha(CcText, 0.15));
-            CcGlyph(ds, "", dx + 1 + CcAvatar / 2, h / 2, 20, fg);
+            float dx = ax + a + 8;
+            ds.FillRectangle(dx, h / 2 - 9, 1, 18, focus ? Gfx.WithAlpha(Theme.Bg, 0.15) : Gfx.WithAlpha(CcText, 0.15));
+            CcGlyph(ds, "", dx + 1 + 15, h / 2, 16, fg);
             return;
         }
         if (_ccPower.Contains(b))
         {
-            CcGlyph(ds, b.Glyph, h / 2, h / 2, 22, fg);
-            using var label = TextKit.Layout(ds, b.Label, TextKit.Ui(600), 17, w - h - 12, CanvasHorizontalAlignment.Left);
+            CcGlyph(ds, b.Glyph, h / 2, h / 2, 18, fg);
+            using var label = TextKit.Layout(ds, b.Label, TextKit.Ui(600), 15, w - h - 12, CanvasHorizontalAlignment.Left);
             ds.DrawTextLayout(label, h - 4, (h - (float)label.LayoutBounds.Height) / 2 - (float)label.LayoutBounds.Y, fg);
             return;
         }
@@ -197,7 +188,14 @@ public sealed partial class WallStage
         ds.DrawTextLayout(l, cx - (float)(ib.X + ib.Width / 2), cy - (float)(ib.Y + ib.Height / 2), c);
     }
 
-    /// <summary>右上状态栏：[Wi-Fi 蓝牙 电量] 胶囊 · 日期 · 时间。内容（到分钟）没变就不重画。</summary>
+    // ---------------- 状态栏 ----------------
+
+    private const float CcIcon = 18, CcIconStroke = 1.6f;
+
+    /// <summary>
+    /// 右上状态栏：一整个胶囊 [Wi-Fi 蓝牙 电池 电量 │ 日期 时间]。图标是同一套线框画法（18 px 格、1.6 px 圆头线），
+    /// 文字同一个字号、同一个字重。内容（到分钟）没变就不重画。
+    /// </summary>
     private void CcPaintStatus(bool force = false)
     {
         if (_ccChrome == null) return;
@@ -207,53 +205,39 @@ public sealed partial class WallStage
         if (!force && key == _ccStatusDrawn) return;
         _ccStatusDrawn = key;
 
-        var icons = new List<(string glyph, string? under, double alpha)>();
-        if (_ccNet.Wlan)
-        {
-            string bars = _ccNet.Bars >= 4 ? "" : _ccNet.Bars == 3 ? "" : _ccNet.Bars == 2 ? "" : "";
-            icons.Add((bars, "", _ccNet.Online ? 0.92 : 0.5));
-        }
-        else if (_ccNet.Wired) icons.Add(("", null, _ccNet.Online ? 0.92 : 0.5));
-        else icons.Add(("", null, 0.5));
-        if (_ccBt is bool bt) icons.Add(("", null, bt ? 0.92 : 0.3));
-        string? pct = null;
-        if (bat.HasBattery)
-        {
-            int n = Math.Clamp((bat.Percent + 5) / 10, 0, 10);
-            bool plug = bat.Charging || bat.OnAc;
-            string g = plug ? (n == 10 ? "" : ((char)(0xE85A + n)).ToString()) : (n == 10 ? "" : ((char)(0xE850 + n)).ToString());
-            icons.Add((g, null, 0.92));
-            pct = $"{bat.Percent}%";
-        }
+        var icons = new List<Action<CanvasDrawingSession, Color>>();
+        icons.Add((ds, c) => CcIconNet(ds, c));
+        if (_ccBt is bool bt) icons.Add((ds, c) => CcIconBluetooth(ds, bt ? c : Gfx.WithAlpha(c, 0.32)));
+        if (bat.HasBattery) icons.Add((ds, c) => CcIconBattery(ds, c, bat));
 
-        const float iconSize = 18, iconGap = 14, padX = 14;
-        using var pctL = TextKit.Layout(G.Device, pct ?? "", TextKit.Ui(600), 14, 200, CanvasHorizontalAlignment.Left);
-        string date = $"{now.Month}月{now.Day}日 周{"日一二三四五六"[(int)now.DayOfWeek]}";
-        using var dateL = TextKit.Layout(G.Device, date, TextKit.Ui(500), 15, 400, CanvasHorizontalAlignment.Left);
-        using var timeL = TextKit.Layout(G.Device, now.ToString("HH:mm"), TextKit.Ui(700), 24, 400, CanvasHorizontalAlignment.Left);
-        float pctW = pct != null ? (float)pctL.LayoutBounds.Width + 6 : 0;
-        float pillW = padX * 2 + icons.Count * iconSize + (icons.Count - 1) * iconGap + pctW;
-        float dateW = (float)dateL.LayoutBounds.Width, timeW = (float)timeL.LayoutBounds.Width;
-        float W = pillW + 18 + dateW + 14 + timeW + 2, H = CcStatusH;
+        const float padX = 14, iconGap = 12, font = 14;
+        var text = Gfx.WithAlpha(CcText, 0.92);
+        string pct = bat.HasBattery ? $"{bat.Percent}%" : "";
+        string clock = $"{now.Month}月{now.Day}日 周{"日一二三四五六"[(int)now.DayOfWeek]}  {now:HH:mm}";
+        using var pctL = TextKit.Layout(G.Device, pct, TextKit.Ui(500), font, 200, CanvasHorizontalAlignment.Left);
+        using var clockL = TextKit.Layout(G.Device, clock, TextKit.Ui(500), font, 400, CanvasHorizontalAlignment.Left);
+        float pctW = pct.Length > 0 ? (float)pctL.LayoutBounds.Width + 5 : 0;
+        float clockW = (float)clockL.LayoutBounds.Width;
+        float W = padX + icons.Count * CcIcon + (icons.Count - 1) * iconGap + pctW + 12 + 1 + 12 + clockW + padX, H = CcStatusH;
         float raster = _ccK * Chrome.Dpi;
         CcSet(_ccStatus, CcDraw(W, H, raster, ds =>
         {
-            float py = (H - CcStatusPillH) / 2, r = CcStatusPillH / 2;
-            ds.FillRoundedRectangle(0, py, pillW, CcStatusPillH, r, r, CcChip);
-            ds.DrawRoundedRectangle(0.5f, py + 0.5f, pillW - 1, CcStatusPillH - 1, r - 0.5f, r - 0.5f, Gfx.WithAlpha(CcText, 0.10), 1);
-            float x = padX;
-            foreach (var (glyph, under, alpha) in icons)
+            ds.FillRoundedRectangle(0, 0, W, H, H / 2, H / 2, CcChip);
+            float x = padX, iy = (H - CcIcon) / 2;
+            var t0 = ds.Transform;
+            foreach (var draw in icons)
             {
-                if (under != null) CcGlyph(ds, under, x + iconSize / 2, H / 2, iconSize, Gfx.WithAlpha(CcText, 0.22));
-                // 信号格数不同的 Wi-Fi 字形墨迹框不一样大：画在满格那个字形的位置上（底部的点对齐）
-                if (under != null && glyph != under) CcGlyphAligned(ds, glyph, under, x + iconSize / 2, H / 2, iconSize, Gfx.WithAlpha(CcText, alpha));
-                else CcGlyph(ds, glyph, x + iconSize / 2, H / 2, iconSize, Gfx.WithAlpha(CcText, alpha));
-                x += iconSize + iconGap;
+                ds.Transform = Matrix3x2.CreateTranslation(x, iy) * t0;
+                draw(ds, text);
+                x += CcIcon + iconGap;
             }
-            if (pct != null) ds.DrawTextLayout(pctL, x - iconGap + 6, (H - (float)pctL.LayoutBounds.Height) / 2 - (float)pctL.LayoutBounds.Y, Gfx.WithAlpha(CcText, 0.92));
-            float dx = pillW + 18;
-            ds.DrawTextLayout(dateL, dx, (H - (float)dateL.LayoutBounds.Height) / 2 - (float)dateL.LayoutBounds.Y, Gfx.WithAlpha(CcText, 0.62));
-            ds.DrawTextLayout(timeL, dx + dateW + 14, (H - (float)timeL.LayoutBounds.Height) / 2 - (float)timeL.LayoutBounds.Y, CcText);
+            ds.Transform = t0;
+            x -= iconGap;
+            if (pctW > 0) { ds.DrawTextLayout(pctL, x + 5, (H - (float)pctL.LayoutBounds.Height) / 2 - (float)pctL.LayoutBounds.Y, text); x += pctW; }
+            x += 12;
+            ds.FillRectangle(x, H / 2 - 8, 1, 16, Gfx.WithAlpha(CcText, 0.18));
+            x += 1 + 12;
+            ds.DrawTextLayout(clockL, x, (H - (float)clockL.LayoutBounds.Height) / 2 - (float)clockL.LayoutBounds.Y, text);
         }));
         float k = _ccK;
         _ccStatus.Size = new Vector2(W * k, H * k);
@@ -261,14 +245,76 @@ public sealed partial class WallStage
         _ccStatus.Offset = new Vector3((float)View.Width - (CcEdgeX + W) * k, (32 + 16 - H / 2) * k, 0);
     }
 
-    /// <summary>画 glyph，但按 frame（同一套字形里墨迹框最大的那个）的位置定位：信号格字形和满格字形叠在一起。</summary>
-    private static void CcGlyphAligned(CanvasDrawingSession ds, string glyph, string frame, float cx, float cy, float size, Color c)
+    private static readonly CanvasStrokeStyle CcRound = new()
     {
-        var font = new FontSpec(CcIconFont, 400);
-        using var f = TextKit.Layout(ds, frame, font, size, 400, CanvasHorizontalAlignment.Left);
-        using var l = TextKit.Layout(ds, glyph, font, size, 400, CanvasHorizontalAlignment.Left);
-        var fb = f.DrawBounds;
-        ds.DrawTextLayout(l, cx - (float)(fb.X + fb.Width / 2), cy - (float)(fb.Y + fb.Height / 2), c);
+        StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round, LineJoin = CanvasLineJoin.Round,
+    };
+
+    /// <summary>Wi-Fi：底部一个点 + 三道弧，信号几格就亮几道（暗的 25 %）；没连上 = 全暗加一道斜线；有线 = 一台显示器。</summary>
+    private void CcIconNet(CanvasDrawingSession ds, Color c)
+    {
+        var dim = Gfx.WithAlpha(c, 0.25);
+        if (!_ccNet.Wlan && _ccNet.Wired)
+        {
+            ds.DrawRoundedRectangle(2, 3.5f, 14, 9.5f, 1.8f, 1.8f, c, CcIconStroke);
+            ds.DrawLine(9, 13, 9, 15.5f, c, CcIconStroke, CcRound);
+            ds.DrawLine(5.5f, 15.5f, 12.5f, 15.5f, c, CcIconStroke, CcRound);
+            return;
+        }
+        bool on = _ccNet.Wlan;
+        int lit = !on ? 0 : _ccNet.Bars >= 4 ? 3 : _ccNet.Bars == 3 ? 2 : _ccNet.Bars == 2 ? 1 : 0;
+        var center = new Vector2(9, 15);
+        ds.FillCircle(center.X, center.Y - 0.3f, 1.5f, on ? c : dim);
+        float[] radii = { 4.3f, 8f, 11.6f };
+        for (int i = 0; i < 3; i++)
+        {
+            using var pb = new CanvasPathBuilder(ds);
+            float a0 = -MathF.PI * 0.75f, sweep = MathF.PI * 0.5f, r = radii[i];
+            pb.BeginFigure(center + new Vector2(MathF.Cos(a0), MathF.Sin(a0)) * r);
+            pb.AddArc(center, r, r, a0, sweep);
+            pb.EndFigure(CanvasFigureLoop.Open);
+            using var g = CanvasGeometry.CreatePath(pb);
+            ds.DrawGeometry(g, i < lit ? c : dim, CcIconStroke, CcRound);
+        }
+        if (!on) ds.DrawLine(3, 3, 15, 15, c, CcIconStroke, CcRound);
+    }
+
+    /// <summary>蓝牙：那个符文，一笔画。</summary>
+    private static void CcIconBluetooth(CanvasDrawingSession ds, Color c)
+    {
+        using var pb = new CanvasPathBuilder(ds);
+        pb.BeginFigure(5.2f, 5.6f);
+        pb.AddLine(12.6f, 12.3f);
+        pb.AddLine(9f, 15.6f);
+        pb.AddLine(9f, 2.4f);
+        pb.AddLine(12.6f, 5.7f);
+        pb.AddLine(5.2f, 12.4f);
+        pb.EndFigure(CanvasFigureLoop.Open);
+        using var g = CanvasGeometry.CreatePath(pb);
+        ds.DrawGeometry(g, c, CcIconStroke, CcRound);
+    }
+
+    /// <summary>电池：圆角外框 + 正极小头 + 按电量填充（低于 15 % 且没在充电时填红色），充电时中间一道闪电。</summary>
+    private static void CcIconBattery(CanvasDrawingSession ds, Color c, BatteryState bat)
+    {
+        ds.DrawRoundedRectangle(1, 5, 14.2f, 8.4f, 2.4f, 2.4f, c, 1.4f);
+        ds.FillRoundedRectangle(16, 7.6f, 1.6f, 3.2f, 0.8f, 0.8f, c);
+        bool plug = bat.Charging || bat.OnAc;
+        float full = 14.2f - 3.6f, w = MathF.Max(1.2f, full * Math.Clamp(bat.Percent, 0, 100) / 100f);
+        var fill = !plug && bat.Percent < 15 ? Gfx.Rgba(0xef, 0x44, 0x44) : c;
+        ds.FillRoundedRectangle(2.8f, 6.8f, w, 4.8f, 1.2f, 1.2f, fill);
+        if (!bat.Charging) return;
+        using var pb = new CanvasPathBuilder(ds);
+        pb.BeginFigure(9.3f, 5.6f);
+        pb.AddLine(6.2f, 9.6f);
+        pb.AddLine(8.3f, 9.6f);
+        pb.AddLine(7.4f, 12.8f);
+        pb.AddLine(10.6f, 8.6f);
+        pb.AddLine(8.5f, 8.6f);
+        pb.EndFigure(CanvasFigureLoop.Closed);
+        using var g = CanvasGeometry.CreatePath(pb);
+        ds.FillGeometry(g, Theme.Bg);
+        ds.DrawGeometry(g, Theme.Bg, 0.6f);
     }
 
     // ---------------- 开 / 关 / 每秒刷新 ----------------
