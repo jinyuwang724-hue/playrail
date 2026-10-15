@@ -213,6 +213,7 @@ public sealed partial class WallStage
         _cc.IsVisible = true;
         CcBackStart();
         CcStagger(120);   // 其余几张卡依次出现
+        _ = PerfRefresh(true);
         CcChromeOpen();
         _ccTimer ??= CcMakeTimer();
         _ccTimer.Start();
@@ -232,6 +233,7 @@ public sealed partial class WallStage
     private void CloseControlCenter()
     {
         if (!_ccOpen || _cc == null) return;
+        ClosePerf(instant: true);
         _ccOpen = false;
         int v = ++_ccVersion;
         _ccTimer?.Stop();
@@ -249,6 +251,7 @@ public sealed partial class WallStage
     private void HideControlCenter()
     {
         if (_cc == null) return;
+        ClosePerf(instant: true);
         _cc.IsVisible = false;
         _cc.StopAnimation("Opacity");
         _cc.Opacity = 1;
@@ -269,6 +272,7 @@ public sealed partial class WallStage
 
     private void CcMove(Direction dir)
     {
+        if (_perfOpen) { PerfMove(dir); return; }
         if (CcChromeMove(dir)) return;
         if (dir is not (Direction.Left or Direction.Right)) return;
         // 不再限制「200 ms 一步」：滚动是弹簧，连按就直接换终点接着滚（可打断）
@@ -287,12 +291,16 @@ public sealed partial class WallStage
 
     private void CcActivate()
     {
+        if (_perfOpen) { PerfActivate(); return; }
         if (CcChromeActivate()) return;
         var b = _ccBlocks[_ccFocus];
         switch (_ccFocus)
         {
             case 0:   // 游戏库：进集合层（进场形变）
                 CloseControlCenter();
+                break;
+            case 1:   // 性能：3:7 两栏的设置页，背景还是这层动态背景
+                OpenPerf();
                 break;
             case 5:   // 软件设置：竖条里的设置列表
                 CloseControlCenter();
@@ -309,6 +317,7 @@ public sealed partial class WallStage
     {
         MarkInput();
         if (MorphIntercept()) return;
+        if (_ccOpen && _perfOpen) return;
         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
         else Toast("游戏设置（原型里还没有）");
     }
@@ -327,6 +336,7 @@ public sealed partial class WallStage
     /// <summary>点卡：点到焦点卡 = A，点到别的卡 = 把它移到中间。</summary>
     private void CcClick(double sx, double sy)
     {
+        if (_perfOpen) return;
         if (CcChromeClick(sx, sy)) return;
         float h = _ccH * _ccK;
         float top = CcTop;
@@ -1416,6 +1426,7 @@ public sealed partial class WallStage
                 foreach (var b in _ccBlocks) CcPaintCard(b);
                 if (_ccBlocks[_ccFocus].Summary != before) CcPaintLabels();
                 CcBackRun();
+                if (!_perfOpen) _ = PerfRefresh(true);   // 控制中心开着就记功耗，进性能页时曲线已经有一段
                 CcChromeTick();
             }
             catch (Exception ex) { Log.Error("control center timer", ex); }
@@ -1471,8 +1482,10 @@ public sealed partial class WallStage
         // 性能：还没有接入功耗读数，不编数字
         var perf = _ccBlocks[1];
         perf.Second = "功耗与风扇";
-        perf.Summary = "功耗读数还没有接入";
-        perf.Reading = "— W"; perf.HasReading = true;
+        // 性能：工具箱后台 agent 的实时功耗与当前预设（连不上就写「—」，不编数字）
+        double? pkgW = Num(_perfView?["actual"]?["package"]);
+        perf.Summary = _perfS != null ? PerfPresetText() : _perfAgentDown ? "连不上工具箱后台" : "正在读取…";
+        perf.Reading = pkgW is double pw ? $"{pw:0.0} W" : "— W"; perf.HasReading = true;
 
         var pad = _ccBlocks[2];
         bool connected = _pad?.Connected ?? false;

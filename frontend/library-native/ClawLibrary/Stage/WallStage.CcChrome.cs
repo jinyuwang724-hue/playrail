@@ -557,6 +557,7 @@ public sealed partial class WallStage
 
     private bool CcChromeBack()
     {
+        if (_perfOpen) { PerfBack(); return true; }
         if (_ccZone == CcZone.Power) { CcPowerClose(); return true; }
         if (_ccZone == CcZone.Dock) { _ccZone = CcZone.Row; CcChromeFocus(); return true; }
         return false;

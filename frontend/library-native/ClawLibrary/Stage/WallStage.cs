@@ -1297,6 +1297,7 @@ public sealed partial class WallStage : IDisposable
     {
         _pad?.Dispose();
         _backdrop?.Dispose();
+        _agent?.Dispose();
         _ccBack?.Dispose();
         if (_backdropLoop) CompositionTarget.Rendering -= OnBackdropFrame;
         if (_ccBackLoop) CompositionTarget.Rendering -= OnCcBackFrame;

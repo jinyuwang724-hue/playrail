@@ -173,6 +173,44 @@ public static class Bench
         Log.Info($"cycle done: {runs} opens, {bad} missing covers");
     }
 
+    /// <summary>保存测试（可逆）：进性能页，走到「短时加成」，+1 → +2，等它存上，再改回 +1。</summary>
+    private static async Task PerfSaveTestAsync(WallStage s)
+    {
+        await Task.Delay(1500);
+        async Task Step(int ms, Action a) { a(); await Task.Delay(ms); }
+        await Step(1500, s.ToggleControlCenter);
+        await Step(700, () => s.Move(Direction.Right));
+        await Step(2500, s.Activate);
+        for (int i = 0; i < 6; i++) await Step(200, () => s.Move(Direction.Down));
+        Log.Info("perfsave: +1");
+        await Step(2500, () => s.Move(Direction.Right));
+        Log.Info("perfsave: -1");
+        await Step(2500, () => s.Move(Direction.Left));
+        Log.Info("perfsave: done");
+    }
+
+    /// <summary>性能页：开控制中心 → 右一格到「性能」→ A 进入 → 往下走到「编辑这档曲线」→ A 进编辑 → 选点（只换点，不改值，不会保存）→ B 退出 → B 回控制中心。</summary>
+    private static async Task RecPerfAsync(WallStage s)
+    {
+        await Task.Delay(1500);
+        var rec = new FrameRecorder();
+        if (!rec.Start(s.HostWindow)) return;
+        await Task.Delay(300);
+        long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+        async Task Step(int ms, Action a) { a(); await Task.Delay(ms); }
+        await Step(1500, s.ToggleControlCenter);
+        await Step(700, () => s.Move(Direction.Right));
+        await Step(3000, s.Activate);
+        for (int i = 0; i < 10; i++) await Step(220, () => s.Move(Direction.Down));
+        await Step(800, s.Activate);
+        await Step(500, () => s.Move(Direction.Left));
+        await Step(800, () => s.Move(Direction.Left));
+        await Step(800, s.Back);
+        await Step(1200, s.Back);
+        int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "perf"), mark);
+        Log.Info($"rec perf: {n} frames");
+    }
+
     /// <summary>可打断性：开 → 80 ms 内连按两次右 → ↓ 后 120 ms 反悔 ↑ → 再 ↓ 停住。</summary>
     private static async Task RecSpringAsync(WallStage s)
     {
@@ -260,6 +298,8 @@ public static class Bench
                 case "cycle": await CycleAsync(s); break;
                 case "recchrome": await RecChromeAsync(s); break;
                 case "recspring": await RecSpringAsync(s); break;
+                case "recperf": await RecPerfAsync(s); break;
+                case "perfsave": await PerfSaveTestAsync(s); break;
                 case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
                 case "ccenter": s.ToggleControlCenter(); await Task.Delay(2500); Log.Info("state ccenter now"); s.Activate(); break;
