@@ -1497,7 +1497,7 @@ public sealed partial class WallStage
         var pad = _ccBlocks[2];
         bool connected = _pad?.Connected ?? false;
         pad.Second = "按键、震动与摇杆";
-        pad.Summary = !connected ? "没有检测到手柄" : _gpRumble is int rumble ? $"震动 {rumble} %" : "手柄已连接";
+        pad.Summary = !connected ? "没有检测到手柄" : _gpRumbleL is int rumble ? (_gpRumbleR is int rr && rr != rumble ? $"震动 左 {rumble} % · 右 {rr} %" : $"震动 {rumble} %") : "手柄已连接";
         pad.Reading = connected ? "已连接" : "—"; pad.HasReading = true;
 
         var disp = _ccBlocks[3];

@@ -224,28 +224,16 @@ public static class Bench
         await Step(500, () => s.Move(Direction.Right));
         await Step(700, () => s.Move(Direction.Right));
         await Step(3000, s.Activate);
-        // 只挪焦点、开映射选择看样子；不在映射选择里按 A、不按开关，不改任何设置
+        // 只挪焦点；只按一次「测试震动」（震一下，不改设置）
         var D = Direction.Down; var U = Direction.Up; var R = Direction.Right; var L = Direction.Left;
         async Task Go(params Direction[] ds) { foreach (var d in ds) await Step(650, () => s.Move(d)); }
-        await Step(900, () => { });                       // 当前模式（分类上）
-        await Go(R, D);                                    // 进：长按 ≡
+        await Step(700, () => { });
+        await Go(D, D, D, D);                              // 震动
+        await Go(R, R, D);                                 // 进：左侧震动 → 右侧震动 → 测试震动
+        await Step(1600, s.Activate);                      // 测试震动
         await Step(650, s.Back);
-        await Go(D, R);                                    // 按键映射，进：LT
-        await Go(D, D, R, R, R, R, R);                     // 在线稿上走
-        await Step(900, s.Activate);                       // 打开「映射到」
-        await Go(D, D, R, R, D);                           // 类型 → 键盘，进键格
-        await Step(900, s.Back);
-        await Step(700, s.Back);                           // 关掉映射选择
-        await Step(650, s.Back);                           // 回分类
-        await Go(D, R, R);                                 // 摇杆
-        await Step(650, s.Back);
-        await Go(D, R);                                    // 扳机
-        await Step(650, s.Back);
-        await Go(D, R, R);                                 // 震动
-        await Step(650, s.Back);
-        await Go(D, D, D, R);                              // 特殊键
-        await Step(650, s.Back);
-        await Go(D, R, R);                                 // 灯光
+        await Go(D, D, D, D, R);                           // 灯光
+        await Step(1500, () => { });
         await Step(650, s.Back);
         await Step(1000, s.Back);
         await Step(1200, s.Back);

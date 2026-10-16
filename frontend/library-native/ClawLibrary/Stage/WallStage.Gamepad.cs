@@ -114,11 +114,11 @@ public sealed partial class WallStage
     private readonly List<GpItem> _gpItems = new();
     private JsonObject? _gpSettings;
     private JsonNode? _gpFw;
-    private int? _gpRumble;
+    /// <summary>左右马达的震动强度（0–100），读自 get_rumble_state 的 current。</summary>
+    private int? _gpRumbleL, _gpRumbleR;
     private string? _gpError, _gpFwError;
     private DispatcherQueueTimer? _gpLive;
     private Input.GamepadPoller.Snapshot _gpShown;
-    private long _gpRippleAt;
 
     // ---------------- 开 / 关 ----------------
 
@@ -141,6 +141,7 @@ public sealed partial class WallStage
         _gp.Opacity = 0;
         _gp.StartAnimation("Opacity", ToScalar(1, 240, EaseOutCss, 80));
         _gpLive ??= MakeGpLiveTimer();
+        if (_pad != null) _pad.StickNavigates = false;   // 手柄页只用十字键挪焦点，左摇杆留给实时输入
         _gpLive.Start();
         _ = GpLoadArt();
         _ = GpRefresh();
@@ -154,6 +155,7 @@ public sealed partial class WallStage
         _gpEditing = false;
         _gpPicker = null;
         _gpLive?.Stop();
+        if (_pad != null) _pad.StickNavigates = true;
         int v = ++_gpVersion;
         if (instant || Reduced)
         {
@@ -174,13 +176,16 @@ public sealed partial class WallStage
         _gp.IsVisible = false;
         _gpSpot = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _gp.Children.InsertAtTop(_gpSpot);
+        _gpArtLayer = G.Container();
+        _gp.Children.InsertAtTop(_gpArtLayer);
         foreach (var face in new[] { "front", "back", "tl", "tr" })
         {
             var s = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
             s.Opacity = face == "front" ? 1 : 0;
             _gpArt[face] = s;
-            _gp.Children.InsertAtTop(s);
+            _gpArtLayer.Children.InsertAtTop(s);
         }
+        EnsureGpFx();
         _gpBody = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _gp.Children.InsertAtTop(_gpBody);
         _cc!.Children.InsertAtTop(_gp);
@@ -196,8 +201,7 @@ public sealed partial class WallStage
         {
             if (!_gpOpen) return;
             var now = _pad?.Last ?? default;
-            bool ripple = GpRippleAge() < 900;
-            if (now == _gpShown && !ripple) return;
+            if (now == _gpShown) return;
             _gpShown = now;
             PaintGpBody();
         };
@@ -251,7 +255,12 @@ public sealed partial class WallStage
             var state = await _agent.Call("get_state");
             if (state?["settings"] is JsonObject s) _gpSettings = (JsonObject)s.DeepClone();
             var rumble = await _agent.Call("get_rumble_state");
-            if (_gpRumbleEdits == 0 && rumble?["strength"] is JsonValue rv && rv.TryGetValue(out int st)) _gpRumble = st;
+            if (_gpRumbleEdits == 0 && rumble != null)
+            {
+                int st = Int(rumble["strength"], -1);
+                _gpRumbleL = rumble["current"] is JsonArray cur && cur.Count == 2 ? Int(cur[0]) : st >= 0 ? st : null;
+                _gpRumbleR = rumble["current"] is JsonArray cur2 && cur2.Count == 2 ? Int(cur2[1]) : st >= 0 ? st : null;
+            }
             _gpError = null;
             try
             {
@@ -301,29 +310,39 @@ public sealed partial class WallStage
         _ = GpRefresh();
     }
 
-    /// <summary>震动强度：连按 ← → 时 400 ms 内只写一次固件（写一次要来回好几包 HID），写完震一下让你感受到。</summary>
-    private void GpRumbleChanged(int value)
+    /// <summary>
+    /// 震动强度（左右分开，照 MSI）：连按 ← → 时 400 ms 内只写一次固件（写一次要来回好几包 HID），写完震一下让你感受到。
+    /// 后台还只认一个强度时（左右分开写的接口还没上线），左右相同就按一个强度写，不同就提示。
+    /// </summary>
+    private void GpRumbleChanged(int left, int right)
     {
-        _gpRumble = value;
+        _gpRumbleL = left;
+        _gpRumbleR = right;
         int edits = ++_gpRumbleEdits;
         After(400, async () =>
         {
             if (edits != _gpRumbleEdits || _agent == null) return;
-            try { await _agent.Call("set_rumble_strength", JsonValue.Create(value)); if (value > 0) await GpTestRumble(); }
-            catch (Exception ex) { Toast($"震动强度没有写进手柄：{ex.Message}"); }
-            if (edits == _gpRumbleEdits) _gpRumbleEdits = 0;
+            try
+            {
+                try { await _agent.Call("set_rumble_strength", JsonValue.Create(left), JsonValue.Create(right)); }
+                catch (Exception ex) when (left == right && !ex.Message.Contains("连接"))
+                {
+                    await _agent.Call("set_rumble_strength", JsonValue.Create(left));
+                }
+                if (left + right > 0) await GpTestRumble();
+            }
+            catch (Exception ex) { Toast(left != right ? "左右分开调还没接上：后台的震动接口还只认一个强度" : $"震动强度没有写进手柄：{ex.Message}"); }
+            if (edits == _gpRumbleEdits) { _gpRumbleEdits = 0; _ = GpRefresh(); }
         });
     }
 
     private async Task GpTestRumble()
     {
-        _gpRippleAt = Environment.TickCount64;
+        GpPlayRumble((_gpRumbleL ?? 100) / 100f, (_gpRumbleR ?? 100) / 100f);
         if (_agent == null) return;
         try { await _agent.Call("test_rumble"); }
         catch (Exception ex) { Toast($"没有震起来：{ex.Message}"); }
     }
-
-    private double GpRippleAge() => _gpRippleAt == 0 ? double.MaxValue : Environment.TickCount64 - _gpRippleAt;
 
     // ---------------- 分类 ----------------
 
@@ -519,6 +538,7 @@ public sealed partial class WallStage
                     sprite.Size = new Vector2(w * k, h * k);
                     sprite.Offset = new Vector3(tl.X * k, tl.Y * k, 0);
                 }
+                PaintGpFx(k, raster);
             }
         }
         PaintGpBody();

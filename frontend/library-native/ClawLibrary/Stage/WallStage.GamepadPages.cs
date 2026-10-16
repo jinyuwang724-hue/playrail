@@ -13,8 +13,9 @@ public sealed partial class WallStage
 {
     private static readonly string[] GpActions = { "MainMenu", "QuickAccess", "MagpieToggle", "None" };
     private static readonly string[] GpActionNames = { "主菜单", "快速访问", "超分开关", "不做事" };
-    private static readonly string[] GpLightEffects = { "off", "monocolor", "breathe", "rainbow" };
-    private static readonly string[] GpLightEffectNames = { "关", "常亮", "呼吸", "彩虹" };
+    private static readonly string[] GpLightEffects = { "off", "monocolor", "breathe", "rainbow", "ripple", "modeinfo" };
+    private static readonly string[] GpLightEffectNames = { "关闭", "常亮", "呼吸", "幻彩", "水波", "模式指示" };
+    private static readonly string[] GpLightSpeedNames = { "慢", "中", "快" };
     private static readonly string[] GpLightColorNames = { "白", "红", "橙", "黄", "绿", "青", "蓝", "紫" };
     private static readonly Color[] GpLightColors =
     {
@@ -112,24 +113,33 @@ public sealed partial class WallStage
                 break;
             case "rumble":
             {
+                // 照 MSI 振动页：左右马达分开调，测试、恢复；另加我们的 Steam 导航震动
                 var s = _gpSettings;
-                var rumble = Item("震动强度", "GripL", _gpRumble is int r ? (r == 0 ? "关" : $"{r} %") : loading, _gpRumble == null ? loading : null);
-                rumble.Lights = new[] { "GripL", "GripR" };
-                if (_gpRumble is int rv)
+                GpItem Motor(string title, string grip, int? value, bool isLeft)
                 {
-                    rumble.Number = rv; rumble.Min = 0; rumble.Max = 100; rumble.StepBy = 5;
-                    rumble.Format = v => v == 0 ? "关" : $"{v} %";
-                    rumble.SetNumber = GpRumbleChanged;
+                    var it = Item(title, grip, value is int v ? (v == 0 ? "关" : $"{v} %") : loading, value == null ? loading : null);
+                    if (value is int cur)
+                    {
+                        it.Number = cur; it.Min = 0; it.Max = 100; it.StepBy = 5;
+                        it.Format = v => v == 0 ? "关" : $"{v} %";
+                        it.SetNumber = v => GpRumbleChanged(isLeft ? v : _gpRumbleL ?? v, isLeft ? _gpRumbleR ?? v : v);
+                    }
+                    return it;
                 }
-                left.Add(rumble);
+                left.Add(Motor("左侧震动", "GripL", _gpRumbleL, true));
                 var nav = Item("Steam 导航震动", "GripL", s == null ? loading : Bool(s["hapticsEnabled"]) ? "开" : "关", s == null ? loading : null);
                 nav.Lights = new[] { "GripL", "GripR" };
                 nav.Press = () => { if (s == null) return; s["hapticsEnabled"] = !Bool(s["hapticsEnabled"]); BuildGpItems(); PaintGpBody(); _ = GpSaveSettings(); };
                 left.Add(nav);
-                var test = Item("测试震动", "GripR", "按 A 震一下", _gpRumble == null ? loading : null);
+                right.Add(Motor("右侧震动", "GripR", _gpRumbleR, false));
+                var test = Item("测试震动", "GripR", "按 A 震一下", _gpRumbleL == null ? loading : null);
                 test.Lights = new[] { "GripL", "GripR" };
                 test.Press = () => _ = GpTestRumble();
                 right.Add(test);
+                var reset = Item("恢复原来的强度", "GripR", "按 A", _gpRumbleL == null ? loading : null);
+                reset.Lights = new[] { "GripL", "GripR" };
+                reset.Press = () => _ = GpWrite("restore_rumble");
+                right.Add(reset);
                 break;
             }
             case "mouse":
@@ -162,29 +172,37 @@ public sealed partial class WallStage
             }
             default:   // light
             {
+                // 照 MSI Mystic Light：效果（关闭 / 常亮 / 呼吸 / 幻彩 / 水波 / 模式指示）、颜色、亮度、速度（慢 / 中 / 快）
                 var l = _gpFw?["light"];
                 int effect = Math.Max(0, Array.IndexOf(GpLightEffects, Str(l?["effect"]) ?? "off"));
+                int color = GpLightColorIndex(l), bright = Int(l?["brightness"], -1), speed = Math.Clamp(Int(l?["speedLevel"], 1), 0, 2);
+                bool hasColor = effect is 1 or 2 or 4, hasSpeed = effect is 2 or 3 or 4;
+                void Write(int e, int c, int b, int sp) => _ = GpWrite("set_light", JsonValue.Create(GpLightEffects[e]), JsonValue.Create(GpLightHex(c)), JsonValue.Create(Math.Max(0, b)), JsonValue.Create(sp));
                 var e = Item("灯光效果", "LS", l == null ? "—" : GpLightEffectNames[effect], l == null ? fwMissing : null);
                 e.Lights = new[] { "LS", "RS" };
                 e.Choices = GpLightEffectNames;
                 e.Choice = effect;
-                e.SetChoice = i => _ = GpWrite("set_light", JsonValue.Create(GpLightEffects[i]), JsonValue.Create(GpLightHex(GpLightColorIndex(l))), JsonValue.Create(Int(l?["brightness"], 100)));
+                e.SetChoice = i => Write(i, color, bright < 0 ? 100 : bright, speed);
                 left.Add(e);
-                int color = GpLightColorIndex(l);
-                var c = Item("颜色", "RS", l == null ? "—" : GpLightColorNames[color], l == null ? fwMissing : null);
+                var sp = Item("速度", "LS", l == null ? "—" : hasSpeed ? GpLightSpeedNames[speed] : "这个效果没有速度", l == null ? fwMissing : hasSpeed ? null : "常亮、模式指示不分快慢");
+                sp.Lights = new[] { "LS", "RS" };
+                sp.Choices = GpLightSpeedNames;
+                sp.Choice = speed;
+                sp.SetChoice = i => Write(effect, color, bright, i);
+                left.Add(sp);
+                var c = Item("颜色", "RS", l == null ? "—" : hasColor ? GpLightColorNames[color] : "跟着效果走", l == null ? fwMissing : hasColor ? null : "幻彩、模式指示的颜色由效果决定");
                 c.Lights = new[] { "LS", "RS" };
                 c.Choices = GpLightColorNames;
                 c.Choice = color;
-                c.Swatches = GpLightColors;
-                c.SetChoice = i => _ = GpWrite("set_light", JsonValue.Create("monocolor"), JsonValue.Create(GpLightHex(i)), JsonValue.Create(Int(l?["brightness"], 100)));
+                if (hasColor) c.Swatches = GpLightColors;
+                c.SetChoice = i => Write(effect, i, bright, speed);
                 right.Add(c);
-                int bright = Int(l?["brightness"], -1);
                 var b = Item("亮度", "RS", bright < 0 ? "—" : $"{bright} %", bright < 0 ? fwMissing : null);
                 b.Lights = new[] { "LS", "RS" };
                 if (bright >= 0)
                 {
                     b.Number = bright; b.Min = 0; b.Max = 100; b.StepBy = 10; b.Format = v => $"{v} %";
-                    b.SetNumber = v => _ = GpWrite("set_light", JsonValue.Create(GpLightEffects[Math.Max(1, effect)]), JsonValue.Create(GpLightHex(color)), JsonValue.Create(v));
+                    b.SetNumber = v => Write(effect, color, v, speed);
                 }
                 right.Add(b);
                 break;
@@ -207,6 +225,7 @@ public sealed partial class WallStage
         _gpItems.AddRange(left);
         _gpItems.AddRange(right);
         if (_gpFocus >= _gpItems.Count) _gpFocus = 0;
+        GpUpdateLightPreview();
     }
 
     /// <summary>按键映射页的一个键：焦点在线稿上这个键时，说明画在它那一侧、和它同高。</summary>
@@ -311,40 +330,13 @@ public sealed partial class WallStage
                 }
                 break;
             case "rumble":
-            {
-                // 握把按强度深浅常亮；测试 / 调强度时从握把中心往外扩三圈波纹
-                float s = (_gpRumble ?? 0) / 100f;
-                if (focus == null && s > 0) { GpFill(ds, "GripL", 0.1f + 0.3f * s, accent); GpFill(ds, "GripR", 0.1f + 0.3f * s, accent); }
-                double age = GpRippleAge();
-                if (age < 900)
-                    foreach (var grip in new[] { "GripL", "GripR" })
-                    {
-                        var c = GpMap("front", GpKeys[grip].X, GpKeys[grip].Y);
-                        for (int i = 0; i < 3; i++)
-                        {
-                            double t = (age - i * 140) / 600;
-                            if (t is < 0 or > 1) continue;
-                            float radius = (float)(24 + t * 90) * (0.6f + 0.4f * Math.Max(s, 0.2f));
-                            ds.DrawCircle(c, radius, Gfx.WithAlpha(accent, (float)(0.75 * (1 - t))), 2f);
-                        }
-                    }
-                break;
-            }
-            case "light":
-            {
-                // 灯色预览：两个摇杆外圈一圈光环，颜色、亮度照当前设置（关灯就不画）
-                var l = _gpFw?["light"];
-                if (l == null || (Str(l["effect"]) ?? "off") == "off") break;
-                var col = GpLightColors[GpLightColorIndex(l)];
-                float a = Int(l["brightness"], 100) / 100f;
-                foreach (var key in new[] { "LS", "RS" })
+                // 没在调某一边时，两边握把按各自强度常亮（动效在 GamepadFx：抖动、握把发光、描边扩散）
+                if (focus == null || focus.Lights?.Length == 2)
                 {
-                    var c = GpMap("front", GpKeys[key].X, GpKeys[key].Y);
-                    ds.DrawCircle(c, GpKeys[key].W / 2 * GpS + 3, Gfx.WithAlpha(col, a), 3f);
-                    ds.DrawCircle(c, GpKeys[key].W / 2 * GpS + 7, Gfx.WithAlpha(col, a * 0.35f), 5f);
+                    if ((_gpRumbleL ?? 0) > 0) GpFill(ds, "GripL", 0.08f + 0.3f * (_gpRumbleL ?? 0) / 100f, accent);
+                    if ((_gpRumbleR ?? 0) > 0) GpFill(ds, "GripR", 0.08f + 0.3f * (_gpRumbleR ?? 0) / 100f, accent);
                 }
                 break;
-            }
             case "trigger":
                 // 行程刻度：扳机那块旁边两条短线标出起点、终点
                 foreach (var (side, region) in new[] { ("left", "TL"), ("right", "TR") })

@@ -54,6 +54,8 @@ public sealed unsafe class GamepadPoller : IDisposable
     public volatile bool Panning;
     /// <summary>有手柄连着（控制中心「手柄」卡的读数）。</summary>
     public bool Connected => _index >= 0;
+    /// <summary>左摇杆也当方向键用（默认）。手柄页关掉：那里要看摇杆的实时输入，转摇杆不能把焦点带跑。</summary>
+    public volatile bool StickNavigates = true;
 
     /// <summary>手柄此刻的原始状态（按键位、扳机 0–255、摇杆 ±32767），给手柄页的实时输入用；不在前台或没连着时是空的。</summary>
     public readonly record struct Snapshot(ushort Buttons, byte LT, byte RT, short LX, short LY, short RX, short RY);
@@ -134,10 +136,11 @@ public sealed unsafe class GamepadPoller : IDisposable
         double lx = Axis(g.ThumbLX), ly = -Axis(g.ThumbLY), rx = Axis(g.ThumbRX), ry = -Axis(g.ThumbRY);
         ushort b = g.Buttons;
         lock (_gate) _last = new Snapshot(b, g.LeftTrigger, g.RightTrigger, g.ThumbLX, g.ThumbLY, g.ThumbRX, g.ThumbRY);
-        Repeat(Direction.Up, (b & DpadUp) != 0 || ly < -StickDead, now);
-        Repeat(Direction.Down, (b & DpadDown) != 0 || ly > StickDead, now);
-        Repeat(Direction.Left, (b & DpadLeft) != 0 || lx < -StickDead, now);
-        Repeat(Direction.Right, (b & DpadRight) != 0 || lx > StickDead, now);
+        bool stick = StickNavigates;
+        Repeat(Direction.Up, (b & DpadUp) != 0 || stick && ly < -StickDead, now);
+        Repeat(Direction.Down, (b & DpadDown) != 0 || stick && ly > StickDead, now);
+        Repeat(Direction.Left, (b & DpadLeft) != 0 || stick && lx < -StickDead, now);
+        Repeat(Direction.Right, (b & DpadRight) != 0 || stick && lx > StickDead, now);
         bool Edge(ushort m) => (b & m) != 0 && (_prev & m) == 0;
         if (Edge(A)) Post(_stage.Activate);
         if (Edge(B)) Post(_stage.Back);
