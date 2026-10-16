@@ -211,6 +211,28 @@ public static class Bench
         Log.Info($"rec perf: {n} frames");
     }
 
+    /// <summary>手柄页：开 → 一路 ↓ 到底（看滚动和左栏描圈）→ 再回顶 → B。只挪焦点，不改设置。</summary>
+    private static async Task RecGamepadAsync(WallStage s)
+    {
+        await Task.Delay(1500);
+        var rec = new FrameRecorder();
+        if (!rec.Start(s.HostWindow)) return;
+        await Task.Delay(300);
+        long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+        async Task Step(int ms, Action a) { a(); await Task.Delay(ms); }
+        await Step(1500, s.ToggleControlCenter);
+        await Step(500, () => s.Move(Direction.Right));
+        await Step(700, () => s.Move(Direction.Right));
+        await Step(3000, s.Activate);
+        for (int i = 0; i < 16; i++) await Step(450, () => s.Move(Direction.Down));
+        await Step(800, () => { });
+        for (int i = 0; i < 16; i++) await Step(120, () => s.Move(Direction.Up));
+        await Step(1000, s.Back);
+        await Step(1200, s.Back);
+        int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "gamepad"), mark);
+        Log.Info($"rec gamepad: {n} frames");
+    }
+
     /// <summary>功耗模式来回切（智能 → 按电源 → 手动 → 回智能，假定开始时是智能）：看高度不跳、焦点跳过用不上的行；再一路 ↓ 到底看滚动。</summary>
     private static async Task RecPerfModesAsync(WallStage s)
     {
@@ -330,6 +352,7 @@ public static class Bench
                 case "recspring": await RecSpringAsync(s); break;
                 case "recperf": await RecPerfAsync(s); break;
                 case "recperfmodes": await RecPerfModesAsync(s); break;
+                case "recgamepad": await RecGamepadAsync(s); break;
                 case "perfsave": await PerfSaveTestAsync(s); break;
                 case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;

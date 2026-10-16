@@ -421,7 +421,8 @@ public sealed partial class WallStage
 
     // ---------------- 绘制 ----------------
 
-    private float PerfListHeight() => _perfRows.Sum(r => r.Section ? PerfSecH : PerfRowH);
+    private float PerfListHeight() => RowsHeight(_perfRows);
+    private static float RowsHeight(List<PerfRow> rows) => rows.Sum(r => r.Section ? PerfSecH : PerfRowH);
 
     private void PaintPerf()
     {
@@ -438,11 +439,11 @@ public sealed partial class WallStage
             _perfTitle.Offset = new Vector3(40 * k, 32 * k, 0);
         }
         // 右栏：整张列表画在一张面上，放进固定高度的裁剪框里，按焦点滚动
-        CcSet(_perfRight, CcDraw(PerfRightW, h, raster, ds => PaintPerfList(ds, h)));
+        CcSet(_perfRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _perfRows, _perfFocus)));
         _perfRight.Size = new Vector2(PerfRightW * k, h * k);
         _perfRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _perfRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
-        PerfScrollTo(h, vh);
+        RowScrollTo(_perfRight, _perfRows, _perfFocus, ref _perfScroll, ref _perfScrollY, h, vh, _perfOpen);
         CcSet(_perfLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintPerfLeft(ds, vh)));
         _perfLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _perfLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
@@ -452,26 +453,26 @@ public sealed partial class WallStage
     /// 焦点行（连上下各 PerfScrollPad）露在框里就不动，出框才滚到刚好露出来；分组里的第一行连分组标题一起露。
     /// 用弹簧滚（和控制中心滑条同一手感），连按时从当前位置接着滚，不跳。
     /// </summary>
-    private void PerfScrollTo(float listH, float viewH)
+    private void RowScrollTo(SpriteVisual list, List<PerfRow> rows, int focus, ref float scroll, ref float scrollY, float listH, float viewH, bool open)
     {
-        float max = Math.Max(0, listH - viewH), target = Math.Clamp(_perfScroll, 0, max);
-        if (_perfFocus >= 0 && _perfFocus < _perfRows.Count)
+        float max = Math.Max(0, listH - viewH), target = Math.Clamp(scroll, 0, max);
+        if (focus >= 0 && focus < rows.Count)
         {
             float top = 0;
-            for (int i = 0; i < _perfFocus; i++) top += _perfRows[i].Section ? PerfSecH : PerfRowH;
+            for (int i = 0; i < focus; i++) top += rows[i].Section ? PerfSecH : PerfRowH;
             float bottom = top + PerfRowH;
-            if (_perfFocus > 0 && _perfRows[_perfFocus - 1].Section) top -= PerfSecH;
+            if (focus > 0 && rows[focus - 1].Section) top -= PerfSecH;
             if (top - PerfScrollPad < target) target = top - PerfScrollPad;
             if (bottom + PerfScrollPad > target + viewH) target = bottom + PerfScrollPad - viewH;
             target = Math.Clamp(target, 0, max);
         }
         float y = -target * _ccK;
-        if (target == _perfScroll && y == _perfScrollY) return;   // 每秒重画一次：位置没变就别打断正在走的弹簧
-        bool moving = target != _perfScroll;
-        _perfScroll = target;
-        _perfScrollY = y;
-        if (!moving || Reduced || !_perfOpen) { _perfRight.StopAnimation("Offset.Y"); _perfRight.Offset = new Vector3(0, y, 0); return; }
-        _perfRight.StartAnimation("Offset.Y", G.SpringScalar(y, Spring.GridCenter));
+        if (target == scroll && y == scrollY) return;   // 每秒重画一次：位置没变就别打断正在走的弹簧
+        bool moving = target != scroll;
+        scroll = target;
+        scrollY = y;
+        if (!moving || Reduced || !open) { list.StopAnimation("Offset.Y"); list.Offset = new Vector3(0, y, 0); return; }
+        list.StartAnimation("Offset.Y", G.SpringScalar(y, Spring.GridCenter));
     }
 
     private static void PText(CanvasDrawingSession ds, string s, FontSpec f, float size, Color c, float x, float cy, float width, CanvasHorizontalAlignment al = CanvasHorizontalAlignment.Left)
@@ -487,15 +488,16 @@ public sealed partial class WallStage
         return (float)l.LayoutBounds.Width;
     }
 
-    private void PaintPerfList(CanvasDrawingSession ds, float h)
+    /// <summary>控制中心子页右栏的设置列表（性能、手柄共用）：分组标题、行号、焦点 ▸、几选一下划线、焦点数值 ‹ ›。</summary>
+    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus)
     {
         var ui = TextKit.Ui(400);
         var mono = new FontSpec("Cascadia Mono", 400);
         float y = 0, W = PerfRightW;
         int n = 0;
-        for (int i = 0; i < _perfRows.Count; i++)
+        for (int i = 0; i < rows.Count; i++)
         {
-            var r = _perfRows[i];
+            var r = rows[i];
             if (r.Section)
             {
                 PText(ds, r.Title, TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.42), 0, y + PerfSecH - 10, 400);
@@ -503,7 +505,7 @@ public sealed partial class WallStage
                 continue;
             }
             n++;
-            bool f = i == _perfFocus;
+            bool f = i == focus;
             float cy = y + PerfRowH / 2;
             float a = r.Disabled ? 0.32f : 1;
             if (f)

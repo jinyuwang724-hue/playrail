@@ -234,6 +234,7 @@ public sealed partial class WallStage
     {
         if (!_ccOpen || _cc == null) return;
         ClosePerf(instant: true);
+        CloseGamepad(instant: true);
         _ccOpen = false;
         int v = ++_ccVersion;
         _ccTimer?.Stop();
@@ -252,6 +253,7 @@ public sealed partial class WallStage
     {
         if (_cc == null) return;
         ClosePerf(instant: true);
+        CloseGamepad(instant: true);
         _cc.IsVisible = false;
         _cc.StopAnimation("Opacity");
         _cc.Opacity = 1;
@@ -273,6 +275,7 @@ public sealed partial class WallStage
     private void CcMove(Direction dir)
     {
         if (_perfOpen) { PerfMove(dir); return; }
+        if (_gpOpen) { GpMove(dir); return; }
         if (CcChromeMove(dir)) return;
         if (dir is not (Direction.Left or Direction.Right)) return;
         // 不再限制「200 ms 一步」：滚动是弹簧，连按就直接换终点接着滚（可打断）
@@ -292,6 +295,7 @@ public sealed partial class WallStage
     private void CcActivate()
     {
         if (_perfOpen) { PerfActivate(); return; }
+        if (_gpOpen) { GpActivate(); return; }
         if (CcChromeActivate()) return;
         var b = _ccBlocks[_ccFocus];
         switch (_ccFocus)
@@ -301,6 +305,9 @@ public sealed partial class WallStage
                 break;
             case 1:   // 性能：3:7 两栏的设置页，背景还是这层动态背景
                 OpenPerf();
+                break;
+            case 2:   // 手柄：同样的 3:7 两栏，左栏是 Claw 8 EX 线稿 + 实时输入
+                OpenGamepad();
                 break;
             case 5:   // 软件设置：竖条里的设置列表
                 CloseControlCenter();
@@ -317,7 +324,7 @@ public sealed partial class WallStage
     {
         MarkInput();
         if (MorphIntercept()) return;
-        if (_ccOpen && _perfOpen) return;
+        if (_ccOpen && (_perfOpen || _gpOpen)) return;
         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
         else Toast("游戏设置（原型里还没有）");
     }
@@ -336,7 +343,7 @@ public sealed partial class WallStage
     /// <summary>点卡：点到焦点卡 = A，点到别的卡 = 把它移到中间。</summary>
     private void CcClick(double sx, double sy)
     {
-        if (_perfOpen) return;
+        if (_perfOpen || _gpOpen) return;
         if (CcChromeClick(sx, sy)) return;
         float h = _ccH * _ccK;
         float top = CcTop;
@@ -1489,8 +1496,8 @@ public sealed partial class WallStage
 
         var pad = _ccBlocks[2];
         bool connected = _pad?.Connected ?? false;
-        pad.Second = "振动与按键";
-        pad.Summary = connected ? "手柄已连接" : "没有检测到手柄";
+        pad.Second = "按键、震动与摇杆";
+        pad.Summary = !connected ? "没有检测到手柄" : _gpRumble is int rumble ? $"震动 {rumble} %" : "手柄已连接";
         pad.Reading = connected ? "已连接" : "—"; pad.HasReading = true;
 
         var disp = _ccBlocks[3];
