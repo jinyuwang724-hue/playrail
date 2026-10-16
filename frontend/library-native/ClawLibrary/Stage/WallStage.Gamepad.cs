@@ -1,10 +1,10 @@
-// 控制中心 → 手柄：不分栏，Claw 8 EX 线稿放在正中，每个设置挂在它对应的键旁边（背景还是控制中心那层动态背景）。
+// 控制中心 → 手柄：左边一列轻量的分类（只有字：按键 / 摇杆 / 扳机 / 震动 / 特殊键 / 更多），右边那块是 Claw 8 EX 线稿，
+// 当前这一类的设置挂在对应的键旁边（背景还是控制中心那层动态背景）。
 // 线稿：MSI Center M 里 1T91 机型的正面 / 背面图（Assets/Pad）。按下的键实时点亮、摇杆推动时点跟着走；
 // 焦点所在的设置拉一根强调色细线连到键上、键描一圈；焦点到 M1 / M2 时线稿翻到背面。
-// 左边：左肩键、快速设置键、左摇杆、十字键、M1；右边：右肩键、Claw 键、A B X Y、右摇杆、M2；
-// 下面一排：震动强度、测试震动、导航震动、接管特殊键、手柄模式、灯光、陀螺仪。
-// 手柄：十字键在这些设置之间按方位移动；A 开关 / 测试，或进入调节（← → 改，A / B 完成）；B 回控制中心。
-// 现在真能改的：特殊键（工具箱后台的按键接管：接管开关、Claw 键 / 快速设置键动作、导航震动）和震动强度 / 测试；
+// 手柄：分类上 ↑ ↓ 换类（右边跟着换），→ 或 A 进到设置；设置之间十字键按方位移动，最左再按 ← 或 B 回分类；
+// A 开关 / 测试，或进入调节（← → 改，A / B 完成）；分类上按 B 回控制中心。
+// 现在真能改的：特殊键（工具箱后台的按键接管：接管开关、Claw 键 / 快速设置键动作）、导航震动、震动强度 / 测试；
 // 其余要先在后台做固件协议，先摆上、置灰写「之后」。
 using System.Numerics;
 using System.Text.Json.Nodes;
@@ -22,11 +22,13 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    // 线稿原图 700×310（MSI Center M 的 img_keymapping_1t91 / img_keymapping_back_1t91，深色版）；舞台上放大到 660 宽居中
+    // 线稿原图 700×310（MSI Center M 的 img_keymapping_1t91 / img_keymapping_back_1t91，深色版）；舞台上放大到 600 宽，放在分类右边那块的正中
     private const float GpArtW = 700, GpArtH = 310;
-    private const float GpX = 310, GpY = 228, GpW = 660, GpS = GpW / GpArtW, GpH = GpArtH * GpS;
-    // 两侧设置的内边（左边右对齐到 270，右边从 1010 起），下面一排的标签行
-    private const float GpLeftEdge = 270, GpRightEdge = 1010, GpBottomY = 640;
+    private const float GpX = 420, GpY = 262, GpW = 600, GpS = GpW / GpArtW, GpH = GpArtH * GpS;
+    // 两侧设置的内边（左边右对齐到 390，右边从 1050 起），下面一排的标签行
+    private const float GpLeftEdge = 390, GpRightEdge = 1050, GpBottomY = 586;
+    // 左边分类：x 40，第一项中线 y 150，行距 54
+    private const float GpSideX = 40, GpSideTop = 150, GpSideStep = 54;
     private static readonly string[] GpActions = { "MainMenu", "QuickAccess", "MagpieToggle", "None" };
     private static readonly string[] GpActionNames = { "主菜单", "快速访问", "超分开关", "不做事" };
 
@@ -45,6 +47,7 @@ public sealed partial class WallStage
         ["LB"] = new(false, 76, 20, 76, 14, 7, 0x0100), ["RB"] = new(false, 624, 20, 76, 14, 7, 0x0200),
         ["Dpad"] = new(false, 112, 129, 58, 58, 29), ["ABXY"] = new(false, 624, 78, 72, 72, 36),
         ["M1"] = new(true, 120, 136, 28, 46, 8), ["M2"] = new(true, 578, 136, 28, 46, 8),
+        ["GripL"] = new(false, 52, 248, 74, 86, 30), ["GripR"] = new(false, 648, 248, 74, 86, 30),
     };
 
     /// <summary>一个设置：Side -1 = 线稿左边（右对齐到 GpLeftEdge），1 = 右边，0 = 下面一排（X 是左边）。</summary>
@@ -71,6 +74,9 @@ public sealed partial class WallStage
     private ContainerVisual? _gp;
     private SpriteVisual _gpFrontArt = null!, _gpBackArt = null!, _gpBody = null!;
     private bool _gpOpen, _gpBusy, _gpEditing, _gpShowBack;
+    /// <summary>焦点在左边分类上（true）还是在这一类的设置上。</summary>
+    private bool _gpInSide = true;
+    private int _gpCat;
     private int _gpFocus, _gpVersion, _gpRumbleEdits;
     private float _gpArtK;
     private readonly List<GpItem> _gpItems = new();
@@ -90,8 +96,9 @@ public sealed partial class WallStage
         _gpOpen = true;
         _gpEditing = false;
         ++_gpVersion;
-        BuildGpItems();
+        _gpInSide = true;
         _gpFocus = 0;
+        BuildGpItems();
         _gpShowBack = false;
         _gpFrontArt.Opacity = 1;
         _gpBackArt.Opacity = 0;
@@ -231,80 +238,140 @@ public sealed partial class WallStage
 
     // ---------------- 设置项 ----------------
 
+    /// <summary>左边的分类（只有字）；每类只把自己的几项挂到线稿旁边。</summary>
+    private static readonly string[] GpCats = { "按键", "摇杆", "扳机", "震动", "特殊键", "更多" };
+
     private void BuildGpItems()
     {
         _gpItems.Clear();
         var s = _gpSettings;
         bool on = s != null && Bool(s["enabled"]);
         string loading = _gpError ?? "正在读取…";
-        GpItem Side(int side, int row, string title, string key, string value, string? why = null) => new()
+        const string Later = "之后做：要先在后台接上手柄固件";
+        var left = new List<GpItem>();
+        var right = new List<GpItem>();
+        var bottom = new List<GpItem>();
+        GpItem Item(string title, string key, string value, string? why = null) => new()
         {
-            Side = side, X = side < 0 ? GpLeftEdge : GpRightEdge, Y = 196 + row * 74, Title = title, Key = key,
-            Value = value, Disabled = why != null, Why = why,
+            Title = title, Key = key, Value = value, Disabled = why != null, Why = why,
         };
-        GpItem KeyAction(int side, int row, string title, string key, string field)
+        GpItem KeyAction(string title, string key, string field)
         {
-            if (s == null) return Side(side, row, title, key, loading, loading);
+            if (s == null) return Item(title, key, loading, loading);
             int idx = Math.Max(0, Array.IndexOf(GpActions, Str(s[field]) ?? "None"));
-            var it = Side(side, row, title, key, on ? GpActionNames[idx] : "未接管", on ? null : "先在下面打开「接管特殊键」");
+            var it = Item(title, key, on ? GpActionNames[idx] : "未接管", on ? null : "先打开下面的「接管」");
             it.Choices = GpActionNames;
             it.Choice = idx;
             it.SetChoice = i => { s[field] = GpActions[i]; _ = GpSaveSettings(); };
             return it;
         }
-        const string Later = "之后做：要先在后台接上手柄固件";
-
-        _gpItems.Add(Side(-1, 0, "左肩键  LB · LT", "LB", "原键位", Later));
-        _gpItems.Add(KeyAction(-1, 1, "快速设置键", "QS", "qamAction"));
-        _gpItems.Add(Side(-1, 2, "左摇杆", "LS", "死区 · 之后", Later));
-        _gpItems.Add(Side(-1, 3, "十字键", "Dpad", "原键位", Later));
-        _gpItems.Add(Side(-1, 4, "M1 背键", "M1", "未映射 · 之后", Later));
-        _gpItems.Add(Side(1, 0, "右肩键  RB · RT", "RB", "原键位", Later));
-        _gpItems.Add(KeyAction(1, 1, "Claw 键", "Claw", "msiAction"));
-        _gpItems.Add(Side(1, 2, "A  B  X  Y", "ABXY", "原键位", Later));
-        _gpItems.Add(Side(1, 3, "右摇杆", "RS", "死区 · 之后", Later));
-        _gpItems.Add(Side(1, 4, "M2 背键", "M2", "未映射 · 之后", Later));
-
-        int col = 0;
-        GpItem Bottom(string title, string value, string? why = null) => new()
+        GpItem Toggle(string title, string key, string field, string? why = null)
         {
-            Side = 0, X = 40 + col++ * 171, Y = GpBottomY, Title = title, Value = value, Disabled = why != null, Why = why,
-        };
-        var rumble = Bottom("震动强度", _gpRumble is int r ? (r == 0 ? "关" : $"{r} %") : loading, _gpRumble == null ? loading : null);
-        if (_gpRumble is int rv)
-        {
-            rumble.Number = rv; rumble.Min = 0; rumble.Max = 100; rumble.StepBy = 5;
-            rumble.Format = v => v == 0 ? "关" : $"{v} %";
-            rumble.SetNumber = GpRumbleChanged;
+            if (s == null) return Item(title, key, loading, loading);
+            bool v = Bool(s[field]);
+            var it = Item(title, key, v ? "开" : "关", why);
+            it.Press = () => { s[field] = !v; BuildGpItems(); PaintGpBody(); _ = GpSaveSettings(); };
+            return it;
         }
-        _gpItems.Add(rumble);
-        var test = Bottom("测试震动", "按 A", _gpRumble == null ? loading : null);
-        test.Press = () => _ = GpTestRumble();
-        _gpItems.Add(test);
-        var haptics = Bottom("导航震动", s == null ? loading : Bool(s["hapticsEnabled"]) ? "开" : "关", s == null ? loading : null);
-        haptics.Press = () => { if (s == null) return; s["hapticsEnabled"] = !Bool(s["hapticsEnabled"]); BuildGpItems(); PaintGpBody(); _ = GpSaveSettings(); };
-        _gpItems.Add(haptics);
-        var takeover = Bottom("接管特殊键", s == null ? loading : on ? "开" : "关", s == null ? loading : null);
-        takeover.Press = () => { if (s == null) return; s["enabled"] = !on; BuildGpItems(); PaintGpBody(); _ = GpSaveSettings(); };
-        _gpItems.Add(takeover);
-        _gpItems.Add(Bottom("手柄模式", "之后", Later));
-        _gpItems.Add(Bottom("灯光", "之后", Later));
-        _gpItems.Add(Bottom("陀螺仪", "之后", Later));
+
+        switch (GpCats[_gpCat])
+        {
+            case "按键":
+                left.Add(Item("左肩键  LB · LT", "LB", "原键位", Later));
+                left.Add(Item("十字键", "Dpad", "原键位", Later));
+                left.Add(Item("M1 背键", "M1", "未映射", Later));
+                right.Add(Item("右肩键  RB · RT", "RB", "原键位", Later));
+                right.Add(Item("A  B  X  Y", "ABXY", "原键位", Later));
+                right.Add(Item("M2 背键", "M2", "未映射", Later));
+                break;
+            case "摇杆":
+                left.Add(Item("左摇杆死区", "LS", "之后", Later));
+                left.Add(Item("左摇杆外圈", "LS", "之后", Later));
+                right.Add(Item("右摇杆死区", "RS", "之后", Later));
+                right.Add(Item("右摇杆外圈", "RS", "之后", Later));
+                bottom.Add(Item("交换左右摇杆", "", "之后", Later));
+                break;
+            case "扳机":
+                left.Add(Item("左扳机行程", "LB", "之后", Later));
+                right.Add(Item("右扳机行程", "RB", "之后", Later));
+                bottom.Add(Item("左右同步", "", "之后", Later));
+                break;
+            case "震动":
+            {
+                var rumble = Item("震动强度", "GripL", _gpRumble is int r ? (r == 0 ? "关" : $"{r} %") : loading, _gpRumble == null ? loading : null);
+                if (_gpRumble is int rv)
+                {
+                    rumble.Number = rv; rumble.Min = 0; rumble.Max = 100; rumble.StepBy = 5;
+                    rumble.Format = v => v == 0 ? "关" : $"{v} %";
+                    rumble.SetNumber = GpRumbleChanged;
+                }
+                left.Add(rumble);
+                var test = Item("测试震动", "GripR", "按 A", _gpRumble == null ? loading : null);
+                test.Press = () => _ = GpTestRumble();
+                right.Add(test);
+                bottom.Add(Toggle("导航震动", "", "hapticsEnabled"));
+                break;
+            }
+            case "特殊键":
+                left.Add(KeyAction("快速设置键", "QS", "qamAction"));
+                right.Add(KeyAction("Claw 键", "Claw", "msiAction"));
+                bottom.Add(Toggle("接管（Steam 大屏幕里）", "", "enabled"));
+                break;
+            default:
+                left.Add(Item("手柄模式", "", "手柄 · 之后", Later));
+                right.Add(Item("灯光", "RS", "之后", Later));
+                bottom.Add(Item("陀螺仪", "", "之后", Later));
+                break;
+        }
+
+        // 两侧按线稿竖向居中排开，下面一排在线稿下方居中
+        float mid = GpY + GpH / 2;
+        void Column(List<GpItem> items, int side)
+        {
+            for (int i = 0; i < items.Count; i++)
+            {
+                items[i].Side = side;
+                items[i].X = side < 0 ? GpLeftEdge : GpRightEdge;
+                items[i].Y = mid - 13 + (i - (items.Count - 1) / 2f) * 84;
+            }
+        }
+        Column(left, -1);
+        Column(right, 1);
+        for (int i = 0; i < bottom.Count; i++)
+        {
+            bottom[i].Side = 0;
+            bottom[i].X = GpX + GpW / 2 - 60 + (i - (bottom.Count - 1) / 2f) * 200;
+            bottom[i].Y = GpBottomY;
+        }
+        _gpItems.AddRange(left);
+        _gpItems.AddRange(right);
+        _gpItems.AddRange(bottom);
         if (_gpFocus >= _gpItems.Count) _gpFocus = 0;
     }
 
     /// <summary>设置项的中心（设计 px），按方位找下一个焦点用。</summary>
     private static Vector2 GpCenter(GpItem it) => it.Side switch
     {
-        < 0 => new Vector2(it.X - 120, it.Y + 13),
-        > 0 => new Vector2(it.X + 120, it.Y + 13),
-        _ => new Vector2(it.X + 70, it.Y + 13),
+        < 0 => new Vector2(it.X - 80, it.Y + 13),
+        > 0 => new Vector2(it.X + 80, it.Y + 13),
+        _ => new Vector2(it.X + 60, it.Y + 13),
     };
 
     // ---------------- 输入 ----------------
 
     private void GpMove(Direction dir)
     {
+        if (_gpInSide)
+        {
+            if (dir is Direction.Up or Direction.Down)
+            {
+                int c = Math.Clamp(_gpCat + (dir == Direction.Up ? -1 : 1), 0, GpCats.Length - 1);
+                if (c == _gpCat) return;
+                GpSetCat(c);
+            }
+            else if (dir == Direction.Right) GpEnterContent();
+            return;
+        }
         if (_gpFocus < 0 || _gpFocus >= _gpItems.Count) return;
         var cur = _gpItems[_gpFocus];
         if (_gpEditing)
@@ -327,29 +394,60 @@ public sealed partial class WallStage
             PaintGpBody();
             return;
         }
-        // 按方位：前方 45° 扇形里最近的（横向偏离算两倍）；扇形里没有就放宽到整个半平面
-        var c = GpCenter(cur);
+        // 按方位：前方 45° 扇形里最近的（横向偏离算两倍）；扇形里没有就放宽到整个半平面；往左再没有 = 回到分类
+        var c0 = GpCenter(cur);
         int best = -1;
         double bestScore = double.MaxValue;
         for (int pass = 0; pass < 2 && best < 0; pass++)
             for (int i = 0; i < _gpItems.Count; i++)
             {
                 if (i == _gpFocus) continue;
-                var v = GpCenter(_gpItems[i]) - c;
+                var v = GpCenter(_gpItems[i]) - c0;
                 float along = dir switch { Direction.Right => v.X, Direction.Left => -v.X, Direction.Down => v.Y, _ => -v.Y };
                 float across = dir is Direction.Left or Direction.Right ? Math.Abs(v.Y) : Math.Abs(v.X);
                 if (along <= 4 || (pass == 0 && across > along)) continue;
                 double score = along + across * 2;
                 if (score < bestScore) { bestScore = score; best = i; }
             }
-        if (best < 0) return;
+        if (best < 0)
+        {
+            if (dir == Direction.Left) GpLeaveContent();
+            return;
+        }
         _gpFocus = best;
         GpFlipArt(_gpItems[best].Back);
         PaintGpBody();
     }
 
+    private void GpSetCat(int cat)
+    {
+        _gpCat = cat;
+        _gpFocus = 0;
+        BuildGpItems();
+        GpFlipArt(false);
+        PaintGpBody();
+    }
+
+    private void GpEnterContent()
+    {
+        if (_gpItems.Count == 0) return;
+        _gpInSide = false;
+        _gpFocus = 0;
+        GpFlipArt(_gpItems[0].Back);
+        PaintGpBody();
+    }
+
+    private void GpLeaveContent()
+    {
+        _gpInSide = true;
+        _gpEditing = false;
+        GpFlipArt(false);
+        PaintGpBody();
+    }
+
     private void GpActivate()
     {
+        if (_gpInSide) { GpEnterContent(); return; }
         if (_gpFocus < 0 || _gpFocus >= _gpItems.Count) return;
         var it = _gpItems[_gpFocus];
         if (_gpEditing) { _gpEditing = false; PaintGpBody(); return; }
@@ -358,9 +456,11 @@ public sealed partial class WallStage
         if (it.Adjustable) { _gpEditing = true; PaintGpBody(); }
     }
 
+    /// <summary>B：调节中 → 退出调节；在设置上 → 回到分类；在分类上 → 回控制中心。</summary>
     private void GpBack()
     {
         if (_gpEditing) { _gpEditing = false; PaintGpBody(); return; }
+        if (!_gpInSide) { GpLeaveContent(); return; }
         CloseGamepad();
     }
 
@@ -393,7 +493,7 @@ public sealed partial class WallStage
         PaintGpBody();
     }
 
-    /// <summary>整页一层（1280×800 设计 px）：标题、所有设置、焦点连线、线稿上的高亮。</summary>
+    /// <summary>整页一层（1280×800 设计 px）：标题、分类、这一类的设置、焦点连线、线稿上的高亮。</summary>
     private void PaintGpBody()
     {
         if (_gp == null) return;
@@ -412,11 +512,28 @@ public sealed partial class WallStage
         var muted = Gfx.WithAlpha(CcText, 0.5);
         bool connected = _pad?.Connected ?? false;
         var snap = _gpShown;
-        var focus = _gpFocus >= 0 && _gpFocus < _gpItems.Count ? _gpItems[_gpFocus] : null;
+        var focus = !_gpInSide && _gpFocus >= 0 && _gpFocus < _gpItems.Count ? _gpItems[_gpFocus] : null;
 
         // 标题：和控制中心的「控制中心」同一个位置、同一个字；下面一行小字是机型和连接状态
         PText(ds, "手柄", TextKit.Ui(700), 24, CcText, 40, 48, 300);
         PText(ds, connected ? "Claw 8 EX · 手柄已连接" : "Claw 8 EX · 没有检测到手柄", ui, 13, muted, 40, 82, 400);
+
+        // 分类：只有字，当前类白字；焦点在分类上时前面加 ▸
+        for (int i = 0; i < GpCats.Length; i++)
+        {
+            float cy = GpSideTop + i * GpSideStep;
+            bool cur = i == _gpCat;
+            var col = cur ? (_gpInSide ? CcText : Gfx.WithAlpha(CcText, 0.92f)) : Gfx.WithAlpha(CcText, 0.42f);
+            PText(ds, GpCats[i], cur ? TextKit.Ui(600) : ui, 18, col, GpSideX + 18, cy, 200);
+            if (cur && _gpInSide)
+            {
+                using var pb = new CanvasPathBuilder(ds);
+                pb.BeginFigure(GpSideX, cy - 6); pb.AddLine(GpSideX + 8, cy); pb.AddLine(GpSideX, cy + 6); pb.EndFigure(CanvasFigureLoop.Closed);
+                using var g = CanvasGeometry.CreatePath(pb);
+                ds.FillGeometry(g, CcText);
+            }
+        }
+
         if (_gpFront == null) PText(ds, "正在载入线稿…", ui, 13, muted, GpX + GpW / 2 - 40, GpY + GpH / 2, 300);
 
         // 线稿上的实时输入：按下的键填强调色，扳机按下按深浅填肩键，摇杆推动时一个点跟着走
@@ -439,8 +556,8 @@ public sealed partial class WallStage
                 ds.FillCircle(p, 4.5f, accent);
             }
 
-        // 焦点：强调色细线从设置连到键上，键描一圈
-        if (focus != null && focus.Key.Length > 0 && GpKeys.TryGetValue(focus.Key, out var fk) && fk.Back == _gpShowBack)
+        // 焦点：强调色细线从设置连到键上，键描一圈（下面一排的设置不连线）
+        if (focus != null && focus.Side != 0 && focus.Key.Length > 0 && GpKeys.TryGetValue(focus.Key, out var fk) && fk.Back == _gpShowBack)
         {
             var ring = GpRect(fk, 4);
             ds.DrawRoundedRectangle(ring, fk.R * GpS + 4, fk.R * GpS + 4, accent, 2f);
