@@ -1,9 +1,9 @@
 // 控制中心 → 手柄：左边一列轻量的分类（只有字，竖向居中），右边那块是 Claw 8 EX 线稿，这一类的设置挂在线稿两侧。
 // 线稿（Assets/Pad，来自 MSI Center M 里 1T91 机型的图）：正面高清 900×412、背面 700×310、左右扳机侧视 420×414；
 // 线稿后面压一圈柔和的暗光把视线收到中间。焦点所在的设置拉一根细线到它管的键上，那块区域整块染强调色（矢量轮廓，抗锯齿）。
-// 按键映射页：线稿缩小移到上面，正下方按组分几排列出每个键的映射，直接在表里选、A 打开「映射到」（WallStage.GamepadPicker.cs）。
+// 按键映射页：线稿照常大小，每个键映射到什么紧凑地列在线稿两侧（按手柄上的位置从上到下），A 打开「映射到」（WallStage.GamepadPicker.cs）。
 // 实时输入只点亮这一页管的东西：映射页亮按键、摇杆页亮摇杆、扳机页亮扳机；扳机只在侧视图上亮（正面肩部那块只归肩键）。
-// 手柄 / 桌面模式：照 MSI Center M —— 固件自带「长按 ≡ 两秒」互切，模式变了弹提示；这里 Y 也能切（按两下确认）。
+// 手柄 / 桌面模式：游戏库在前台时一律是手柄模式（桌面模式下这里没法操作），离开前台再切回桌面模式；切模式的入口之后放进 Game Bar 小组件。
 // 软件输入层不露面：映射用到它时后台自己开、布局清空时自己关（见 docs/gamepad-input-layer.md）。
 // 各分类的内容在 WallStage.GamepadPages.cs。读：工具箱后台 get_gamepad_state、get_state、get_rumble_state、get_input_layout。
 using System.Numerics;
@@ -35,8 +35,8 @@ public sealed partial class WallStage
     private const float GpSideX = 40, GpCatH = 44, GpGroupH = 34;
     /// <summary>摇杆高亮的大圆盘半径（正面原图像素，MSI 的摇杆页也是罩一圈）。</summary>
     private const float GpStickDisc = 56;
-    /// <summary>按键映射页：线稿缩到 0.68、中心上移到 y 238，下面 412… 留给映射表（每组一列，列宽 168、行距 62）。</summary>
-    private const float GpMapArtS = 0.68f, GpMapArtCy = 238, GpMapTop = 412, GpMapColW = 168, GpMapRowStep = 62;
+    /// <summary>按键映射页两侧的行：行距 46（小字键名 + 值），值最宽 128。</summary>
+    private const float GpMapRowStep = 46, GpMapValueW = 128;
 
     /// <summary>线稿上一个键：所在的面（front / back / tl / tr）、中心、宽高、圆角（原图像素）；Region = 填哪块矢量区域（没有就按形状）；XInput 位用于实时点亮。</summary>
     private readonly record struct GpKey(string Face, float X, float Y, float W, float H, float R, string? Region = null, ushort XInput = 0);
@@ -81,7 +81,7 @@ public sealed partial class WallStage
 
     /// <summary>
     /// 一个设置。Side -1 = 线稿左边（右对齐到 GpLeftEdge），1 = 右边；Row 是那一侧的第几行（两侧各自竖向居中）。
-    /// Cell = 按键映射表里的一格（X, Y 是左上角，左对齐，宽 GpMapColW）。
+    /// Side 0 = 线稿正下方居中。Compact = 按键映射页的紧凑行（小一号、行距小）；Stock = 值是原样（没改过），字淡一些。
     /// </summary>
     private sealed class GpItem
     {
@@ -90,7 +90,7 @@ public sealed partial class WallStage
         public float X, Y;
         public string Key = "";
         public string[]? Lights;
-        public bool Cell, Disabled;
+        public bool Compact, Stock, Disabled;
         public string? Why;
         public string[]? Choices;
         public int Choice;
@@ -104,10 +104,9 @@ public sealed partial class WallStage
     }
 
     private ContainerVisual? _gp;
-    /// <summary>_gpArtPage 管这一页线稿的位置和大小（映射页缩小上移），里面的 _gpArtLayer 震动时抖；_gpHi 是线稿上的高亮，跟着线稿一起动。</summary>
+    /// <summary>_gpArtPage 是线稿整层（映射选择打开时隐去），里面的 _gpArtLayer 震动时抖；_gpHi 是线稿上的高亮，跟着线稿一起抖。</summary>
     private ContainerVisual _gpArtPage = null!;
     private SpriteVisual _gpSpot = null!, _gpBody = null!, _gpHi = null!;
-    private float _gpPoseS = 1;
     private readonly Dictionary<string, SpriteVisual> _gpArt = new();
     private readonly Dictionary<string, CanvasBitmap> _gpBitmaps = new();
     private readonly Dictionary<string, CanvasGeometry> _gpRegions = new();
@@ -121,10 +120,10 @@ public sealed partial class WallStage
     /// <summary>软件输入层：全局布局（get_input_layout 的 layout）和开关 / 状态（get_input_layer_state）。后台没有输入层时都是 null。</summary>
     private JsonObject? _gpLayout;
     private JsonNode? _gpLayer;
-    /// <summary>上次读到的固件模式（变了就提示）；Y 切模式要在 3 秒内按第二下确认。</summary>
+    /// <summary>上次读到的固件模式（变了就提示）。_gpDesktopHeld = 手柄原本在桌面模式、因为游戏库在前台先切成了手柄模式，离开前台要切回去。</summary>
     private string? _gpLastMode;
-    private long _gpModeArm;
-    private int _gpPollTicks;
+    private bool _gpDesktopHeld;
+    private int _gpPollTicks, _gpHoldVersion;
     /// <summary>左右马达的震动强度（0–100），读自 get_rumble_state 的 current。</summary>
     private int? _gpRumbleL, _gpRumbleR;
     private string? _gpError, _gpFwError;
@@ -145,7 +144,6 @@ public sealed partial class WallStage
         _gpFocus = 0;
         BuildGpItems();
         GpShowFaces(GpPageFaces(), instant: true);
-        GpApplyArtPose(instant: true);
         _gpShown = _pad?.Last ?? default;
         PaintGp();
         foreach (var vis in CcPageParts()) vis.StartAnimation("Opacity", ToScalar(0, 160, EaseOutCss));
@@ -289,12 +287,11 @@ public sealed partial class WallStage
                 var fw = await _agent.Call("get_gamepad_state");
                 _gpFw = Bool(fw?["available"]) ? fw : null;
                 _gpFwError = _gpFw == null ? Str(fw?["error"]) ?? "读不到手柄固件" : null;
-                // 模式变了（长按 ≡、或者这里 Y 切的）：提示一句，像 MSI 的模式 OSD
+                // 游戏库在前台时不让桌面模式生效（比如从 Game Bar 切过来）：先切回手柄模式，离开前台再切回去
                 if (Str(_gpFw?["mode"]) is string mode)
                 {
-                    if (_gpLastMode != null && mode != _gpLastMode && _gpOpen)
-                        Toast(mode == "desktop" ? "已切到桌面模式：手柄现在是键鼠 · 长按 ≡ 两秒切回" : "已切到手柄模式");
                     _gpLastMode = mode;
+                    if (mode == "desktop" && _windowActive) _ = GpHoldGamepadMode();
                 }
             }
             catch (Exception ex) { _gpFw = null; _gpFwError = ex.Message.Contains("不支持") ? "后台还没有固件读取" : ex.Message; }
@@ -371,24 +368,60 @@ public sealed partial class WallStage
         });
     }
 
-    /// <summary>
-    /// Y：手柄 / 桌面模式互切。桌面模式下手柄变成键鼠、这里就收不到手柄键了，所以要 3 秒内按第二下确认；切回靠长按 ≡ 两秒（固件自带）。
-    /// </summary>
-    private void GpToggleMode()
+    // ---------------- 游戏库里不让桌面模式生效 ----------------
+
+    /// <summary>窗口激活 / 失去激活（WallStage.Rail 里的 Activated 调）。</summary>
+    private void GpOnWindowActive(bool active)
     {
-        if (_gpPicker != null || _gpEditing) return;
-        string? mode = Str(_gpFw?["mode"]);
-        if (mode == null) { Toast(_gpFwError ?? "还没读到手柄模式"); return; }
-        string to = mode == "desktop" ? "xinput" : "desktop";
-        long now = Environment.TickCount64;
-        if (now - _gpModeArm > 3000)
+        int v = ++_gpHoldVersion;
+        if (active) { _ = GpCheckDesktopMode(); return; }
+        if (_gpDesktopHeld) _ = GpReleaseDesktopMode(v);
+    }
+
+    /// <summary>激活时读一次手柄模式：桌面模式就先切成手柄模式。</summary>
+    private async Task GpCheckDesktopMode()
+    {
+        try
         {
-            _gpModeArm = now;
-            Toast(to == "desktop" ? "再按一次 Y 切到桌面模式（手柄变成键鼠，长按 ≡ 两秒切回）" : "再按一次 Y 切回手柄模式");
-            return;
+            _agent ??= new AgentClient();
+            var fw = await _agent.Call("get_gamepad_state");
+            if (Str(fw?["mode"]) == "desktop" && _windowActive) await GpHoldGamepadMode();
         }
-        _gpModeArm = 0;
-        _ = GpWrite("set_gamepad_mode", JsonValue.Create(to));
+        catch (Exception ex) { Log.Warn($"gamepad mode check: {ex.Message}"); }
+    }
+
+    private async Task GpHoldGamepadMode()
+    {
+        if (_gpDesktopHeld) return;
+        _gpDesktopHeld = true;
+        Log.Info("gamepad: desktop mode held as gamepad mode while the library is in front");
+        try { await _agent!.Call("set_gamepad_mode", JsonValue.Create("xinput")); }
+        catch (Exception ex) { _gpDesktopHeld = false; Log.Warn($"gamepad hold: {ex.Message}"); }
+        if (_gpOpen) _ = GpRefresh();
+    }
+
+    /// <summary>
+    /// 离开前台 1.5 秒后还没回来就切回桌面模式；前台是 Game Bar（或我们的小组件）时先等着 —— 那里要用手柄操作，回到别处再切。
+    /// </summary>
+    private async Task GpReleaseDesktopMode(int version)
+    {
+        await Task.Delay(1500);
+        while (version == _gpHoldVersion && !_windowActive && SystemInfo.ForegroundProcessName() is string fg
+               && (fg.StartsWith("GameBar", StringComparison.OrdinalIgnoreCase) || fg.StartsWith("ClawWidget", StringComparison.OrdinalIgnoreCase)))
+            await Task.Delay(1000);
+        if (version != _gpHoldVersion || _windowActive || !_gpDesktopHeld) return;
+        _gpDesktopHeld = false;
+        Log.Info("gamepad: library left the foreground, back to desktop mode");
+        try { await _agent!.Call("set_gamepad_mode", JsonValue.Create("desktop")); }
+        catch (Exception ex) { Log.Warn($"gamepad release: {ex.Message}"); }
+    }
+
+    /// <summary>手柄页里的 X / Y：震动页 X 测试震动、Y 恢复原来的强度；别的页不做事。</summary>
+    private void GpPadButton(bool isY)
+    {
+        if (_gpPicker != null || _gpEditing || GpCatId != "rumble") return;
+        if (isY) _ = GpWrite("restore_rumble");
+        else _ = GpTestRumble();
     }
 
     /// <summary>
@@ -441,30 +474,6 @@ public sealed partial class WallStage
 
     private bool GpIsMapPage => GpCatId is "gpmap" or "dkmap";
 
-    /// <summary>线稿的位置：映射页缩小、上移（下面放映射表），其余页原样；换页时 240 ms 过去，高亮在同一层里跟着走。</summary>
-    private void GpApplyArtPose(bool instant = false)
-    {
-        if (_gp == null) return;
-        float s = GpIsMapPage ? GpMapArtS : 1, dy = GpIsMapPage ? GpMapArtCy - GpCy : 0, k = _ccK;
-        _gpArtPage.CenterPoint = new Vector3(GpCx * k, GpCy * k, 0);
-        var scale = new Vector3(s, s, 1);
-        var offset = new Vector3(0, dy * k, 0);
-        if (instant || Reduced || _gpPoseS == s)
-        {
-            _gpArtPage.StopAnimation("Scale"); _gpArtPage.StopAnimation("Offset");
-            _gpArtPage.Scale = scale; _gpArtPage.Offset = offset;
-        }
-        else
-        {
-            var ease = G.Ease(EaseOutCss);
-            var sa = G.C.CreateVector3KeyFrameAnimation(); sa.InsertKeyFrame(1, scale, ease); sa.Duration = Gfx.Ms(240);
-            var oa = G.C.CreateVector3KeyFrameAnimation(); oa.InsertKeyFrame(1, offset, ease); oa.Duration = Gfx.Ms(240);
-            _gpArtPage.StartAnimation("Scale", sa);
-            _gpArtPage.StartAnimation("Offset", oa);
-        }
-        _gpPoseS = s;
-    }
-
     /// <summary>换线稿：要显示的面淡入、其余淡出（180 ms）。</summary>
     private void GpShowFaces(HashSet<string> faces, bool instant = false)
     {
@@ -494,7 +503,6 @@ public sealed partial class WallStage
                 _gpFocus = 0;
                 BuildGpItems();
                 GpShowFaces(GpPageFaces());
-                GpApplyArtPose();
                 PaintGpBody();
             }
             else if (dir == Direction.Right) GpEnterContent();
@@ -547,9 +555,9 @@ public sealed partial class WallStage
         PaintGpBody();
     }
 
-    /// <summary>设置项的中心（设计 px），按方位找下一个焦点用：映射表的格是格子中间，其余是说明文字那块。</summary>
+    /// <summary>设置项的中心（设计 px），按方位找下一个焦点用：说明文字那块。</summary>
     private static Vector2 GpCenter(GpItem it) =>
-        it.Cell ? new Vector2(it.X + GpMapColW / 2, it.Y + 12) : new Vector2(it.Side < 0 ? it.X - 80 : it.X + 80, it.Y + 13);
+        new(it.Side < 0 ? it.X - 80 : it.Side > 0 ? it.X + 80 : it.X, it.Y + (it.Compact ? 10 : 13));
 
     private void GpEnterContent()
     {
@@ -611,7 +619,6 @@ public sealed partial class WallStage
             }));
             _gpSpot.Size = new Vector2(sw * k, sh * k);
             _gpSpot.Offset = new Vector3((GpCx - sw / 2) * k, (GpCy - sh / 2) * k, 0);
-            GpApplyArtPose(instant: true);
             if (_gpArtLoaded)
             {
                 _gpArtK = k;
@@ -664,47 +671,68 @@ public sealed partial class WallStage
         var muted = Gfx.WithAlpha(CcText, 0.5);
         bool connected = _pad?.Connected ?? false;
 
-        // 标题：和控制中心的「控制中心」同一个位置、同一个字；下面一行小字是机型、连接状态、当前模式和怎么切
+        // 标题：和控制中心的「控制中心」同一个位置、同一个字；下面一行小字是机型、连接状态和模式
         PText(ds, "手柄", TextKit.Ui(700), 24, CcText, 40, 48, 300);
-        string mode = Str(_gpFw?["mode"]) switch { "desktop" => "桌面模式", "xinput" => "手柄模式", "dinput" => "DInput 模式", _ => "" };
-        string sub = !connected ? "Claw 8 EX · 没有检测到手柄"
-            : $"Claw 8 EX · 已连接{(mode.Length > 0 ? $" · {mode}  ·  Y 切换（或长按 ≡ 两秒）" : "")}";
+        string mode = _gpDesktopHeld ? "桌面模式（游戏库里先用手柄模式）"
+            : Str(_gpFw?["mode"]) switch { "desktop" => "桌面模式", "xinput" => "手柄模式", "dinput" => "DInput 模式", _ => "" };
+        string sub = !connected ? "Claw 8 EX · 没有检测到手柄" : $"Claw 8 EX · 已连接{(mode.Length > 0 ? " · " + mode : "")}";
         PText(ds, sub, ui, 13, muted, 40, 82, 900);
 
         PaintGpSidebar(ds);
         if (_gpPicker != null) { PaintGpPicker(ds, accent); return; }
-        if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpIsMapPage ? GpMapArtCy : GpCy, 300);
+        if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpCy, 300);
 
         var focus = GpFocusItem;
-        // 两侧的设置：焦点那项拉一根细线到它管的键（映射页没有两侧设置，焦点直接在表里）
-        if (focus is { Cell: false } && focus.Key.Length > 0 && GpKeys.TryGetValue(focus.Key, out var fk) && _gpFacesShown.Contains(fk.Face))
+        // 两侧的设置：焦点那项拉一根细线到它管的键（摇杆映射那种没有 Key 的，连到它点亮的那块）
+        string target = focus == null || focus.Side == 0 ? "" : focus.Key.Length > 0 ? focus.Key : focus.Lights?.FirstOrDefault() ?? "";
+        if (focus != null && target.Length > 0 && GpKeys.TryGetValue(target, out var fk) && _gpFacesShown.Contains(fk.Face))
         {
             var r = GpKeyRect(fk);
             var c = GpMap(fk.Face, fk.X, fk.Y);
             bool left = focus.Side < 0;
-            float half = fk.Region == null && focus.Key is "LS" or "RS" ? GpStickDisc * GpS : (float)r.Width / 2;
-            var target = new Vector2(c.X + (left ? -half : half), c.Y);
-            var start = new Vector2(left ? GpLeftEdge + 14 : GpRightEdge - 14, focus.Y + 13);
+            float half = fk.Region == null && target is "LS" or "RS" ? GpStickDisc * GpS : (float)r.Width / 2;
+            var end = new Vector2(c.X + (left ? -half : half), c.Y);
+            var start = new Vector2(left ? GpLeftEdge + 14 : GpRightEdge - 14, focus.Y + (focus.Compact ? 10 : 13));
             using var round = new CanvasStrokeStyle { StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round };
-            ds.DrawLine(start, target, Gfx.WithAlpha(accent, 0.9f), 1.4f, round);
+            ds.DrawLine(start, end, Gfx.WithAlpha(accent, 0.9f), 1.4f, round);
             ds.FillCircle(start, 3, accent);
         }
 
-        foreach (var (title, x) in _gpMapHeads)
-            PText(ds, title, TextKit.Ui(500), 12, Gfx.WithAlpha(CcText, 0.36f), x + 14, GpMapTop - 30, GpMapColW);
-        foreach (var it in _gpItems)
-        {
-            if (it.Cell) PaintGpCell(ds, it, it == focus);
-            else PaintGpItem(ds, it, it == focus);
-        }
+        foreach (var it in _gpItems) PaintGpItem(ds, it, it == focus);
+
+        // 底部的按键提示（按键图标 + 字）
         if (GpIsMapPage)
         {
-            string hint = focus == null ? "按 → 进到映射表"
-                : _gpEditing ? "← → 改  ·  A 完成"
-                : focus.Choices != null ? "A 改这个键做什么（Steam 大屏幕里生效）"
-                : "A 改映射：长按、双击、组合键、键盘鼠标都在里面";
-            float hw = PWidth(ds, hint, ui, 13);
-            PText(ds, hint, ui, 13, muted, GpCx - hw / 2, 724, hw + 4);
+            if (focus == null) GpHints(ds, ("→", "进去选键"));
+            else if (_gpEditing) GpHints(ds, ("← →", "改"), ("A", "完成"));
+            else if (focus.Choices != null) GpHints(ds, ("A", "改这个键在 Steam 大屏幕里做什么"));
+            else GpHints(ds, ("A", "改映射"));
+        }
+        else if (GpCatId == "rumble") GpHints(ds, ("X", "测试震动"), ("Y", "恢复原来的强度"));
+    }
+
+    /// <summary>
+    /// 底部居中一排按键提示：每个是一个圆角小框里的键名（像手柄上的键）+ 一句说明，之间空开。
+    /// </summary>
+    private void GpHints(CanvasDrawingSession ds, params (string Key, string Text)[] hints)
+    {
+        var ui = TextKit.Ui(400);
+        var keyFont = TextKit.Ui(600);
+        const float y = 732, h = 22, gap = 28;
+        float total = 0;
+        var widths = hints.Select(x => (Key: Math.Max(h, PWidth(ds, x.Key, keyFont, 12) + 12), Text: PWidth(ds, x.Text, ui, 13))).ToArray();
+        foreach (var w in widths) total += w.Key + 8 + w.Text;
+        total += gap * (hints.Length - 1);
+        float x0 = GpCx - total / 2;
+        var line = Gfx.WithAlpha(CcText, 0.55f);
+        for (int i = 0; i < hints.Length; i++)
+        {
+            var (kw, tw) = widths[i];
+            ds.DrawRoundedRectangle(x0, y - h / 2, kw, h, h / 2, h / 2, line, 1.2f);
+            float keyW = PWidth(ds, hints[i].Key, keyFont, 12);
+            PText(ds, hints[i].Key, keyFont, 12, Gfx.WithAlpha(CcText, 0.85f), x0 + (kw - keyW) / 2, y, keyW + 4);
+            PText(ds, hints[i].Text, ui, 13, Gfx.WithAlpha(CcText, 0.6f), x0 + kw + 8, y, tw + 4);
+            x0 += kw + 8 + tw + gap;
         }
     }
 
@@ -827,57 +855,39 @@ public sealed partial class WallStage
         ds.FillGeometry(part, Gfx.WithAlpha(accent, 0.8f));
     }
 
-    /// <summary>一个设置：上面小字标题，下面值；焦点白字，调节中值两边是 ‹ ›，置灰的写原因。</summary>
+    /// <summary>
+    /// 一个设置：上面小字标题，下面值；焦点白字，调节中值两边是 ‹ ›，置灰的写原因。左边一列右对齐、右边一列左对齐、Side 0 居中。
+    /// Compact（按键映射）：小一号、放不下的值截断加「…」，没改过的值字淡一些，调节提示在页面底部。
+    /// </summary>
     private void PaintGpItem(CanvasDrawingSession ds, GpItem it, bool focused)
     {
         var ui = TextKit.Ui(400);
         float a = it.Disabled ? 0.4f : 1f;
         var titleCol = Gfx.WithAlpha(CcText, (focused ? 0.75f : 0.45f) * (it.Disabled ? 0.85f : 1f));
-        var valueCol = Gfx.WithAlpha(CcText, (focused ? 1f : 0.66f) * a);
+        var valueCol = Gfx.WithAlpha(CcText, (focused ? 1f : it.Compact ? (it.Stock ? 0.42f : 0.92f) : 0.66f) * a);
         bool editing = focused && _gpEditing;
         string value = editing && it.Choices != null ? it.Choices[it.Choice]
             : editing && it.Number is int n && it.Format != null ? it.Format(n) : it.Value;
-        var valueFont = editing ? TextKit.Ui(600) : ui;
-        float tw = PWidth(ds, it.Title, ui, 13), vw = PWidth(ds, value, valueFont, 19);
-        float chev = editing ? 22 : 0;
-        bool left = it.Side < 0;
-        float tx = left ? it.X - tw : it.X, vx = left ? it.X - vw - chev : it.X + chev;
-        PText(ds, it.Title, ui, 13, titleCol, tx, it.Y, tw + 4);
-        PText(ds, value, valueFont, 19, valueCol, vx, it.Y + 27, vw + 4);
+        var valueFont = editing || focused && it.Compact ? TextKit.Ui(600) : ui;
+        float titleSize = it.Compact ? 12 : 13, valueSize = it.Compact ? 15 : 19, valueDy = it.Compact ? 20 : 27;
+        if (it.Compact && !editing) value = GpFit(ds, value, valueFont, valueSize, GpMapValueW);
+        float tw = PWidth(ds, it.Title, ui, titleSize), vw = PWidth(ds, value, valueFont, valueSize);
+        float chev = editing ? (it.Compact ? 18 : 22) : 0;
+        float tx, vx;
+        if (it.Side < 0) { tx = it.X - tw; vx = it.X - vw - chev; }
+        else if (it.Side > 0) { tx = it.X; vx = it.X + chev; }
+        else { tx = it.X - tw / 2; vx = it.X - vw / 2; }
+        PText(ds, it.Title, ui, titleSize, titleCol, tx, it.Y, tw + 4);
+        PText(ds, value, valueFont, valueSize, valueCol, vx, it.Y + valueDy, vw + 4);
         if (editing)
         {
-            DrawChevron(ds, vx - 16, it.Y + 27, true, valueCol);
-            DrawChevron(ds, vx + vw + 16, it.Y + 27, false, valueCol);
+            DrawChevron(ds, vx - chev + 6, it.Y + valueDy, true, valueCol);
+            DrawChevron(ds, vx + vw + chev - 6, it.Y + valueDy, false, valueCol);
+            if (it.Compact) return;
             const string hint = "← → 改  ·  A 完成";
             float hw = PWidth(ds, hint, ui, 11);
-            PText(ds, hint, ui, 11, Gfx.WithAlpha(CcText, 0.45f), left ? it.X - hw : it.X, it.Y + 52, hw + 4);
+            PText(ds, hint, ui, 11, Gfx.WithAlpha(CcText, 0.45f), it.Side < 0 ? it.X - hw : it.Side > 0 ? it.X : it.X - hw / 2, it.Y + 52, hw + 4);
         }
-    }
-
-    /// <summary>
-    /// 映射表的一格：上面小字是键名，下面是它现在做什么。改过的（不是原键位 / 默认）字亮一些；焦点前面 ▸、白字；
-    /// 几选一的格（快速设置键 / Claw 键）调节中两边是 ‹ ›。放不下的值截断加「…」。
-    /// </summary>
-    private void PaintGpCell(CanvasDrawingSession ds, GpItem it, bool focused)
-    {
-        var ui = TextKit.Ui(400);
-        bool editing = focused && _gpEditing;
-        string value = editing && it.Choices != null ? it.Choices[it.Choice] : it.Value;
-        bool stock = value is "原键位" or "默认" or "原功能" or "原样" or "—";
-        var titleCol = Gfx.WithAlpha(CcText, focused ? 0.8f : 0.45f);
-        var valueCol = Gfx.WithAlpha(CcText, focused ? 1f : stock ? 0.5f : 0.85f);
-        float x = it.X + 14, w = GpMapColW - 24;
-        if (focused) GpFocusMark(ds, it.X, it.Y, CcText);
-        PText(ds, it.Title, focused ? TextKit.Ui(600) : ui, 13, titleCol, x, it.Y, w);
-        var vf = editing ? TextKit.Ui(600) : ui;
-        if (editing)
-        {
-            float vw = PWidth(ds, value, vf, 16);
-            DrawChevron(ds, x + 4, it.Y + 24, true, valueCol);
-            PText(ds, value, vf, 16, valueCol, x + 16, it.Y + 24, vw + 4);
-            DrawChevron(ds, x + 28 + vw, it.Y + 24, false, valueCol);
-        }
-        else PText(ds, GpFit(ds, value, vf, 16, w), vf, 16, valueCol, x, it.Y + 24, w + 4);
     }
 
     /// <summary>放不下就从尾巴截掉、加「…」。</summary>

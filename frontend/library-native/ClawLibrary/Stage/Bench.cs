@@ -228,17 +228,15 @@ public static class Bench
         await Step(500, () => s.Move(Direction.Right));
         await Step(700, () => s.Move(Direction.Right));
         await Step(3000, s.Activate);
-        // 按键映射表里走一圈（LT 换侧视图、M1 翻背面），打开 A 键的按键页再关掉（不改任何东西）；再把其余分类过一遍
+        // 映射：左列走几行（LT 换侧视图），跳到右列打开一个键的按键页再关掉（不改任何东西），一路往下到 M2（背面）；再把其余分类过一遍
         var D = Direction.Down; var R = Direction.Right;
-        await Step(1200, () => s.Move(R));                 // 进表：LT（侧视图）
+        await Step(1200, () => s.Move(R));                 // 进：LT（侧视图）
         await Step(900, () => s.Move(D));                  // LB
-        await Step(900, () => s.Move(R));                  // A
-        await Step(1500, s.Activate);                      // A 的按键页
+        await Step(900, () => s.Move(D));                  // View
+        await Step(900, () => s.Move(R));                  // 右列
+        await Step(1500, s.Activate);                      // 按键页
         await Step(900, s.Back);
-        await Step(700, () => s.Move(R));                  // 十字键
-        await Step(700, () => s.Move(R));                  // 摇杆：右摇杆
-        await Step(700, () => s.Move(R));                  // 功能键
-        await Step(1200, () => s.Move(R));                 // 背键 M2（背面）
+        for (int i = 0; i < 8; i++) await Step(500, () => s.Move(D));   // 一路到 M2（背面）
         await Step(700, s.Back);                           // 回分类
         for (int i = 0; i < 5; i++) await Step(1100, () => s.Move(D));   // 摇杆、扳机、震动、桌面按键映射、鼠标
         await Step(1000, s.Back);

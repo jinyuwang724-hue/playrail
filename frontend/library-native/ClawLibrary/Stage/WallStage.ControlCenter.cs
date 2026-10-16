@@ -319,15 +319,22 @@ public sealed partial class WallStage
         }
     }
 
-    /// <summary>Y：手柄页里 = 手柄 / 桌面模式互切；控制中心里 = 拍立得 ⇄ 卡片 切换卡片样式；墙上仍是游戏设置的占位提示。</summary>
+    /// <summary>Y：手柄页里交给手柄页（震动页 = 恢复原来的强度）；控制中心里 = 拍立得 ⇄ 卡片 切换卡片样式；墙上仍是游戏设置的占位提示。</summary>
     public void PadY()
     {
         MarkInput();
         if (MorphIntercept()) return;
-        if (_ccOpen && _gpOpen) { GpToggleMode(); return; }
+        if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
         if (_ccOpen && _perfOpen) return;
         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
         else Toast("游戏设置（原型里还没有）");
+    }
+
+    /// <summary>X：手柄页里交给手柄页（震动页 = 测试震动）；其余照旧切标题样式。</summary>
+    public void PadX()
+    {
+        if (_ccOpen && _gpOpen) { MarkInput(); GpPadButton(isY: false); return; }
+        ToggleTitleStyle();
     }
 
     private void OpenRailSettings()

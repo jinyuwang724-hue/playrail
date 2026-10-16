@@ -89,9 +89,12 @@ public sealed partial class WallStage
             });
         _window.Activated += (_, e) =>
         {
+            bool was = _windowActive;
             _windowActive = e.WindowActivationState != WindowActivationState.Deactivated;
             UpdateBackdropRunning();
+            if (was != _windowActive) GpOnWindowActive(_windowActive);
         };
+        _ = GpCheckDesktopMode();   // 启动时手柄就在桌面模式：同样先切成手柄模式
     }
 
     /// <summary>竖条要画的东西（页签、合集入口、设置项）。</summary>

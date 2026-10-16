@@ -123,14 +123,32 @@ public sealed partial class WallStage
         return code switch { 0x11 => "M1", 0x12 => "M2", 0x9C => "F23", 0x9D => "F22", 0xFF => "不映射", _ => $"0x{code:X2}" };
     }
 
+    /// <summary>
+    /// 一个键格的显示名：手柄键直接写键名（A、LB、十字 ↑…），键盘上单个字符的键前面加「键盘」免得和手柄键混，
+    /// 鼠标、小键盘同理。
+    /// </summary>
     private static string GpCellName(GpCell c) => c.Cmd switch
     {
         var s when s.StartsWith("pad:LStick") => $"左摇杆 {c.Label}",
         var s when s.StartsWith("pad:RStick") => $"右摇杆 {c.Label}",
-        var s when s.StartsWith("pad:") => $"手柄 {c.Label}",
+        "pad:Up" => "十字 ↑", "pad:Down" => "十字 ↓", "pad:Left" => "十字 ←", "pad:Right" => "十字 →",
+        "pad:LS" => "左摇杆按下", "pad:RS" => "右摇杆按下",
+        var s when s.StartsWith("pad:") => c.Label,
         var s when s.StartsWith("mouse:") => $"鼠标{c.Label}",
         var s when s.StartsWith("key:Num") && s != "key:NumLock" || s is "key:NumLock" => $"小键盘 {c.Label}",
+        var s when s.StartsWith("key:") && c.Label.Length == 1 => $"键盘 {c.Label}",
         _ => c.Label,
+    };
+
+    /// <summary>几个键码连成一个组合：多于一个时用键帽上的字（Ctrl + C），一个时用显示名。</summary>
+    private static string GpCodesText(int[] codes) => codes.Length == 1 ? GpCodeName(codes[0])
+        : string.Join(" + ", codes.Select(c => GpAllCells.FirstOrDefault(x => x.Code == c) is { Label: not null } cell ? cell.Label : GpCodeName(c)));
+
+    /// <summary>键自己原来发的东西（原键位时的值）。</summary>
+    private static string GpNativeName(string src) => src switch
+    {
+        "Back" => "View", "Start" => "Menu", "Guide" => "Xbox",
+        _ => GpNativeCode(src) is int code and > 0 ? GpCodeName(code) : src,
     };
 
     // ---------------- 软件层布局的读写 ----------------
@@ -182,10 +200,13 @@ public sealed partial class WallStage
     private static string GpCommandText(JsonNode? cmd)
     {
         string? Find(string c) => GpAllCells.Where(x => x.Cmd == c).Select(GpCellName).FirstOrDefault();
+        string? Cap(string c) => GpAllCells.Where(x => x.Cmd == c).Select(x => x.Label).FirstOrDefault();
+        var keys = (cmd?["keys"] as JsonArray ?? new JsonArray()).Select(k => Str(k) ?? "").ToArray();
         return Str(cmd?["type"]) switch
         {
-            "gamepad" => Find("pad:" + Str(cmd!["button"])) ?? $"手柄 {Str(cmd!["button"])}",
-            "keyboard" => string.Join(" + ", (cmd!["keys"] as JsonArray ?? new JsonArray()).Select(k => Find("key:" + Str(k)) ?? Str(k))),
+            "gamepad" => Find("pad:" + Str(cmd!["button"])) ?? Str(cmd!["button"]) ?? "手柄",
+            // 一个键用显示名（键盘 C），组合键用键帽上的字（Ctrl + C）
+            "keyboard" => keys.Length == 1 ? Find("key:" + keys[0]) ?? keys[0] : string.Join(" + ", keys.Select(k => Cap("key:" + k) ?? k)),
             "mouse" => cmd!["wheel"] != null ? Find("wheel:" + Str(cmd["wheel"])) ?? "滚轮" : Find("mouse:" + Str(cmd["button"])) ?? "鼠标",
             "system" => Find("sys:" + Str(cmd!["action"])) ?? Str(cmd!["action"]) ?? "系统",
             _ => "无",
@@ -262,9 +283,9 @@ public sealed partial class WallStage
             })) + (acts.Count > 3 ? " …" : "");
         }
         var codes = GpFirmwareCodes(src);
-        if (codes.Length == 0) return _gpFw == null ? "—" : "原键位";
-        if (codes.Length == 1 && codes[0] == GpNativeCode(src)) return "原键位";
-        return string.Join(" + ", codes.Select(GpCodeName));
+        if (codes.Length == 0) return _gpFw == null && GpFirmwareSource(src) ? "—" : GpNativeName(src);
+        if (codes.Length == 1 && codes[0] == GpNativeCode(src)) return GpNativeName(src);
+        return GpCodesText(codes);
     }
 
     private List<PerfRow> GpKeyRows(GpPickerState p)

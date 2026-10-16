@@ -123,6 +123,25 @@ public static class SystemInfo
     [DllImport("user32.dll")]
     private static extern bool PostMessage(nint hwnd, uint msg, nint wParam, nint lParam);
 
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
+
+    /// <summary>前台窗口所属进程的名字（不带 .exe）；读不到给 null。</summary>
+    public static string? ForegroundProcessName()
+    {
+        try
+        {
+            var hwnd = GetForegroundWindow();
+            if (hwnd == 0 || GetWindowThreadProcessId(hwnd, out uint pid) == 0) return null;
+            using var p = Process.GetProcessById((int)pid);
+            return p.ProcessName;
+        }
+        catch { return null; }
+    }
+
     [DllImport("powrprof.dll")]
     private static extern byte SetSuspendState(byte hibernate, byte force, byte wakeupEventsDisabled);
 

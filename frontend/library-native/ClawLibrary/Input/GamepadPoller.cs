@@ -148,7 +148,7 @@ public sealed unsafe class GamepadPoller : IDisposable
         if (Edge(RB)) Post(() => _stage.SwitchTab(1));
         if (Edge(Y)) Post(_stage.PadY);
         if (Edge(Menu)) Post(_stage.ToggleControlCenter);
-        if (Edge(X)) Post(_stage.ToggleTitleStyle);
+        if (Edge(X)) Post(_stage.PadX);
         if (Edge(Back)) Post(_stage.ToggleHud);
         _prev = b;
         // 右摇杆：死区外按平方曲线给速度，再用与滚轮同一类的指数平滑追上去

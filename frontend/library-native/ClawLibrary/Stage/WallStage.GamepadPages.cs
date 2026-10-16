@@ -1,9 +1,10 @@
-// 控制中心 → 手柄：每个分类的内容 —— 按键映射表（线稿正下方，按组分几列），摇杆 / 扳机 / 震动挂在线稿两侧的设置，
+// 控制中心 → 手柄：每个分类挂在线稿两侧的设置（按键映射是紧凑的一键一行，按手柄上的位置从上到下），
 // 和这一页在线稿上额外画的东西（摇杆死区圈、震动握把、扳机行程刻度）。
 // 当前值从固件读（get_gamepad_state，见 docs/gamepad-firmware-protocol.md）；读不到写「—」。
 // 范围照 MSI Center M：摇杆死区 0–50 %、外圈 75–100 %，扳机行程 0–100 %。
 using System.Numerics;
 using System.Text.Json.Nodes;
+using ClawLibrary.Data;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Geometry;
 using Windows.UI;
@@ -17,35 +18,19 @@ public sealed partial class WallStage
     private static readonly string[] GpSpecialChoices = { "原功能", "主菜单", "快速访问", "超分开关", "不做事" };
     private const string GpLater = "后台的手柄固件写入还没上线，接上后这里就能改";
 
-    /// <summary>手柄模式的映射表：每组一列，从左到右大致是手柄上从左到右。</summary>
-    private static readonly (string Title, string[] Keys)[] GpMapGroups =
-    {
-        ("扳机 / 肩键", new[] { "LT", "LB", "RB", "RT" }),
-        ("A B X Y", new[] { "A", "B", "X", "Y" }),
-        ("十字键", new[] { "Up", "Down", "Left", "Right" }),
-        ("摇杆", new[] { "LStick", "RStick", "LS", "RS" }),
-        ("功能键", new[] { "Back", "QS", "Start", "Claw" }),
-        ("背键", new[] { "M1", "M2" }),
-    };
-
-    /// <summary>桌面模式的映射表：只有固件管得到的键（桌面模式下固件直接发键鼠，软件输入层不参与）。</summary>
-    private static readonly (string Title, string[] Keys)[] GpDesktopGroups =
-    {
-        ("扳机 / 肩键", new[] { "LT", "LB", "RB", "RT" }),
-        ("A B X Y", new[] { "A", "B", "X", "Y" }),
-        ("十字键", new[] { "Up", "Down", "Left", "Right" }),
-        ("摇杆按下", new[] { "LS", "RS" }),
-    };
-
-    /// <summary>映射表各列的标题和左边 x（画在表上面）。</summary>
-    private readonly List<(string Title, float X)> _gpMapHeads = new();
+    /// <summary>手柄模式的映射：左右两列，各自按手柄上从上到下（扳机、肩键、小按键、摇杆、十字键 / ABXY、背键）。</summary>
+    private static readonly string[] GpMapLeft = { "LT", "LB", "Back", "QS", "LStick", "LS", "Up", "Down", "Left", "Right", "M1" };
+    private static readonly string[] GpMapRight = { "RT", "RB", "Start", "Claw", "Y", "X", "B", "A", "RStick", "RS", "M2" };
+    /// <summary>桌面模式的映射：只有固件管得到的键（桌面模式下固件直接发键鼠，软件输入层不参与）。</summary>
+    private static readonly string[] GpDesktopLeft = { "LT", "LB", "LS", "Up", "Down", "Left", "Right" };
+    private static readonly string[] GpDesktopRight = { "RT", "RB", "Y", "X", "B", "A", "RS" };
 
     private void BuildGpItems()
     {
         _gpItems.Clear();
-        _gpMapHeads.Clear();
         var left = new List<GpItem>();
         var right = new List<GpItem>();
+        GpItem? center = null;
         string loading = _gpError ?? "正在读取…";
         string fwMissing = _gpFwError ?? "正在读取…";
         GpItem Item(string title, string key, string value, string? why = null) => new() { Title = title, Key = key, Value = value, Disabled = why != null, Why = why };
@@ -55,24 +40,9 @@ public sealed partial class WallStage
             case "gpmap" or "dkmap":
             {
                 bool desktop = GpCatId == "dkmap";
-                var groups = desktop ? GpDesktopGroups : GpMapGroups;
-                float x0 = GpCx - groups.Length * GpMapColW / 2;
-                // 一列一列排，焦点在表里按方位走
-                for (int g = 0; g < groups.Length; g++)
-                {
-                    float x = x0 + g * GpMapColW;
-                    _gpMapHeads.Add((groups[g].Title, x));
-                    for (int r = 0; r < groups[g].Keys.Length; r++)
-                    {
-                        var cell = GpMapCell(groups[g].Keys[r], desktop);
-                        cell.Cell = true;
-                        cell.X = x;
-                        cell.Y = GpMapTop + r * GpMapRowStep;
-                        _gpItems.Add(cell);
-                    }
-                }
-                if (_gpFocus >= _gpItems.Count) _gpFocus = 0;
-                return;
+                foreach (var src in desktop ? GpDesktopLeft : GpMapLeft) left.Add(GpMapCell(src, desktop));
+                foreach (var src in desktop ? GpDesktopRight : GpMapRight) right.Add(GpMapCell(src, desktop));
+                break;
             }
             case "stick":
             {
@@ -99,6 +69,15 @@ public sealed partial class WallStage
                 break;
             }
             case "trigger":
+            {
+                // 快速触发 = 扳机当按键用（轻按即满），关 = 线性；左右一起开关
+                var tl = _gpFw?["triggers"]?["left"];
+                bool quick = Bool(tl?["quickTrigger"]) || Bool(_gpFw?["triggers"]?["right"]?["quickTrigger"]);
+                var q = Item("快速触发", "", tl == null ? "—" : quick ? "开 · 轻按即满" : "关 · 线性", tl == null ? fwMissing : null);
+                q.Side = 0;
+                q.Lights = new[] { "TL", "TR" };
+                q.Press = () => _ = GpSetQuickTrigger(!quick);
+                center = q;
                 foreach (var (side, list, key) in new[] { ("left", left, "TL"), ("right", right, "TR") })
                 {
                     var t = _gpFw?["triggers"]?[side];
@@ -113,17 +92,14 @@ public sealed partial class WallStage
                         end.Number = b; end.Min = Math.Min(100, a + 5); end.Max = 100; end.StepBy = 5; end.Format = v => $"{v} %";
                         end.SetNumber = v => { t!["outer"] = v; GpTriggerChanged(side); };
                     }
-                    bool quick = Bool(t?["quickTrigger"]);
-                    var q = Item($"{name}快速触发", key, t == null ? "—" : quick ? "开" : "关", t == null ? fwMissing : null);
-                    q.Press = () => _ = GpWrite("set_quick_trigger", JsonValue.Create(side), JsonValue.Create(!quick));
                     list.Add(start);
                     list.Add(end);
-                    list.Add(q);
                 }
                 break;
+            }
             case "rumble":
             {
-                // 照 MSI 振动页：左右马达分开调，测试、恢复
+                // 照 MSI 振动页：左右马达分开调；测试（X）、恢复原来的强度（Y）是页面底部的按键提示
                 GpItem Motor(string title, string grip, int? value, bool isLeft)
                 {
                     var it = Item(title, grip, value is int v ? (v == 0 ? "关" : $"{v} %") : loading, value == null ? loading : null);
@@ -136,15 +112,7 @@ public sealed partial class WallStage
                     return it;
                 }
                 left.Add(Motor("左侧震动", "GripL", _gpRumbleL, true));
-                var test = Item("测试震动", "GripL", "按 A 震一下", _gpRumbleL == null ? loading : null);
-                test.Lights = new[] { "GripL", "GripR" };
-                test.Press = () => _ = GpTestRumble();
-                left.Add(test);
                 right.Add(Motor("右侧震动", "GripR", _gpRumbleR, false));
-                var reset = Item("恢复原来的强度", "GripR", "按 A", _gpRumbleL == null ? loading : null);
-                reset.Lights = new[] { "GripL", "GripR" };
-                reset.Press = () => _ = GpWrite("restore_rumble");
-                right.Add(reset);
                 break;
             }
             default:   // mouse
@@ -155,22 +123,43 @@ public sealed partial class WallStage
                 break;
         }
 
-        // 两侧按线稿竖向居中排开
+        // 两侧按线稿竖向居中排开（映射页紧凑），居中那项放在线稿正下方
         void Column(List<GpItem> items, int side)
         {
+            bool compact = GpIsMapPage;
             for (int i = 0; i < items.Count; i++)
             {
                 items[i].Side = side;
                 items[i].Row = i;
+                items[i].Compact = compact;
                 items[i].X = side < 0 ? GpLeftEdge : GpRightEdge;
-                items[i].Y = GpCy - 13 + (i - (items.Count - 1) / 2f) * GpRowStep;
+                items[i].Y = GpCy - (compact ? 10 : 13) + (i - (items.Count - 1) / 2f) * (compact ? GpMapRowStep : GpRowStep);
             }
         }
         Column(left, -1);
         Column(right, 1);
         _gpItems.AddRange(left);
         _gpItems.AddRange(right);
+        if (center != null)
+        {
+            center.X = GpCx;
+            center.Y = GpCy + GpSideH / 2 + 34;
+            _gpItems.Add(center);
+        }
         if (_gpFocus >= _gpItems.Count) _gpFocus = 0;
+    }
+
+    /// <summary>快速触发左右一起写：先左后右，写完读回。</summary>
+    private async Task GpSetQuickTrigger(bool on)
+    {
+        try
+        {
+            _agent ??= new AgentClient();
+            await _agent.Call("set_quick_trigger", JsonValue.Create("left"), JsonValue.Create(on));
+            await _agent.Call("set_quick_trigger", JsonValue.Create("right"), JsonValue.Create(on));
+        }
+        catch (Exception ex) { Toast($"没有写进手柄：{ex.Message}"); }
+        _ = GpRefresh();
     }
 
     /// <summary>
@@ -187,9 +176,10 @@ public sealed partial class WallStage
                 bool isLeft = src == "LStick", swap = Bool(_gpFw?["sticks"]?["swap"]);
                 it.Key = "";
                 it.Lights = new[] { isLeft ? "LS" : "RS" };
-                it.Choices = new[] { "原样", isLeft ? "当右摇杆用" : "当左摇杆用" };
+                it.Choices = isLeft ? new[] { "左摇杆", "右摇杆" } : new[] { "右摇杆", "左摇杆" };
                 it.Choice = swap ? 1 : 0;
                 it.Value = _gpFw == null ? "—" : it.Choices[it.Choice];
+                it.Stock = !swap;
                 it.Disabled = _gpFw == null;
                 it.Why = _gpFwError ?? "正在读取…";
                 // 固件只有「左右互换」一个开关：改任意一边，两边一起换
@@ -202,9 +192,11 @@ public sealed partial class WallStage
                 string field = src == "QS" ? "qamAction" : "msiAction";
                 bool on = s != null && Bool(s["enabled"]);
                 int idx = on ? 1 + Math.Max(0, Array.IndexOf(GpActions, Str(s![field]) ?? "None")) : 0;
-                it.Choices = GpSpecialChoices;
+                // 第一项是不接管时 MSI 原来的功能
+                it.Choices = GpSpecialChoices.Select((c, i) => i == 0 ? (src == "QS" ? "MSI 快速设置" : "MSI Center M") : c).ToArray();
                 it.Choice = idx;
-                it.Value = s == null ? "—" : GpSpecialChoices[idx];
+                it.Value = s == null ? "—" : it.Choices[idx];
+                it.Stock = idx == 0;
                 it.Disabled = s == null;
                 it.Why = _gpError ?? "正在读取…";
                 it.SetChoice = i =>
@@ -214,7 +206,7 @@ public sealed partial class WallStage
                     {
                         // 接管是两个键一起的：一个放回原功能，另一个也放回
                         s["enabled"] = false;
-                        Toast("快速设置键和 Claw 键一起放回原功能");
+                        Toast("快速设置键和 Claw 键一起放回 MSI 原来的功能");
                     }
                     else { s["enabled"] = true; s[field] = GpActions[i - 1]; }
                     _ = GpSaveSettings();
@@ -223,6 +215,7 @@ public sealed partial class WallStage
             }
             default:
                 it.Value = desktop ? GpDesktopSummary(src) : GpKeySummary(src);
+                it.Stock = desktop ? it.Value == "默认" : GpActs(src) == null && GpFirmwareCodes(src) is var c && (c.Length == 0 || c.Length == 1 && c[0] == GpNativeCode(src));
                 it.Press = () => GpOpenPicker(src, desktop);
                 break;
         }
@@ -244,7 +237,7 @@ public sealed partial class WallStage
         if (_gpFw == null) return "—";
         if (_gpFw["desktopKeys"]?[src] is not JsonArray arr) return "默认";
         var codes = arr.Select(n => Int(n)).Where(c => c is > 0 and <= 0xFF).ToArray();
-        return codes.Length == 0 ? "默认" : string.Join(" + ", codes.Select(GpCodeName));
+        return codes.Length == 0 ? "默认" : GpCodesText(codes);
     }
 
     private static int GpNativeCode(string src) => src switch
