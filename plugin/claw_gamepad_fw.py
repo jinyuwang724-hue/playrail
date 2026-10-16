@@ -439,51 +439,85 @@ def _side(side):
 
 
 class ModeWatcher:
-    """Which mode the pad is in, from the USB product id it enumerates with (it re-enumerates on every
-    switch, whether by holding the ≡ key or by set_gamepad_mode). Polled once a second; only HID
-    interface paths are listed, the pad is not opened."""
-    INTERVAL = 1.0
+    """Which mode the pad is in, read from the firmware (0x26) every INTERVAL seconds, behind the same lock
+    as every other pad request. The USB product id does NOT change on this pad (measured 2026-10-16: still
+    0x1901 in desktop mode), so it is only a hint: if it ever changes, the mode is read at once.
 
-    def __init__(self, paths=None, clock=time.time):
-        self._paths = paths
+    Listeners get (mode, previous, notify). notify is False for a switch announced with expect(mode, False)
+    (set_gamepad_mode(..., notify=False), e.g. the game library's temporary switch); changed_at / changed_to
+    only follow switches that notify."""
+    INTERVAL = 2.0
+    HINT_INTERVAL = 1.0
+
+    def __init__(self, read=None, paths=None, clock=time.time, monotonic=time.monotonic):
+        self.read = read          # -> (mode byte, M-key function), GamepadFirmware.read_mode
+        self._paths = paths       # -> HID interface paths, for the product-id hint
         self._clock = clock
-        self.mode = None          # xinput / dinput / desktop
-        self.changed_at = None    # epoch ms of the last change seen since the agent started
-        self.listeners = []       # async callables (mode, previous)
+        self._monotonic = monotonic
+        self.mode = None          # xinput / dinput / msi / desktop / ...
+        self.changed_at = None    # epoch ms of the last notified switch since the agent started
+        self.changed_to = None
+        self.listeners = []       # async callables (mode, previous, notify)
+        self._expected = None     # (mode, notify, deadline)
+        self._product = None
         self._task = None
 
-    def _present(self):
+    def expect(self, mode, notify):
+        self._expected = (mode, notify, self._monotonic() + 15)
+
+    def _read_mode(self):
+        return MODES.get(self.read()[0], "unknown")
+
+    def _product_now(self):
         if self._paths is None:
-            channel = _rumble_default.HidChannel(tuple(PRODUCTS))
-            self._paths = channel._paths
+            self._paths = _rumble_default.HidChannel(tuple(PRODUCTS))._paths
         lowered = " ".join(self._paths()).lower()
-        for product, name in PRODUCTS.items():
+        for product in PRODUCTS:
             if "vid_0db0&pid_%04x" % product in lowered:
-                return name
+                return product
         return None
 
     async def poll(self):
         try:
-            mode = await asyncio.get_running_loop().run_in_executor(None, self._present)
+            mode = await asyncio.get_running_loop().run_in_executor(None, self._read_mode)
         except Exception:
-            return self.mode
+            return self.mode  # pad busy, asleep or re-enumerating: keep the last mode
+        return await self.observe(mode)
+
+    async def observe(self, mode):
         if mode is None or mode == self.mode:
-            return self.mode  # None: between two enumerations
+            return self.mode
         previous, self.mode = self.mode, mode
-        if previous is not None:
-            self.changed_at = int(self._clock() * 1000)
-            for listener in list(self.listeners):
-                try:
-                    await listener(mode, previous)
-                except Exception:
-                    pass
+        if previous is None:
+            return mode  # first look is no change
+        notify = True
+        expected = self._expected
+        if expected and expected[0] == mode and self._monotonic() < expected[2]:
+            notify, self._expected = expected[1], None
+        if notify:
+            self.changed_at, self.changed_to = int(self._clock() * 1000), mode
+        for listener in list(self.listeners):
+            try:
+                await listener(mode, previous, notify)
+            except Exception:
+                pass
         return mode
 
     def start(self):
         async def run():
+            ticks = 0
             while True:
-                await self.poll()
-                await asyncio.sleep(self.INTERVAL)
+                await asyncio.sleep(self.HINT_INTERVAL)
+                ticks += 1
+                try:
+                    product = await asyncio.get_running_loop().run_in_executor(None, self._product_now)
+                except Exception:
+                    product = self._product
+                hinted = product is not None and self._product is not None and product != self._product
+                self._product = product or self._product
+                if hinted or ticks * self.HINT_INTERVAL >= self.INTERVAL:
+                    ticks = 0
+                    await self.poll()
         self._task = asyncio.create_task(run())
 
     async def close(self):
@@ -509,9 +543,11 @@ class GamepadControl:
 
     def __init__(self, data_dir, firmware=None, log=None, clock=time.monotonic, watcher=None):
         self._path = Path(data_dir) / "gamepad.json"
-        self.watcher = watcher or ModeWatcher()
-        self.watcher.listeners.append(self._mode_changed)
         self._firmware = firmware or GamepadFirmware()
+        self.watcher = watcher or ModeWatcher()
+        if self.watcher.read is None:
+            self.watcher.read = self._firmware.read_mode
+        self.watcher.listeners.append(self._mode_changed)
         self._log = log or (lambda *args: None)
         self._clock = clock
         self._config = {"version": 1, "original": {}, "items": {}, "light": None}
@@ -640,7 +676,7 @@ class GamepadControl:
         return await self._set_items({"dstick." + side: ([(base + 1, 0xFF, 1), (base + 2, 0xFF, deadzone),
                                                           (base + 9, 0xFF, 1), (base + 10, 0xFF, outer)], "desktop")})
 
-    async def _mode_changed(self, mode, previous):
+    async def _mode_changed(self, mode, previous, notify=True):
         """A mode switch seen by the watcher: desktop stick defaults on first use, then this mode's bytes."""
         self._log("Claw pad mode %s -> %s" % (previous, mode))
         if mode == "desktop":
@@ -736,16 +772,21 @@ class GamepadControl:
                    "frames": frames if effect == "custom" else None}
         return await self._set_items({"light": (light_bytes(built, raw, brightness), None)}, light=setting)
 
-    async def set_mode(self, name):
-        """xinput / desktop. Re-applies per-mode mappings and the mode light afterwards."""
+    async def set_mode(self, name, notify=True):
+        """xinput / desktop. Re-applies per-mode mappings and the mode light afterwards.
+        notify=False: a temporary switch (the game library in front), no mode notice for it."""
         target = {"xinput": 1, "desktop": 4}.get(name)
         if target is None:
             raise ValueError("模式只能是 xinput 或 desktop")
+        if type(notify) is not bool:
+            raise ValueError("notify 要是 true / false")
+        self.watcher.expect(name, notify)
         async with self._lock:
             mode, mkeys = await self._run(self._firmware.read_mode)
             if mode != target:
                 await self._run(self._firmware.switch_mode, target, mkeys)
         await self.enforce("mode")
+        await self.watcher.observe(name)  # listeners now, not at the next poll
         return True
 
     async def restore(self, what="all"):
@@ -781,7 +822,8 @@ class GamepadControl:
             state = await self._run(self._firmware.read_state)
         except Exception as error:
             return {"available": False, "error": str(error), "managed": self.managed(),
-                    "modeChangedAt": self.watcher.changed_at, "modeChangedTo": self.watcher.mode}
+                    "modeChangedAt": self.watcher.changed_at, "modeChangedTo": self.watcher.changed_to,
+                    "desktopKeys": None, "desktopKeysSource": None, "desktopKeysError": "读不到手柄固件：%s" % error}
         self._mode = mode_class(state["modeRaw"])
         light = self._config["light"]
         if light and "light" in self._config["items"]:
@@ -798,12 +840,44 @@ class GamepadControl:
         state["light"]["managed"] = "light" in self._config["items"]
         state["managed"] = self.managed()
         # When the watcher last saw a mode switch (epoch ms, null: none since the agent started).
-        state["modeChangedAt"], state["modeChangedTo"] = self.watcher.changed_at, self.watcher.mode
+        state["modeChangedAt"], state["modeChangedTo"] = self.watcher.changed_at, self.watcher.changed_to
         state["desktopSticks"] = {name[7:]: {"deadzone": item["bytes"][1][2], "outer": item["bytes"][3][2]}
                                   for name, item in self._config["items"].items() if name.startswith("dstick.")}
-        state["desktopKeys"] = {name[5:]: [value for address, mask, value in item["bytes"][-5:] if value]
-                                for name, item in self._config["items"].items() if name.startswith("dkey.")}
+        state["desktopKeys"], state["desktopKeysSource"] = self._desktop_keys(state)
+        state["desktopKeysError"] = None
         return state
+
+    def _desktop_keys(self, state):
+        """The 14 source keys as the firmware maps them in desktop mode, in the format of state["keys"].
+        The pad has ONE key table; desktop-mode mappings live in it only while the pad is in desktop mode
+        (we write them on the switch, like MSI Center M). In desktop mode that table is read as it is
+        ("firmware"); in gamepad mode it is the table read now with the bytes we will write on the next
+        switch to desktop ("firmware+switch")."""
+        managed = set(self._config["items"])
+        if mode_class(state["modeRaw"]) == "desktop":
+            return {name: dict(key, managed="dkey." + name in managed) for name, key in state["keys"].items()}, "firmware"
+        desired = self._desired("desktop")
+        result = {}
+        for name, key in state["keys"].items():
+            codes = (key["codes"] + [0] * 5)[:5]
+            if name in TRIGGER_KEYS:
+                base = TRIGGER_KEYS[name]
+                trigger = state["triggers"]["left" if name == "LT" else "right"]
+                current = {base + 1: trigger["flags"]}
+                current.update({base + 5 + i: code for i, code in enumerate(codes)})
+            else:
+                base = KEYS + KEY_SLOTS[name] * 8
+                current = {base: key["index"], base + 1: key["flags"], base + 2: key["turboSpeed"]}
+                current.update({base + 3 + i: code for i, code in enumerate(codes)})
+            planned = {address: desired.get(address, value) for address, value in current.items()}
+            if name in TRIGGER_KEYS:
+                flags = planned[base + 1]
+                mapped = [planned[base + 5 + i] for i in range(5) if planned[base + 5 + i]]
+                entry = {"mapped": bool(flags & 4), "codes": mapped, "keys": [key_name(c) for c in mapped]}
+            else:
+                entry = parse_key(bytes(planned[base + i] for i in range(8)))
+            result[name] = dict(entry, managed="dkey." + name in managed)
+        return result, "firmware+switch"
 
     async def enforce(self, reason):
         if not self._config["items"]:

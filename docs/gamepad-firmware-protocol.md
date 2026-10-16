@@ -183,7 +183,7 @@ M 键功能：MSI 枚举 0 宏、1 组合、2 禁用；hid-msi（v5 起特意交
 
 ## 风险
 
-1. **桌面模式回不来**：hid-msi 说桌面模式 USB 产品号会变成 0x1903，而且驱动只在 XInput / DInput 的端点上开配置接口。
+1. **桌面模式回不来**（已解决：实测桌面模式下产品号不变、配置接口照常能读写，`set_gamepad_mode xinput` 能切回）：hid-msi 说桌面模式 USB 产品号会变成 0x1903，而且驱动只在 XInput / DInput 的端点上开配置接口。
    但 MSI Center M 只监听 0x1901 / 0x1902，却能在模式 4 下改桌面摇杆设置 —— 说明这台机器桌面模式下配置接口大概率还在。
    没实测。第一次切桌面前要准备好退路（MSI Center M 能切回、或者固件组合键），工具箱这边已经让读取接受 0x1901 / 0x1902 / 0x1903 三种产品号。
 2. **ClawTweaks 会抢**：它启动时把震动改回 100；开虚拟手柄时会把固件死区 / 外圈「放宽」（`[HwFloor] Widened …`），还会同步到 MSI Center M 的配置；
@@ -292,7 +292,7 @@ M 键功能：MSI 枚举 0 宏、1 组合、2 禁用；hid-msi（v5 起特意交
 | `set_key_map(source, codes)` | source：A B X Y LB RB LT RT LS RS Up Down Left Right | `[自己的键码]` = 放回原值。LT/RT 写扳机块 +5，标志位只动 bit0/bit2 |
 | `set_desktop_key_map(source, codes)` | 同上 | 只在手柄处于桌面模式时写进去，回到手柄模式自动放回（同 MSI） |
 | `set_light(effect, color, brightness, speed, direction, frames)` | effect：off / monocolor / breathe / rainbow / ripple / custom / modeinfo；color `#rrggbb`；亮度 0–100；速度 0 慢 / 1 中 / 2 快；direction `cw`/`ccw`（水波）；frames（custom，1–8 帧，每帧一个颜色或 9 个区的颜色） | 帧按 MSI 布局写在槽 0。MSI 的速度：呼吸 11/14/17、幻彩 13/15/17、水波 14/17/20（固件字节 = 20 − 速度）；常亮 17、关闭 15 |
-| `set_gamepad_mode(mode)` | `xinput` / `desktop` | 0x24 后等手柄报告新模式，再写当前模式该有的映射和模式指示灯。**还没在真机上试过**（用户要求先保留） |
+| `set_gamepad_mode(mode, notify=True)` | `xinput` / `desktop`；`notify` 见末节 | 0x24 后等手柄报告新模式，再写当前模式该有的映射和模式指示灯。2026-10-17 真机切过桌面再切回 |
 | `restore_gamepad(what)` | `all` / `sticks` / `triggers` / `backkeys` / `keys` / `desktopkeys` / `light` / 单项名（如 `stick.left`、`m1`） | 写回第一次写之前存的原值 |
 | `set_rumble_strength(left, right)` | 各 0–100；只给一个参数 = 左右相同 | `get_rumble_state` 返回 `current [左, 右]`、`left`、`right` |
 
@@ -329,15 +329,30 @@ M 键功能：MSI 枚举 0 宏、1 组合、2 禁用；hid-msi（v5 起特意交
 
 ## 模式切换的检测和桌面摇杆死区（2026-10-16，0.17.13）
 
-照 MSI Center M：固件长按 ≡ 切换（或它快速设置里的 ControlMode 磁贴）→ 固件上报 GamepadModeUpdated → MSI 弹 OSD、写注册表 `ControlModeUpdated`、
+照 MSI Center M：模式切换（MSI 界面说固件长按 ≡ 能切，**本机未验证**；或它快速设置里的 ControlMode 磁贴）→ 固件上报 GamepadModeUpdated → MSI 弹 OSD、写注册表 `ControlModeUpdated`、
 切到桌面时同步桌面摇杆死区（默认 DeadZone 10 / Edge 100）、按模式设模式指示灯。我们的做法：
 
-- **检测**：不靠 MSI 的服务（它禁用着）。手柄每次切模式都用另一个产品号重新枚举（`0x1901` XInput、`0x1902` DInput、`0x1903` 桌面），
-  `ModeWatcher` 每秒列一次 HID 接口路径看产品号，不发任何命令；长按 ≡ 和 `set_gamepad_mode` 一样能看到。重新枚举中间的空档不算。
+- **检测**：不靠 MSI 的服务（它禁用着）。**实测切到桌面后 USB 产品号不变**（还是 0x1901，不重新枚举；hid-msi 说的 0x1903 在本机不成立），
+  所以 `ModeWatcher` 每 2 秒发一次 0x26 读模式（和其他读写共用一把锁），产品号只当辅助（变了就立即读）。
+  `set_gamepad_mode` 切完马上通知；固件自己切（若有）2 秒内看到。`set_gamepad_mode(mode, notify=False)` 的临时切换不弹提示、不改 `modeChangedAt`。
 - **提示**：见 `docs/gamepad-input-layer.md`「手柄模式」——自己的 OSD（不要 MSI 的红条）+ 推送事件 `gamepad_mode` + `get_gamepad_state().modeChangedAt`。不写 MSI 的注册表。
 - **桌面摇杆死区**：摇杆块（0x22A / 0x23A）只有一套，MSI 每次切模式重写。我们同样：桌面那套存成只在桌面模式生效的项 `dstick.left/right`
   （第一次进桌面时按 MSI 默认死区 10 / 外圈 100 建，接口 `set_desktop_stick_deadzone(side, deadzone, outer)` 可改），回到手柄模式写回手柄那套
   （用户设过的 `stick.*`，没设过就是接管前的原值）。只在桌面模式生效的项现在优先于不分模式的项。
 - **模式指示灯**：灯光是 modeinfo 时，切模式后的 `enforce("mode")` 按新模式换色（之前就有）。
 
-真机：检测 / 死区同步只用假手柄测过；没有真的切模式（用户之前要求先保留）。
+真机（2026-10-17）：`set_gamepad_mode desktop` → 提示、输入层暂停、桌面死区 10 / 100 都对；`set_gamepad_mode xinput, notify=false` → 不弹提示，死区回到手柄那套。
+
+### 桌面模式的键映射（`desktopKeys`）
+
+固件里只有**一张**键表（0x3A 起 14 个 KeyProfile + 扳机块）：真机在桌面模式下读回来，14 个键和手柄模式时完全一样（各自原键码，没有另存一张桌面表）。
+桌面模式下的映射就是「切到桌面时这张表里写着什么」—— MSI 和我们都在切到桌面时把桌面那套写进去（`dkey.*`），切回手柄再写回。
+
+`get_gamepad_state()["desktopKeys"]`：14 个源键，格式和 `keys` 一样（`mapped`、`codes`、`keys`，普通键还有 `index`、`flags`、`turbo`、`turboSpeed`），每个加 `managed`（我们写过桌面映射 = true）。
+`desktopKeysSource`：
+- `"firmware"`：手柄正处于桌面模式，直接是固件里这张表；
+- `"firmware+switch"`：手柄在手柄模式，是固件现在这张表加上「切到桌面时我们会写的字节」——也就是切过去以后固件里会有的值。
+
+读不到固件时 `desktopKeys: null`，`desktopKeysError` 写原因（如「读不到手柄固件：…」）。
+桌面模式下各个原键码（比如 A = 0x09 手柄 A）在键鼠模式里实际产生什么，由固件自己决定，没有实测过（要人在桌面模式下按键看）。
+

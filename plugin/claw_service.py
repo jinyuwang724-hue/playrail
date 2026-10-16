@@ -115,7 +115,7 @@ class Service:
                                                not_games=_power_module.NOT_GAMES, python=sys.executable,
                                                log=logging.info)
         self._input_task = None
-        # Pad mode switches (holding ≡, or set_gamepad_mode): notice first, then the firmware listener.
+        # Pad mode switches (set_gamepad_mode, or the firmware switching by itself if it can): notice first, then the firmware listener.
         self._gamepad.watcher.listeners.insert(0, self._pad_mode_changed)
         self._settings_path = self._data / "settings.json"
         self._task = None
@@ -341,8 +341,9 @@ class Service:
         await call(*args)
         return await self._gamepad.read()
 
-    async def set_gamepad_mode(self, mode):
-        return await self._gamepad_write(self._gamepad.set_mode, mode)
+    async def set_gamepad_mode(self, mode, notify=True):
+        # notify=False: a temporary switch (the game library in front), no mode notice.
+        return await self._gamepad_write(self._gamepad.set_mode, mode, notify)
 
     async def set_stick_deadzone(self, side, deadzone, outer):
         return await self._gamepad_write(self._gamepad.set_stick_deadzone, side, deadzone, outer)
@@ -381,9 +382,11 @@ class Service:
         self._gamepad.watcher.start()
         await self._input.start(pad_mode=mode)
 
-    async def _pad_mode_changed(self, mode, previous):
-        await self._input.show_mode_osd(mode)
-        await self._emit("gamepad_mode", {"mode": mode, "previous": previous, "at": self._gamepad.watcher.changed_at})
+    async def _pad_mode_changed(self, mode, previous, notify=True):
+        if notify:
+            await self._input.show_mode_osd(mode)
+        await self._emit("gamepad_mode", {"mode": mode, "previous": previous, "notify": notify,
+                                          "at": self._gamepad.watcher.changed_at})
         # Desktop mode pauses the layer (nothing hidden, no virtual pad), gamepad mode resumes it.
         asyncio.create_task(self._input.set_pad_mode(mode))
 

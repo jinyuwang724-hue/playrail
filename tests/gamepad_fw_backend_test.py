@@ -238,7 +238,11 @@ async def control_flow():
         assert pad.mode[0] == 4 and pad.memory[0x7D] == 0x67 and pad.memory[0x24F:0x252] == bytes((0, 0, 255))
         await control.set_mode("xinput")
         assert pad.mode[0] == 1 and pad.memory[0x7D] == 0x0A and pad.memory[0x24F:0x252] == bytes((0, 255, 0))
-        assert (await control.read())["desktopKeys"] == {"A": [0x67]}
+        state = await control.read()
+        assert state["desktopKeysSource"] == "firmware+switch", "gamepad mode: the table plus what the switch writes"
+        assert state["desktopKeys"]["A"]["codes"] == [0x67] and state["desktopKeys"]["A"]["managed"]
+        assert state["desktopKeys"]["B"]["codes"] == [0x0A] and not state["desktopKeys"]["B"]["managed"]
+        assert state["desktopKeys"]["LT"] == {"mapped": False, "codes": [0x13], "keys": ["LT"], "managed": False}
 
         # Everything back: the pad memory equals what it was before the first write.
         await control.restore("light")
@@ -260,43 +264,62 @@ async def control_flow():
 
 
 async def mode_watch():
-    """Holding the menu key switches mode: the pad re-enumerates with another product id."""
+    """The pad stays 0DB0:1901 in desktop mode (measured), so the mode is read from the firmware (0x26)."""
     with tempfile.TemporaryDirectory() as folder:
         pad = FakePad(claw_8_ex_memory())
-        xinput, desktop = r"\\?\hid#vid_0db0&pid_1901&mi_01#7&1", r"\\?\hid#vid_0db0&pid_1903&mi_01#7&2"
-        paths, seen = [xinput], []
-        watcher = fw.ModeWatcher(paths=lambda: list(paths), clock=lambda: 1000.0)
+        now, seen = [1000.0], []
+        watcher = fw.ModeWatcher(paths=lambda: [], clock=lambda: now[0])
         control = fw.GamepadControl(folder, fw.GamepadFirmware(pad), watcher=watcher)
 
-        async def note(mode, previous):
-            seen.append((mode, previous))
+        async def note(mode, previous, notify):
+            seen.append((mode, previous, notify))
         watcher.listeners.insert(0, note)
         assert await watcher.poll() == "xinput" and seen == [] and watcher.changed_at is None, "first look is no change"
 
-        pad.mode, paths[:] = (0x04, 0x00), []
-        assert await watcher.poll() == "xinput", "between enumerations: keep the last mode"
-        paths[:] = [desktop]
-        assert await watcher.poll() == "desktop" and seen == [("desktop", "xinput")] and watcher.changed_at == 1000000
+        pad.mode = (0x04, 0x00)  # switched by the firmware itself: no command from us
+        assert await watcher.poll() == "desktop" and seen == [("desktop", "xinput", True)]
+        assert watcher.changed_at == 1000000 and watcher.changed_to == "desktop"
         # MSI's desktop stick dead zones (10 / 100) on the first switch to desktop.
         assert [pad.memory[a] for a in (0x22C, 0x234, 0x23C, 0x244)] == [10, 100, 10, 100]
         state = await control.read()
         assert state["modeChangedAt"] == 1000000 and state["modeChangedTo"] == "desktop"
         assert state["desktopSticks"] == {"left": {"deadzone": 10, "outer": 100}, "right": {"deadzone": 10, "outer": 100}}
+        assert state["desktopKeysSource"] == "firmware" and state["desktopKeys"]["A"]["codes"] == [9]
+        assert set(state["desktopKeys"]) == set(fw.OWN_CODES) and not state["desktopKeys"]["A"]["managed"]
 
-        pad.mode, paths[:] = (0x01, 0x00), [xinput]
+        pad.mode = (0x01, 0x00)
         await watcher.poll()
         assert [pad.memory[a] for a in (0x22C, 0x234, 0x23C, 0x244)] == [5, 100, 5, 100], "gamepad dead zones come back"
         await control.set_stick_deadzone("left", 12, 90)
         assert pad.memory[0x22C] == 12
-        pad.mode, paths[:] = (0x04, 0x00), [desktop]
-        await watcher.poll()
+
+        # set_gamepad_mode(..., notify=False): listeners hear it without a notice, the time stays.
+        now[0] = 2000.0
+        await control.set_mode("desktop", notify=False)
+        assert seen[-1] == ("desktop", "xinput", False) and watcher.changed_at == 1000000
         assert pad.memory[0x22C] == 10 and pad.memory[0x234] == 100, "desktop set wins in desktop mode"
+        count = len(seen)
+        await watcher.poll()
+        assert len(seen) == count, "the poll after it is no second change"
         await control.set_desktop_stick_deadzone("left", 20, 95)
         assert pad.memory[0x22C] == 20
-        pad.mode, paths[:] = (0x01, 0x00), [xinput]
-        await watcher.poll()
+        await control.set_mode("xinput")
+        assert seen[-1] == ("xinput", "desktop", True) and watcher.changed_at == 2000000
         assert pad.memory[0x22C] == 12 and pad.memory[0x234] == 90, "and the user's gamepad set in gamepad mode"
-        assert seen[-1] == ("xinput", "desktop") and len(seen) == 4
+
+        # A silent switch the poll sees before set_gamepad_mode reports it still stays silent.
+        watcher.expect("desktop", False)
+        pad.mode = (0x04, 0x00)
+        await watcher.poll()
+        assert seen[-1] == ("desktop", "xinput", False)
+        pad.mode = (0x01, 0x00)
+        await watcher.poll()
+        assert seen[-1] == ("xinput", "desktop", True), "an expectation is used once"
+
+        def broken():
+            raise OSError("busy")
+        watcher.read = broken
+        assert await watcher.poll() == "xinput", "a failed read keeps the last mode"
         await control.close()
 
 

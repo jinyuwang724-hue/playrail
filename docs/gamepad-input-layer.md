@@ -249,18 +249,28 @@ HidHide 被别的程序改掉（ClawTweaks 会自己改 HidHide）：引擎每�
 
 ## 手柄模式：桌面模式暂停、模式切换提示（0.17.13）
 
-手柄每次切模式（长按 ≡，或 `set_gamepad_mode`）都会用另一个 USB 产品号重新枚举：`1901` 手柄（XInput）、`1902` DInput、`1903` 桌面。
-`claw_gamepad_fw.ModeWatcher` 每秒列一次 HID 接口路径（不打开手柄）看是哪个产品号；重新枚举中间的空档不算变化。看到变化时，按顺序：
-1. **模式提示（OSD）**：后台起 `ClawInput-<版本>.exe --osd gamepad|desktop`（`native/InputLayer/Osd.cs`）。屏幕上方居中的小窗，深色半透明圆角，
+**这台手柄切到桌面模式后 USB 产品号不变**（2026-10-16 实测：`set_gamepad_mode desktop` 后固件读回模式 4，PnP 里一直是 `USB\VID_0DB0&PID_1901`，不重新枚举；
+hid-msi 说的 0x1903 在这台机器上不成立）。所以 `claw_gamepad_fw.ModeWatcher` 读固件：每 2 秒发一次 0x26（读手柄模式），和其他手柄读写共用同一把锁、一次一个请求；
+产品号只当辅助（每秒列一次 HID 接口路径，哪天真变了就马上读一次固件）。读失败（手柄忙、睡眠、重新枚举）保持上一个模式。
+`set_gamepad_mode` 自己切的不用等轮询，切完马上通知。
+
+切换的入口：以后放在 Game Bar 小组件里（用户决定，不做手柄快捷键）。固件自己有没有「长按 ≡ 切模式」**未验证**（MSI Center M 的界面是这么写的，本机没有实测过）；
+如果有，2 秒内的轮询也能看到。看到变化时，按顺序：
+1. **模式提示（OSD）**（`notify = false` 的切换不弹，见下）：后台起 `ClawInput-<版本>.exe --osd gamepad|desktop`（`native/InputLayer/Osd.cs`）。屏幕上方居中的小窗，深色半透明圆角，
    左边手柄 / 显示器图标（Segoe Fluent Icons / MDL2），右边「手柄模式」/「桌面模式」，淡入 0.15 秒、停 1.15 秒、淡出 0.35 秒（约 1.6 秒）。
    置顶、不抢焦点（`WS_EX_NOACTIVATE`）、点不到（`WS_EX_TRANSPARENT`）、不进任务栏；每帧重新置顶，盖得住窗口化和无边框全屏的游戏。
    **独占全屏的游戏看不到**（它独占显示输出），这种情况只能靠应用内提示。没有 MSI 的红条。
-2. 推送事件 `gamepad_mode`：`{"mode": "desktop", "previous": "xinput", "at": 毫秒时间戳}`。
+2. 推送事件 `gamepad_mode`：`{"mode": "desktop", "previous": "xinput", "notify": true, "at": 毫秒时间戳}`。
 3. 输入层：不在 XInput 模式 → 暂停（引擎退出：不隐藏真手柄、拔掉虚拟手柄、放回 M1 / M2）；回到 XInput 模式 → 按规则恢复。
 4. 固件（照 MSI Center M）：切到桌面时，桌面摇杆死区第一次用就设成 MSI 的默认值（死区 10 / 外圈 100，`dstick.left/right`），
    然后写这个模式该有的字节：桌面模式写桌面那套摇杆死区和桌面键位，回到手柄模式写回手柄那套；模式指示灯（灯光 = modeinfo 时）跟着换色。
 
-`get_gamepad_state()` 加了：`modeChangedAt`（最近一次看到切换的毫秒时间戳，后台启动以来没切过 = `null`）、`modeChangedTo`、`desktopSticks`。
+**`set_gamepad_mode(mode, notify=True)`**：第二个参数 `notify`（布尔，可省，默认 `true`）。`false` = 临时切换（游戏库到前台时把桌面模式临时切成手柄模式、离开时切回），
+不弹提示框、不改 `modeChangedAt`；输入层暂停 / 恢复和桌面死区照常。agent 调用：`{"method": "set_gamepad_mode", "args": ["xinput", false]}`。
+先登记「接下来这次切换不通知」再切，所以轮询先看到也不会弹。
+
+`get_gamepad_state()` 加了：`modeChangedAt`（最近一次**通知过**的切换的毫秒时间戳，后台启动以来没有 = `null`）、`modeChangedTo`（那次切到的模式）、`desktopSticks`、
+`desktopKeys` / `desktopKeysSource` / `desktopKeysError`（见 `docs/gamepad-firmware-protocol.md` 末节）。当前模式看 `mode`。
 前端拿 `modeChangedAt` 变没变弹应用内提示。新接口 `set_desktop_stick_deadzone(side, deadzone, outer)`（范围同手柄的，只在桌面模式生效）。
 
 ## 延迟
@@ -276,7 +286,8 @@ HidHide 被别的程序改掉（ClawTweaks 会自己改 HidHide）：引擎每�
 - `tests/InputLayerTests.cs`（`test.ps1` 里跑）：51 项，触发方式的时间（长按 / 双击 / 可中断 / 组合键 / 切换 / 连发 / 启停延迟）、输出合并（多键同一输出、键盘组合键顺序、扳机当按键、摇杆方向、滚轮、切换布局松键）、引擎格式解析、HidHide 记录（只撤自己加的、别人的隐藏开关保留、补回被改掉的）。
 - `tests/input_layer_backend_test.py`（自带 Python 运行时直接跑）：布局校验 / 补全 / 编译、按游戏存储（拒绝路径穿越）、按规则开关（第一个绑键的布局打开、游戏布局也算、最后一个键去掉就关、调试覆盖和 `null`）、
   桌面模式暂停 / 恢复、固件（M1 → F22、被改过的 A 放回、不再用到立即放回）、引擎崩溃后放回固件并自动重开、后台重启后照规则、白名单带 Steam、冲突报告。
-- `tests/gamepad_fw_backend_test.py` 的 `mode_watch`：产品号变化 → 通知一次、记时间；枚举空档不算；第一次进桌面写 10 / 100，回手柄写回手柄那套，两套各自可改。
+- `tests/gamepad_fw_backend_test.py` 的 `mode_watch`：固件模式变化（产品号不变）→ 通知一次、记时间；`notify = false` 的切换只通知监听者不记时间，轮询先看到也一样；读失败保持；
+  第一次进桌面写 10 / 100，回手柄写回手柄那套，两套各自可改；`desktopKeys` 桌面模式读实际表、手柄模式给「表 + 切换时会写的」。
 
 ## 真机测试（2026-10-16，经已安装的后台 0.17.12）
 
@@ -325,8 +336,23 @@ HidHide 被别的程序改掉（ClawTweaks 会自己改 HidHide）：引擎每�
 | 模式提示 | 直接起 `ClawInput --osd desktop / gamepad` 截图：上方居中、深色圆角、图标 + 字，盖在全屏的游戏库上；约 1.2 秒后进程自己退出 ✅ |
 | 收尾 | 删掉测试布局；HidHide、固件（M1 Alt+F12、M2 0x12、A 原键）和测试前相同；`desktopSticks` 为空（没进过桌面模式） |
 
-没在真机上做的：**真的切一次手柄模式**。用户之前要求切模式先保留，这次没有新的明确同意，所以「长按 ≡ / set_gamepad_mode → 检测 → 提示 → 输入层暂停 / 恢复 → 桌面死区」
-这一串只在测试里用假手柄验证过（`mode_watch`、`switch`），OSD 单独在真机上显示过。真机切一次：手柄在旁边时长按 ≡ 切到桌面再切回来即可（固件自己的功能，随时能切回）。
+第二轮时没真的切过模式；后来实测发现产品号根本不变，按产品号的检测不会触发 —— 第三轮改成读固件，见下。
+
+## 真机测试第三轮（2026-10-17，读固件模式）
+
+可撤销，测完是手柄模式。先存一个绑了键的布局让输入层开着，再：
+
+| 检查 | 结果 |
+|---|---|
+| `set_gamepad_mode("desktop")` | 0.6 秒；固件读回模式 4；**PnP 仍是 `PID_1901`**（产品号确实不变） |
+| 模式提示 | 调用开始后 0.79 秒出现，截图是「桌面模式」，上方居中 ✅ |
+| 事件 / 时间 | `gamepad_mode {mode: desktop, previous: xinput, notify: true}`；`modeChangedAt` 有值、`modeChangedTo: desktop` ✅ |
+| 输入层 | `phase off`、`padMode desktop`（暂停：不隐藏、没有虚拟手柄）✅ |
+| 桌面摇杆死区 | `desktopSticks` 左右 10 / 100，固件里读到摇杆死区 10 / 外圈 100 ✅ |
+| 桌面模式的键表（`desktopKeysSource: firmware`） | 14 个键和手柄模式完全相同（各自原键码），说明固件只有一张键表，见固件文档 |
+| `set_gamepad_mode("xinput", false)` | 0.49 秒；2 秒内没有提示框进程；`modeChangedAt` 没变；事件 `notify: false` ✅ |
+| 回到手柄模式 | 摇杆死区回到 5 / 100；输入层自动 `active` ✅ |
+| 收尾 | 手柄模式；删掉测试布局，输入层 off；HidHide 和测试前相同；`dstick.left/right`（10 / 100）留着，这是桌面模式那套死区 |
 
 ## 已知限制
 
