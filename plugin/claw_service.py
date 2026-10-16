@@ -40,6 +40,9 @@ _rumble_spec.loader.exec_module(_rumble_module)
 _gamepad_fw_spec = importlib.util.spec_from_file_location("claw_toolbox_gamepad_fw", PLUGIN_ROOT / "claw_gamepad_fw.py")
 _gamepad_fw_module = importlib.util.module_from_spec(_gamepad_fw_spec)
 _gamepad_fw_spec.loader.exec_module(_gamepad_fw_module)
+_input_spec = importlib.util.spec_from_file_location("claw_toolbox_input_layer", PLUGIN_ROOT / "claw_input_layer.py")
+_input_module = importlib.util.module_from_spec(_input_spec)
+_input_spec.loader.exec_module(_input_module)
 
 # ControllerHapticsService.PlayPattern in Playhub 2.1.0 executes the first step.
 HAPTIC_PATTERNS = {
@@ -107,6 +110,11 @@ class Service:
         self._rumble = _rumble_module.RumbleControl(self._data, log=logging.info)
         self._gamepad = _gamepad_fw_module.GamepadControl(
             self._data, _gamepad_fw_module.GamepadFirmware(rumble=_rumble_module), log=logging.info)
+        # The agent's own Python keeps seeing the real pad (navigation haptics match it by vendor / product id).
+        self._input = _input_module.InputLayer(PLUGIN_ROOT, self._data, self._emit, gamepad=self._gamepad,
+                                               not_games=_power_module.NOT_GAMES, python=sys.executable,
+                                               log=logging.info)
+        self._input_task = None
         self._settings_path = self._data / "settings.json"
         self._task = None
         self._recent = []
@@ -138,6 +146,7 @@ class Service:
         self._power.start()
         self._rumble.start()
         self._gamepad.start()
+        self._input_task = asyncio.create_task(self._input.start())
 
     def _schedule_compatibility(self):
         if self._stopping or (self._compatibility_task and not self._compatibility_task.done()):
@@ -359,6 +368,30 @@ class Service:
 
     async def restore_gamepad(self, what="all"):
         return await self._gamepad_write(self._gamepad.restore, what)
+
+    # ---- software input layer (docs/gamepad-input-layer.md) ----
+
+    async def get_input_layer_state(self):
+        return await self._input.state()
+
+    async def set_input_layer_enabled(self, enabled):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        return await self._input.set_enabled(enabled)
+
+    async def get_input_layout(self, game=None):
+        return await self._input.get_layout(game)
+
+    async def save_input_layout(self, layout, game=None):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        return await self._input.save_layout(layout, game)
+
+    async def get_input_layer_catalog(self):
+        return _input_module.catalog()
+
+    async def test_input_layer(self, steps, layout_for=None):
+        return await self._input.test(steps, layout_for)
 
     async def test_rumble(self):
         if self._stopping:
@@ -605,6 +638,9 @@ class Service:
         self._overlay_frames.close()
         await self._power.close()
         await self._rumble.close()
+        if self._input_task and not self._input_task.done():
+            await self._input_task
+        await self._input.close()  # unhides the pad and puts M1 / M2 back while the firmware link is still open
         await self._gamepad.close()
         await self._magpie.close()
         if self._compatibility_task:

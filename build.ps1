@@ -20,6 +20,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Touch bridge build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Management.dll ("/out:" + (Join-Path $taskOutput 'ClawPower.exe')) (Join-Path $taskRoot 'native\ClawPower.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Power helper build failed.' }
+& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Core.dll ("/out:" + (Join-Path $taskOutput 'ClawInput.exe')) (Get-ChildItem -LiteralPath (Join-Path $taskRoot 'native\InputLayer') -Filter *.cs | ForEach-Object FullName)
+if ($LASTEXITCODE -ne 0) { throw 'Input layer build failed.' }
 if (-not $RouterOnly) {
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:winexe /platform:x64 /reference:System.Web.Extensions.dll ("/win32manifest:" + (Join-Path $taskRoot 'native\SteamAdminLauncher.manifest')) ("/out:" + (Join-Path $taskOutput 'SteamAdminLauncher.exe')) (Join-Path $taskRoot 'native\SteamAdminLauncher.cs') (Join-Path $taskRoot 'native\SteamPaths.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Steam launcher build failed.' }
@@ -34,6 +36,8 @@ Copy-Item -LiteralPath (Join-Path $taskOutput 'ClawRouter.exe') -Destination (Jo
 Copy-Item -LiteralPath (Join-Path $taskOutput 'ClawTouchBridge.exe') -Destination (Join-Path $taskOutput ('ClawTouchBridge-'+$taskVersion+'.exe')) -Force
 # The power helper stays elevated while the plugin runs; versioned for the same reason.
 Copy-Item -LiteralPath (Join-Path $taskOutput 'ClawPower.exe') -Destination (Join-Path $taskOutput ('ClawPower-'+$taskVersion+'.exe')) -Force
+# The input layer engine stays elevated while the layer is on; versioned for the same reason.
+Copy-Item -LiteralPath (Join-Path $taskOutput 'ClawInput.exe') -Destination (Join-Path $taskOutput ('ClawInput-'+$taskVersion+'.exe')) -Force
 }
 [IO.Directory]::CreateDirectory((Join-Path $taskRoot 'plugin\dist')) | Out-Null
 $taskRouter = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\menu-router.js'),[Text.Encoding]::UTF8)
