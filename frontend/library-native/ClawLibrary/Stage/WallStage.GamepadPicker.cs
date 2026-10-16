@@ -87,7 +87,7 @@ public sealed partial class WallStage
         JsonNode? codes = source switch
         {
             "M1" => _gpFw?["backKeys"]?["m1"]?["codes"], "M2" => _gpFw?["backKeys"]?["m2"]?["codes"],
-            "LT" => _gpFw?["triggers"]?["left"]?["codes"], "RT" => _gpFw?["triggers"]?["right"]?["codes"], _ => null,
+            _ => _gpFw?["keys"]?[source]?["codes"],
         };
         var current = (codes as JsonArray)?.Select(n => Int(n)).Where(c => c is > 0 and < 0xFF).ToArray() ?? Array.Empty<int>();
         int type = current.Length == 0 || current.Length == 1 && current[0] == GpNativeCode(source) ? 0

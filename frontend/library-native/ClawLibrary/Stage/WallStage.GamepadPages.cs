@@ -81,7 +81,7 @@ public sealed partial class WallStage
                     list.Add(d);
                     list.Add(o);
                 }
-                bool swap = Bool(_gpFw?["sticks"]?["left"]?["mapEnabled"]);
+                bool swap = Bool(_gpFw?["sticks"]?["swap"]);
                 var sw = Item("交换左右摇杆", "", _gpFw == null ? "—" : swap ? "开" : "关", _gpFw == null ? fwMissing : null);
                 sw.Lights = new[] { "LS", "RS" };
                 sw.Press = () => _ = GpWrite("set_stick_swap", JsonValue.Create(!swap));
@@ -256,10 +256,9 @@ public sealed partial class WallStage
         JsonNode? codes = src switch
         {
             "M1" => _gpFw?["backKeys"]?["m1"]?["codes"], "M2" => _gpFw?["backKeys"]?["m2"]?["codes"],
-            "LT" => _gpFw?["triggers"]?["left"]?["codes"], "RT" => _gpFw?["triggers"]?["right"]?["codes"],
-            _ => null,
+            _ => _gpFw?["keys"]?[src]?["codes"],
         };
-        if (codes is not JsonArray arr || arr.Count == 0) return src is "M1" or "M2" && _gpFw == null ? "—" : "原键位";
+        if (codes is not JsonArray arr || arr.Count == 0) return _gpFw == null ? "—" : "原键位";
         var list = arr.Select(n => Int(n)).Where(c => c is > 0 and < 0xFF).ToArray();
         if (list.Length == 0) return "不映射";
         if (list.Length == 1 && GpNativeCode(src) == list[0]) return "原键位";
