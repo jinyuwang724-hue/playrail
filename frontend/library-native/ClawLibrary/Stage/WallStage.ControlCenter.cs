@@ -235,6 +235,7 @@ public sealed partial class WallStage
         if (!_ccOpen || _cc == null) return;
         ClosePerf(instant: true);
         CloseGamepad(instant: true);
+        CloseDisplay(instant: true);
         _ccOpen = false;
         int v = ++_ccVersion;
         _ccTimer?.Stop();
@@ -254,6 +255,7 @@ public sealed partial class WallStage
         if (_cc == null) return;
         ClosePerf(instant: true);
         CloseGamepad(instant: true);
+        CloseDisplay(instant: true);
         _cc.IsVisible = false;
         _cc.StopAnimation("Opacity");
         _cc.Opacity = 1;
@@ -276,6 +278,7 @@ public sealed partial class WallStage
     {
         if (_perfOpen) { PerfMove(dir); return; }
         if (_gpOpen) { GpMove(dir); return; }
+        if (_dsOpen) { DsMove(dir); return; }
         if (CcChromeMove(dir)) return;
         if (dir is not (Direction.Left or Direction.Right)) return;
         // 不再限制「200 ms 一步」：滚动是弹簧，连按就直接换终点接着滚（可打断）
@@ -296,6 +299,7 @@ public sealed partial class WallStage
     {
         if (_perfOpen) { PerfActivate(); return; }
         if (_gpOpen) { GpActivate(); return; }
+        if (_dsOpen) { DsActivate(); return; }
         if (CcChromeActivate()) return;
         var b = _ccBlocks[_ccFocus];
         switch (_ccFocus)
@@ -308,6 +312,9 @@ public sealed partial class WallStage
                 break;
             case 2:   // 手柄：同样的 3:7 两栏，左栏是 Claw 8 EX 线稿 + 实时输入
                 OpenGamepad();
+                break;
+            case 3:   // 显示与声音：和性能页同样的 3:7 两栏
+                OpenDisplay();
                 break;
             case 5:   // 软件设置：竖条里的设置列表
                 CloseControlCenter();
@@ -325,7 +332,7 @@ public sealed partial class WallStage
         MarkInput();
         if (MorphIntercept()) return;
         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
-        if (_ccOpen && _perfOpen) return;
+        if (_ccOpen && (_perfOpen || _dsOpen)) return;
         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
         else Toast("游戏设置（原型里还没有）");
     }
@@ -351,7 +358,7 @@ public sealed partial class WallStage
     /// <summary>点卡：点到焦点卡 = A，点到别的卡 = 把它移到中间。</summary>
     private void CcClick(double sx, double sy)
     {
-        if (_perfOpen || _gpOpen) return;
+        if (_perfOpen || _gpOpen || _dsOpen) return;
         if (CcChromeClick(sx, sy)) return;
         float h = _ccH * _ccK;
         float top = CcTop;
