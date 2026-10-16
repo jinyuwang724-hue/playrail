@@ -86,7 +86,8 @@ public sealed partial class WallStage
     private int? _gpRumble;
     private string? _gpError;
     private CanvasBitmap? _gpFront, _gpBack;
-    private readonly Dictionary<string, CanvasBitmap> _gpMasks = new();
+    /// <summary>握把、肩部、背键的高亮区域：Assets/Pad/regions.txt 里的矢量轮廓，换算到舞台坐标后的几何（抗锯齿填充，放多大边都是平的）。</summary>
+    private readonly Dictionary<string, CanvasGeometry> _gpRegions = new();
     private DispatcherQueueTimer? _gpLive;
     private Input.GamepadPoller.Snapshot _gpShown;
 
@@ -174,8 +175,7 @@ public sealed partial class WallStage
             string dir = Path.Combine(AppContext.BaseDirectory, "Assets", "Pad");
             _gpFront = await CanvasBitmap.LoadAsync(G.Device, Path.Combine(dir, "claw8ex-front.png"));
             _gpBack = await CanvasBitmap.LoadAsync(G.Device, Path.Combine(dir, "claw8ex-back.png"));
-            foreach (var (name, file) in new[] { ("GripL", "mask-grip-l"), ("GripR", "mask-grip-r"), ("LB", "mask-shoulder-l"), ("RB", "mask-shoulder-r"), ("M1", "mask-m1"), ("M2", "mask-m2") })
-                _gpMasks[name] = await CanvasBitmap.LoadAsync(G.Device, Path.Combine(dir, file + ".png"));
+            GpLoadRegions(Path.Combine(dir, "regions.txt"));
             _gpArtK = 0;
             if (_gpOpen) PaintGp();
         }
@@ -594,18 +594,31 @@ public sealed partial class WallStage
     private const float GpStickDisc = 44;
 
     /// <summary>
-    /// 线稿上一块区域填强调色：握把、肩部、背键用按线稿边界漫水填出来的遮罩（Assets/Pad/mask-*.png，原图同尺寸）；
+    /// 线稿上一块区域填强调色：握把、肩部、背键用沿线稿边界描出的矢量轮廓（Assets/Pad/regions.txt）；
     /// 摇杆是一圈大圆盘，十字键是整个圆盘，A B X Y 填四个键，其余按键填它自己的形状。
     /// </summary>
+    /// <summary>读 regions.txt：每行「名字 面 x,y x,y …」（原图像素），建成舞台坐标的多边形。生成方法见 tools/PadRegions。</summary>
+    private void GpLoadRegions(string path)
+    {
+        foreach (var line in File.ReadAllLines(path))
+        {
+            if (line.Length == 0 || line[0] == '#') continue;
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 5) continue;
+            var pts = parts.Skip(2).Select(p =>
+            {
+                var xy = p.Split(',');
+                return GpPoint(float.Parse(xy[0], System.Globalization.CultureInfo.InvariantCulture), float.Parse(xy[1], System.Globalization.CultureInfo.InvariantCulture));
+            }).ToArray();
+            if (_gpRegions.TryGetValue(parts[0], out var old)) old.Dispose();
+            _gpRegions[parts[0]] = CanvasGeometry.CreatePolygon(G.Device, pts);
+        }
+    }
+
     private void GpFill(CanvasDrawingSession ds, string name, float alpha, Color accent)
     {
         if (!GpKeys.TryGetValue(name, out var key) || key.Back != _gpShowBack) return;
-        if (_gpMasks.TryGetValue(name, out var mask))
-        {
-            using var tint = new Microsoft.Graphics.Canvas.Effects.TintEffect { Source = mask, Color = accent };
-            ds.DrawImage(tint, new Rect(GpX, GpY, GpW, GpH), mask.Bounds, alpha);
-            return;
-        }
+        if (_gpRegions.TryGetValue(name, out var region)) { ds.FillGeometry(region, Gfx.WithAlpha(accent, alpha)); return; }
         var c = GpPoint(key.X, key.Y);
         switch (name)
         {
