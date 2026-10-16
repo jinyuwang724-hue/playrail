@@ -2,11 +2,12 @@ import { createMenuRouter } from "./menu-router.js";
 import { installNavigationHaptics } from "./navigation-haptics.js";
 import { createGameAdder } from "./game-add.js";
 import { syncPluginPanel } from "./panel-lifecycle.js";
-import { createModuleSelection, createToolboxUI, toolboxStyles } from "./toolbox-ui.js";
+import { createModuleSelection, createToolboxUI, toolboxModules, toolboxStyles } from "./toolbox-ui.js";
 import { createMagpieController, createMagpiePanel } from "./magpie.js";
 import { syncOverlayInset, syncQuickAccessSize } from "./magpie.js";
 import { installSteamContext } from "./steam-context.js";
-import { createPowerController, createPowerPanel } from "./power.js";
+import { createPowerController, createPowerPanel, powerSummaries, powerTiles } from "./power.js";
+import { createRumbleController, createRumbleRows } from "./rumble.js";
 const manifest = { name: "Claw 掌机工具箱" };
 const connection = window.__DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_deckyLoaderAPIInit;
 if (!connection) throw new Error("Decky 接口不可用");
@@ -16,11 +17,20 @@ catch { api = connection.connect(1, manifest.name); }
 const R = SP_REACT, UI = DFL, h = R.createElement;
 const GameAdder = createGameAdder(window, UI, api, R);
 const moduleSelection = createModuleSelection();
-const { ModuleStack, SectionLabel, StatusText } = createToolboxUI(R, UI);
+const { Home, SubPage, TitleBar, SectionLabel, StatusText } = createToolboxUI(R, UI);
+// Side-panel title: the game the power governor sees, or the toolbox name.
+function Title() {
+  const [value, setValue] = R.useState(() => power.value);
+  R.useEffect(() => power.subscribe(setValue), []);
+  const smart = value.draft?.enabled ? value.view?.smart : null;
+  return h(TitleBar, { game: smart?.game ? { name: smart.game, detail: smart.target ? `目标 ${smart.target} 帧` : "智能调节" } : null });
+}
 const magpie = createMagpieController(api);
 const MagpiePanel = createMagpiePanel(R, UI, magpie, StatusText);
 const power = createPowerController(api);
 const PowerPanel = createPowerPanel(R, UI, power, StatusText, SectionLabel);
+const rumble = createRumbleController(api);
+const RumbleRows = createRumbleRows(R, UI, rumble, StatusText);
 // While Steam's side menus are open, keep the quick access panel at its on-screen
 // size (Steam rebuilds it on its own). The menus go through Magpie's effect chain
 // with the game. Runs only while an overlay is visible.
@@ -102,6 +112,9 @@ export function Content() {
   const [busy, setBusy] = R.useState(false);
   const [message, setMessage] = R.useState("");
   const [proxy, setProxy] = R.useState(() => proxyState);
+  // The home page shows power and picture state without opening those modules.
+  const [powerValue, setPowerValue] = R.useState(() => power.value);
+  const [magpieValue, setMagpieValue] = R.useState(() => magpie.value);
   const { clash, busy: proxyBusy, message: proxyMessage, operation: proxyOperation, link: subscriptionLink } = proxy;
   R.useEffect(() => {
     let mounted = true;
@@ -109,12 +122,23 @@ export function Content() {
     subscribers.add(setValue);
     proxySubscribers.add(setProxy);
     setProxy(proxyState);
+    const removePower = power.subscribe(setPowerValue), removeMagpie = magpie.subscribe(setMagpieValue);
+    // Read-only: neither read applies a setting.
+    if (!power.value.view) power.refresh(false);
+    api.call("get_magpie_state").then(value => { if (mounted) magpie.accept(value); }).catch(() => {});
     refresh().catch(e => { if (mounted) setMessage(String(e)); });
     if (!proxyState.busy) refreshProxy().catch(() => {
       updateProxy({ message: "暂时无法读取 Clash Verge 状态，请确认它正在运行" });
     });
-    return () => { mounted = false; unsubscribeModule(); subscribers.delete(setValue); proxySubscribers.delete(setProxy); };
+    return () => { mounted = false; unsubscribeModule(); subscribers.delete(setValue); proxySubscribers.delete(setProxy); removePower(); removeMagpie(); };
   }, []);
+  // Live readings on the home page; module pages keep their own refresh.
+  R.useEffect(() => {
+    if (activeModule !== null) return undefined;
+    // Sampled reads: an unsampled read carries no package power.
+    const poll = setInterval(() => power.refresh(true), 3000);
+    return () => clearInterval(poll);
+  }, [activeModule]);
   const proxyAction = async (action, choice) => {
     if (proxyState.busy || proxyChoiceUnchanged(action, choice, clash)) return;
     if (proxyRead) { try { await proxyRead; } catch {} }
@@ -151,7 +175,9 @@ export function Content() {
   const compatibility = value.compatibility ?? { enabled: {}, items: {}, busy: true, phase: "正在读取修复状态" };
   const contents = {
     magpie: h(MagpiePanel, { key: "magpie" }),
-    power: h(PowerPanel, { key: "power" }),
+    power: h(PowerPanel, { key: "power", section: "power" }),
+    osd: h(PowerPanel, { key: "osd", section: "osd" }),
+    fan: h(PowerPanel, { key: "fan", section: "fan" }),
     compatibility: h(UI.PanelSection, { key: "compatibility" },
       h(StatusText, null, compatibility.phase),
       h(UI.PanelSectionRow, null, h(UI.ToggleField, { label: "Steam 启动修复", description: "避免重启后普通权限 Steam 抢先启动，保持游戏运行监控。关闭时恢复原设置。", checked: !!compatibility.enabled?.steam, disabled: compatibility.busy || compatibilityBusy, onChange: enabled => compatibilityAction("set", "steam", enabled) })),
@@ -168,8 +194,10 @@ export function Content() {
       h(UI.PanelSectionRow, { key: "mapping-xbox" }, h(UI.DropdownItem, { label: "Xbox 键", rgOptions: actions, selectedOption: value.settings.qamAction, disabled: busy, onChange: option => save({ qamAction: option.data }) })),
       (value.status.error || message) && field("提示", value.status.error || message)),
     haptics: h(UI.PanelSection, { key: "haptics" },
+      h(RumbleRows, { key: "rumble" }),
+      h(SectionLabel, null, "界面导航震动"),
       h(StatusText, null, value.haptics?.phase ?? "等待导航"),
-      h(UI.PanelSectionRow, { key: "haptics-enabled" }, h(UI.ToggleField, { label: "手柄反馈修复", description: "开启后自动生效。", checked: value.settings.hapticsEnabled, disabled: busy, onChange: hapticsEnabled => save({ hapticsEnabled }) }))),
+      h(UI.PanelSectionRow, { key: "haptics-enabled" }, h(UI.ToggleField, { label: "手柄反馈修复", checked: value.settings.hapticsEnabled, disabled: busy, onChange: hapticsEnabled => save({ hapticsEnabled }) }))),
     games: h(GameAdder, { key: "game-add", embedded: true }),
     proxy: h(UI.PanelSection, { key: "proxy" },
       h(StatusText, null, proxyBusy ? proxyOperation : clash.phase),
@@ -197,9 +225,46 @@ export function Content() {
         subscriptionItem.updated && h("div", { style: { fontSize: "12px", opacity: .75 } }, `更新时间：${new Date(subscriptionItem.updated * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false })}`))),
       proxyMessage && field("提示", proxyMessage)),
   };
-  return h("div", { className: "claw-toolbox-ui" },
-    h("style", null, toolboxStyles),
-    h(ModuleStack, { active: activeModule, onSelect: id => moduleSelection.select(id), contents }));
+  const proxyModeLabel = proxyModes.find(item => item.data === clash.mode)?.label;
+  const states = {
+    ...powerSummaries(powerValue),
+    magpie: magpieValue.enabled ? { text: magpieValue.active ? "铺满中" : "已开启" } : { text: "关", off: true },
+    mapping: value.settings.enabled ? { text: "接管中" } : { text: "关", off: true },
+    haptics: value.settings.hapticsEnabled ? { text: "开" } : { text: "关", off: true },
+    proxy: !clash.available ? { text: "未运行", off: true } : proxyModeLabel ? { text: proxyModeLabel } : undefined,
+    compatibility: compatibility.enabled?.steam || compatibility.enabled?.gamebar ? { text: "已启用" } : undefined,
+  };
+  const open = id => moduleSelection.select(id);
+  const page = toolboxModules.find(module => module.id === activeModule);
+  let body;
+  if (page) body = h(SubPage, { module: page, state: states[page.id], onBack: () => open(null) }, contents[page.id]);
+  else {
+    const view = powerValue.view, draft = powerValue.draft, live = view?.live ?? {}, smart = view?.smart;
+    const managed = !!draft?.enabled;
+    const round = (v, digits = 0) => typeof v === "number" ? Math.round(v * 10 ** digits) / 10 ** digits : null;
+    const fps = round(smart?.fps ?? live.fps), target = managed ? smart?.target : null;
+    const toggleMagpie = async () => {
+      if (magpieValue.busy) return;
+      const result = await magpie.toggle();
+      api.toaster?.toast?.({ title: "超分铺满", body: result.ok ? result.message : result.reason });
+    };
+    const [powerTile, ...otherTiles] = powerTiles(powerValue, power, open);
+    body = h(Home, {
+      metrics: [
+        { label: "功耗", value: managed ? round(view?.actual?.package, 1) : null, unit: "W" },
+        { label: "CPU", value: round(live.cpuTemp), unit: "°C" },
+        { label: "帧率", value: fps },
+        { label: view ? (view.charger ? "插电" : "电池") : "电量", value: live.battery ?? null, unit: "%" },
+      ],
+      banner: managed && view?.otherTool ? "体感助手也在调功耗，两边会互相改写。请在体感助手里关掉“自动设置 TDP”，或退出体感助手。" : null,
+      tiles: [powerTile,
+        { id: "magpie", label: "超分铺满", icon: "magpie", on: !!magpieValue.enabled, steps: 1, filled: magpieValue.enabled ? 1 : 0,
+          value: magpieValue.enabled ? (magpieValue.active ? "铺满中" : "已开启") : "关", disabled: !!magpieValue.busy, onPress: toggleMagpie },
+        ...otherTiles].filter(Boolean),
+      onOpen: open,
+    });
+  }
+  return h("div", { className: "claw-toolbox-ui" }, h("style", null, toolboxStyles), body);
 }
 export default function plugin() {
   let disposed = false;
@@ -249,8 +314,8 @@ export default function plugin() {
     onError: error => console.warn("[Claw] Steam context unavailable", error) });
   frontendReady.then(value => { update(value); void haptics.sync(); }).catch(error => update({ ...state, status: { ...state.status, error: String(error) } }));
   return {
-    name: manifest.name, title: h("div", null, manifest.name), content: h(Content),
+    name: manifest.name, title: h(Title), content: h(Content),
     icon: UI.IconsModule?.Controller ? h(UI.IconsModule.Controller, { width: 20, height: 20, style: { width: 20, height: 20 } }) : null,
-    onDismount() { disposed = true; clearInterval(plainTimer); removeInset(); syncOverlayInset(window, null); syncQuickAccessSize(window, null); steamContext.dispose(); disposePanel(); haptics.dispose(); routers.get(window)?.dispose(); routers.delete(window); magpie.dispose(); power.dispose(); api.removeEventListener("power_status", powerListener); api.removeEventListener("magpie_status", magpieListener); api.removeEventListener("router_event", listener); api.removeEventListener("haptic_status", hapticListener); api.call("frontend_ready", false, frontendId).catch(() => {}); },
+    onDismount() { disposed = true; clearInterval(plainTimer); removeInset(); syncOverlayInset(window, null); syncQuickAccessSize(window, null); steamContext.dispose(); disposePanel(); haptics.dispose(); routers.get(window)?.dispose(); routers.delete(window); magpie.dispose(); power.dispose(); rumble.dispose(); api.removeEventListener("power_status", powerListener); api.removeEventListener("magpie_status", magpieListener); api.removeEventListener("router_event", listener); api.removeEventListener("haptic_status", hapticListener); api.call("frontend_ready", false, frontendId).catch(() => {}); },
   };
 }

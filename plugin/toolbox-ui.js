@@ -1,14 +1,41 @@
-export const toolboxModules = [
-  { id: "magpie", title: "缩放与锐化", subtitle: "等比铺满 · Magpie", icon: "Display", accent: "#8abfff" },
-  { id: "power", title: "性能与功耗", subtitle: "功耗 · CPU 频率", icon: "Battery", accent: "#f2a07b" },
-  { id: "games", title: "添加游戏", subtitle: "非 Steam 游戏", icon: "Library", accent: "#79c7ff" },
-  { id: "proxy", title: "网络代理", subtitle: "订阅与节点", icon: "Globe", accent: "#74dbc6" },
-  { id: "mapping", title: "按键映射", subtitle: "掌机快捷按键", icon: "Controller", accent: "#f3c784" },
-  { id: "haptics", title: "导航反馈", subtitle: "手柄震动", icon: "Haptics", accent: "#c5b2f5" },
-  { id: "compatibility", title: "兼容性修复", subtitle: "Steam 启动与 Game Bar", icon: "Controller", accent: "#92d2b1" },
+// Home page: live readings, quick tiles and a grouped list of every module; each
+// module opens on its own page. A new module (e.g. vibration strength) only needs
+// an entry here with its group; nothing relies on fixed slots.
+export const toolboxGroups = [
+  { id: "play", title: "游戏与硬件" },
+  { id: "system", title: "系统与工具" },
 ];
 
-export function createModuleSelection(initial = "games") {
+export const toolboxModules = [
+  { id: "power", group: "play", title: "性能与功耗", icon: "power" },
+  { id: "magpie", group: "play", title: "画面缩放", icon: "magpie" },
+  { id: "osd", group: "play", title: "性能显示", icon: "osd" },
+  { id: "fan", group: "play", title: "风扇", icon: "fan" },
+  { id: "mapping", group: "play", title: "按键映射", icon: "mapping" },
+  { id: "haptics", group: "play", title: "震动", icon: "haptics" },
+  { id: "games", group: "system", title: "添加游戏", icon: "games" },
+  { id: "proxy", group: "system", title: "网络代理", icon: "proxy" },
+  { id: "compatibility", group: "system", title: "兼容性修复", icon: "compatibility" },
+];
+
+const iconPaths = {
+  power: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+  magpie: '<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  osd: '<path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>',
+  fan: '<circle cx="12" cy="12" r="2"/><path d="M12 10c0-4 1-7 4-7 2 0 2 3-1 5M14 12c4 0 7 1 7 4 0 2-3 2-5-1M12 14c0 4-1 7-4 7-2 0-2-3 1-5M10 12c-4 0-7-1-7-4 0-2 3-2 5 1"/>',
+  mapping: '<rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 10v4M5 12h4M16 11h.01M18 13h.01"/>',
+  haptics: '<path d="M8 6h8v12H8zM4 9v6M20 9v6M2 11v2M22 11v2"/>',
+  games: '<path d="M4 4h6v16H4zM12 4h3v16h-3zM17 5l3 1-3 14-3-1z"/>',
+  proxy: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>',
+  compatibility: '<path d="M14 7a4 4 0 0 0-5 5l-6 6 3 3 6-6a4 4 0 0 0 5-5l-2 2-3-3z"/>',
+  play: '<path d="M7 4v16l13-8z" fill="currentColor"/>',
+  plug: '<path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0zM12 18v4"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  chevron: '<path d="M9 5l7 7-7 7"/>',
+  warn: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>',
+};
+
+export function createModuleSelection(initial = null) {
   let value = initial;
   const listeners = new Set();
   return {
@@ -22,55 +49,126 @@ export function createModuleSelection(initial = "games") {
   };
 }
 
+// SteamOS colours only (read from Steam's GamepadUI stylesheet): text #dcdedf / #b8bcbf /
+// #8b929a, white with #0e141b text for controller focus. Tiles that are on use Steam's
+// own two-colour Primary button gradient for the bottom edge and solid blue elsewhere.
+// The module list reuses the classes of Steam's own settings sidebar.
+// No background colour of our own: the page sits on whatever the side panel (and any
+// CSS Loader theme) paints. Rows and section titles are Steam's own Field and PanelSection.
 export const toolboxStyles = `
-.claw-toolbox-ui { color:#edf2f7; padding-bottom:16px; }
-.claw-toolbox-ui .claw-module-heading-row { margin:0 16px; padding:4px 0; border-top:1px solid #34414e; }
-.claw-toolbox-ui .claw-module-section:first-child .claw-module-heading-row { border-top:0; }
-.claw-toolbox-ui button.DialogButton._DialogLayout.claw-module-button { display:flex; align-items:center; gap:10px; width:100%; min-width:0; min-height:62px; margin:0; padding:10px 5px; border:0; border-radius:3px; box-shadow:none; background:transparent; color:#edf2f7; text-align:left; }
-.claw-toolbox-ui .claw-module-copy { flex:1; min-width:0; }
-.claw-toolbox-ui .claw-module-title { display:block; font-size:16px; font-weight:650; line-height:22px; }
-.claw-toolbox-ui .claw-module-icon { display:flex; align-items:center; flex-shrink:0; color:var(--claw-accent); }
-.claw-toolbox-ui .claw-module-icon svg { width:20px; height:20px; }
-.claw-toolbox-ui .claw-module-subtitle { display:block; margin-top:2px; font-size:12px; line-height:17px; color:#b8c5d1; }
-.claw-toolbox-ui .claw-module-chevron { display:flex; flex-shrink:0; color:#b8c5d1; }
-.claw-toolbox-ui .claw-module-chevron svg { width:14px; height:14px; }
-.claw-toolbox-ui button.DialogButton._DialogLayout.claw-module-button.gpfocus, .claw-toolbox-ui button.DialogButton._DialogLayout.claw-module-button:focus-visible { background:#edf2f7; color:#17212b; outline:2px solid #edf2f7; outline-offset:0; }
-.claw-toolbox-ui .claw-module-button.gpfocus .claw-module-subtitle, .claw-toolbox-ui .claw-module-button:focus-visible .claw-module-subtitle { color:#34414e; }
-.claw-toolbox-ui .claw-module-button.gpfocus .claw-module-icon, .claw-toolbox-ui .claw-module-button:focus-visible .claw-module-icon, .claw-toolbox-ui .claw-module-button.gpfocus .claw-module-chevron, .claw-toolbox-ui .claw-module-button:focus-visible .claw-module-chevron { color:#34526e; }
-.claw-toolbox-ui .claw-module-content { padding-bottom:12px; }
-.claw-toolbox-ui .claw-section-label { padding:8px 0 7px; color:#b8c5d1; font-size:12px; font-weight:650; letter-spacing:.4px; border-bottom:1px solid #34414e; margin:8px 0 5px; }
+.claw-title { display:flex; align-items:baseline; gap:8px; width:100%; min-width:0; padding:4px 16px 6px; box-sizing:border-box; color:#dcdedf; }
+.claw-title b { font-size:18px; line-height:24px; font-weight:600; letter-spacing:.3px; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.claw-title span { font-size:13px; line-height:18px; color:#8b929a; white-space:nowrap; }
+.claw-title .claw-title-end { margin-left:auto; }
+.claw-toolbox-ui { --claw-fg:#dcdedf; --claw-fg-2:#b8bcbf; --claw-fg-3:#8b929a; --claw-off:#67707b; --claw-blue:#1a9fff; --claw-accent:linear-gradient(90deg, #47bfff, #1a44c2); --claw-accent-solid:#47bfff; --claw-sep:rgba(255,255,255,.1); --claw-warn:#ffc82c; color:var(--claw-fg); padding-bottom:8px; }
+.claw-toolbox-ui .claw-game { display:flex; align-items:baseline; gap:6px; min-width:0; padding-bottom:10px; font-size:12px; line-height:16px; color:var(--claw-fg-3); }
+.claw-toolbox-ui .claw-game b { color:var(--claw-fg); font-weight:500; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.claw-toolbox-ui .claw-game .claw-source { margin-left:auto; white-space:nowrap; letter-spacing:.5px; }
+.claw-toolbox-ui .claw-strip { display:grid; grid-template-columns:repeat(4,1fr); padding:10px 0 4px; }
+.claw-toolbox-ui .claw-metric { display:flex; flex-direction:column; align-items:center; gap:4px; min-width:0; text-align:center; }
+.claw-toolbox-ui .claw-metric strong { display:flex; align-items:baseline; justify-content:center; height:26px; font-size:22px; line-height:26px; font-weight:400; color:#fff; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.claw-toolbox-ui .claw-metric strong small { font-size:12px; color:var(--claw-fg-3); margin-left:2px; }
+.claw-toolbox-ui .claw-metric strong.na { color:var(--claw-off); }
+.claw-toolbox-ui .claw-metric span { font-size:11px; line-height:14px; color:var(--claw-fg-3); letter-spacing:.5px; }
+.claw-toolbox-ui .claw-banner { display:flex; align-items:flex-start; gap:8px; margin-top:14px; font-size:12px; line-height:16px; color:var(--claw-fg-2); overflow-wrap:anywhere; }
+.claw-toolbox-ui .claw-banner svg { width:14px; height:14px; flex-shrink:0; margin-top:1px; color:var(--claw-warn); }
+.claw-toolbox-ui .claw-tiles { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.claw-toolbox-ui .claw-tiles button.DialogButton.claw-tile.claw-tile { display:flex; flex-direction:column; align-items:stretch; gap:5px; width:100%; min-width:0 !important; min-height:92px; margin:0; padding:14px 14px 13px; border:0; border-radius:4px; box-shadow:none; background:rgba(0,0,0,.22); color:var(--claw-fg); text-align:left; position:relative; overflow:hidden; }
+.claw-toolbox-ui .claw-tile-label { display:flex; align-items:center; gap:6px; font-size:12px; line-height:16px; color:var(--claw-fg-3); }
+.claw-toolbox-ui .claw-tile-label svg { width:15px; height:15px; flex-shrink:0; }
+.claw-toolbox-ui .claw-tile-value { font-size:17px; line-height:22px; font-weight:500; color:var(--claw-fg-2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.claw-toolbox-ui .claw-dots { display:flex; gap:4px; margin-top:6px; }
+.claw-toolbox-ui .claw-dots i { flex:1; max-width:18px; height:3px; border-radius:2px; background:rgba(255,255,255,.12); }
+.claw-toolbox-ui .claw-dots i.f { background:var(--claw-fg-2); }
+.claw-toolbox-ui .claw-tile.on .claw-tile-label svg { color:var(--claw-accent-solid); }
+.claw-toolbox-ui .claw-tile.on .claw-tile-value { color:#fff; }
+.claw-toolbox-ui .claw-tile.on .claw-dots i.f { background:var(--claw-accent-solid); }
+.claw-toolbox-ui .claw-tile.on:after { content:""; position:absolute; left:0; right:0; bottom:0; height:3px; background:var(--claw-accent); }
+.claw-toolbox-ui .claw-tiles button.DialogButton.claw-tile.claw-tile.gpfocus { background:#fff; box-shadow:0 4px 4px rgba(0,0,0,.25); }
+.claw-toolbox-ui .claw-tile.gpfocus .claw-tile-label { color:#3d4450; }
+.claw-toolbox-ui .claw-tile.gpfocus .claw-tile-value { color:#0e141b; }
+.claw-toolbox-ui .claw-tile.gpfocus .claw-dots i { background:rgba(14,20,27,.15); }
+.claw-toolbox-ui .claw-tile.gpfocus .claw-dots i.f { background:#0e141b; }
+.claw-toolbox-ui .claw-tile.on.gpfocus .claw-dots i.f { background:#1a9fff; }
+.claw-toolbox-ui .claw-nav { display:flex; flex-direction:column; margin:0 -16px; }
+.claw-toolbox-ui .claw-nav-item { display:flex; align-items:center; min-width:0; padding:13px 16px; font-size:16px; line-height:20px; color:var(--claw-fg-2); cursor:pointer; }
+.claw-toolbox-ui .claw-nav-icon { display:flex; width:20px; height:20px; flex-shrink:0; margin-inline-end:14px; }
+.claw-toolbox-ui .claw-nav-icon svg { width:20px; height:20px; }
+.claw-toolbox-ui .claw-nav-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.claw-toolbox-ui .claw-nav-item.claw-nav-active { background:#3d4450; color:#fff; }
+.claw-toolbox-ui .claw-state { max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; color:var(--claw-fg-3); }
+.claw-toolbox-ui .claw-sub-head { display:flex; align-items:center; gap:10px; margin:0 16px 12px; min-width:0; }
+.claw-toolbox-ui button.DialogButton.claw-back.claw-back { display:flex; align-items:center; justify-content:center; width:32px; min-width:0 !important; height:32px; flex-shrink:0; margin:0; padding:0; border:0; border-radius:4px; box-shadow:none; background:rgba(0,0,0,.22); color:var(--claw-fg); }
+.claw-toolbox-ui .claw-back svg { width:16px; height:16px; }
+.claw-toolbox-ui button.DialogButton.claw-back.claw-back.gpfocus { background:#fff; color:#0e141b; }
+.claw-toolbox-ui .claw-sub-title { flex:1; min-width:0; font-size:16px; line-height:22px; font-weight:600; letter-spacing:.5px; color:rgba(255,255,255,.7); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.claw-toolbox-ui .claw-section-label { padding:14px 0 6px; color:rgba(255,255,255,.7); font-size:14px; line-height:20px; font-weight:600; letter-spacing:.5px; }
 .claw-toolbox-ui .claw-field { padding:8px 0; line-height:1.5; min-width:0; overflow-wrap:anywhere; }
-.claw-toolbox-ui .claw-field-label { display:block; color:#b8c5d1; font-size:12px; font-weight:500; margin-bottom:3px; }
-.claw-toolbox-ui .claw-field-value { color:#edf2f7; font-size:14px; }
-.claw-toolbox-ui .claw-module-status { margin:0 0 12px; padding:0; color:#b8c5d1; font-size:13px; line-height:20px; overflow-wrap:anywhere; }
-.claw-toolbox-ui .claw-hint { color:#b8c5d1; font-size:12px; line-height:18px; padding:4px 0 8px; overflow-wrap:anywhere; }
-.claw-toolbox-ui .claw-action-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.claw-toolbox-ui .claw-field-label { display:block; color:var(--claw-fg-2); font-size:12px; margin-bottom:3px; }
+.claw-toolbox-ui .claw-field-value { color:var(--claw-fg); font-size:14px; }
+.claw-toolbox-ui .claw-module-status { margin:0 0 6px; padding:0; color:var(--claw-fg-2); font-size:13px; line-height:18px; overflow-wrap:anywhere; }
+.claw-toolbox-ui .claw-hint { color:var(--claw-fg-2); font-size:12px; line-height:16px; padding:4px 0 8px; overflow-wrap:anywhere; }
+.claw-toolbox-ui .claw-action-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
 .claw-toolbox-ui .claw-action-grid button { min-width:0; width:100%; }
-.claw-toolbox-ui .claw-primary-action button.DialogButton._DialogLayout { background:#67b8ed; color:#101b24; font-weight:650; }
-.claw-toolbox-ui .claw-primary-action button.DialogButton._DialogLayout:disabled, .claw-toolbox-ui .claw-primary-action button.DialogButton._DialogLayout.Disabled { background:#2b3946; color:#9aa9b7; }
-.claw-toolbox-ui .claw-primary-action button.DialogButton._DialogLayout.gpfocus { background:#d9f0ff; color:#101b24; }
-.claw-toolbox-ui .claw-content { --claw-accent:#79c7ff; }
+.claw-toolbox-ui .claw-primary-action button.DialogButton._DialogLayout { background:var(--claw-blue); color:#fff; }
+.claw-toolbox-ui .claw-primary-action button.DialogButton._DialogLayout:disabled, .claw-toolbox-ui .claw-primary-action button.DialogButton._DialogLayout.Disabled { background:rgba(255,255,255,.15); color:var(--claw-off); }
+.claw-toolbox-ui .claw-primary-action button.DialogButton._DialogLayout.gpfocus { background:#fff; color:#0e141b; }
 @media (prefers-reduced-motion:reduce) { .claw-toolbox-ui * { scroll-behavior:auto; } }
 `;
 
 export function createToolboxUI(React, ui) {
   const h = React.createElement;
-  // Render each registered module in sequence; adding a module never needs a grid slot.
-  function ModuleStack({ active, onSelect, contents, modules = toolboxModules }) {
-    return h(ui.Focusable, { className: "claw-module-list", "flow-children": "column", "aria-label": "工具箱功能模块" },
-      modules.map(module => {
-        const expanded = active === module.id;
-        const headingId = `claw-module-${module.id}`;
-        const contentId = `${headingId}-content`;
-        return h(ui.Focusable, { key: module.id, className: "claw-module-section", "flow-children": "column", style: { "--claw-accent": module.accent } },
-          h("div", { className: "claw-module-heading-row" }, h(ui.DialogButton, {
-            id: headingId, className: "claw-module-button", style: { width: "100%", minWidth: 0, padding: "10px 5px" },
-            "aria-expanded": expanded, "aria-controls": contentId, onClick: () => onSelect(expanded ? null : module.id),
-          }, h("span", { className: "claw-module-icon" }, ui.IconsModule?.[module.icon] && h(ui.IconsModule[module.icon])),
-          h("span", { className: "claw-module-copy" }, h("span", { className: "claw-module-title" }, module.title), h("span", { className: "claw-module-subtitle" }, module.subtitle)),
-          h("span", { className: "claw-module-chevron", "aria-hidden": true }, ui.IconsModule?.Chevron && h(ui.IconsModule.Chevron, { direction: expanded ? "down" : "right" })))),
-          expanded && h(ui.Focusable, { id: contentId, className: "claw-module-content", "flow-children": "column", role: "region", "aria-labelledby": headingId }, contents[module.id]));
-      }));
+  // Steam's settings sidebar classes (list item, icon, title, focused item), when found.
+  const nav = (typeof ui.findModule === "function" && ui.findModule(m => m && typeof m === "object" && m.PagedSettingsDialog_PageListItem && m.ResponsivePageList)) || {};
+  const Icon = ({ name }) => h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8,
+    strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true, dangerouslySetInnerHTML: { __html: iconPaths[name] ?? "" } });
+
+  // metrics: [{ label, value, unit }] with value null shown as a dash, never a guess.
+  // tiles: [{ id, label, icon, value, steps, filled, on, onPress }].
+  function Home({ game, source, metrics = [], banner, tiles = [], onOpen, modules = toolboxModules, groups = toolboxGroups }) {
+    const known = new Set(groups.map(group => group.id));
+    const sets = [...groups, { id: "other", title: "其他" }]
+      .map(group => ({ group, items: modules.filter(module => group.id === "other" ? !known.has(module.group) : module.group === group.id) }))
+      .filter(set => set.items.length);
+    // Order: quick tiles, then the live readings (and any conflict notice), then the module list.
+    return h(ui.Focusable, { className: "claw-home", "flow-children": "column" },
+      (game || source) && h(ui.PanelSection, null, h("div", { className: "claw-game" },
+        game && h("b", null, game.name), game?.detail && h("span", null, `· ${game.detail}`),
+        source && h("span", { className: "claw-source" }, source.text))),
+      tiles.length > 0 && h(ui.PanelSection, { title: "快捷切换" },
+        h(ui.Focusable, { className: "claw-tiles", "flow-children": "grid" }, tiles.map(tile =>
+          h(ui.DialogButton, { key: tile.id, className: tile.on ? "claw-tile on" : "claw-tile", onClick: tile.onPress, disabled: tile.disabled, "aria-label": `${tile.label}：${tile.value}` },
+            h("span", { className: "claw-tile-label" }, h(Icon, { name: tile.icon }), tile.label),
+            h("span", { className: "claw-tile-value" }, tile.value),
+            tile.steps > 0 && h("span", { className: "claw-dots", "aria-hidden": true },
+              Array.from({ length: tile.steps }, (_, i) => h("i", { key: i, className: i < tile.filled ? "f" : "" }))))))),
+      (metrics.length > 0 || banner) && h(ui.PanelSection, null,
+        metrics.length > 0 && h("div", { className: "claw-strip", role: "group", "aria-label": "实时读数" }, metrics.map(metric =>
+          h("div", { key: metric.label, className: "claw-metric" },
+            h("strong", { className: metric.value == null ? "na" : "" }, metric.value ?? "—", metric.value != null && metric.unit && h("small", null, metric.unit)),
+            h("span", null, metric.label)))),
+        banner && h("div", { className: "claw-banner", role: "status" }, h(Icon, { name: "warn" }), h("span", null, banner))),
+      sets.map(({ group, items }) => h(ui.PanelSection, { key: group.id, title: group.title },
+        h(ui.Focusable, { className: "claw-nav", "flow-children": "column" }, items.map(module => h(ui.Focusable, {
+          key: module.id, className: `claw-nav-item ${nav.PagedSettingsDialog_PageListItem ?? ""}`, role: "button",
+          focusClassName: `claw-nav-active ${nav.Active ?? ""}`, onActivate: () => onOpen(module.id), onClick: () => onOpen(module.id),
+        }, h("div", { className: `claw-nav-icon ${nav.PageListItem_Icon ?? ""}` }, h(Icon, { name: module.icon })),
+          h("div", { className: `claw-nav-title ${nav.PageListItem_Title ?? ""}` }, module.title)))))));
+  }
+  // Side-panel title: the running game when known, otherwise the toolbox name; power source on the right.
+  function TitleBar({ game, source }) {
+    return h("div", { className: "claw-title" },
+      h("b", null, game?.name ?? "Claw 掌机工具箱"), game?.detail && h("span", null, game.detail),
+      source && h("span", { className: "claw-title-end" }, source));
+  }
+  // A module's full settings, on its own page; B (cancel) or the back button returns home.
+  function SubPage({ module, state, onBack, children }) {
+    return h(ui.Focusable, { className: "claw-sub", "flow-children": "column", onCancelButton: onBack, onCancelActionDescription: "返回" },
+      h("div", { className: "claw-sub-head" },
+        h(ui.DialogButton, { className: "claw-back", onClick: onBack, "aria-label": "返回首页" }, h(Icon, { name: "back" })),
+        h("span", { className: "claw-sub-title" }, module.title),
+        state?.text && h("span", { className: "claw-state" }, state.text)),
+      h(ui.Focusable, { className: "claw-module-content", "flow-children": "column", role: "region", "aria-label": module.title }, children));
   }
   function SectionLabel({ children }) {
     return h(ui.PanelSectionRow, null, h("div", { className: "claw-section-label" }, children));
@@ -78,5 +176,5 @@ export function createToolboxUI(React, ui) {
   function StatusText({ children }) {
     return h(ui.PanelSectionRow, null, h("p", { className: "claw-module-status", role: "status" }, children));
   }
-  return { ModuleStack, SectionLabel, StatusText };
+  return { Home, SubPage, TitleBar, SectionLabel, StatusText };
 }

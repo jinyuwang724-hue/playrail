@@ -9,6 +9,8 @@ global.window = { __DECKY_SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED_decky
     if (method === 'get_state') return healthy;
     if (method === 'get_clash_state') return { available: false, subscriptions: {} };
     if (method === 'set_scaling_pause') return {};
+    // Heading summaries read power and picture state; reads never apply anything.
+    if (method === 'get_power_state' || method === 'get_magpie_state') return {};
     calls.push([method, ...args]);
     return new Promise(resolve => { pending = resolve; });
   } })
@@ -20,7 +22,12 @@ global.DFL = Object.fromEntries(['PanelSection', 'PanelSectionRow', 'ToggleField
 const { Content } = await import('../plugin/frontend.js');
 const { toolboxModules } = await import('../plugin/toolbox-ui.js');
 function nodes(node) { return !node || typeof node !== 'object' ? [] : [node, ...node.children.flat(Infinity).flatMap(nodes)]; }
-function panel() { const tree = Content(); return tree.children[1].props.contents.compatibility; }
+// The home page lists modules; opening one renders its page with the module content as the child.
+function panel() {
+  let tree = Content();
+  if (tree.children[1].props.onOpen) { tree.children[1].props.onOpen('compatibility'); tree = Content(); }
+  return tree.children[1].children[0];
+}
 
 test('compatibility module keeps two independent switches, pending operation and restore controls', async () => {
   assert.equal(toolboxModules.filter(item => item.id === 'compatibility').length, 1);

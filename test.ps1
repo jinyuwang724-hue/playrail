@@ -8,5 +8,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Native tests failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Firmware shortcut test compile failed.' }
 & (Join-Path $PSScriptRoot 'plugin\bin\FirmwareShortcutTests.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Firmware shortcut tests failed.' }
-node --test (Join-Path $PSScriptRoot 'tests\frontend.test.mjs') (Join-Path $PSScriptRoot 'tests\menu-router.test.mjs') (Join-Path $PSScriptRoot 'tests\steam-context.test.mjs') (Join-Path $PSScriptRoot 'tests\navigation-haptics.test.mjs') (Join-Path $PSScriptRoot 'tests\compatibility-ui.test.mjs') (Join-Path $PSScriptRoot 'tests\scaling-visibility.test.mjs') (Join-Path $PSScriptRoot 'tests\panel-lifecycle.test.mjs') (Join-Path $PSScriptRoot 'tests\magpie.test.mjs')
+& $taskCompiler /nologo /codepage:65001 /target:exe /platform:x64 ("/reference:"+(Join-Path $PSScriptRoot 'plugin\bin\ClawInput.exe')) /reference:System.Web.Extensions.dll /reference:System.Core.dll ("/out:"+(Join-Path $PSScriptRoot 'plugin\bin\InputLayerTests.exe')) (Join-Path $PSScriptRoot 'tests\InputLayerTests.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Input layer test compile failed.' }
+& (Join-Path $PSScriptRoot 'plugin\bin\InputLayerTests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Input layer tests failed.' }
+node --test (Join-Path $PSScriptRoot 'tests\frontend.test.mjs') (Join-Path $PSScriptRoot 'tests\menu-router.test.mjs') (Join-Path $PSScriptRoot 'tests\steam-context.test.mjs') (Join-Path $PSScriptRoot 'tests\navigation-haptics.test.mjs') (Join-Path $PSScriptRoot 'tests\compatibility-ui.test.mjs') (Join-Path $PSScriptRoot 'tests\scaling-visibility.test.mjs') (Join-Path $PSScriptRoot 'tests\panel-lifecycle.test.mjs') (Join-Path $PSScriptRoot 'tests\magpie.test.mjs') (Join-Path $PSScriptRoot 'tests\toolbox-ui.test.mjs') (Join-Path $PSScriptRoot 'tests\rumble.test.mjs')
 if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed.' }

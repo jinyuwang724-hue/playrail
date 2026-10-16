@@ -262,6 +262,20 @@ $clawPython = 'C:\Users\13304\.cache\codex-runtimes\codex-primary-runtime\depend
 
 `install.ps1` 在 `artifacts/plugin-backup-*` 保存被替换文件，跳过哈希相同的文件。不要绕开版本化机制去覆盖运行中的文件，也不要盲目恢复整套旧包覆盖最新 Magpie 功能。
 
+### 0.17.0 起：独立后台（不依赖 Decky）
+
+- 功耗、风扇、OSD、震动、Magpie、按键路由、兼容修复都在独立后台 `claw_agent.py` 里（逻辑在 `claw_service.py`），装在 `%LOCALAPPDATA%\ClawToolbox\app`，用自带的 Python（`runtime\python-3.12.x`，由 `tools/Build-AgentRuntime.py` 生成），由登录任务 `\ClawToolbox\Agent` 启动。日志 `%LOCALAPPDATA%\ClawToolbox\logs\agent.log`，设置在 `...\ClawToolbox\data`（首次启动从 Decky 设置目录复制）。
+- Decky 插件 `main.py` 只转发调用（`claw_agent_client.py`，127.0.0.1 + `agent.json` 里的令牌），另外保留 Clash Verge。Decky 退出或崩溃时后台照常运行，并把按键交还 ClawTweaks；Decky 重连后自动重新登记。
+- 升级流程：`install.ps1` 部署后台和插件、更新登录任务，但不启动后台；重启 Decky 后插件发现后台版本旧，会让它恢复后退出，再经登录任务启动新版本。
+- **从 Claude 桌面应用里操作时**：它是打包应用，写进 `%LOCALAPPDATA%` 的文件会被重定向到 `Packages\Claude_*\LocalCache`，系统和登录任务看不到；从它里面启动的 Decky 也会看到重定向后的目录。安装和重启 Decky 都要经 `tools/Invoke-OutsideApp.ps1` 在应用外执行：
+
+```powershell
+.\tools\Invoke-OutsideApp.ps1 -Script "$PWD\install.ps1"
+.\tools\Invoke-OutsideApp.ps1 -Script "$PWD\tools\Restart-Decky.ps1"
+```
+
+- 回退到 0.16.x 前先禁用登录任务（`Disable-ScheduledTask -TaskPath '\ClawToolbox\' -TaskName Agent`）并让后台退出，否则旧插件和后台会同时控制功耗和风扇。
+
 ### 检查入口
 
 - `test.ps1`：编译并运行原生策略／快捷键检查，随后执行一组 Node 检查；要求 `node` 在当前 shell PATH 中。部分旧 scaling 检查是历史保留，按修改范围选择。

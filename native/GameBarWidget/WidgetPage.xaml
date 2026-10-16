@@ -1,0 +1,117 @@
+<Page
+    x:Class="ClawWidget.WidgetPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+    <!-- Native layout of the approved design ("UI design", WinUI Fluent dark): side rail, header with
+         readings, 3x3 quick tiles; tiles and their contents are built in WidgetPage.cpp. -->
+    <!-- Game Bar's title bar already sits right above; only a small gap under it. -->
+    <Grid x:Name="Root" Padding="12,4,12,12" ColumnSpacing="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <!-- Side rail: edit, brightness, volume, power -->
+        <Border x:Name="Rail" Width="48" CornerRadius="4" Padding="0,4"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+            <Grid RowSpacing="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Button x:Name="EditButton" Grid.Row="0" Width="40" Height="44" Padding="0" HorizontalAlignment="Center"
+                        Background="Transparent" BorderThickness="0" ToolTipService.ToolTip="编辑磁贴" />
+                <Rectangle Grid.Row="1" Width="32" Height="1" Margin="0,6" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                <Grid Grid.Row="2" RowSpacing="4">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <TextBlock x:Name="BrightnessValue" HorizontalAlignment="Center" FontWeight="SemiBold" Text="--" />
+                    <Slider x:Name="BrightnessSlider" Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" Minimum="0" Maximum="100"
+                            SmallChange="5" LargeChange="10" StepFrequency="1" IsThumbToolTipEnabled="False" IsFocusEngagementEnabled="True" />
+                    <Button x:Name="AutoBrightness" Grid.Row="2" Width="40" Height="36" Padding="0" HorizontalAlignment="Center"
+                            Background="Transparent" BorderThickness="0" IsEnabled="False" />
+                </Grid>
+                <Rectangle Grid.Row="3" Width="32" Height="1" Margin="0,6" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                <Grid Grid.Row="4" RowSpacing="4">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <TextBlock x:Name="VolumeValue" HorizontalAlignment="Center" FontWeight="SemiBold" Text="--" />
+                    <Slider x:Name="VolumeSlider" Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" Minimum="0" Maximum="100"
+                            SmallChange="5" LargeChange="10" StepFrequency="1" IsThumbToolTipEnabled="False" IsFocusEngagementEnabled="True" />
+                    <Button x:Name="MuteButton" Grid.Row="2" Width="40" Height="36" Padding="0" HorizontalAlignment="Center"
+                            Background="Transparent" BorderThickness="0" />
+                </Grid>
+                <Rectangle Grid.Row="5" Width="32" Height="1" Margin="0,6" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                <Button x:Name="PowerButton" Grid.Row="6" Width="40" Height="44" Padding="0" HorizontalAlignment="Center">
+                    <Button.Flyout>
+                        <MenuFlyout x:Name="PowerMenu" Placement="RightEdgeAlignedBottom">
+                            <MenuFlyoutItem x:Name="SleepItem" Text="睡眠" />
+                            <MenuFlyoutItem x:Name="ShutdownItem" Text="关机" />
+                            <MenuFlyoutItem x:Name="RestartItem" Text="重启" />
+                            <MenuFlyoutSeparator />
+                            <MenuFlyoutItem x:Name="LockItem" Text="锁定" />
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </Button>
+            </Grid>
+        </Border>
+
+        <!-- Quick tiles page -->
+        <Grid x:Name="MainPanel" Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <!-- Collapsed while no banner shows, so the header lines up with the top of the rail. -->
+            <StackPanel x:Name="Banners" Spacing="12" Margin="0,0,0,12" Visibility="Collapsed">
+                <muxc:InfoBar x:Name="OfflineBar" IsClosable="False" Severity="Error" Title="未连接" Message="工具箱后台没有运行">
+                    <muxc:InfoBar.ActionButton><Button x:Name="ReconnectButton" Content="重新连接" Style="{ThemeResource AccentButtonStyle}" /></muxc:InfoBar.ActionButton>
+                </muxc:InfoBar>
+                <muxc:InfoBar x:Name="ConflictBar" IsClosable="False" Severity="Warning" Title="功耗冲突" Message="体感助手也在设置功耗，两边会互相改写" />
+                <muxc:InfoBar x:Name="MessageBar" IsClosable="False" Severity="Warning" />
+            </StackPanel>
+            <Border x:Name="Header" Grid.Row="1" CornerRadius="4" Padding="14,10" Margin="0,0,0,12"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <Grid x:Name="HeaderGrid" ColumnSpacing="12" RowSpacing="6">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <StackPanel x:Name="TitleBlock" VerticalAlignment="Center">
+                        <TextBlock x:Name="GameName" FontSize="20" LineHeight="28" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Text="Claw 掌机工具箱" />
+                        <StackPanel x:Name="FpsLine" Orientation="Horizontal" Spacing="4">
+                            <TextBlock x:Name="FpsValue" FontSize="32" LineHeight="36" FontWeight="SemiBold" />
+                            <TextBlock x:Name="FpsLabel" VerticalAlignment="Bottom" Margin="0,0,0,4" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+                    <StackPanel x:Name="Stats" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" />
+                </Grid>
+            </Border>
+            <Grid x:Name="Tiles" Grid.Row="2" RowSpacing="8" ColumnSpacing="8" XYFocusKeyboardNavigation="Enabled" />
+        </Grid>
+
+        <!-- Tile editing -->
+        <ScrollViewer x:Name="EditPanel" Grid.Column="1" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="12" Padding="0,0,10,0">
+                <Grid MinHeight="48">
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock FontSize="20" LineHeight="28" FontWeight="SemiBold" Text="编辑快捷磁贴" />
+                        <TextBlock Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="X 拿起 · 方向键移动 · X 放下" />
+                    </StackPanel>
+                    <Button x:Name="DoneButton" HorizontalAlignment="Right" Height="40" Padding="20,0" FontWeight="SemiBold"
+                            Style="{ThemeResource AccentButtonStyle}" Content="完成" />
+                </Grid>
+                <Grid><TextBlock FontWeight="SemiBold" Text="已固定" /><TextBlock x:Name="PinnedCount" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /></Grid>
+                <Grid x:Name="PinnedTiles" RowSpacing="8" ColumnSpacing="8" Padding="0,8,8,0" />
+                <Grid x:Name="AvailableHeader"><TextBlock FontWeight="SemiBold" Text="可添加" /><TextBlock HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="按 A 固定" /></Grid>
+                <Grid x:Name="AvailableTiles" RowSpacing="8" ColumnSpacing="8" Padding="0,8,8,0" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

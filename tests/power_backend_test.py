@@ -61,6 +61,11 @@ def governor_checks():
     # Uncapped target: climbs while fps still grows.
     h, _ = simulate(aaa, 0, 35)
     assert h[-1] >= 34, h[-10:]
+    # Steam's home screen (no game): the draw follows the limit, which must not ratchet up.
+    clock = Clock(); g = power.SmartGovernor(clock)
+    for _ in range(120):
+        g.update(None, None, g.limit - 0.5, 60, 8, 25); clock.now += 1
+    assert g.limit == 12, g.limit
 
 
 def main():
@@ -97,9 +102,27 @@ def main():
     assert power.validate({**base, "osd": {"enabled": True, "time": True, "fps": True}})["osd"] == {"enabled": True, "level": 2, "size": "medium", "rows": 1, "smallUnits": False}
     expect_error({**base, "osd": {"enabled": True, "level": 5, "size": "medium"}})
     assert power.validate(base)["fan"]["mode"] == "firmware"
-    expect_error({**base, "fan": {"mode": "turbo", "custom": [1, 2, 3, 4, 5, 6], "full": False}})
-    expect_error({**base, "fan": {"mode": "custom", "custom": [1, 2, 3, 4, 5, 101], "full": False}})
-    assert power.fan_duties({"mode": "quiet", "custom": [0] * 6}) == power.FAN_PRESETS["quiet"]
+    expect_error({**base, "fan": {"mode": "turbo", "full": False}})
+    expect_error({**base, "fan": {"mode": "quiet", "curves": {"quiet": [1, 2, 3, 4, 5, 101]}, "full": False}})
+    expect_error({**base, "fan": {"mode": "quiet", "curves": {"loud": [1, 2, 3, 4, 5, 6]}, "full": False}})
+    old = power.validate({**base, "fan": {"mode": "custom", "custom": [60, 64, 68, 74, 80, 84], "full": False}})["fan"]
+    assert old == {"mode": "balanced", "curves": power.FAN_PRESETS, "full": False}, "0.16.9 custom becomes 均衡"
+    edited = power.validate({**base, "fan": {"mode": "quiet", "curves": {"quiet": [20, 30, 50, 70, 90, 100]}, "full": False}})["fan"]
+    assert edited["curves"]["quiet"] == [20, 30, 50, 70, 76, 76] and edited["curves"]["balanced"] == power.FAN_PRESETS["balanced"]
+    assert power.fan_points(edited)[0] == [50, 20]
+    assert max(power.FAN_PRESETS["quiet"] + power.FAN_PRESETS["balanced"]) <= power.FAN_CAP < max(power.FAN_PRESETS["performance"]), "静音/均衡 stay under 4700 rpm"
+    assert power.validate({**base, "fan": {"mode": "performance", "curves": {"performance": [30, 45, 63, 76, 88, 100], "balanced": [20, 30, 50, 63, 90, 100]}, "full": False}})["fan"]["curves"]["balanced"][-1] == power.FAN_CAP
+    curve = power.fan_points({"mode": "balanced", "curves": power.FAN_PRESETS})
+    assert power.fan_duty_at(curve, 30) == 20 and power.fan_duty_at(curve, 65) == 40 and power.fan_duty_at(curve, 80) == power.FAN_CAP
+    fan = power.FanGovernor(); assert fan.update(curve, 50, 0) == 20
+    for t in range(1, 4): assert fan.update(curve, 80, t) == 20, "a 3 s spike does not speed the fan up"
+    for t in range(4, 20): assert fan.update(curve, 50, t) == 20
+    for t in range(20, 25): assert fan.update(curve, 70, t) == 20
+    assert fan.update(curve, 70, 25) == 50, "6 s above speeds it up"
+    for t in range(26, 30): assert fan.update(curve, 50, t) == 50, "a short dip does not slow it down"
+    for t in range(30, 36): fan.update(curve, 50, t)
+    assert fan.duty == 20, "10 s below slows it down"
+    assert fan.update(curve, 96, 36) == power.FAN_CAP, "very hot reacts at once"
     assert "5161" in power.osd_text(3, full) and "5161" not in power.osd_text(2, full)
     assert "VRAM" not in power.osd_text(4, full) and "1h45min" in visible(power.osd_text(2, full))
     charging = {**full, "charger": True, "batteryW": 18.0, "chargeMinutes": 40, "minutes": None}
@@ -124,6 +147,27 @@ def main():
             assert control.freq_target() == (0, 0)
             control.settings["mode"] = "auto"
             assert control.freq_target() == (2750, 2750)
+            # Frequency caps follow this CPU: 0x2F = 4.7 GHz turbo -> nothing at or above it is offered.
+            assert power.max_turbo_mhz({"turboRatios": "2E2E2E2E2E2E2E2F"}) == 4700
+            assert power.max_turbo_mhz({}) is None
+            assert power.freq_offered(4700) == [0, 1500, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 4000, 4500]
+            assert power.freq_offered(4700, [5000, 2750])[-1] == 5000, "a saved older cap stays selectable"
+            assert power.freq_offered(0)[-1] == 4500
+            # E-core switch: "pending" means the registry differs from what this boot started with.
+            state = {"on": True, "boot": 1000.0}
+            power.small_cores_enabled, power.boot_time = (lambda: state["on"]), (lambda: state["boot"])
+            assert control.ecore_view() == {"enabled": True, "pending": False}
+            state["on"] = False
+            assert control.ecore_view() == {"enabled": False, "pending": True}
+            state["boot"] = 5000.0  # restarted: the new state is what Windows uses now
+            assert control.ecore_view() == {"enabled": False, "pending": False}
+            state["on"] = True
+            assert control.ecore_view()["pending"]
+            try:
+                await control.set_ecore("on")
+                raise AssertionError("accepted a non-boolean switch")
+            except ValueError:
+                pass
             if "--live" in sys.argv:
                 view = await control.get(sample=True)
                 print(json.dumps(view["actual"], ensure_ascii=False))

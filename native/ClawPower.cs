@@ -172,6 +172,18 @@ class Executor : IDisposable {
             else if (command == "fan_read") reply["fan"] = MsiFan.Read();
             else if (command == "fan_curve") reply["fan"] = MsiFan.Apply(Ints(request, "cpu"), Ints(request, "gpu"), true.Equals(request.ContainsKey("full") ? request["full"] : false));
             else if (command == "fan_restore") reply["fan"] = MsiFan.Restore(request.ContainsKey("cpu") ? Ints(request, "cpu") : null, request.ContainsKey("gpu") ? Ints(request, "gpu") : null);
+            else if (command == "cpu_info") reply["cpu"] = CpuInfo();
+            else if (command == "sys_read") reply["sys"] = SystemControls.Read();
+            else if (command == "brightness_set") reply["sys"] = SystemControls.SetBrightness(Convert.ToInt32(Number(request, "value")));
+            else if (command == "volume_set") reply["sys"] = SystemControls.SetVolume(Convert.ToInt32(Number(request, "value")), null);
+            else if (command == "mute_set") reply["sys"] = SystemControls.SetVolume(-1, true.Equals(request.ContainsKey("muted") ? request["muted"] : false));
+            else if (command == "refresh_set") reply["sys"] = SystemControls.SetRefresh(Convert.ToInt32(Number(request, "hz")));
+            else if (command == "fps_limit_set") reply["sys"] = SystemControls.SetFpsLimit(Convert.ToInt32(Number(request, "fps")), request.ContainsKey("exe") ? Convert.ToString(request["exe"]) : null);
+            else if (command == "kill") reply["sys"] = SystemControls.Kill(Convert.ToInt32(Number(request, "pid")));
+            else if (command == "power_action") reply["sys"] = SystemControls.Power(Convert.ToString(request["action"]));
+            else if (command == "keyboard") reply["sys"] = SystemControls.ToggleKeyboard();
+            else if (command == "screenshot") reply["sys"] = SystemControls.Screenshot();
+            else if (command == "ecore_set") reply["ecore"] = SmallCores.Set(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
             else throw new ArgumentException("未知命令");
             reply["ok"] = true;
         } catch (Exception error) {
@@ -302,6 +314,33 @@ class Executor : IDisposable {
 
     // Package temperature: TjMax (MSR 0x1A2 bits 16-23) minus the digital readout of
     // IA32_PACKAGE_THERM_STATUS (0x1B1 bits 16-22). Read only.
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentThread();
+    [DllImport("kernel32.dll")] static extern UIntPtr SetThreadAffinityMask(IntPtr thread, UIntPtr mask);
+
+    // Frequency limits from the CPU itself, so the frequency cap choices match this processor.
+    // 0xCE: base and minimum ratio. 0x771 (HWP capabilities) per logical processor: its highest
+    // performance level; on hybrid parts P- and E-cores report different levels.
+    Dictionary<string, object> CpuInfo() {
+        ulong platform = ReadMsr(0xCE);
+        var highest = new List<object>();
+        Thread.BeginThreadAffinity();
+        try {
+            for (int cpu = 0; cpu < Math.Min(Environment.ProcessorCount, 64); cpu++) {
+                SetThreadAffinityMask(GetCurrentThread(), (UIntPtr)(1UL << cpu));
+                Thread.Sleep(0);
+                try { highest.Add((int)(ReadMsr(0x771) & 0xFF)); } catch (InvalidOperationException) { highest.Add(null); }
+            }
+        } finally {
+            SetThreadAffinityMask(GetCurrentThread(), (UIntPtr)((1UL << Math.Min(Environment.ProcessorCount, 63)) - 1));
+            Thread.EndThreadAffinity();
+        }
+        ulong turbo = 0;
+        try { turbo = ReadMsr(0x1AD); } catch (InvalidOperationException) { }
+        return new Dictionary<string, object> {
+            { "baseRatio", (int)((platform >> 8) & 0xFF) }, { "minRatio", (int)((platform >> 40) & 0xFF) },
+            { "turboRatios", turbo.ToString("X16") }, { "hwpHighest", highest } };
+    }
+
     Dictionary<string, object> Thermal() {
         ulong target = ReadMsr(0x1A2), status = ReadMsr(0x1B1);
         int tjMax = (int)((target >> 16) & 0xFF);
@@ -373,7 +412,12 @@ static class Osd {
             for (uint i = 1; i < count; i++) {  // slot 0 belongs to RTSS itself
                 long entry = offset + (long)i * size;
                 string owner = ReadString(view, entry + 256, 256);
-                if (owner == Owner) { slot = entry; break; }
+                if (owner == Owner) { slot = entry; continue; }
+                // 体感助手 leaves its OSD line behind when it exits, so a second, frozen line stays on
+                // screen. Clear its slot only while it is not running; a running copy keeps its line.
+                if (owner == "MotionAssistant" && Process.GetProcessesByName("MotionAssistant").Length == 0) {
+                    Clear(view, entry, size); Bump(view); owner = "";
+                }
                 if (owner.Length == 0 && free < 0) free = entry;
             }
             if (text.Length == 0) {
@@ -454,7 +498,7 @@ static class Osd {
         return SetInt("FontHeight", height);
     }
 
-    static Dictionary<string, object> SetInt(string property, int zoom) {
+    internal static Dictionary<string, object> SetInt(string property, int zoom) {
         string dir = null;
         using (var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\WOW6432Node\Unwinder\RTSS"))
             if (key != null) dir = key.GetValue("InstallDir") as string;
@@ -509,6 +553,34 @@ static class Osd {
         }
         update();
         return new Dictionary<string, object> { { "face", face }, { "previous", previous } };
+    }
+
+    // One integer property in the given profiles only ("" = global); a missing game profile is skipped.
+    internal static void SetIntIn(string property, int value, string[] profiles) {
+        var hooks = Hooks();
+        var enumProfiles = Get<EnumProfilesFn>(hooks, "EnumProfiles");
+        var load = Get<ProfileFn>(hooks, "LoadProfile");
+        var save = Get<ProfileFn>(hooks, "SaveProfile");
+        var setProp = Get<PropertyFn>(hooks, "SetProfileProperty");
+        var update = Get<UpdateFn>(hooks, "UpdateProfiles");
+        var existing = new HashSet<string>(ProfileNames(enumProfiles), StringComparer.OrdinalIgnoreCase);
+        foreach (string name in profiles) {
+            if (!existing.Contains(name)) continue;
+            load(name);
+            setProp(property, BitConverter.GetBytes(value), 4);
+            save(name);
+        }
+        update();
+    }
+
+    // Frame limit (RTSS "FramerateLimit", 0 = off) of the global profile, for the widget.
+    internal static int HooksForWidget() {
+        var hooks = Hooks();
+        var load = Get<ProfileFn>(hooks, "LoadProfile");
+        var getProp = Get<PropertyFn>(hooks, "GetProfileProperty");
+        load("");
+        var data = new byte[4];
+        return getProp("FramerateLimit", data, 4) ? BitConverter.ToInt32(data, 0) : 0;
     }
 
     static IntPtr Hooks() {
@@ -567,6 +639,186 @@ static class Osd {
 //   Get_AP(1)[0] bit 7  software curve in control (Set_Data 0xD4); clear = firmware's own curve
 //   Get_Data(0x98) bit 7 full speed
 // Every Get_* reply starts with a status byte (1 = ok) that is stripped here.
+// "All cores as E-cores" (体感助手's 模拟全核心E核): SmallProcessorMask marks every logical
+// processor of group 0 as a small core, so the scheduler stops preferring P-cores. Windows reads
+// it at boot only. Writing the same value 体感助手 writes keeps the two interchangeable.
+// System controls for the Game Bar widget: brightness, volume, refresh rate, RTSS frame limit,
+// closing the game, power actions, touch keyboard and screenshot. All run in this elevated
+// executor because the games (and Steam) run elevated here.
+static class SystemControls {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool EnumDisplaySettingsW(string device, int mode, ref DEVMODE devMode);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int ChangeDisplaySettingsExW(string device, ref DEVMODE devMode, IntPtr hwnd, uint flags, IntPtr param);
+    [DllImport("user32.dll")] static extern bool LockWorkStation();
+    [DllImport("user32.dll")] static extern IntPtr GetDesktopWindow();
+    [DllImport("user32.dll")] static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+    [DllImport("powrprof.dll")] static extern bool SetSuspendState(bool hibernate, bool force, bool disableWake);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct DEVMODE {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+        public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra;
+        public int dmFields, dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+        public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+        public short dmLogPixels;
+        public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+        public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
+    }
+    const int ENUM_CURRENT_SETTINGS = -1, DM_DISPLAYFREQUENCY = 0x400000;
+
+    public static Dictionary<string, object> Read() {
+        var result = new Dictionary<string, object>();
+        try { result["brightness"] = Brightness(); } catch (Exception) { result["brightness"] = null; }
+        try { var audio = Audio(); float level; bool muted; audio.GetMasterVolumeLevelScalar(out level); audio.GetMute(out muted);
+              result["volume"] = (int)Math.Round(level * 100); result["muted"] = muted; } catch (Exception) { result["volume"] = null; }
+        var current = Current();
+        result["refresh"] = current.dmDisplayFrequency;
+        result["refreshRates"] = RefreshRates(current);
+        try {
+            var hooks = Osd.HooksForWidget();
+            result["fpsLimit"] = hooks;
+        } catch (Exception) { result["fpsLimit"] = null; }
+        return result;
+    }
+
+    // Brightness of the built-in panel through WMI (the only interface Windows exposes for it).
+    static int Brightness() {
+        using (var searcher = new System.Management.ManagementObjectSearcher(@"root\WMI", "SELECT CurrentBrightness FROM WmiMonitorBrightness"))
+            foreach (System.Management.ManagementObject item in searcher.Get()) return Convert.ToInt32(item["CurrentBrightness"]);
+        throw new InvalidOperationException("没有可调亮度的屏幕");
+    }
+
+    public static Dictionary<string, object> SetBrightness(int value) {
+        value = Math.Max(0, Math.Min(100, value));
+        using (var searcher = new System.Management.ManagementObjectSearcher(@"root\WMI", "SELECT * FROM WmiMonitorBrightnessMethods"))
+            foreach (System.Management.ManagementObject item in searcher.Get()) { item.InvokeMethod("WmiSetBrightness", new object[] { 1u, (byte)value }); break; }
+        return Read();
+    }
+
+    // Core Audio: default render endpoint volume.
+    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator { }
+    [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDeviceEnumerator { int NotImpl1(); [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device); }
+    [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDevice { [PreserveSig] int Activate(ref Guid iid, int context, IntPtr parameters, [MarshalAs(UnmanagedType.IUnknown)] out object endpoint); }
+    [ComImport, Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IAudioEndpointVolume {
+        int RegisterControlChangeNotify(IntPtr notify); int UnregisterControlChangeNotify(IntPtr notify); int GetChannelCount(out int count);
+        int SetMasterVolumeLevel(float level, ref Guid context); int SetMasterVolumeLevelScalar(float level, ref Guid context);
+        int GetMasterVolumeLevel(out float level); int GetMasterVolumeLevelScalar(out float level);
+        int SetChannelVolumeLevel(uint channel, float level, ref Guid context); int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid context);
+        int GetChannelVolumeLevel(uint channel, out float level); int GetChannelVolumeLevelScalar(uint channel, out float level);
+        int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid context); int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
+    }
+
+    static IAudioEndpointVolume Audio() {
+        var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+        IMMDevice device;
+        if (enumerator.GetDefaultAudioEndpoint(0, 1, out device) != 0) throw new InvalidOperationException("没有默认音频输出");
+        var iid = typeof(IAudioEndpointVolume).GUID; object endpoint;
+        if (device.Activate(ref iid, 23, IntPtr.Zero, out endpoint) != 0) throw new InvalidOperationException("无法控制音量");
+        return (IAudioEndpointVolume)endpoint;
+    }
+
+    public static Dictionary<string, object> SetVolume(int value, bool? muted) {
+        var audio = Audio(); var context = Guid.Empty;
+        if (value >= 0) { audio.SetMasterVolumeLevelScalar(Math.Max(0, Math.Min(100, value)) / 100f, ref context); audio.SetMute(false, ref context); }
+        if (muted.HasValue) audio.SetMute(muted.Value, ref context);
+        return Read();
+    }
+
+    static DEVMODE Current() {
+        var mode = new DEVMODE(); mode.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+        if (!EnumDisplaySettingsW(null, ENUM_CURRENT_SETTINGS, ref mode)) throw new InvalidOperationException("无法读取显示模式");
+        return mode;
+    }
+
+    // Refresh rates the panel offers at the current resolution.
+    static List<int> RefreshRates(DEVMODE current) {
+        var rates = new SortedSet<int>();
+        var mode = new DEVMODE(); mode.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+        for (int i = 0; EnumDisplaySettingsW(null, i, ref mode); i++)
+            if (mode.dmPelsWidth == current.dmPelsWidth && mode.dmPelsHeight == current.dmPelsHeight && mode.dmDisplayFrequency > 1)
+                rates.Add(mode.dmDisplayFrequency);
+        return new List<int>(rates);
+    }
+
+    public static Dictionary<string, object> SetRefresh(int hz) {
+        var mode = Current();
+        if (!RefreshRates(mode).Contains(hz)) throw new ArgumentException("屏幕不支持 " + hz + " Hz");
+        mode.dmDisplayFrequency = hz; mode.dmFields = DM_DISPLAYFREQUENCY;
+        int code = ChangeDisplaySettingsExW(null, ref mode, IntPtr.Zero, 0x1 /* CDS_UPDATEREGISTRY */, IntPtr.Zero);
+        if (code != 0) throw new InvalidOperationException("切换刷新率失败（" + code + "）");
+        return Read();
+    }
+
+    // Global profile plus the running game's own profile (it overrides the global one). Touching every
+    // profile like the OSD settings do took ~10 s with the ~60 profiles here, far too slow for a tile.
+    public static Dictionary<string, object> SetFpsLimit(int fps, string exe) {
+        if (fps < 0 || fps > 360) throw new ArgumentException("帧率限制超出范围");
+        Osd.SetIntIn("FramerateLimit", fps, string.IsNullOrEmpty(exe) ? new[] { "" } : new[] { "", exe });
+        return new Dictionary<string, object> { { "fpsLimit", fps } };
+    }
+
+    // Only ever called with the foreground game the agent detected.
+    public static Dictionary<string, object> Kill(int pid) {
+        using (var process = Process.GetProcessById(pid)) {
+            string name = process.ProcessName;
+            process.Kill();
+            process.WaitForExit(5000);
+            return new Dictionary<string, object> { { "closed", name } };
+        }
+    }
+
+    public static Dictionary<string, object> Power(string action) {
+        if (action == "lock") { if (!LockWorkStation()) throw new InvalidOperationException("无法锁定"); }
+        else if (action == "sleep") SetSuspendState(false, false, false);
+        else if (action == "shutdown" || action == "restart")
+            Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "shutdown.exe"), (action == "shutdown" ? "/s" : "/r") + " /t 0") { UseShellExecute = false, CreateNoWindow = true });
+        else throw new ArgumentException("不支持的电源操作");
+        return new Dictionary<string, object> { { "action", action } };
+    }
+
+    // Touch keyboard: TabTip's own toggle interface (starting TabTip.exe alone does not show it).
+    [ComImport, Guid("4ce576fa-83dc-4F88-951c-9d0782b4e376")] class UIHostNoLaunch { }
+    [ComImport, Guid("37c994e7-432b-4834-a2f7-dce1f13b834b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface ITipInvocation { void Toggle(IntPtr hwnd); }
+
+    public static Dictionary<string, object> ToggleKeyboard() {
+        try { ((ITipInvocation)new UIHostNoLaunch()).Toggle(GetDesktopWindow()); }
+        catch (COMException) {
+            Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles), @"microsoft shared\ink\TabTip.exe")) { UseShellExecute = true });
+        }
+        return new Dictionary<string, object> { { "keyboard", true } };
+    }
+
+    // Game Bar's own screenshot shortcut (Win+Alt+PrtScn), saved to Videos\Captures.
+    public static Dictionary<string, object> Screenshot() {
+        const byte WIN = 0x5B, ALT = 0x12, PRINT = 0x2C; const uint UP = 2;
+        keybd_event(WIN, 0, 0, UIntPtr.Zero); keybd_event(ALT, 0, 0, UIntPtr.Zero); keybd_event(PRINT, 0, 0, UIntPtr.Zero);
+        keybd_event(PRINT, 0, UP, UIntPtr.Zero); keybd_event(ALT, 0, UP, UIntPtr.Zero); keybd_event(WIN, 0, UP, UIntPtr.Zero);
+        return new Dictionary<string, object> { { "screenshot", true } };
+    }
+}
+
+static class SmallCores {
+    const string Key = @"SYSTEM\CurrentControlSet\Control\Session Manager\kernel\Kgroups\00";
+    const string Name = "SmallProcessorMask";
+
+    public static Dictionary<string, object> Set(bool enabled) {
+        using (var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(Key)) {
+            if (key == null) throw new InvalidOperationException("无法打开处理器分组注册表项");
+            if (enabled) {
+                int threads = Math.Min(Environment.ProcessorCount, 64);
+                ulong mask = threads == 64 ? ulong.MaxValue : (1UL << threads) - 1;
+                if (mask <= uint.MaxValue) key.SetValue(Name, unchecked((int)(uint)mask), Microsoft.Win32.RegistryValueKind.DWord);
+                else key.SetValue(Name, unchecked((long)mask), Microsoft.Win32.RegistryValueKind.QWord);
+            } else key.DeleteValue(Name, false);
+            return new Dictionary<string, object> { { "enabled", key.GetValue(Name) != null } };
+        }
+    }
+}
+
 static class MsiFan {
     const string Instance = @"MSI_ACPI.InstanceName='ACPI\PNP0C14\0_0'";
 

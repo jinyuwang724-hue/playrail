@@ -1,0 +1,35 @@
+<Application
+    x:Class="ClawWidget.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    RequestedTheme="Dark">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <muxc:XamlControlsResources />
+            </ResourceDictionary.MergedDictionaries>
+            <!-- Game Bar's own palette (measured on its widget panels): blue-grey #25282C panels,
+                 #3E434B buttons, #45484B dividers, #484B4E slider tracks. Fluent's neutral greys
+                 looked like a different app next to them. The app is always dark, so these are plain
+                 keys: keys of this dictionary win over the merged Fluent ones (theme dictionaries did not). -->
+            <SolidColorBrush x:Key="SolidBackgroundFillColorBaseBrush" Color="#FF25282C" />
+            <SolidColorBrush x:Key="CardBackgroundFillColorDefaultBrush" Color="#FF2E3237" />
+            <SolidColorBrush x:Key="CardStrokeColorDefaultBrush" Color="#FF373B41" />
+            <SolidColorBrush x:Key="DividerStrokeColorDefaultBrush" Color="#FF45484B" />
+            <SolidColorBrush x:Key="ControlStrongStrokeColorDefaultBrush" Color="#FF6B7584" />
+            <SolidColorBrush x:Key="ButtonBackground" Color="#FF3E434B" />
+            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#FF474D56" />
+            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#FF363A41" />
+            <SolidColorBrush x:Key="ButtonBackgroundDisabled" Color="#FF30343A" />
+            <SolidColorBrush x:Key="ButtonBorderBrush" Color="#FF3E434B" />
+            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#FF474D56" />
+            <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#FF363A41" />
+            <SolidColorBrush x:Key="ButtonBorderBrushDisabled" Color="#FF30343A" />
+            <SolidColorBrush x:Key="SliderTrackFill" Color="#FF484B4E" />
+            <SolidColorBrush x:Key="SliderTrackFillPointerOver" Color="#FF52565A" />
+            <SolidColorBrush x:Key="SliderTrackFillPressed" Color="#FF484B4E" />
+            <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FF2E3237" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
