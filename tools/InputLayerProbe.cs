@@ -56,11 +56,17 @@ class InputLayerProbe : Form {
     void Poll() {
         timeBeginPeriod(1);
         var last = new ushort[4]; var lastLt = new byte[4];
-        var seen = new bool[4];
+        var seen = new bool[4]; var connected = new bool[4]; var first = new bool[4];
         while (!done) {
             for (uint i = 0; i < 4; i++) {
                 State s;
-                if (GetStateEx(i, out s) != 0) continue;
+                bool ok = GetStateEx(i, out s) == 0;
+                if (ok != connected[i] || !first[i]) {
+                    first[i] = true; connected[i] = ok;
+                    CapsEx c; string id = ok && GetCapabilitiesEx(1, i, 0, out c) == 0 ? c.Vendor.ToString("X4") + ":" + c.Product.ToString("X4") : null;
+                    lock (pads) pads.Add(new Dictionary<string, object> { { "qpcMs", Math.Round(Ms(), 3) }, { "slot", i }, { "connected", ok }, { "id", id } });
+                }
+                if (!ok) continue;
                 if (!seen[i] || s.Pad.Buttons != last[i] || s.Pad.LT != lastLt[i]) {
                     seen[i] = true; last[i] = s.Pad.Buttons; lastLt[i] = s.Pad.LT;
                     lock (pads) pads.Add(new Dictionary<string, object> { { "qpcMs", Math.Round(Ms(), 3) }, { "slot", i }, { "buttons", (int)s.Pad.Buttons }, { "lt", (int)s.Pad.LT } });
@@ -70,13 +76,15 @@ class InputLayerProbe : Form {
         }
     }
 
-    protected override void WndProc(ref Message m) {
-        if (m.Msg == 0x100 || m.Msg == 0x101 || m.Msg == 0x104 || m.Msg == 0x105)
-            lock (keys) keys.Add(new Dictionary<string, object> { { "qpcMs", Math.Round(Ms(), 3) }, { "vk", m.WParam.ToInt32() }, { "down", m.Msg == 0x100 || m.Msg == 0x104 } });
-        base.WndProc(ref m);
-    }
 
-    protected override bool ProcessCmdKey(ref Message msg, Keys keyData) { return true; } // keep Tab from moving focus
+    // Keys arrive here before WndProc (and Tab would move the focus): log and swallow.
+    public override bool PreProcessMessage(ref Message m) {
+        if (m.Msg == 0x100 || m.Msg == 0x101 || m.Msg == 0x104 || m.Msg == 0x105) {
+            lock (keys) keys.Add(new Dictionary<string, object> { { "qpcMs", Math.Round(Ms(), 3) }, { "vk", m.WParam.ToInt32() }, { "down", m.Msg == 0x100 || m.Msg == 0x104 } });
+            return true;
+        }
+        return base.PreProcessMessage(ref m);
+    }
 
     void Save() {
         var d = new Dictionary<string, object> { { "process", Process.GetCurrentProcess().ProcessName }, { "slots", slots } };

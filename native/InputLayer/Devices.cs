@@ -441,8 +441,9 @@ namespace ClawInput {
         }
     }
 
-    // 1 ms tick without spinning: a high-resolution waitable timer (Windows 10 1803+), else Sleep(1)
-    // at 1 ms timer resolution.
+    // 1 ms tick without spinning: a high-resolution waitable timer (Windows 10 1803+) aimed at fixed
+    // deadlines (a plain 1 ms relative wait overshoots to ~675 Hz on this device), else Sleep(1) at 1 ms
+    // timer resolution.
     public sealed class Ticker : IDisposable {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr CreateWaitableTimerExW(IntPtr security, string name, uint flags, uint access);
         [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetWaitableTimer(IntPtr timer, ref long due, int period, IntPtr routine, IntPtr arg, bool resume);
@@ -450,17 +451,27 @@ namespace ClawInput {
         [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint ms);
         [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint ms);
         readonly IntPtr timer;
-        readonly long interval;
+        readonly long period;
+        long next;
         public readonly bool HighResolution;
         public Ticker(int hz) {
-            interval = -(10000000L / Math.Max(100, Math.Min(1000, hz)));
+            period = System.Diagnostics.Stopwatch.Frequency / Math.Max(100, Math.Min(1000, hz));
+            next = System.Diagnostics.Stopwatch.GetTimestamp() + period;
             timer = CreateWaitableTimerExW(IntPtr.Zero, null, 0x2, 0x1F0003);
             HighResolution = timer != IntPtr.Zero;
             if (!HighResolution) timeBeginPeriod(1);
         }
         public void Wait() {
-            if (HighResolution) { long due = interval; SetWaitableTimer(timer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false); WaitForSingleObject(timer, 50); }
-            else Thread.Sleep(1);
+            long now = System.Diagnostics.Stopwatch.GetTimestamp(), wait = next - now;
+            if (wait > 0) {
+                if (HighResolution) {
+                    long due = -Math.Max(1, wait * 10000000L / System.Diagnostics.Stopwatch.Frequency);
+                    SetWaitableTimer(timer, ref due, 0, IntPtr.Zero, IntPtr.Zero, false); WaitForSingleObject(timer, 50);
+                } else Thread.Sleep(1);
+                now = System.Diagnostics.Stopwatch.GetTimestamp();
+            }
+            next += period;
+            if (now - next > 4 * period) next = now + period; // after a stall (sleep, debugger): no catch-up burst
         }
         public void Dispose() { if (HighResolution) Win.CloseHandle(timer); else timeEndPeriod(1); }
     }

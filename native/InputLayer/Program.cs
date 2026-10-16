@@ -190,7 +190,7 @@ namespace ClawInput {
         readonly StreamWriter writer;
         readonly JavaScriptSerializer json = new JavaScriptSerializer();
         readonly Translator translator = new Translator();
-        readonly LatencyStats latency = new LatencyStats(), testLatency = new LatencyStats();
+        readonly LatencyStats latency = new LatencyStats(), keyLatency = new LatencyStats(), testLatency = new LatencyStats();
         readonly Foreground foreground = new Foreground();
         Layout global = new Layout { Name = "global" };
         Dictionary<string, Layout> games = new Dictionary<string, Layout>();
@@ -212,7 +212,9 @@ namespace ClawInput {
         Process guard;
         volatile int padIndex = -1, virtualIndex = -1, otherVirtual;
         volatile string layoutName = "passthrough", error;
-        long loops, packets, reapplied, ticks;
+        long loops, packets, reapplied, ticks, sent;
+        volatile string slots = "";
+        List<string> virtualBefore = new List<string>();
         double loopHz, packetHz;
         long rateAt = Stopwatch.GetTimestamp(), rateLoops, ratePackets;
         volatile Script script, finished;
@@ -330,14 +332,19 @@ namespace ClawInput {
                 StartGuard();
                 // Before hiding: find the pad while every process can still see it.
                 padIndex = FindPad();
+                virtualBefore = VirtualSlots();
+                sent = 0;
                 pad = new VirtualPad();
                 pad.Rumble = ForwardRumble;
                 journal = Hiding.Apply(hh, journalPath, Process.GetCurrentProcess().Id, devices, apps);
+                // HidHide only stops new opens: programs that already had the pad open (Steam, a running
+                // game) keep seeing it. Restarting the xusb22 function is not supported (pnputil error 50) and
+                // disabling it could leave the user without a pad, so that stays a documented limitation.
                 hook = new BackKeyHook();
                 if (hook.Error != null) error = hook.Error;
                 translator.SetLayout(Layout.Passthrough(), new List<OutputEvent>());
                 layoutName = "";
-                latency.Clear(); testLatency.Clear();
+                latency.Clear(); keyLatency.Clear(); testLatency.Clear();
                 running = true; enabled = true;
                 loop = new Thread(Loop) { IsBackground = true, Name = "input-loop", Priority = ThreadPriority.Highest };
                 loop.Start();
@@ -385,6 +392,12 @@ namespace ClawInput {
             if (index < 0) return;
             var v = new XInput.Vibration { Left = (ushort)(large * 257), Right = (ushort)(small * 257) };
             XInput.SetState((uint)index, ref v);
+        }
+
+        static List<string> VirtualSlots() {
+            var result = new List<string>();
+            for (uint i = 0; i < 4; i++) { ushort v, p; if (XInput.Identity(i, out v, out p) && v == 0x045E && p == 0x028E) result.Add(i.ToString()); }
+            return result;
         }
 
         static int FindPad() {
@@ -460,7 +473,11 @@ namespace ClawInput {
                         } else { padIndex = -1; frame.Clear(); fresh = true; rescanDevices = true; }
                     } else {
                         frame.Clear();
-                        if (now >= nextScan) { nextScan = now + 1000; padIndex = FindPad(); if (padIndex >= 0) rescanDevices = true; }
+                        if (now >= nextScan) {
+                            nextScan = now + 1000;
+                            padIndex = FindPad();
+                            if (padIndex >= 0) rescanDevices = true;
+                        }
                     }
                     var h = hook;
                     if (s == null && h != null) {
@@ -468,17 +485,22 @@ namespace ClawInput {
                         if (h.M1 != m1 || h.M2 != m2) { fresh = true; m1 = h.M1; m2 = h.M2; }
                     }
                     var report = translator.Update(frame, now, events);
-                    bool wrote = false;
+                    bool wrote = false, typed = false;
                     if (!sentOnce || !report.Same(last)) {
-                        if (pad != null && pad.Send(report)) { last = report; sentOnce = true; wrote = true; }
+                        if (pad != null && pad.Send(report)) { last = report; sentOnce = true; wrote = true; sent++; }
                     }
+                    long padDone = Stopwatch.GetTimestamp();
                     if (events.Count > 0) {
                         if (s != null) foreach (var e in events) s.Timeline.Add(new Dictionary<string, object> { { "t", Math.Round(now - s.Start, 1) }, { "qpcMs", Math.Round(now, 3) }, { "event", e.ToString() } });
-                        Output.Send(events); events.Clear(); wrote = true;
+                        Output.Send(events); events.Clear(); typed = true;
                     }
-                    if (wrote && s != null) s.Timeline.Add(new Dictionary<string, object> { { "t", Math.Round(now - s.Start, 1) }, { "qpcMs", Math.Round(now, 3) }, { "buttons", (int)report.Buttons }, { "lt", (int)report.LT }, { "rt", (int)report.RT } });
-                    // Read -> virtual pad / SendInput written. Scripted frames are counted apart from the real pad.
-                    if (wrote && fresh) (s == null ? latency : testLatency).Add(Ms(Stopwatch.GetTimestamp() - readAt));
+                    if ((wrote || typed) && s != null) s.Timeline.Add(new Dictionary<string, object> { { "t", Math.Round(now - s.Start, 1) }, { "qpcMs", Math.Round(now, 3) }, { "buttons", (int)report.Buttons }, { "lt", (int)report.LT }, { "rt", (int)report.RT } });
+                    // Read -> virtual pad report written (gamepad path) / SendInput returned (keyboard path).
+                    // Scripted frames count apart; the first reports after plugging wait for the new device.
+                    if (fresh && sent > 3) {
+                        if (wrote) (s == null ? latency : testLatency).Add(Ms(padDone - readAt));
+                        if (typed && s == null) keyLatency.Add(Ms(Stopwatch.GetTimestamp() - readAt));
+                    }
                     loops++;
                     ticks++;
                 }
@@ -503,9 +525,13 @@ namespace ClawInput {
                     int fixes = Hiding.Ensure(hh, journalPath, journal, devices, apps);
                     if (fixes > 0) { reapplied += fixes; error = "HidHide 被别的程序改过，已重新隐藏（" + reapplied + " 次）"; }
                     if (virtualIndex < 0 && pad != null) virtualIndex = pad.Index();
-                    int others = 0;
-                    for (uint i = 0; i < 4; i++) { ushort v, p; if (i != virtualIndex && i != padIndex && XInput.Identity(i, out v, out p) && v == 0x045E) others++; }
-                    otherVirtual = others;
+                    // The bus does not always answer the user-index call: the new 045E:028E slot is ours.
+                    var now045e = VirtualSlots();
+                    if (virtualIndex < 0) foreach (var slot in now045e) if (!virtualBefore.Contains(slot)) virtualIndex = int.Parse(slot);
+                    otherVirtual = Math.Max(0, now045e.Count - (virtualIndex >= 0 ? 1 : 0));
+                    var seen = new List<string>();
+                    for (uint i = 0; i < 4; i++) { ushort v, p; seen.Add(XInput.Identity(i, out v, out p) ? v.ToString("X4") + ":" + p.ToString("X4") : "-"); }
+                    slots = string.Join(" ", seen);
                 }
                 Emit(new Dictionary<string, object> { { "type", "status" }, { "status", Status() } });
             } catch (Exception ex) { error = ex.Message; }
@@ -522,7 +548,7 @@ namespace ClawInput {
                     { "reports", pad == null ? 0 : pad.Submitted }, { "failed", pad == null ? 0 : pad.Failed }, { "rumbleRequests", pad == null ? 0 : pad.RumbleRequests } } },
                 { "foreground", foreground.Name }, { "layout", layoutName },
                 { "hidhide", new Dictionary<string, object> { { "cloak", cloak }, { "hidden", devices }, { "apps", apps }, { "blacklist", black }, { "whitelist", white }, { "reapplied", reapplied } } },
-                { "latency", latency.Snapshot() }, { "testLatency", testLatency.Snapshot() }, { "loopHz", Math.Round(loopHz) }, { "highResolutionTimer", highRes }, { "pollHz", pollHz },
+                { "latency", latency.Snapshot() }, { "keyLatency", keyLatency.Snapshot() }, { "testLatency", testLatency.Snapshot() }, { "xinputSlots", slots }, { "loopHz", Math.Round(loopHz) }, { "highResolutionTimer", highRes }, { "pollHz", pollHz },
                 { "backKeys", new Dictionary<string, object> { { "hooked", h != null && h.Error == null }, { "m1", h != null && h.M1 }, { "m2", h != null && h.M2 }, { "swallowed", h == null ? 0 : h.Swallowed } } },
                 { "keyboardMouse", new Dictionary<string, object> { { "sent", Output.Sent }, { "failed", Output.Failed } } },
                 { "otherVirtualPads", otherVirtual }, { "testRunning", script != null },

@@ -60,6 +60,8 @@ DEFAULTS = {"longPressMs": 300, "doublePressMs": 250, "startDelayMs": 0, "endDel
             "toggle": False, "interruptible": True}
 RANGES = {"longPressMs": (50, 5000), "doublePressMs": (50, 2000), "startDelayMs": (0, 5000),
           "endDelayMs": (0, 5000), "repeatHz": (0, 60)}
+# HidHide only stops new opens of the pad (checked on the device 2026-10-16).
+OPEN_BEFORE_NOTE = "开启前就在运行的程序（Steam、已经打开的游戏）仍能直接读到真手柄；游戏要重新启动后才只看到虚拟手柄"
 GAME_NAME = re.compile(r"^[^\\/:*?\"<>|]{1,120}\.exe$", re.IGNORECASE)
 
 # Firmware side: back keys become F22 / F23 (what the engine's keyboard hook catches).
@@ -744,7 +746,9 @@ class InputLayer:
             self._conflicts = conflicts(self._engine, processes, self._xbox)
             self._conflicts_at = now
         engine = self._engine or {}
+        notes = [OPEN_BEFORE_NOTE] if self._phase == "active" else []
         return {"owner": self._settings["owner"], "phase": self._phase, "error": self._error or engine.get("error"),
+                "notes": notes,
                 "pollHz": self._settings["pollHz"], "engine": engine or None,
                 "latency": engine.get("latency"), "layout": engine.get("layout"), "foreground": engine.get("foreground"),
                 "conflicts": self._conflicts, "firmware": self._firmware_record()["items"],

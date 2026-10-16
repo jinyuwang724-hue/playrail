@@ -45,7 +45,10 @@
 - 后台的 `pythonw.exe`（导航震动按 0DB0:1901 找真手柄）；
 - 游戏库 `ClawLibrary.exe`：从本用户的包注册表（`ClawToolbox.Library_*` 的 `PackageRootFolder`）和正在运行的进程找路径，每 5 秒再找一次。
 
-游戏、Steam、ClawRouter 等只看见虚拟手柄（`045E:028E`）。
+开启之后才启动的程序（游戏、ClawRouter……）只看见虚拟手柄（`045E:028E`），而且它在这些程序里就是 0 号手柄（真机实测）。
+**开启前就在运行、已经打开过手柄的程序（Steam、已经打开的游戏）仍能读到真手柄**：HidHide 只拦新的打开。
+本想开启时重启手柄的 XInput 功能来关掉这些旧句柄，但 xusb22 不支持重启（`pnputil /restart-device` 返回 50），
+禁用再启用又可能在出错时把手柄留在禁用状态（重启电脑也不会恢复），所以不做；状态里 `notes` 会提示「游戏要重新启动后才只看到虚拟手柄」。
 
 ## 前台和布局
 
@@ -164,6 +167,7 @@
  "owner": "toolbox",                     // 设置：toolbox = 我们接管 / off = 关闭
  "phase": "active",                      // off / starting / active / stopping / error
  "error": null,                          // 出错或警告（给人看）
+ "notes": ["开启前就在运行的程序……"],       // 开着时的固定提示
  "layout": "global",                     // 当前生效：global / game:<exe> / passthrough（前台不是游戏）
  "foreground": "eldenring.exe",
  "latency": {"samples": 2048, "lastMs": 0.21, "avgMs": 0.25, "p50Ms": 0.22, "p99Ms": 0.6, "maxMs": 1.1},
@@ -179,7 +183,9 @@
    "hidhide": {"cloak": true, "hidden": ["HID\\VID_0DB0&PID_1901&IG_03\\…", "USB\\VID_0DB0&PID_1901&MI_00\\…"], "apps": ["\\Device\\HarddiskVolume3\\…\\ClawInput-0.17.12.exe", "…"], "reapplied": 0},
    "loopHz": 1000, "highResolutionTimer": true,
    "backKeys": {"hooked": true, "m1": false, "m2": false, "swallowed": 0},
-   "testLatency": {"samples": 0}, "otherVirtualPads": 0, "testRunning": false}
+   "keyLatency": {"samples": 0},          // 读到 → SendInput 返回（键鼠那条路）
+   "testLatency": {"samples": 0},         // 脚本测试的帧，单独算
+   "xinputSlots": "0DB0:1901 045E:028E - -", "otherVirtualPads": 0, "testRunning": false}
 }
 ```
 
@@ -220,8 +226,9 @@ HidHide 被别的程序改掉（ClawTweaks 会自己改 HidHide）：引擎每�
 
 ## 延迟
 
-测量点：引擎读到真手柄的新数据包（`XInputGetStateEx` 返回、包序号变了）→ 虚拟手柄报告的 IOCTL 完成、SendInput 返回。只统计当拍就有输出的帧
-（长按、双击这类「按设计要等」的不算）。最近 2048 个样本给出 last / avg / p50 / p99 / max（`latency`）；脚本测试的帧单独算（`engine.testLatency`）。
+测量点：引擎读到真手柄的新数据包（`XInputGetStateEx` 返回、包序号变了）→ 虚拟手柄报告的 IOCTL 完成（`latency`）；键鼠那条路量到 SendInput 返回（`engine.keyLatency`）。
+只统计当拍就有输出的帧（长按、双击这类「按设计要等」的不算），刚插上虚拟手柄的前几帧不算。最近 2048 个样本给出 last / avg / p50 / p99 / max；脚本测试的帧单独算（`engine.testLatency`）。
+主循环用高精度可等待定时器对准固定的 1 ms 节拍（单纯「每次等 1 ms」在本机只有约 675 Hz）。
 另外：1 kHz 轮询本身平均多 0.5 ms（最多 1 ms）采样等待；手柄自己的 USB 报告间隔见 `engine.pad.packetHz`。
 目标 ≤ 2 ms。真机结果见下。
 
@@ -230,14 +237,41 @@ HidHide 被别的程序改掉（ClawTweaks 会自己改 HidHide）：引擎每�
 - `tests/InputLayerTests.cs`（`test.ps1` 里跑）：51 项，触发方式的时间（长按 / 双击 / 可中断 / 组合键 / 切换 / 连发 / 启停延迟）、输出合并（多键同一输出、键盘组合键顺序、扳机当按键、摇杆方向、滚轮、切换布局松键）、引擎格式解析、HidHide 记录（只撤自己加的、别人的隐藏开关保留、补回被改掉的）。
 - `tests/input_layer_backend_test.py`（自带 Python 运行时直接跑）：布局校验 / 补全 / 编译、按游戏存储（拒绝路径穿越）、开关流程（假引擎 + 假固件：M1 → F22、被改过的 A 放回、关闭时放回）、引擎崩溃后放回固件、冲突报告。
 
-## 真机测试
+## 真机测试（2026-10-16，经已安装的后台 0.17.12）
 
-（待补）
+用户同意：ClawTweaks 保持运行直接测（它在跑、HidHide 原本隐藏开关关、黑名单空、没有虚拟手柄）；不写固件；用脚本按键。
+「游戏」用 `tools/InputLayerProbe.cs`：一个在前台、**不在白名单里**的窗口，1 ms 轮询 4 个 XInput 槽、记录收到的键，和引擎用同一个 QPC 时钟。
+演示布局（全局）：A = 长按 300 ms → B + 普通按压 A；X = 双击 250 ms → Tab + 普通按压 X。脚本：长按 A 600 ms；短按 A 100 ms；双击 X；单击 X。
+
+| 检查 | 结果 |
+|---|---|
+| 开启 | 0.7 秒；藏了 `HID\…IG_03\…` 和 `USB\…MI_00\…`；白名单加了引擎、后台 python、游戏库（从包注册表找到）；固件没动 |
+| 冲突报告 | 「ClawTweaks 在运行」；Steam 在运行，「Xbox 配置支持」从配置里读不到（null） |
+| 开启后才启动的「游戏」看到的手柄 | 只有 0 号 = `045E:028E`（虚拟），真手柄看不到 ✅ |
+| 前台 / 布局 | `inputlayerprobe.exe` / `global` ✅ |
+| 长按 A | 引擎 301 ms 发 B，600 ms 松开；没有发 A ✅ |
+| 短按 A | 松开时发 A 短按（1000–1040 ms）✅ |
+| 双击 X | 第二下按下时 Tab 按下（1560 ms），松开时 Tab 松开（1701 ms）；没有发 X ✅ |
+| 单击 X | 双击窗口结束后补发 X 短按（2431–2472 ms）✅ |
+| 「游戏」收到 | 虚拟手柄按键比引擎写出晚 1.0–5.3 ms（含探针自己 1 ms 轮询）；Tab 按下 / 松开都收到（窗口消息晚 12.7 / 2.4 ms，是探针窗口自己的消息循环） |
+| 主循环 | 984–991 Hz，高精度定时器 |
+| 延迟（读到 → 虚拟手柄写完） | 脚本帧 avg 0.26 ms、p50 0.12 ms、max 0.75 ms ✅（目标 ≤ 2 ms）。真手柄没人按、包序号不变，所以真机读数没有样本；两者只差读的那一步（`XInputGetStateEx`，微秒级） |
+| 强杀引擎（管理员 `taskkill /F`） | 守护进程解除隐藏（记录里 `restoredBy: guard`），桥、守护都退出；后台状态 `phase: error`「输入层意外退出，已解除隐藏」；HidHide 和测试前逐项相同 ✅ |
+| 关闭 | 引擎退出、虚拟手柄拔掉；HidHide 隐藏开关关、黑名单空、白名单 3 项，和测试前逐项相同 ✅ |
+| 收尾 | 删掉演示布局；固件 M1 = Alt+F12、M2 = 0x12、A / X 原键，和测试前相同；Decky、游戏库、小组件重连正常 |
+
+测试里发现并修掉的：
+- 1 ms 相对等待只有 649–675 Hz → 改成对准固定节拍，990 Hz 左右。
+- ViGEm 的「查询虚拟手柄编号」调用在本机不回应 → 改成看开启后新出现的 `045E:028E` 槽。
+- 开启前就在运行的程序仍能看到真手柄（两个手柄都在）→ 重启 xusb22 不支持，改成文档和状态 `notes` 里说明（见上）。
+
+没测的：真人按真手柄（用户说用脚本测就行）——真机读数的延迟、M1 / M2 经 F22 / F23 的钩子都要等真按键才有数据；
+游戏的震动转发（状态里 `rumbleRequests` 有计数，强度没核对）。
 
 ## 已知限制
 
 - 只认 XInput 模式（`0DB0:1901`）。切到桌面模式后引擎找不到手柄，虚拟手柄保持中立，切回来自动接上。
-- 只读 XInput 第 0 号的老游戏：真手柄仍占着系统里的 0 号位置（只是被藏起来），虚拟手柄通常在 1 号，这类游戏看不到手柄。HidHide + ViGEm 的通病。
+- 开启前就在运行的程序（Steam、已打开的游戏）仍能读到真手柄，会同时看到两个手柄；游戏重启后正常（见「隐藏什么」）。
 - Game Bar 打开时前台是 Game Bar → 直通；Steam 游戏内覆盖层画在游戏窗口里，前台还是游戏 → 布局照常生效（和 Steam 一样）。
 - MSI 键 / 快速设置键不经过这一层（还是 ClawRouter 管）。
 - 陀螺仪：本机手柄当 Xbox 手柄认，没有陀螺仪数据，不在这一层。
