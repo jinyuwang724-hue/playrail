@@ -3,10 +3,11 @@
 //   选择指令：顶上一排页签（手柄 / 鼠标 / 键盘 / 数字键盘 / 系统，LB / RB 或在页签上 ← → 切），下面按实物布局摆键；
 //            键盘里 Ctrl / Shift / Alt / Win 按一下是叠加（组合键），再按一个普通键完成。
 //   触发设置：长按时间、双击间隔、连发、切换、启动 / 结束延迟、可中断（触感、指令循环、反转输入第二批）。
-// 混合映射，每个键只归一层管（见 docs/gamepad-input-layer.md）：
-//   只用「普通按压 + 固件发得出的键」→ 写固件（set_back_key / set_key_map），零延迟，不用开输入层；
-//   用到长按 / 双击 / 组合触发、触发设置、系统动作 → 这个键进软件输入层的全局布局（save_input_layout），
-//   输入层开着时后台会把这个键在固件里放回原键、交给软件层。恢复原键位 = 从布局里拿掉 + 固件放回原键。
+// 混合映射，每个键只归一层管（见 docs/gamepad-input-layer.md），界面上不分层、不露开关：
+//   只用「普通按压 + 固件发得出的键」→ 写固件（set_back_key / set_key_map），零延迟；
+//   用到长按 / 双击 / 组合触发、触发设置、系统动作，或者固件管不到的键（View / Menu）→ 这个键进软件输入层的全局布局（save_input_layout），
+//   后台按布局自己开关输入层，并把这个键在固件里放回原键、交给软件层。恢复原键位 = 从布局里拿掉 + 固件放回原键。
+// 桌面模式只有固件一层（set_desktop_key_map）：普通按压、固件发得出的键。
 using System.Numerics;
 using System.Text.Json.Nodes;
 using ClawLibrary.Engine;
@@ -212,7 +213,7 @@ public sealed partial class WallStage
             if (v != _gpLayoutEdits || _gpLayout == null) return;
             await GpWrite("save_input_layout", _gpLayout.DeepClone());
             if (v == _gpLayoutEdits) _gpLayoutEdits = 0;
-            if (!GpLayerOn && _gpOpen) Toast("已存进软件输入层的布局；输入层现在关着，打开后才生效（「当前模式」页）");
+            await GpSyncLayer();
         });
     }
 
@@ -270,6 +271,15 @@ public sealed partial class WallStage
     {
         string src = p.Source;
         var rows = new List<PerfRow>();
+        if (p.Desktop)
+        {
+            // 桌面模式：固件一层，只有「按下发什么」
+            rows.Add(new PerfRow { Section = true, Title = "桌面模式" });
+            rows.Add(new PerfRow { Title = "指令", Value = GpDesktopSummary(src) + "  ›", Press = () => { p.Act = 0; p.Level = GpSubLevel.Chooser; p.Cell = 0; p.InTabs = false; p.Chord.Clear(); PaintGpBody(); } });
+            rows.Add(new PerfRow { Title = "禁用这个键", Value = "按下不起作用  ›", Press = () => GpWriteFirmware(p, new[] { 0xFF }) });
+            rows.Add(new PerfRow { Title = "恢复默认", Value = "固件的桌面默认  ›", Press = () => { _ = GpWrite("restore_gamepad", JsonValue.Create("dkey." + src)); p.KeyFocus = 1; } });
+            return rows;
+        }
         var acts = GpActs(src);
         int count = acts?.Count ?? 1;
         for (int i = 0; i < count; i++)
@@ -326,7 +336,7 @@ public sealed partial class WallStage
             Title = "禁用这个键", Value = "按下不起作用  ›",
             Press = () =>
             {
-                if (GpActs(src) != null) { GpEnsureActs(src).Clear(); GpSaveLayout(); }
+                if (GpActs(src) != null || !GpFirmwareSource(src)) { GpEnsureActs(src).Clear(); GpSaveLayout(); }
                 else GpWriteFirmware(p, new[] { 0xFF });
             },
         });
@@ -482,12 +492,18 @@ public sealed partial class WallStage
         p.Chord.Clear();
         p.Level = GpSubLevel.Key;
         bool firmwareOk = cell.Code > 0 && chord.All(c => c.Code > 0);
-        if (GpActs(p.Source) == null && firmwareOk)
+        if (p.Desktop)
+        {
+            if (firmwareOk) GpWriteFirmware(p, chord.Select(c => c.Code).Append(cell.Code).Take(5).ToArray());
+            else { Toast($"桌面模式下手柄发不出「{cell.Label}」"); PaintGpBody(); }
+            return;
+        }
+        if (GpActs(p.Source) == null && firmwareOk && GpFirmwareSource(p.Source))
         {
             GpWriteFirmware(p, chord.Select(c => c.Code).Append(cell.Code).Take(5).ToArray());
             return;
         }
-        if (cell.Cmd.Length == 0) { Toast($"「{cell.Label}」软件输入层还没有"); PaintGpBody(); return; }
+        if (cell.Cmd.Length == 0) { Toast($"「{cell.Label}」之后做"); PaintGpBody(); return; }
         GpActObj(p)["command"] = GpCommandFromCell(cell, chord);
         GpSaveLayout();
     }
@@ -507,7 +523,7 @@ public sealed partial class WallStage
     {
         if (_gpLayout?["buttons"] is JsonObject buttons && buttons.ContainsKey(p.Source)) { buttons.Remove(p.Source); GpSaveLayout(); }
         int native = GpNativeCode(p.Source);
-        if (!(GpFirmwareCodes(p.Source) is { Length: 1 } c && c[0] == native) && !p.Desktop)
+        if (native != 0 && !(GpFirmwareCodes(p.Source) is { Length: 1 } c && c[0] == native) && !p.Desktop)
             GpWriteFirmware(p, new[] { native });
         p.KeyFocus = 1;
         PaintGpBody();
@@ -525,8 +541,6 @@ public sealed partial class WallStage
         var ui = TextKit.Ui(400);
         var muted = Gfx.WithAlpha(CcText, 0.5);
         string where = p.Desktop ? "（桌面模式）" : "";
-        bool layered = GpActs(p.Source) != null;
-        string layer = layered ? (GpLayerOn ? "软件输入层（已打开）" : "软件输入层（现在关着，打开后才生效）") : "手柄固件，改了立刻生效、零延迟";
         switch (p.Level)
         {
             case GpSubLevel.Key:
@@ -534,7 +548,8 @@ public sealed partial class WallStage
                 var rows = GpKeyRows(p);
                 p.KeyFocus = Math.Clamp(p.KeyFocus, 0, rows.Count - 1);
                 PText(ds, GpSourceName(p.Source) + where, TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
-                PText(ds, $"现在：{GpKeySummary(p.Source)}  ·  {layer}", ui, 13, muted, GpPickX, 170, 900);
+                string now = p.Desktop ? GpDesktopSummary(p.Source) : GpKeySummary(p.Source);
+                PText(ds, $"现在：{now}  ·  改了立刻生效", ui, 13, muted, GpPickX, 170, 900);
                 PaintGpRows(ds, rows, p.KeyFocus);
                 break;
             }
@@ -543,7 +558,7 @@ public sealed partial class WallStage
                 var rows = GpSettingsRows(p);
                 p.SettingsFocus = Math.Clamp(p.SettingsFocus, 0, rows.Count - 1);
                 PText(ds, $"{GpSourceName(p.Source)}{where} · 触发设置", TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
-                PText(ds, $"照 Steam 输入；改这些会把这个键交给软件输入层  ·  {layer}", ui, 13, muted, GpPickX, 170, 900);
+                PText(ds, "照 Steam 输入", ui, 13, muted, GpPickX, 170, 900);
                 PaintGpRows(ds, rows, p.SettingsFocus);
                 break;
             }
@@ -599,6 +614,10 @@ public sealed partial class WallStage
                 case "system": currentCmds.Add("sys:" + Str(cmd!["action"])); break;
             }
         }
+        else if (p.Desktop)
+        {
+            foreach (var c in _gpFw?["desktopKeys"]?[p.Source] as JsonArray ?? new JsonArray()) currentCodes.Add(Int(c));
+        }
         else foreach (var c in GpFirmwareCodes(p.Source)) currentCodes.Add(c);
 
         using var font = new CanvasTextFormat { FontFamily = TextKit.Ui(400).Family, FontSize = 14, HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
@@ -623,7 +642,7 @@ public sealed partial class WallStage
                 PText(ds, label, ui, 11, Gfx.WithAlpha(CcText, 0.38f), GpPickX + col * GpCellStepX + 140, GpChooserTop + row * GpCellStepY + 22, 80);
         string hint = p.Tab == 2
             ? (p.Chord.Count > 0 ? $"组合：{string.Join(" + ", p.Chord.Select(GpCellName))} + …  再按一个普通键完成" : "Ctrl / Shift / Alt / Win 按一下是叠加，可以组合；再按一个普通键完成")
-            : p.Tab == 4 ? "音量、静音固件就能发；截图、显示键盘走软件输入层；其余之后做" : "A 选定  ·  LB / RB 换页签  ·  B 返回";
+            : p.Tab == 4 ? "强制关闭游戏、打开控制中心、Steam 快速菜单、切换超分之后做" : "A 选定  ·  LB / RB 换页签  ·  B 返回";
         PText(ds, hint, ui, 13, muted, GpPickX, bottom + 30, 900);
     }
 }

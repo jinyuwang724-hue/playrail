@@ -1,11 +1,11 @@
 // 控制中心 → 手柄：左边一列轻量的分类（只有字，竖向居中），右边那块是 Claw 8 EX 线稿，这一类的设置挂在线稿两侧。
 // 线稿（Assets/Pad，来自 MSI Center M 里 1T91 机型的图）：正面高清 900×412、背面 700×310、左右扳机侧视 420×414；
 // 线稿后面压一圈柔和的暗光把视线收到中间。焦点所在的设置拉一根细线到它管的键上，那块区域整块染强调色（矢量轮廓，抗锯齿）。
-// 按下的键实时点亮、摇杆推动时点跟着走、扳机按多深填多少。
-// 手柄：分类上 ↑ ↓ 换类，→ / A 进到设置；设置之间十字键按方位移动，最左再 ← 或 B 回分类；分类上 B 回控制中心。
-// 按键映射：焦点直接在线稿的键上走，A 打开第三级「映射到」（WallStage.GamepadPicker.cs）。
-// 各分类的内容在 WallStage.GamepadPages.cs。读：工具箱后台 get_gamepad_state（固件只读）、get_state、get_rumble_state；
-// 写：震动强度、特殊键已接上；固件写入（模式、映射、死区、扳机、灯光）等后台加上对应方法后自动生效，没有时提示。
+// 按键映射页：线稿缩小移到上面，正下方按组分几排列出每个键的映射，直接在表里选、A 打开「映射到」（WallStage.GamepadPicker.cs）。
+// 实时输入只点亮这一页管的东西：映射页亮按键、摇杆页亮摇杆、扳机页亮扳机；扳机只在侧视图上亮（正面肩部那块只归肩键）。
+// 手柄 / 桌面模式：照 MSI Center M —— 固件自带「长按 ≡ 两秒」互切，模式变了弹提示；这里 Y 也能切（按两下确认）。
+// 软件输入层不露面：映射用到它时后台自己开、布局清空时自己关（见 docs/gamepad-input-layer.md）。
+// 各分类的内容在 WallStage.GamepadPages.cs。读：工具箱后台 get_gamepad_state、get_state、get_rumble_state、get_input_layout。
 using System.Numerics;
 using System.Text.Json.Nodes;
 using ClawLibrary.Data;
@@ -35,6 +35,8 @@ public sealed partial class WallStage
     private const float GpSideX = 40, GpCatH = 44, GpGroupH = 34;
     /// <summary>摇杆高亮的大圆盘半径（正面原图像素，MSI 的摇杆页也是罩一圈）。</summary>
     private const float GpStickDisc = 56;
+    /// <summary>按键映射页：线稿缩到 0.68、中心上移到 y 238，下面 412… 留给映射表（每组一列，列宽 168、行距 62）。</summary>
+    private const float GpMapArtS = 0.68f, GpMapArtCy = 238, GpMapTop = 412, GpMapColW = 168, GpMapRowStep = 62;
 
     /// <summary>线稿上一个键：所在的面（front / back / tl / tr）、中心、宽高、圆角（原图像素）；Region = 填哪块矢量区域（没有就按形状）；XInput 位用于实时点亮。</summary>
     private readonly record struct GpKey(string Face, float X, float Y, float W, float H, float R, string? Region = null, ushort XInput = 0);
@@ -48,10 +50,11 @@ public sealed partial class WallStage
         ["Dpad"] = new("front", 144, 157, 74, 74, 37),
         ["Up"] = new("front", 144, 135, 19, 18, 4, null, 0x0001), ["Down"] = new("front", 144, 178, 19, 18, 4, null, 0x0002),
         ["Left"] = new("front", 122, 157, 18, 19, 4, null, 0x0004), ["Right"] = new("front", 166, 157, 18, 19, 4, null, 0x0008),
-        ["View"] = new("front", 170, 61, 12, 22, 6, null, 0x0020), ["QS"] = new("front", 170, 89, 12, 22, 6),
-        ["Menu"] = new("front", 726, 60, 12, 22, 6, null, 0x0010), ["Claw"] = new("front", 726, 90, 12, 22, 6),
+        ["Back"] = new("front", 170, 61, 12, 22, 6, null, 0x0020), ["QS"] = new("front", 170, 89, 12, 22, 6),
+        ["Start"] = new("front", 726, 60, 12, 22, 6, null, 0x0010), ["Claw"] = new("front", 726, 90, 12, 22, 6),
         ["LB"] = new("front", 126, 36, 64, 22, 10, "LB", 0x0100), ["RB"] = new("front", 774, 36, 64, 22, 10, "RB", 0x0200),
-        ["LT"] = new("front", 78, 24, 56, 22, 10, "LB"), ["RT"] = new("front", 822, 24, 56, 22, 10, "RB"),
+        // 扳机在正面只露一条边、和肩键共用一块轮廓，所以扳机一律画在侧视图上
+        ["LT"] = new("tl", 105, 280, 90, 150, 20, "TL"), ["RT"] = new("tr", 315, 280, 90, 150, 20, "TR"),
         ["GripL"] = new("front", 70, 300, 130, 150, 40, "GripL"), ["GripR"] = new("front", 830, 300, 130, 150, 40, "GripR"),
         ["M1"] = new("back", 120, 136, 28, 46, 8, "M1"), ["M2"] = new("back", 578, 136, 28, 46, 8, "M2"),
         ["TL"] = new("tl", 105, 280, 90, 150, 20, "TL"), ["BL"] = new("tl", 75, 160, 80, 70, 20, "BL"),
@@ -78,7 +81,7 @@ public sealed partial class WallStage
 
     /// <summary>
     /// 一个设置。Side -1 = 线稿左边（右对齐到 GpLeftEdge），1 = 右边；Row 是那一侧的第几行（两侧各自竖向居中）。
-    /// Hotspot = 按键映射页：焦点在线稿的键上走，只给焦点那个键画说明。
+    /// Cell = 按键映射表里的一格（X, Y 是左上角，左对齐，宽 GpMapColW）。
     /// </summary>
     private sealed class GpItem
     {
@@ -87,7 +90,7 @@ public sealed partial class WallStage
         public float X, Y;
         public string Key = "";
         public string[]? Lights;
-        public bool Hotspot, Disabled;
+        public bool Cell, Disabled;
         public string? Why;
         public string[]? Choices;
         public int Choice;
@@ -97,13 +100,14 @@ public sealed partial class WallStage
         public Func<int, string>? Format;
         public Action<int>? SetNumber;
         public Action? Press;
-        /// <summary>颜色选项（灯光颜色）：值前面画一个色块。</summary>
-        public Color[]? Swatches;
         public bool Adjustable => !Disabled && (Choices != null || Number != null);
     }
 
     private ContainerVisual? _gp;
-    private SpriteVisual _gpSpot = null!, _gpBody = null!;
+    /// <summary>_gpArtPage 管这一页线稿的位置和大小（映射页缩小上移），里面的 _gpArtLayer 震动时抖；_gpHi 是线稿上的高亮，跟着线稿一起动。</summary>
+    private ContainerVisual _gpArtPage = null!;
+    private SpriteVisual _gpSpot = null!, _gpBody = null!, _gpHi = null!;
+    private float _gpPoseS = 1;
     private readonly Dictionary<string, SpriteVisual> _gpArt = new();
     private readonly Dictionary<string, CanvasBitmap> _gpBitmaps = new();
     private readonly Dictionary<string, CanvasGeometry> _gpRegions = new();
@@ -117,6 +121,10 @@ public sealed partial class WallStage
     /// <summary>软件输入层：全局布局（get_input_layout 的 layout）和开关 / 状态（get_input_layer_state）。后台没有输入层时都是 null。</summary>
     private JsonObject? _gpLayout;
     private JsonNode? _gpLayer;
+    /// <summary>上次读到的固件模式（变了就提示）；Y 切模式要在 3 秒内按第二下确认。</summary>
+    private string? _gpLastMode;
+    private long _gpModeArm;
+    private int _gpPollTicks;
     /// <summary>左右马达的震动强度（0–100），读自 get_rumble_state 的 current。</summary>
     private int? _gpRumbleL, _gpRumbleR;
     private string? _gpError, _gpFwError;
@@ -137,6 +145,7 @@ public sealed partial class WallStage
         _gpFocus = 0;
         BuildGpItems();
         GpShowFaces(GpPageFaces(), instant: true);
+        GpApplyArtPose(instant: true);
         _gpShown = _pad?.Last ?? default;
         PaintGp();
         foreach (var vis in CcPageParts()) vis.StartAnimation("Opacity", ToScalar(0, 160, EaseOutCss));
@@ -177,10 +186,12 @@ public sealed partial class WallStage
         if (_gp != null) return;
         _gp = G.Container();
         _gp.IsVisible = false;
+        _gpArtPage = G.Container();
+        _gp.Children.InsertAtTop(_gpArtPage);
         _gpSpot = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
-        _gp.Children.InsertAtTop(_gpSpot);
+        _gpArtPage.Children.InsertAtTop(_gpSpot);
         _gpArtLayer = G.Container();
-        _gp.Children.InsertAtTop(_gpArtLayer);
+        _gpArtPage.Children.InsertAtTop(_gpArtLayer);
         foreach (var face in new[] { "front", "back", "tl", "tr" })
         {
             var s = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
@@ -189,6 +200,8 @@ public sealed partial class WallStage
             _gpArtLayer.Children.InsertAtTop(s);
         }
         EnsureGpFx();
+        _gpHi = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+        _gpArtLayer.Children.InsertAtTop(_gpHi);
         _gpBody = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _gp.Children.InsertAtTop(_gpBody);
         _cc!.Children.InsertAtTop(_gp);
@@ -203,10 +216,16 @@ public sealed partial class WallStage
         t.Tick += (_, _) =>
         {
             if (!_gpOpen) return;
+            // 每 3 秒重读一次（长按 ≡ 换了模式要跟上）；正在调、映射选择开着、有没写完的改动时不读，免得把本地值冲掉
+            if (++_gpPollTicks >= 90)
+            {
+                _gpPollTicks = 0;
+                if (!_gpEditing && _gpPicker == null && _gpLayoutEdits + _gpRumbleEdits == 0) _ = GpRefresh();
+            }
             var now = _pad?.Last ?? default;
             if (now == _gpShown) return;
             _gpShown = now;
-            PaintGpBody();
+            if (_gpPicker == null) PaintGpHi();
         };
         return t;
     }
@@ -270,6 +289,13 @@ public sealed partial class WallStage
                 var fw = await _agent.Call("get_gamepad_state");
                 _gpFw = Bool(fw?["available"]) ? fw : null;
                 _gpFwError = _gpFw == null ? Str(fw?["error"]) ?? "读不到手柄固件" : null;
+                // 模式变了（长按 ≡、或者这里 Y 切的）：提示一句，像 MSI 的模式 OSD
+                if (Str(_gpFw?["mode"]) is string mode)
+                {
+                    if (_gpLastMode != null && mode != _gpLastMode && _gpOpen)
+                        Toast(mode == "desktop" ? "已切到桌面模式：手柄现在是键鼠 · 长按 ≡ 两秒切回" : "已切到手柄模式");
+                    _gpLastMode = mode;
+                }
             }
             catch (Exception ex) { _gpFw = null; _gpFwError = ex.Message.Contains("不支持") ? "后台还没有固件读取" : ex.Message; }
             try
@@ -345,6 +371,37 @@ public sealed partial class WallStage
         });
     }
 
+    /// <summary>
+    /// Y：手柄 / 桌面模式互切。桌面模式下手柄变成键鼠、这里就收不到手柄键了，所以要 3 秒内按第二下确认；切回靠长按 ≡ 两秒（固件自带）。
+    /// </summary>
+    private void GpToggleMode()
+    {
+        if (_gpPicker != null || _gpEditing) return;
+        string? mode = Str(_gpFw?["mode"]);
+        if (mode == null) { Toast(_gpFwError ?? "还没读到手柄模式"); return; }
+        string to = mode == "desktop" ? "xinput" : "desktop";
+        long now = Environment.TickCount64;
+        if (now - _gpModeArm > 3000)
+        {
+            _gpModeArm = now;
+            Toast(to == "desktop" ? "再按一次 Y 切到桌面模式（手柄变成键鼠，长按 ≡ 两秒切回）" : "再按一次 Y 切回手柄模式");
+            return;
+        }
+        _gpModeArm = 0;
+        _ = GpWrite("set_gamepad_mode", JsonValue.Create(to));
+    }
+
+    /// <summary>
+    /// 软件输入层跟着布局走、不给开关：后台自己管（状态里 auto = true）时这里什么都不做；
+    /// 老后台没有自动管理时，这里只在布局清空后把它关掉 —— 不替它打开，免得虚拟手柄被 Steam 的桌面配置当鼠标用。
+    /// </summary>
+    private async Task GpSyncLayer()
+    {
+        if (_gpLayer == null || Bool(_gpLayer["auto"])) return;
+        bool want = (_gpLayout?["buttons"] as JsonObject)?.Count > 0;
+        if (!want && GpLayerOn) await GpWrite("set_input_layer_enabled", JsonValue.Create(false));
+    }
+
     private async Task GpTestRumble()
     {
         GpPlayRumble((_gpRumbleL ?? 100) / 100f, (_gpRumbleR ?? 100) / 100f);
@@ -355,13 +412,11 @@ public sealed partial class WallStage
 
     // ---------------- 分类 ----------------
 
-    /// <summary>左边分类：Group = 分组小标题（不能选）。</summary>
+    /// <summary>左边分类：Group = 分组小标题（不能选，Id 是这组对应的固件模式，正在用的那组标「当前」）。</summary>
     private static readonly (string Id, string Title, bool Group)[] GpSidebar =
     {
-        ("mode", "当前模式", false),
-        ("", "手柄模式", true), ("gpmap", "按键映射", false), ("stick", "摇杆", false), ("trigger", "扳机", false), ("rumble", "震动", false),
-        ("", "桌面模式", true), ("dkmap", "按键映射", false), ("mouse", "鼠标", false),
-        ("", "其他", true), ("special", "特殊键", false), ("light", "灯光", false),
+        ("xinput", "手柄模式", true), ("gpmap", "按键映射", false), ("stick", "摇杆", false), ("trigger", "扳机", false), ("rumble", "震动", false),
+        ("desktop", "桌面模式", true), ("dkmap", "按键映射", false), ("mouse", "鼠标", false),
     };
 
     private static readonly int[] GpCatRows = Enumerable.Range(0, GpSidebar.Length).Where(i => !GpSidebar[i].Group).ToArray();
@@ -375,12 +430,39 @@ public sealed partial class WallStage
         return y + (GpSidebar[row].Group ? GpGroupH - 10 : GpCatH / 2);
     }
 
-    /// <summary>这一页用哪几张线稿：扳机页是两张侧视图，其余是正面（焦点到背键时翻背面）。</summary>
+    /// <summary>这一页用哪几张线稿：扳机页是两张侧视图，其余是正面（焦点到背键时翻背面、到扳机时换侧视图）。</summary>
     private HashSet<string> GpPageFaces()
     {
         if (GpCatId == "trigger") return new() { "tl", "tr" };
         var it = !_gpInSide && _gpFocus >= 0 && _gpFocus < _gpItems.Count ? _gpItems[_gpFocus] : null;
-        return it != null && GpKeys.TryGetValue(it.Key, out var k) && k.Face == "back" ? new() { "back" } : new() { "front" };
+        if (it == null || !GpKeys.TryGetValue(it.Key, out var k)) return new() { "front" };
+        return k.Face switch { "back" => new() { "back" }, "tl" or "tr" => new() { "tl", "tr" }, _ => new() { "front" } };
+    }
+
+    private bool GpIsMapPage => GpCatId is "gpmap" or "dkmap";
+
+    /// <summary>线稿的位置：映射页缩小、上移（下面放映射表），其余页原样；换页时 240 ms 过去，高亮在同一层里跟着走。</summary>
+    private void GpApplyArtPose(bool instant = false)
+    {
+        if (_gp == null) return;
+        float s = GpIsMapPage ? GpMapArtS : 1, dy = GpIsMapPage ? GpMapArtCy - GpCy : 0, k = _ccK;
+        _gpArtPage.CenterPoint = new Vector3(GpCx * k, GpCy * k, 0);
+        var scale = new Vector3(s, s, 1);
+        var offset = new Vector3(0, dy * k, 0);
+        if (instant || Reduced || _gpPoseS == s)
+        {
+            _gpArtPage.StopAnimation("Scale"); _gpArtPage.StopAnimation("Offset");
+            _gpArtPage.Scale = scale; _gpArtPage.Offset = offset;
+        }
+        else
+        {
+            var ease = G.Ease(EaseOutCss);
+            var sa = G.C.CreateVector3KeyFrameAnimation(); sa.InsertKeyFrame(1, scale, ease); sa.Duration = Gfx.Ms(240);
+            var oa = G.C.CreateVector3KeyFrameAnimation(); oa.InsertKeyFrame(1, offset, ease); oa.Duration = Gfx.Ms(240);
+            _gpArtPage.StartAnimation("Scale", sa);
+            _gpArtPage.StartAnimation("Offset", oa);
+        }
+        _gpPoseS = s;
     }
 
     /// <summary>换线稿：要显示的面淡入、其余淡出（180 ms）。</summary>
@@ -412,6 +494,7 @@ public sealed partial class WallStage
                 _gpFocus = 0;
                 BuildGpItems();
                 GpShowFaces(GpPageFaces());
+                GpApplyArtPose();
                 PaintGpBody();
             }
             else if (dir == Direction.Right) GpEnterContent();
@@ -464,16 +547,9 @@ public sealed partial class WallStage
         PaintGpBody();
     }
 
-    /// <summary>
-    /// 设置项的中心（设计 px），按方位找下一个焦点用：映射页是键在线稿上的位置（背键按它在握把后面的位置算），
-    /// 其余是说明文字那块。
-    /// </summary>
-    private static Vector2 GpCenter(GpItem it)
-    {
-        if (it.Hotspot && GpKeys.TryGetValue(it.Key, out var k))
-            return k.Face == "back" ? GpMap("front", k.X < 350 ? 70 : 830, 290) : GpMap(k.Face, k.X, k.Y);
-        return new Vector2(it.Side < 0 ? it.X - 80 : it.X + 80, it.Y + 13);
-    }
+    /// <summary>设置项的中心（设计 px），按方位找下一个焦点用：映射表的格是格子中间，其余是说明文字那块。</summary>
+    private static Vector2 GpCenter(GpItem it) =>
+        it.Cell ? new Vector2(it.X + GpMapColW / 2, it.Y + 12) : new Vector2(it.Side < 0 ? it.X - 80 : it.X + 80, it.Y + 13);
 
     private void GpEnterContent()
     {
@@ -535,6 +611,7 @@ public sealed partial class WallStage
             }));
             _gpSpot.Size = new Vector2(sw * k, sh * k);
             _gpSpot.Offset = new Vector3((GpCx - sw / 2) * k, (GpCy - sh / 2) * k, 0);
+            GpApplyArtPose(instant: true);
             if (_gpArtLoaded)
             {
                 _gpArtK = k;
@@ -553,124 +630,165 @@ public sealed partial class WallStage
         PaintGpBody();
     }
 
-    /// <summary>整页一层（1280×800 设计 px）：标题、分类、设置、连线、线稿上的高亮和实时输入；映射选择打开时画它。</summary>
+    /// <summary>
+    /// 两层，都是 1280×800 设计 px：_gpBody 是界面（标题、分类、设置、映射表、连线），_gpHi 是线稿上的高亮和实时输入（在线稿那层里，跟着线稿缩放）。
+    /// 实时输入变了只重画 _gpHi。映射选择打开时线稿整层隐去。
+    /// </summary>
     private void PaintGpBody()
     {
         if (_gp == null) return;
         float k = _ccK, raster = k * Chrome.Dpi;
-        CcSet(_gpBody, CcDraw(1280, 800, raster, PaintGpBody));
+        CcSet(_gpBody, CcDraw(1280, 800, raster, PaintGpUi));
         _gpBody.Size = new Vector2(1280 * k, 800 * k);
         _gpBody.Offset = Vector3.Zero;
-        // 映射选择盖在线稿上时把线稿和暗光压下去
+        PaintGpHi();
         float artAlpha = _gpPicker != null ? 0f : 1f;
-        if (_gpSpot.Opacity != artAlpha)
-        {
-            _gpSpot.Opacity = artAlpha;
-            foreach (var (face, s) in _gpArt) if (_gpFacesShown.Contains(face)) { s.StopAnimation("Opacity"); s.Opacity = artAlpha; }
-        }
+        if (_gpArtPage.Opacity != artAlpha) _gpArtPage.Opacity = artAlpha;
     }
 
-    private void PaintGpBody(CanvasDrawingSession ds)
+    private void PaintGpHi()
+    {
+        if (_gp == null) return;
+        float k = _ccK, raster = k * Chrome.Dpi;
+        CcSet(_gpHi, CcDraw(1280, 800, raster, PaintGpArtHi));
+        _gpHi.Size = new Vector2(1280 * k, 800 * k);
+        _gpHi.Offset = Vector3.Zero;
+    }
+
+    private GpItem? GpFocusItem => !_gpInSide && _gpFocus >= 0 && _gpFocus < _gpItems.Count ? _gpItems[_gpFocus] : null;
+
+    private void PaintGpUi(CanvasDrawingSession ds)
     {
         var ui = TextKit.Ui(400);
         var accent = PerfAccent;
         var muted = Gfx.WithAlpha(CcText, 0.5);
         bool connected = _pad?.Connected ?? false;
 
-        // 标题：和控制中心的「控制中心」同一个位置、同一个字；下面一行小字是机型、连接状态和当前模式
+        // 标题：和控制中心的「控制中心」同一个位置、同一个字；下面一行小字是机型、连接状态、当前模式和怎么切
         PText(ds, "手柄", TextKit.Ui(700), 24, CcText, 40, 48, 300);
         string mode = Str(_gpFw?["mode"]) switch { "desktop" => "桌面模式", "xinput" => "手柄模式", "dinput" => "DInput 模式", _ => "" };
-        string sub = connected ? $"Claw 8 EX · 已连接{(mode.Length > 0 ? " · " + mode : "")}" : "Claw 8 EX · 没有检测到手柄";
-        PText(ds, sub, ui, 13, muted, 40, 82, 600);
+        string sub = !connected ? "Claw 8 EX · 没有检测到手柄"
+            : $"Claw 8 EX · 已连接{(mode.Length > 0 ? $" · {mode}  ·  Y 切换（或长按 ≡ 两秒）" : "")}";
+        PText(ds, sub, ui, 13, muted, 40, 82, 900);
 
         PaintGpSidebar(ds);
         if (_gpPicker != null) { PaintGpPicker(ds, accent); return; }
-        if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpCy, 300);
+        if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpIsMapPage ? GpMapArtCy : GpCy, 300);
 
-        var focus = !_gpInSide && _gpFocus >= 0 && _gpFocus < _gpItems.Count ? _gpItems[_gpFocus] : null;
-        PaintGpPageArt(ds, accent, focus);
-        PaintGpLive(ds, accent);
-
-        // 焦点：这一项管的区域整块填强调色，再拉一根细线从设置连到区域边上
-        if (focus != null)
+        var focus = GpFocusItem;
+        // 两侧的设置：焦点那项拉一根细线到它管的键（映射页没有两侧设置，焦点直接在表里）
+        if (focus is { Cell: false } && focus.Key.Length > 0 && GpKeys.TryGetValue(focus.Key, out var fk) && _gpFacesShown.Contains(fk.Face))
         {
-            foreach (var region in focus.Lights ?? (focus.Key.Length > 0 ? new[] { focus.Key } : Array.Empty<string>()))
-                GpFill(ds, region, 0.42f, accent);
-            if (focus.Key.Length > 0 && GpKeys.TryGetValue(focus.Key, out var fk) && _gpFacesShown.Contains(fk.Face))
-            {
-                var r = GpKeyRect(fk);
-                var c = GpMap(fk.Face, fk.X, fk.Y);
-                bool left = focus.Side < 0;
-                float half = fk.Region == null && focus.Key is "LS" or "RS" ? GpStickDisc * GpS : (float)r.Width / 2;
-                var target = new Vector2(c.X + (left ? -half : half), c.Y);
-                var start = new Vector2(left ? GpLeftEdge + 14 : GpRightEdge - 14, focus.Y + 13);
-                using var round = new CanvasStrokeStyle { StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round };
-                ds.DrawLine(start, target, Gfx.WithAlpha(accent, 0.9f), 1.4f, round);
-                ds.FillCircle(start, 3, accent);
-            }
+            var r = GpKeyRect(fk);
+            var c = GpMap(fk.Face, fk.X, fk.Y);
+            bool left = focus.Side < 0;
+            float half = fk.Region == null && focus.Key is "LS" or "RS" ? GpStickDisc * GpS : (float)r.Width / 2;
+            var target = new Vector2(c.X + (left ? -half : half), c.Y);
+            var start = new Vector2(left ? GpLeftEdge + 14 : GpRightEdge - 14, focus.Y + 13);
+            using var round = new CanvasStrokeStyle { StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round };
+            ds.DrawLine(start, target, Gfx.WithAlpha(accent, 0.9f), 1.4f, round);
+            ds.FillCircle(start, 3, accent);
         }
 
+        foreach (var (title, x) in _gpMapHeads)
+            PText(ds, title, TextKit.Ui(500), 12, Gfx.WithAlpha(CcText, 0.36f), x + 14, GpMapTop - 30, GpMapColW);
         foreach (var it in _gpItems)
-            if (!it.Hotspot || it == focus) PaintGpItem(ds, it, it == focus);
-        if (focus == null && _gpItems.Count > 0 && _gpItems[0].Hotspot)
         {
-            const string hint = "按 → 进去，在线稿上选一个键，A 改它的映射";
+            if (it.Cell) PaintGpCell(ds, it, it == focus);
+            else PaintGpItem(ds, it, it == focus);
+        }
+        if (GpIsMapPage)
+        {
+            string hint = focus == null ? "按 → 进到映射表"
+                : _gpEditing ? "← → 改  ·  A 完成"
+                : focus.Choices != null ? "A 改这个键做什么（Steam 大屏幕里生效）"
+                : "A 改映射：长按、双击、组合键、键盘鼠标都在里面";
             float hw = PWidth(ds, hint, ui, 13);
-            PText(ds, hint, ui, 13, muted, GpCx - hw / 2, GpY + GpH + 44, hw + 4);
+            PText(ds, hint, ui, 13, muted, GpCx - hw / 2, 724, hw + 4);
         }
     }
 
-    /// <summary>分类：竖向居中，只有字；分组小标题小一号、更淡；当前类白字，焦点在分类上时前面加 ▸。</summary>
+    /// <summary>线稿上的高亮（在线稿那层里画）：这一页额外的图、实时输入、焦点那项管的区域。</summary>
+    private void PaintGpArtHi(CanvasDrawingSession ds)
+    {
+        if (_gpPicker != null) return;
+        var accent = PerfAccent;
+        var focus = GpFocusItem;
+        PaintGpPageArt(ds, accent, focus);
+        PaintGpLive(ds, accent);
+        if (focus != null)
+            foreach (var region in focus.Lights ?? (focus.Key.Length > 0 ? new[] { focus.Key } : Array.Empty<string>()))
+                GpFill(ds, region, 0.42f, accent);
+    }
+
+    /// <summary>分类：竖向居中，只有字；分组小标题小一号、更淡，正在用的模式后面标「当前」；当前类白字，焦点在分类上时前面加 ▸。</summary>
     private void PaintGpSidebar(CanvasDrawingSession ds)
     {
         var ui = TextKit.Ui(400);
         int cat = 0;
+        string? mode = Str(_gpFw?["mode"]);
         for (int i = 0; i < GpSidebar.Length; i++)
         {
             var e = GpSidebar[i];
             float cy = GpSidebarY(i);
-            if (e.Group) { PText(ds, e.Title, TextKit.Ui(500), 12, Gfx.WithAlpha(CcText, 0.36f), GpSideX, cy, 200); continue; }
+            if (e.Group)
+            {
+                var gf = TextKit.Ui(500);
+                PText(ds, e.Title, gf, 12, Gfx.WithAlpha(CcText, 0.36f), GpSideX, cy, 200);
+                if (mode == e.Id)
+                {
+                    float w = PWidth(ds, e.Title, gf, 12);
+                    ds.FillCircle(GpSideX + w + 10, cy, 2.5f, PerfAccent);
+                    PText(ds, "当前", gf, 12, Gfx.WithAlpha(PerfAccent, 0.9f), GpSideX + w + 17, cy, 60);
+                }
+                continue;
+            }
             bool cur = cat++ == _gpCat;
             var col = cur ? (_gpInSide ? CcText : Gfx.WithAlpha(CcText, 0.92f)) : Gfx.WithAlpha(CcText, 0.45f);
             PText(ds, e.Title, cur ? TextKit.Ui(600) : ui, 17, col, GpSideX + 16, cy, 200);
-            if (cur && _gpInSide && _gpPicker == null)
-            {
-                using var pb = new CanvasPathBuilder(ds);
-                pb.BeginFigure(GpSideX, cy - 6); pb.AddLine(GpSideX + 8, cy); pb.AddLine(GpSideX, cy + 6); pb.EndFigure(CanvasFigureLoop.Closed);
-                using var g = CanvasGeometry.CreatePath(pb);
-                ds.FillGeometry(g, CcText);
-            }
+            if (cur && _gpInSide && _gpPicker == null) GpFocusMark(ds, GpSideX, cy, CcText);
         }
     }
 
-    /// <summary>线稿上的实时输入：按下的键填强调色，扳机按多深填多少，摇杆推动时一个点跟着走。</summary>
+    /// <summary>▸ 焦点记号（分类、映射表共用）。</summary>
+    private static void GpFocusMark(CanvasDrawingSession ds, float x, float cy, Color color)
+    {
+        using var pb = new CanvasPathBuilder(ds);
+        pb.BeginFigure(x, cy - 6); pb.AddLine(x + 8, cy); pb.AddLine(x, cy + 6); pb.EndFigure(CanvasFigureLoop.Closed);
+        using var g = CanvasGeometry.CreatePath(pb);
+        ds.FillGeometry(g, color);
+    }
+
+    /// <summary>
+    /// 线稿上的实时输入，只亮这一页管的：映射页亮按键（扳机不亮，正面肩部那块只归肩键）；摇杆页 / 鼠标页是摇杆推到哪、按下；
+    /// 扳机页是侧视图上扳机按多深填多少；震动页不亮。
+    /// </summary>
     private void PaintGpLive(CanvasDrawingSession ds, Color accent)
     {
         var snap = _gpShown;
-        foreach (var (name, key) in GpKeys)
-            if (key.XInput != 0 && name is not ("LB" or "RB") && (snap.Buttons & key.XInput) != 0) GpFill(ds, name, 0.85f, accent);
-        if (_gpFacesShown.Contains("front"))
+        switch (GpCatId)
         {
-            float lb = Math.Max((snap.Buttons & 0x0100) != 0 ? 1 : 0, snap.LT > 20 ? snap.LT / 255f : 0);
-            float rb = Math.Max((snap.Buttons & 0x0200) != 0 ? 1 : 0, snap.RT > 20 ? snap.RT / 255f : 0);
-            if (lb > 0) GpFill(ds, "LB", 0.85f * lb, accent);
-            if (rb > 0) GpFill(ds, "RB", 0.85f * rb, accent);
-            foreach (var (name, ax, ay) in new[] { ("LS", snap.LX, snap.LY), ("RS", snap.RX, snap.RY) })
-            {
-                float fx = ax / 32767f, fy = ay / 32767f;
-                if (fx * fx + fy * fy < 0.01f) continue;
-                var key = GpKeys[name];
-                var p = GpMap("front", key.X, key.Y) + new Vector2(fx, -fy) * (key.W / 2 * GpS);
-                ds.FillCircle(p, 5f, accent);
-            }
-        }
-        if (_gpFacesShown.Contains("tl"))
-        {
-            // 侧视图：扳机按多深，扳机那块从上往下填多少；肩键按下整块填
-            GpFillPartial(ds, "TL", snap.LT / 255f, accent);
-            GpFillPartial(ds, "TR", snap.RT / 255f, accent);
-            if ((snap.Buttons & 0x0100) != 0) GpFill(ds, "BL", 0.85f, accent);
-            if ((snap.Buttons & 0x0200) != 0) GpFill(ds, "BR", 0.85f, accent);
+            case "gpmap" or "dkmap":
+                foreach (var (name, key) in GpKeys)
+                    if (key.XInput != 0 && (snap.Buttons & key.XInput) != 0) GpFill(ds, name, 0.85f, accent);
+                break;
+            case "stick" or "mouse":
+                if (!_gpFacesShown.Contains("front")) break;
+                foreach (var (name, ax, ay) in new[] { ("LS", snap.LX, snap.LY), ("RS", snap.RX, snap.RY) })
+                {
+                    var key = GpKeys[name];
+                    if ((snap.Buttons & key.XInput) != 0) GpFill(ds, name, 0.5f, accent);
+                    float fx = ax / 32767f, fy = ay / 32767f;
+                    if (fx * fx + fy * fy < 0.01f) continue;
+                    var p = GpMap("front", key.X, key.Y) + new Vector2(fx, -fy) * (key.W / 2 * GpS);
+                    ds.FillCircle(p, 5f, accent);
+                }
+                break;
+            case "trigger":
+                if (!_gpFacesShown.Contains("tl")) break;
+                GpFillPartial(ds, "TL", snap.LT / 255f, accent);
+                GpFillPartial(ds, "TR", snap.RT / 255f, accent);
+                break;
         }
     }
 
@@ -709,7 +827,7 @@ public sealed partial class WallStage
         ds.FillGeometry(part, Gfx.WithAlpha(accent, 0.8f));
     }
 
-    /// <summary>一个设置：上面小字标题，下面值；焦点白字，调节中值两边是 ‹ ›，置灰的写原因；灯光颜色前面带色块。</summary>
+    /// <summary>一个设置：上面小字标题，下面值；焦点白字，调节中值两边是 ‹ ›，置灰的写原因。</summary>
     private void PaintGpItem(CanvasDrawingSession ds, GpItem it, bool focused)
     {
         var ui = TextKit.Ui(400);
@@ -721,21 +839,56 @@ public sealed partial class WallStage
             : editing && it.Number is int n && it.Format != null ? it.Format(n) : it.Value;
         var valueFont = editing ? TextKit.Ui(600) : ui;
         float tw = PWidth(ds, it.Title, ui, 13), vw = PWidth(ds, value, valueFont, 19);
-        float swatch = it.Swatches != null ? 20 : 0;
         float chev = editing ? 22 : 0;
         bool left = it.Side < 0;
-        float tx = left ? it.X - tw : it.X, vx = left ? it.X - vw - chev : it.X + chev + swatch;
+        float tx = left ? it.X - tw : it.X, vx = left ? it.X - vw - chev : it.X + chev;
         PText(ds, it.Title, ui, 13, titleCol, tx, it.Y, tw + 4);
         PText(ds, value, valueFont, 19, valueCol, vx, it.Y + 27, vw + 4);
-        if (it.Swatches != null)
-            ds.FillCircle(vx - 12, it.Y + 27, 6, Gfx.WithAlpha(it.Swatches[Math.Clamp(it.Choice, 0, it.Swatches.Length - 1)], a));
         if (editing)
         {
-            DrawChevron(ds, vx - 16 - swatch, it.Y + 27, true, valueCol);
+            DrawChevron(ds, vx - 16, it.Y + 27, true, valueCol);
             DrawChevron(ds, vx + vw + 16, it.Y + 27, false, valueCol);
             const string hint = "← → 改  ·  A 完成";
             float hw = PWidth(ds, hint, ui, 11);
             PText(ds, hint, ui, 11, Gfx.WithAlpha(CcText, 0.45f), left ? it.X - hw : it.X, it.Y + 52, hw + 4);
         }
+    }
+
+    /// <summary>
+    /// 映射表的一格：上面小字是键名，下面是它现在做什么。改过的（不是原键位 / 默认）字亮一些；焦点前面 ▸、白字；
+    /// 几选一的格（快速设置键 / Claw 键）调节中两边是 ‹ ›。放不下的值截断加「…」。
+    /// </summary>
+    private void PaintGpCell(CanvasDrawingSession ds, GpItem it, bool focused)
+    {
+        var ui = TextKit.Ui(400);
+        bool editing = focused && _gpEditing;
+        string value = editing && it.Choices != null ? it.Choices[it.Choice] : it.Value;
+        bool stock = value is "原键位" or "默认" or "原功能" or "原样" or "—";
+        var titleCol = Gfx.WithAlpha(CcText, focused ? 0.8f : 0.45f);
+        var valueCol = Gfx.WithAlpha(CcText, focused ? 1f : stock ? 0.5f : 0.85f);
+        float x = it.X + 14, w = GpMapColW - 24;
+        if (focused) GpFocusMark(ds, it.X, it.Y, CcText);
+        PText(ds, it.Title, focused ? TextKit.Ui(600) : ui, 13, titleCol, x, it.Y, w);
+        var vf = editing ? TextKit.Ui(600) : ui;
+        if (editing)
+        {
+            float vw = PWidth(ds, value, vf, 16);
+            DrawChevron(ds, x + 4, it.Y + 24, true, valueCol);
+            PText(ds, value, vf, 16, valueCol, x + 16, it.Y + 24, vw + 4);
+            DrawChevron(ds, x + 28 + vw, it.Y + 24, false, valueCol);
+        }
+        else PText(ds, GpFit(ds, value, vf, 16, w), vf, 16, valueCol, x, it.Y + 24, w + 4);
+    }
+
+    /// <summary>放不下就从尾巴截掉、加「…」。</summary>
+    private static string GpFit(CanvasDrawingSession ds, string s, FontSpec f, float size, float max)
+    {
+        if (PWidth(ds, s, f, size) <= max) return s;
+        for (int n = s.Length - 1; n > 1; n--)
+        {
+            string t = s[..n].TrimEnd(' ', '·', '+') + "…";
+            if (PWidth(ds, t, f, size) <= max) return t;
+        }
+        return "…";
     }
 }

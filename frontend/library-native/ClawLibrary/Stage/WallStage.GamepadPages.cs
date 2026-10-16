@@ -1,4 +1,5 @@
-// 控制中心 → 手柄：每个分类挂在线稿两侧的设置，和这一页在线稿上额外画的东西（摇杆死区圈、震动波纹、灯光预览）。
+// 控制中心 → 手柄：每个分类的内容 —— 按键映射表（线稿正下方，按组分几列），摇杆 / 扳机 / 震动挂在线稿两侧的设置，
+// 和这一页在线稿上额外画的东西（摇杆死区圈、震动握把、扳机行程刻度）。
 // 当前值从固件读（get_gamepad_state，见 docs/gamepad-firmware-protocol.md）；读不到写「—」。
 // 范围照 MSI Center M：摇杆死区 0–50 %、外圈 75–100 %，扳机行程 0–100 %。
 using System.Numerics;
@@ -11,24 +12,38 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
+    /// <summary>快速设置键 / Claw 键在 Steam 大屏幕里做什么（工具箱后台的按键接管，settings.qamAction / msiAction）。</summary>
     private static readonly string[] GpActions = { "MainMenu", "QuickAccess", "MagpieToggle", "None" };
-    private static readonly string[] GpActionNames = { "主菜单", "快速访问", "超分开关", "不做事" };
-    private static readonly string[] GpLightEffects = { "off", "monocolor", "breathe", "rainbow", "ripple", "modeinfo" };
-    private static readonly string[] GpLightEffectNames = { "关闭", "常亮", "呼吸", "幻彩", "水波", "模式指示" };
-    private static readonly string[] GpLightSpeedNames = { "慢", "中", "快" };
-    private static readonly string[] GpLightColorNames = { "白", "红", "橙", "黄", "绿", "青", "蓝", "紫" };
-    private static readonly Color[] GpLightColors =
-    {
-        Gfx.Rgba(0xff, 0xff, 0xff), Gfx.Rgba(0xff, 0x2d, 0x2d), Gfx.Rgba(0xff, 0x8a, 0x1f), Gfx.Rgba(0xff, 0xe0, 0x2a),
-        Gfx.Rgba(0x3c, 0xe0, 0x5a), Gfx.Rgba(0x2a, 0xe0, 0xe0), Gfx.Rgba(0x2f, 0x6b, 0xff), Gfx.Rgba(0xa8, 0x4b, 0xff),
-    };
-    /// <summary>桌面模式下由固件改成键鼠的键（MSI 桌面模式示意图里涂红的那些）。</summary>
-    private static readonly string[] GpDesktopKeys = { "LB", "RB", "LS", "RS", "Dpad", "QS", "Claw" };
+    private static readonly string[] GpSpecialChoices = { "原功能", "主菜单", "快速访问", "超分开关", "不做事" };
     private const string GpLater = "后台的手柄固件写入还没上线，接上后这里就能改";
+
+    /// <summary>手柄模式的映射表：每组一列，从左到右大致是手柄上从左到右。</summary>
+    private static readonly (string Title, string[] Keys)[] GpMapGroups =
+    {
+        ("扳机 / 肩键", new[] { "LT", "LB", "RB", "RT" }),
+        ("A B X Y", new[] { "A", "B", "X", "Y" }),
+        ("十字键", new[] { "Up", "Down", "Left", "Right" }),
+        ("摇杆", new[] { "LStick", "RStick", "LS", "RS" }),
+        ("功能键", new[] { "Back", "QS", "Start", "Claw" }),
+        ("背键", new[] { "M1", "M2" }),
+    };
+
+    /// <summary>桌面模式的映射表：只有固件管得到的键（桌面模式下固件直接发键鼠，软件输入层不参与）。</summary>
+    private static readonly (string Title, string[] Keys)[] GpDesktopGroups =
+    {
+        ("扳机 / 肩键", new[] { "LT", "LB", "RB", "RT" }),
+        ("A B X Y", new[] { "A", "B", "X", "Y" }),
+        ("十字键", new[] { "Up", "Down", "Left", "Right" }),
+        ("摇杆按下", new[] { "LS", "RS" }),
+    };
+
+    /// <summary>映射表各列的标题和左边 x（画在表上面）。</summary>
+    private readonly List<(string Title, float X)> _gpMapHeads = new();
 
     private void BuildGpItems()
     {
         _gpItems.Clear();
+        _gpMapHeads.Clear();
         var left = new List<GpItem>();
         var right = new List<GpItem>();
         string loading = _gpError ?? "正在读取…";
@@ -37,50 +52,28 @@ public sealed partial class WallStage
 
         switch (GpCatId)
         {
-            case "mode":
+            case "gpmap" or "dkmap":
             {
-                string cur = Str(_gpFw?["mode"]) ?? "";
-                int idx = cur == "desktop" ? 1 : 0;
-                var mode = Item("当前模式", "", _gpFw == null ? "—" : idx == 1 ? "桌面模式" : "手柄模式", _gpFw == null ? fwMissing : null);
-                mode.Choices = new[] { "手柄模式", "桌面模式" };
-                mode.Choice = idx;
-                mode.SetChoice = i => _ = GpWrite("set_gamepad_mode", JsonValue.Create(i == 1 ? "desktop" : "xinput"));
-                mode.Lights = idx == 1 ? GpDesktopKeys : new[] { "ABXY", "LS", "RS", "Dpad", "LB", "RB" };
-                left.Add(mode);
-                left.Add(Item("长按 ≡ 两秒", "Menu", "手柄 / 桌面互切", "这是手柄固件自带的组合键，不能改"));
-                left.Add(Item("自动切换", "", "之后", "之后做：进游戏切手柄模式、回到桌面切桌面模式"));
-                // 软件输入层：开关、状态（阶段、延迟、生效的布局）、冲突提示
-                var lay = _gpLayer;
-                bool layerOn = Str(lay?["owner"]) == "toolbox";
-                var sw = Item("软件输入层", "", lay == null ? "—" : layerOn ? "开" : "关", lay == null ? "后台还没有软件输入层" : null);
-                sw.Lights = new[] { "ABXY", "LS", "RS", "Dpad", "LB", "RB" };
-                sw.Press = () => _ = GpWrite("set_input_layer_enabled", JsonValue.Create(!layerOn));
-                right.Add(sw);
-                string phase = Str(lay?["phase"]) ?? "off";
-                double p99 = Num(lay?["latency"]?["p99Ms"]) ?? 0;
-                string where = Str(lay?["layout"]) switch { "passthrough" => "前台不是游戏，原样直通", "global" => "用全局布局", var s when s?.StartsWith("game:") == true => $"用 {s[5..]} 的布局", _ => "" };
-                string state = lay == null ? "—" : phase switch
+                bool desktop = GpCatId == "dkmap";
+                var groups = desktop ? GpDesktopGroups : GpMapGroups;
+                float x0 = GpCx - groups.Length * GpMapColW / 2;
+                // 一列一列排，焦点在表里按方位走
+                for (int g = 0; g < groups.Length; g++)
                 {
-                    "active" => $"运行中{(p99 > 0 ? $" · 延迟 {p99:0.0} ms" : "")}",
-                    "starting" => "正在打开…", "stopping" => "正在关闭…", "error" => Str(lay["error"]) ?? "出错了", _ => "关着",
-                };
-                var warnings = (lay?["conflicts"]?["warnings"] as JsonArray)?.Select(w => Str(w)).Where(w => w != null).ToArray() ?? Array.Empty<string?>();
-                var notes = (lay?["notes"] as JsonArray)?.Select(w => Str(w)).Where(w => w != null).ToArray() ?? Array.Empty<string?>();
-                var st = Item("状态", "", state + (where.Length > 0 && phase == "active" ? $" · {where}" : ""));
-                st.Press = () => Toast(warnings.Length + notes.Length == 0 ? "没有冲突提示" : string.Join("；", warnings.Concat(notes)));
-                right.Add(st);
-                right.Add(Item("冲突提示", "", warnings.Length == 0 ? "没有" : $"{warnings.Length} 条 · 按 A 看", null));
-                right[^1].Press = st.Press;
-                break;
+                    float x = x0 + g * GpMapColW;
+                    _gpMapHeads.Add((groups[g].Title, x));
+                    for (int r = 0; r < groups[g].Keys.Length; r++)
+                    {
+                        var cell = GpMapCell(groups[g].Keys[r], desktop);
+                        cell.Cell = true;
+                        cell.X = x;
+                        cell.Y = GpMapTop + r * GpMapRowStep;
+                        _gpItems.Add(cell);
+                    }
+                }
+                if (_gpFocus >= _gpItems.Count) _gpFocus = 0;
+                return;
             }
-            case "gpmap":
-                foreach (var src in new[] { "LT", "LB", "LS", "Up", "Left", "Right", "Down", "M1", "RT", "RB", "Y", "X", "B", "A", "RS", "M2" })
-                    _gpItems.Add(GpMapItem(src, desktop: false));
-                return;
-            case "dkmap":
-                foreach (var src in new[] { "LB", "LS", "Up", "Left", "Right", "Down", "RB", "RS" })
-                    _gpItems.Add(GpMapItem(src, desktop: true));
-                return;
             case "stick":
             {
                 foreach (var (side, list, key) in new[] { ("left", left, "LS"), ("right", right, "RS") })
@@ -103,11 +96,6 @@ public sealed partial class WallStage
                     list.Add(d);
                     list.Add(o);
                 }
-                bool swap = Bool(_gpFw?["sticks"]?["swap"]);
-                var sw = Item("交换左右摇杆", "", _gpFw == null ? "—" : swap ? "开" : "关", _gpFw == null ? fwMissing : null);
-                sw.Lights = new[] { "LS", "RS" };
-                sw.Press = () => _ = GpWrite("set_stick_swap", JsonValue.Create(!swap));
-                right.Add(sw);
                 break;
             }
             case "trigger":
@@ -135,8 +123,7 @@ public sealed partial class WallStage
                 break;
             case "rumble":
             {
-                // 照 MSI 振动页：左右马达分开调，测试、恢复；另加我们的 Steam 导航震动
-                var s = _gpSettings;
+                // 照 MSI 振动页：左右马达分开调，测试、恢复
                 GpItem Motor(string title, string grip, int? value, bool isLeft)
                 {
                     var it = Item(title, grip, value is int v ? (v == 0 ? "关" : $"{v} %") : loading, value == null ? loading : null);
@@ -149,86 +136,23 @@ public sealed partial class WallStage
                     return it;
                 }
                 left.Add(Motor("左侧震动", "GripL", _gpRumbleL, true));
-                var nav = Item("Steam 导航震动", "GripL", s == null ? loading : Bool(s["hapticsEnabled"]) ? "开" : "关", s == null ? loading : null);
-                nav.Lights = new[] { "GripL", "GripR" };
-                nav.Press = () => { if (s == null) return; s["hapticsEnabled"] = !Bool(s["hapticsEnabled"]); BuildGpItems(); PaintGpBody(); _ = GpSaveSettings(); };
-                left.Add(nav);
-                right.Add(Motor("右侧震动", "GripR", _gpRumbleR, false));
-                var test = Item("测试震动", "GripR", "按 A 震一下", _gpRumbleL == null ? loading : null);
+                var test = Item("测试震动", "GripL", "按 A 震一下", _gpRumbleL == null ? loading : null);
                 test.Lights = new[] { "GripL", "GripR" };
                 test.Press = () => _ = GpTestRumble();
-                right.Add(test);
+                left.Add(test);
+                right.Add(Motor("右侧震动", "GripR", _gpRumbleR, false));
                 var reset = Item("恢复原来的强度", "GripR", "按 A", _gpRumbleL == null ? loading : null);
                 reset.Lights = new[] { "GripL", "GripR" };
                 reset.Press = () => _ = GpWrite("restore_rumble");
                 right.Add(reset);
                 break;
             }
-            case "mouse":
+            default:   // mouse
                 left.Add(Item("移动光标", "LS", "左摇杆", GpLater));
                 left.Add(Item("光标速度", "LS", "—", GpLater));
                 right.Add(Item("滚动", "RS", "右摇杆", GpLater));
                 right.Add(Item("左键 / 右键", "RB", "RB / LB", GpLater));
                 break;
-            case "special":
-            {
-                var s = _gpSettings;
-                bool on = s != null && Bool(s["enabled"]);
-                GpItem KeyAction(string title, string key, string field)
-                {
-                    if (s == null) return Item(title, key, loading, loading);
-                    int idx = Math.Max(0, Array.IndexOf(GpActions, Str(s[field]) ?? "None"));
-                    var it = Item(title, key, on ? GpActionNames[idx] : "未接管", on ? null : "先打开「接管（Steam 大屏幕里）」");
-                    it.Choices = GpActionNames;
-                    it.Choice = idx;
-                    it.SetChoice = i => { s[field] = GpActions[i]; _ = GpSaveSettings(); };
-                    return it;
-                }
-                left.Add(KeyAction("快速设置键", "QS", "qamAction"));
-                var takeover = Item("接管（Steam 大屏幕里）", "QS", s == null ? loading : on ? "开" : "关", s == null ? loading : null);
-                takeover.Lights = new[] { "QS", "Claw" };
-                takeover.Press = () => { if (s == null) return; s["enabled"] = !on; BuildGpItems(); PaintGpBody(); _ = GpSaveSettings(); };
-                left.Add(takeover);
-                right.Add(KeyAction("Claw 键", "Claw", "msiAction"));
-                break;
-            }
-            default:   // light
-            {
-                // 照 MSI Mystic Light：效果（关闭 / 常亮 / 呼吸 / 幻彩 / 水波 / 模式指示）、颜色、亮度、速度（慢 / 中 / 快）
-                var l = _gpFw?["light"];
-                int effect = Math.Max(0, Array.IndexOf(GpLightEffects, Str(l?["effect"]) ?? "off"));
-                int color = GpLightColorIndex(l), bright = Int(l?["brightness"], -1), speed = Math.Clamp(Int(l?["speedLevel"], 1), 0, 2);
-                bool hasColor = effect is 1 or 2 or 4, hasSpeed = effect is 2 or 3 or 4;
-                void Write(int e, int c, int b, int sp) => _ = GpWrite("set_light", JsonValue.Create(GpLightEffects[e]), JsonValue.Create(GpLightHex(c)), JsonValue.Create(Math.Max(0, b)), JsonValue.Create(sp));
-                var e = Item("灯光效果", "LS", l == null ? "—" : GpLightEffectNames[effect], l == null ? fwMissing : null);
-                e.Lights = new[] { "LS", "RS" };
-                e.Choices = GpLightEffectNames;
-                e.Choice = effect;
-                e.SetChoice = i => Write(i, color, bright < 0 ? 100 : bright, speed);
-                left.Add(e);
-                var sp = Item("速度", "LS", l == null ? "—" : hasSpeed ? GpLightSpeedNames[speed] : "这个效果没有速度", l == null ? fwMissing : hasSpeed ? null : "常亮、模式指示不分快慢");
-                sp.Lights = new[] { "LS", "RS" };
-                sp.Choices = GpLightSpeedNames;
-                sp.Choice = speed;
-                sp.SetChoice = i => Write(effect, color, bright, i);
-                left.Add(sp);
-                var c = Item("颜色", "RS", l == null ? "—" : hasColor ? GpLightColorNames[color] : "跟着效果走", l == null ? fwMissing : hasColor ? null : "幻彩、模式指示的颜色由效果决定");
-                c.Lights = new[] { "LS", "RS" };
-                c.Choices = GpLightColorNames;
-                c.Choice = color;
-                if (hasColor) c.Swatches = GpLightColors;
-                c.SetChoice = i => Write(effect, i, bright, speed);
-                right.Add(c);
-                var b = Item("亮度", "RS", bright < 0 ? "—" : $"{bright} %", bright < 0 ? fwMissing : null);
-                b.Lights = new[] { "LS", "RS" };
-                if (bright >= 0)
-                {
-                    b.Number = bright; b.Min = 0; b.Max = 100; b.StepBy = 10; b.Format = v => $"{v} %";
-                    b.SetNumber = v => Write(effect, color, v, speed);
-                }
-                right.Add(b);
-                break;
-            }
         }
 
         // 两侧按线稿竖向居中排开
@@ -247,44 +171,80 @@ public sealed partial class WallStage
         _gpItems.AddRange(left);
         _gpItems.AddRange(right);
         if (_gpFocus >= _gpItems.Count) _gpFocus = 0;
-        GpUpdateLightPreview();
     }
 
-    /// <summary>按键映射页的一个键：焦点在线稿上这个键时，说明画在它那一侧、和它同高。</summary>
-    private GpItem GpMapItem(string src, bool desktop)
+    /// <summary>
+    /// 映射表的一格。普通键：值是它现在映射到什么，A 打开「映射到」（触发方式、键盘鼠标……）；
+    /// 摇杆：原样 / 当另一边的摇杆用（固件的左右互换）；快速设置键 / Claw 键：在 Steam 大屏幕里做什么（← → 选）。
+    /// </summary>
+    private GpItem GpMapCell(string src, bool desktop)
     {
-        var key = GpKeys[src];
-        var pos = key.Face == "back" ? GpMap("front", key.X < 350 ? 70 : 830, 290) : GpMap(key.Face, key.X, key.Y);
-        bool left = pos.X < GpCx;
-        var it = new GpItem
+        var it = new GpItem { Title = GpSourceName(src), Key = src };
+        switch (src)
         {
-            Hotspot = true, Key = src, Side = left ? -1 : 1, X = left ? GpLeftEdge : GpRightEdge, Y = Math.Clamp(pos.Y - 13, GpY - 10, GpY + GpH - 30),
-            Title = $"{GpSourceName(src)}  →", Value = desktop ? "—" : GpKeySummary(src),
-        };
-        it.Press = () => GpOpenPicker(src, desktop);
+            case "LStick" or "RStick":
+            {
+                bool isLeft = src == "LStick", swap = Bool(_gpFw?["sticks"]?["swap"]);
+                it.Key = "";
+                it.Lights = new[] { isLeft ? "LS" : "RS" };
+                it.Choices = new[] { "原样", isLeft ? "当右摇杆用" : "当左摇杆用" };
+                it.Choice = swap ? 1 : 0;
+                it.Value = _gpFw == null ? "—" : it.Choices[it.Choice];
+                it.Disabled = _gpFw == null;
+                it.Why = _gpFwError ?? "正在读取…";
+                // 固件只有「左右互换」一个开关：改任意一边，两边一起换
+                it.SetChoice = i => { if (_gpFw?["sticks"] is JsonObject s) s["swap"] = i == 1; _ = GpWrite("set_stick_swap", JsonValue.Create(i == 1)); };
+                break;
+            }
+            case "QS" or "Claw":
+            {
+                var s = _gpSettings;
+                string field = src == "QS" ? "qamAction" : "msiAction";
+                bool on = s != null && Bool(s["enabled"]);
+                int idx = on ? 1 + Math.Max(0, Array.IndexOf(GpActions, Str(s![field]) ?? "None")) : 0;
+                it.Choices = GpSpecialChoices;
+                it.Choice = idx;
+                it.Value = s == null ? "—" : GpSpecialChoices[idx];
+                it.Disabled = s == null;
+                it.Why = _gpError ?? "正在读取…";
+                it.SetChoice = i =>
+                {
+                    if (s == null) return;
+                    if (i == 0)
+                    {
+                        // 接管是两个键一起的：一个放回原功能，另一个也放回
+                        s["enabled"] = false;
+                        Toast("快速设置键和 Claw 键一起放回原功能");
+                    }
+                    else { s["enabled"] = true; s[field] = GpActions[i - 1]; }
+                    _ = GpSaveSettings();
+                };
+                break;
+            }
+            default:
+                it.Value = desktop ? GpDesktopSummary(src) : GpKeySummary(src);
+                it.Press = () => GpOpenPicker(src, desktop);
+                break;
+        }
         return it;
     }
 
     private static string GpSourceName(string src) => src switch
     {
         "LT" => "LT 左扳机", "RT" => "RT 右扳机", "LB" => "LB 左肩键", "RB" => "RB 右肩键",
+        "LStick" => "左摇杆", "RStick" => "右摇杆",
         "LS" => "左摇杆按下", "RS" => "右摇杆按下", "Up" => "十字键 上", "Down" => "十字键 下", "Left" => "十字键 左", "Right" => "十字键 右",
+        "Back" => "View 键", "Start" => "Menu 键", "QS" => "快速设置键", "Claw" => "Claw 键",
         "M1" => "M1 背键", "M2" => "M2 背键", _ => $"{src} 键",
     };
 
-    /// <summary>这个键现在映射到什么：背键、扳机从固件读；其余固件里没读这部分，写「原键位」。</summary>
-    private string GpMappingText(string src)
+    /// <summary>桌面模式下这个键映射到什么：我们写过的从 desktopKeys 读，没写过是固件的桌面默认。</summary>
+    private string GpDesktopSummary(string src)
     {
-        JsonNode? codes = src switch
-        {
-            "M1" => _gpFw?["backKeys"]?["m1"]?["codes"], "M2" => _gpFw?["backKeys"]?["m2"]?["codes"],
-            _ => _gpFw?["keys"]?[src]?["codes"],
-        };
-        if (codes is not JsonArray arr || arr.Count == 0) return _gpFw == null ? "—" : "原键位";
-        var list = arr.Select(n => Int(n)).Where(c => c is > 0 and < 0xFF).ToArray();
-        if (list.Length == 0) return "不映射";
-        if (list.Length == 1 && GpNativeCode(src) == list[0]) return "原键位";
-        return string.Join(" + ", list.Select(GpCodeName));
+        if (_gpFw == null) return "—";
+        if (_gpFw["desktopKeys"]?[src] is not JsonArray arr) return "默认";
+        var codes = arr.Select(n => Int(n)).Where(c => c is > 0 and <= 0xFF).ToArray();
+        return codes.Length == 0 ? "默认" : string.Join(" + ", codes.Select(GpCodeName));
     }
 
     private static int GpNativeCode(string src) => src switch
@@ -293,20 +253,8 @@ public sealed partial class WallStage
         "A" => 0x09, "B" => 0x0A, "X" => 0x0B, "Y" => 0x0C, "M1" => 0x11, "M2" => 0x12, "LT" => 0x13, "RT" => 0x14, _ => 0,
     };
 
-    private static int GpLightColorIndex(JsonNode? light)
-    {
-        if (light?["color"] is not JsonArray c || c.Count < 3) return 0;
-        var rgb = new Vector3(Int(c[0]), Int(c[1]), Int(c[2]));
-        int best = 0; float bestD = float.MaxValue;
-        for (int i = 0; i < GpLightColors.Length; i++)
-        {
-            float d = Vector3.DistanceSquared(rgb, new Vector3(GpLightColors[i].R, GpLightColors[i].G, GpLightColors[i].B));
-            if (d < bestD) { bestD = d; best = i; }
-        }
-        return best;
-    }
-
-    private static string GpLightHex(int i) => $"#{GpLightColors[i].R:x2}{GpLightColors[i].G:x2}{GpLightColors[i].B:x2}";
+    /// <summary>固件管得到的源键（set_key_map 的 14 个 + 背键）；View / Menu 等只能交给软件输入层。</summary>
+    private static bool GpFirmwareSource(string src) => GpNativeCode(src) != 0;
 
     /// <summary>摇杆死区 / 外圈：本地先改（圈立刻跟着变），停手 600 ms 后写一次。</summary>
     private void GpStickChanged(string side)
@@ -332,7 +280,7 @@ public sealed partial class WallStage
         });
     }
 
-    /// <summary>每页在线稿上额外画的：摇杆页的死区 / 外圈、震动页的握把强度和波纹、灯光页的灯色预览、扳机页的行程刻度。</summary>
+    /// <summary>每页在线稿上额外画的：摇杆页的死区 / 外圈、震动页的握把强度、扳机页的行程刻度。</summary>
     private void PaintGpPageArt(CanvasDrawingSession ds, Color accent, GpItem? focus)
     {
         switch (GpCatId)

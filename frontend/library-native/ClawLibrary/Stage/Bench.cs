@@ -217,30 +217,33 @@ public static class Bench
     private static async Task RecGamepadAsync(WallStage s)
     {
         await Task.Delay(1500);
+        // 录不了（窗口捕获被拒）也照走一遍：每步打一行日志，外面按时间截屏对照
         var rec = new FrameRecorder();
-        if (!rec.Start(s.HostWindow)) return;
+        bool recording = rec.Start(s.HostWindow);
         await Task.Delay(300);
         long mark = System.Diagnostics.Stopwatch.GetTimestamp();
-        async Task Step(int ms, Action a) { a(); await Task.Delay(ms); }
+        int step = 0;
+        async Task Step(int ms, Action a) { a(); Log.Info($"bench step {++step}"); await Task.Delay(ms); }
         await Step(1500, s.ToggleControlCenter);
         await Step(500, () => s.Move(Direction.Right));
         await Step(700, () => s.Move(Direction.Right));
         await Step(3000, s.Activate);
-        // 当前模式页看软件输入层的开关和状态；按键映射：LT 的触发方式改成长按（存进布局，输入层关着不生效），再恢复原键位
+        // 按键映射表里走一圈（LT 换侧视图、M1 翻背面），打开 A 键的按键页再关掉（不改任何东西）；再把其余分类过一遍
         var D = Direction.Down; var R = Direction.Right;
-        await Step(700, () => s.Move(R));                  // 进当前模式页
-        await Step(1500, () => { });
-        await Step(700, s.Back);
-        await Step(700, () => s.Move(D));                  // 分类：按键映射
-        await Step(700, () => s.Move(R));                  // 进：LT
-        await Step(1200, s.Activate);                      // LT 的按键页
-        await Step(1800, () => s.Move(R));                 // 触发方式 → 长按（存布局）
-        for (int i = 0; i < 6; i++) await Step(450, () => s.Move(D));   // 走到「恢复原键位」
-        await Step(1800, s.Activate);                      // 恢复原键位
-        await Step(700, s.Back);                           // 关按键页
+        await Step(1200, () => s.Move(R));                 // 进表：LT（侧视图）
+        await Step(900, () => s.Move(D));                  // LB
+        await Step(900, () => s.Move(R));                  // A
+        await Step(1500, s.Activate);                      // A 的按键页
+        await Step(900, s.Back);
+        await Step(700, () => s.Move(R));                  // 十字键
+        await Step(700, () => s.Move(R));                  // 摇杆：右摇杆
+        await Step(700, () => s.Move(R));                  // 功能键
+        await Step(1200, () => s.Move(R));                 // 背键 M2（背面）
         await Step(700, s.Back);                           // 回分类
+        for (int i = 0; i < 5; i++) await Step(1100, () => s.Move(D));   // 摇杆、扳机、震动、桌面按键映射、鼠标
         await Step(1000, s.Back);
         await Step(1200, s.Back);
+        if (!recording) return;
         int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "gamepad"), mark);
         Log.Info($"rec gamepad: {n} frames");
     }
