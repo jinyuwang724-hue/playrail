@@ -47,7 +47,7 @@ public sealed partial class WallStage
         ["LB"] = new(false, 76, 20, 76, 14, 7, 0x0100), ["RB"] = new(false, 624, 20, 76, 14, 7, 0x0200),
         ["Dpad"] = new(false, 112, 129, 58, 58, 29), ["ABXY"] = new(false, 624, 78, 72, 72, 36),
         ["M1"] = new(true, 120, 136, 28, 46, 8), ["M2"] = new(true, 578, 136, 28, 46, 8),
-        ["GripL"] = new(false, 52, 248, 74, 86, 30), ["GripR"] = new(false, 648, 248, 74, 86, 30),
+        ["GripL"] = new(false, 70, 222, 130, 146, 30), ["GripR"] = new(false, 630, 222, 130, 146, 30),
     };
 
     /// <summary>一个设置：Side -1 = 线稿左边（右对齐到 GpLeftEdge），1 = 右边，0 = 下面一排（X 是左边）。</summary>
@@ -57,6 +57,8 @@ public sealed partial class WallStage
         public int Side;
         public float X, Y;
         public string Key = "";
+        /// <summary>焦点在这项时线稿上填哪几块（不写就填 Key 那一块）。</summary>
+        public string[]? Lights;
         public bool Disabled;
         public string? Why;
         public string[]? Choices;
@@ -84,6 +86,7 @@ public sealed partial class WallStage
     private int? _gpRumble;
     private string? _gpError;
     private CanvasBitmap? _gpFront, _gpBack;
+    private readonly Dictionary<string, CanvasBitmap> _gpMasks = new();
     private DispatcherQueueTimer? _gpLive;
     private Input.GamepadPoller.Snapshot _gpShown;
 
@@ -171,6 +174,8 @@ public sealed partial class WallStage
             string dir = Path.Combine(AppContext.BaseDirectory, "Assets", "Pad");
             _gpFront = await CanvasBitmap.LoadAsync(G.Device, Path.Combine(dir, "claw8ex-front.png"));
             _gpBack = await CanvasBitmap.LoadAsync(G.Device, Path.Combine(dir, "claw8ex-back.png"));
+            foreach (var (name, file) in new[] { ("GripL", "mask-grip-l"), ("GripR", "mask-grip-r"), ("LB", "mask-shoulder-l"), ("RB", "mask-shoulder-r"), ("M1", "mask-m1"), ("M2", "mask-m2") })
+                _gpMasks[name] = await CanvasBitmap.LoadAsync(G.Device, Path.Combine(dir, file + ".png"));
             _gpArtK = 0;
             if (_gpOpen) PaintGp();
         }
@@ -289,16 +294,17 @@ public sealed partial class WallStage
                 left.Add(Item("左摇杆外圈", "LS", "之后", Later));
                 right.Add(Item("右摇杆死区", "RS", "之后", Later));
                 right.Add(Item("右摇杆外圈", "RS", "之后", Later));
-                bottom.Add(Item("交换左右摇杆", "", "之后", Later));
+                bottom.Add(new GpItem { Title = "交换左右摇杆", Value = "之后", Disabled = true, Why = Later, Lights = new[] { "LS", "RS" } });
                 break;
             case "扳机":
                 left.Add(Item("左扳机行程", "LB", "之后", Later));
                 right.Add(Item("右扳机行程", "RB", "之后", Later));
-                bottom.Add(Item("左右同步", "", "之后", Later));
+                bottom.Add(new GpItem { Title = "左右同步", Value = "之后", Disabled = true, Why = Later, Lights = new[] { "LB", "RB" } });
                 break;
             case "震动":
             {
                 var rumble = Item("震动强度", "GripL", _gpRumble is int r ? (r == 0 ? "关" : $"{r} %") : loading, _gpRumble == null ? loading : null);
+                rumble.Lights = new[] { "GripL", "GripR" };
                 if (_gpRumble is int rv)
                 {
                     rumble.Number = rv; rumble.Min = 0; rumble.Max = 100; rumble.StepBy = 5;
@@ -307,19 +313,24 @@ public sealed partial class WallStage
                 }
                 left.Add(rumble);
                 var test = Item("测试震动", "GripR", "按 A", _gpRumble == null ? loading : null);
+                test.Lights = new[] { "GripL", "GripR" };
                 test.Press = () => _ = GpTestRumble();
                 right.Add(test);
-                bottom.Add(Toggle("导航震动", "", "hapticsEnabled"));
+                var nav = Toggle("导航震动", "", "hapticsEnabled");
+                nav.Lights = new[] { "GripL", "GripR" };
+                bottom.Add(nav);
                 break;
             }
             case "特殊键":
                 left.Add(KeyAction("快速设置键", "QS", "qamAction"));
                 right.Add(KeyAction("Claw 键", "Claw", "msiAction"));
-                bottom.Add(Toggle("接管（Steam 大屏幕里）", "", "enabled"));
+                var takeover = Toggle("接管（Steam 大屏幕里）", "", "enabled");
+                takeover.Lights = new[] { "QS", "Claw" };
+                bottom.Add(takeover);
                 break;
             default:
                 left.Add(Item("手柄模式", "", "手柄 · 之后", Later));
-                right.Add(Item("灯光", "RS", "之后", Later));
+                right.Add(new GpItem { Title = "灯光", Key = "RS", Value = "之后", Disabled = true, Why = Later, Lights = new[] { "LS", "RS" } });
                 bottom.Add(Item("陀螺仪", "", "之后", Later));
                 break;
         }
@@ -536,17 +547,18 @@ public sealed partial class WallStage
 
         if (_gpFront == null) PText(ds, "正在载入线稿…", ui, 13, muted, GpX + GpW / 2 - 40, GpY + GpH / 2, 300);
 
-        // 线稿上的实时输入：按下的键填强调色，扳机按下按深浅填肩键，摇杆推动时一个点跟着走
+        // 线稿上的实时输入：按下的键填强调色，扳机按下按深浅填肩部，摇杆推动时一个点跟着走
         foreach (var (name, key) in GpKeys)
         {
-            if (key.Back != _gpShowBack) continue;
-            float fill = 0;
-            if (key.XInput != 0 && (snap.Buttons & key.XInput) != 0) fill = 0.85f;
-            if (name == "LB" && snap.LT > 20) fill = Math.Max(fill, snap.LT / 255f * 0.85f);
-            if (name == "RB" && snap.RT > 20) fill = Math.Max(fill, snap.RT / 255f * 0.85f);
-            if (fill > 0) ds.FillRoundedRectangle(GpRect(key, 0), key.R * GpS, key.R * GpS, Gfx.WithAlpha(accent, fill));
+            if (key.Back != _gpShowBack || name is "LB" or "RB") continue;
+            if (key.XInput != 0 && (snap.Buttons & key.XInput) != 0) GpFill(ds, name, 0.85f, accent);
         }
         if (!_gpShowBack)
+        {
+            float l = Math.Max((snap.Buttons & GpKeys["LB"].XInput) != 0 ? 1 : 0, snap.LT > 20 ? snap.LT / 255f : 0);
+            float r = Math.Max((snap.Buttons & GpKeys["RB"].XInput) != 0 ? 1 : 0, snap.RT > 20 ? snap.RT / 255f : 0);
+            if (l > 0) GpFill(ds, "LB", 0.85f * l, accent);
+            if (r > 0) GpFill(ds, "RB", 0.85f * r, accent);
             foreach (var (name, ax, ay) in new[] { ("LS", snap.LX, snap.LY), ("RS", snap.RX, snap.RY) })
             {
                 float fx = ax / 32767f, fy = ay / 32767f;
@@ -555,21 +567,59 @@ public sealed partial class WallStage
                 var p = GpPoint(key.X, key.Y) + new Vector2(fx, -fy) * (key.W / 2 * GpS);
                 ds.FillCircle(p, 4.5f, accent);
             }
+        }
 
-        // 焦点：强调色细线从设置连到键上，键描一圈（下面一排的设置不连线）
-        if (focus != null && focus.Side != 0 && focus.Key.Length > 0 && GpKeys.TryGetValue(focus.Key, out var fk) && fk.Back == _gpShowBack)
+        // 焦点：这一项管的那块区域在线稿上整块填强调色（握把、肩部、背键按线稿的边，摇杆是一圈大圆盘）；
+        // 两侧的设置再拉一根细线到区域边上，下面一排不连线
+        if (focus != null)
         {
-            var ring = GpRect(fk, 4);
-            ds.DrawRoundedRectangle(ring, fk.R * GpS + 4, fk.R * GpS + 4, accent, 2f);
-            var keyPt = GpPoint(fk.X, fk.Y);
-            var target = new Vector2(focus.Side < 0 ? (float)ring.X : (float)(ring.X + ring.Width), keyPt.Y);
-            var start = new Vector2(focus.Side < 0 ? GpLeftEdge + 14 : GpRightEdge - 14, focus.Y + 13);
-            using var round = new CanvasStrokeStyle { StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round };
-            ds.DrawLine(start, target, Gfx.WithAlpha(accent, 0.9f), 1.4f, round);
-            ds.FillCircle(start, 3, accent);
+            foreach (var region in focus.Lights ?? (focus.Key.Length > 0 ? new[] { focus.Key } : Array.Empty<string>()))
+                GpFill(ds, region, 0.4f, accent);
+            if (focus.Side != 0 && focus.Key.Length > 0 && GpKeys.TryGetValue(focus.Key, out var fk) && fk.Back == _gpShowBack)
+            {
+                var c = GpPoint(fk.X, fk.Y);
+                float half = focus.Key is "LS" or "RS" ? GpStickDisc * GpS : fk.W * GpS / 2;
+                var target = new Vector2(c.X + (focus.Side < 0 ? -half : half), c.Y);
+                var start = new Vector2(focus.Side < 0 ? GpLeftEdge + 14 : GpRightEdge - 14, focus.Y + 13);
+                using var round = new CanvasStrokeStyle { StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round };
+                ds.DrawLine(start, target, Gfx.WithAlpha(accent, 0.9f), 1.4f, round);
+                ds.FillCircle(start, 3, accent);
+            }
         }
 
         foreach (var it in _gpItems) PaintGpItem(ds, it, it == focus);
+    }
+
+    /// <summary>摇杆高亮的大圆盘半径（原图像素，MSI 的摇杆页也是这样罩一圈）。</summary>
+    private const float GpStickDisc = 44;
+
+    /// <summary>
+    /// 线稿上一块区域填强调色：握把、肩部、背键用按线稿边界漫水填出来的遮罩（Assets/Pad/mask-*.png，原图同尺寸）；
+    /// 摇杆是一圈大圆盘，十字键是整个圆盘，A B X Y 填四个键，其余按键填它自己的形状。
+    /// </summary>
+    private void GpFill(CanvasDrawingSession ds, string name, float alpha, Color accent)
+    {
+        if (!GpKeys.TryGetValue(name, out var key) || key.Back != _gpShowBack) return;
+        if (_gpMasks.TryGetValue(name, out var mask))
+        {
+            using var tint = new Microsoft.Graphics.Canvas.Effects.TintEffect { Source = mask, Color = accent };
+            ds.DrawImage(tint, new Rect(GpX, GpY, GpW, GpH), mask.Bounds, alpha);
+            return;
+        }
+        var c = GpPoint(key.X, key.Y);
+        switch (name)
+        {
+            case "LS" or "RS":
+                ds.FillCircle(c, GpStickDisc * GpS, Gfx.WithAlpha(accent, alpha * 0.8f));
+                ds.DrawCircle(c, GpStickDisc * GpS, Gfx.WithAlpha(accent, Math.Min(1, alpha + 0.3f)), 1.2f);
+                break;
+            case "ABXY":
+                foreach (var b in new[] { "A", "B", "X", "Y" }) GpFill(ds, b, alpha, accent);
+                break;
+            default:
+                ds.FillRoundedRectangle(GpRect(key, 0), key.R * GpS, key.R * GpS, Gfx.WithAlpha(accent, alpha));
+                break;
+        }
     }
 
     private static Rect GpRect(GpKey key, float grow)
