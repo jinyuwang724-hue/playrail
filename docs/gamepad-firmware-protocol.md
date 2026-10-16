@@ -195,6 +195,27 @@ M 键功能：MSI 枚举 0 宏、1 组合、2 禁用；hid-msi（v5 起特意交
 6. **固件版本**：这套地址只适用 1.66+ / 2.17+ / 3.x+（`claw_rumble.supported_firmware`）。老固件 M1 在 0x7A、灯光在 0x1FA，布局不同，直接拒绝。
 7. **校准、重置、多配置槽、实时 RGB、陀螺仪**：这次不碰。
 
+## 对照 MSI Center M 界面
+
+截图在 `docs/msi-center-gamepad/`（本机 2026-10-16，MSI 服务禁用状态下打开的，没改任何设置）。
+
+| MSI 界面项 | 范围 / 当前显示 | 对应固件 | 说明 |
+|---|---|---|---|
+| 控制模式 手柄 / 桌面 | — | 0x24 / 0x26 模式 1 / 4 | |
+| 「自动切换」勾选框 | — | 不在固件 | MSI 软件功能（注册表 `AutoSwitchMode`），我们要做就自己做 |
+| 按键对应：LT LB RT RB、A B X Y、十字键四向、左右摇杆按下 | 都显示「--」 | 0x3A 起 16 个 KeyProfile；LT / RT 在扳机块 +5 起 | 这次不做按键重映射 |
+| 按键对应：M1 / M2 | 显示「--」 | 0xBA / 0x163 | **固件里实际是 Alt+F12 / 0x12**：MSI 显示的是它自己存的配置 |
+| 快速设置键（启动快速设置）、Claw 键（启动 MSI Center M） | — | 配置内存里没有这两个键的字段 | 软件层处理；我们的特殊键接管（ClawRouter）已经管着 |
+| 摇杆死区 | 左右各 **0–50 %**，当前 5 % | 0x22C / 0x23C | 固件字节本身能存 0–100，界面按 MSI 限到 0–50 |
+| 摇杆外部阈值 | 左右各 **75–100 %**，当前 100 % | 0x234 / 0x244 | 界面限 75–100 |
+| 交换左右摇杆 | 勾选框；勾上后映射不能用 | 摇杆块 +3 映射开、+6 映射目标（MSI：左摇杆勾上时写 2） | 可选 |
+| 扳机 | 左右各一个双滑块 **0–100 %**，当前 0–100；「同步设置」勾选框 | 0x20F/0x210、0x21E/0x21F | 「同步」只是界面上左右联动，固件里还是两组 |
+| 振动 | 左右分开 0–100 %，显示 50 / 50；「测试」按钮 | 0x22 / 0x23 | **固件实际 100 / 100**，又一处证明 MSI 显示的是自己的配置 |
+| 校准 | 打不开（服务禁用） | 0xFD / 0xFE | 不碰 |
+
+摇杆死区 5 % 两边一致，大概是因为 ClawTweaks 改固件死区时会顺手同步进 MSI 的配置（它的 `MsiCenterMProfile.MirrorDeadzone`）。
+结论：**不能拿 MSI 界面的数字当固件当前值**，要以 `get_gamepad_state` 读到的为准；但 MSI 界面的范围（死区 0–50、外圈 75–100、扳机 0–100 双滑块）值得照搬。
+
 ## 已经加好的只读接口
 
 后台（分支 `claude/gamepad-fw-readonly`，`plugin/claw_gamepad_fw.py`）：`get_gamepad_state()`，只发 0x26 + 0x04，11 次读，本机实测 44–57 ms。
@@ -228,8 +249,9 @@ M 键功能：MSI 枚举 0 宏、1 组合、2 禁用；hid-msi（v5 起特意交
 
 | 接口 | 参数 | 写什么 | 备注 |
 |---|---|---|---|
-| `set_stick_deadzone(side, deadzone, outer)` | side = left / right；0–100，deadzone < outer | 0x22C/0x234 或 0x23C/0x244，顺带把对应「开」字节置 1 | 同时只按「当前模式」写；手柄 / 桌面两套值后台自己存，切模式时写对应那套（照 MSI） |
-| `set_trigger_range(side, start, end)` | 0–100，start < end | 0x20F/0x210 或 0x21E/0x21F，标志 bit1 置 1 | 就是「扳机行程」 |
+| `set_stick_deadzone(side, deadzone, outer)` | side = left / right；deadzone 0–50、outer 75–100（同 MSI 界面） | 0x22C/0x234 或 0x23C/0x244，顺带把对应「开」字节置 1 | 同时只按「当前模式」写；手柄 / 桌面两套值后台自己存，切模式时写对应那套（照 MSI） |
+| `set_trigger_range(side, start, end)` | 0–100，start < end | 0x20F/0x210 或 0x21E/0x21F，标志 bit1 置 1 | 就是「扳机行程」；「同步左右」放在前端做 |
+| `set_stick_swap(enabled)` | bool | 两个摇杆块的 +3 / +6 | 可选，照 MSI「交换左右摇杆」 |
 | `set_quick_trigger(side, enabled)` | bool | 0x35 / 0x36 | 可选，效果先实测 |
 | `set_back_key(key, codes)` | key = m1 / m2；codes 最多 5 个键码；恢复 = 写回第一次接管前读到的原值（背键「原生码」到底是哪个，M1 现在被 ClawTweaks 占着，没法从本机读出来） | 0xBB 起 7 字节：`04 <连发速度原值> c0…c4` | 不碰宏区；会让 ClawTweaks 的背键功能失效 |
 | `set_light(effect, color, brightness, speed)` | 第一版只 off / monocolor；color = RGB；亮度 0–100；速度 0–20 | 0x24A 起：槽号 0、帧数 1、效果号 9、速度、亮度、9 区同色 | 呼吸等多帧效果单独确认后再加 |
