@@ -246,6 +246,29 @@ public static class Bench
         Log.Info($"rec gamepad: {n} frames");
     }
 
+    /// <summary>
+    /// 映射的「选择指令」五个页签挨个看一遍（只看不选）：控制中心 → 手柄 → 映射里 LT → 按键页 → 指令 → 手柄 / 鼠标 / 键盘 / 数字键盘 / 系统。
+    /// 每步打一行日志，外面按时间截屏。
+    /// </summary>
+    private static async Task RecPickerAsync(WallStage s)
+    {
+        await Task.Delay(1500);
+        int step = 0;
+        async Task Step(int ms, Action a) { a(); Log.Info($"bench step {++step}"); await Task.Delay(ms); }
+        await Step(1500, s.ToggleControlCenter);
+        await Step(500, () => s.Move(Direction.Right));
+        await Step(700, () => s.Move(Direction.Right));
+        await Step(3000, s.Activate);                          // 手柄页（按键映射）
+        await Step(1000, () => s.Move(Direction.Right));       // LT
+        await Step(1000, s.Activate);                          // 按键页
+        await Step(600, () => s.Move(Direction.Down));         // 指令
+        await Step(2000, s.Activate);                          // 选择指令：手柄
+        await Step(1000, () => s.Move(Direction.Down));        // 焦点挪一格
+        for (int t = 1; t <= 4; t++) await Step(2000, () => s.SwitchTab(1));   // 鼠标、键盘、数字键盘、系统
+        for (int i = 0; i < 4; i++) await Step(600, s.Back);
+        await Step(800, s.Back);
+    }
+
     /// <summary>功耗模式来回切（智能 → 按电源 → 手动 → 回智能，假定开始时是智能）：看高度不跳、焦点跳过用不上的行；再一路 ↓ 到底看滚动。</summary>
     private static async Task RecPerfModesAsync(WallStage s)
     {
@@ -366,6 +389,7 @@ public static class Bench
                 case "recperf": await RecPerfAsync(s); break;
                 case "recperfmodes": await RecPerfModesAsync(s); break;
                 case "recgamepad": await RecGamepadAsync(s); break;
+                case "recpicker": await RecPickerAsync(s); break;
                 case "perfsave": await PerfSaveTestAsync(s); break;
                 case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;

@@ -458,6 +458,15 @@ public sealed partial class WallStage
                 ds.FillRectangle(arm, col);
                 break;
             }
+            case "Share":  // 截图：相机
+            {
+                ds.DrawRoundedRectangle(x + 3, cy - 5.5f, 16, 12, 2.5f, 2.5f, col, 1.4f);
+                ds.DrawLine(x + 8, cy - 5.5f, x + 9.5f, cy - 8, col, 1.4f);
+                ds.DrawLine(x + 9.5f, cy - 8, x + 12.5f, cy - 8, col, 1.4f);
+                ds.DrawLine(x + 12.5f, cy - 8, x + 14, cy - 5.5f, col, 1.4f);
+                ds.DrawCircle(cx, cy + 0.5f, 3.4f, col, 1.4f);
+                break;
+            }
             default:
                 PText(ds, id, bold, 10, col, x, cy, 22, Microsoft.Graphics.Canvas.Text.CanvasHorizontalAlignment.Center);
                 break;
