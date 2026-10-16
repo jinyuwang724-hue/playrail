@@ -395,7 +395,7 @@ public sealed partial class WallStage
         if (_gpDesktopHeld) return;
         _gpDesktopHeld = true;
         Log.Info("gamepad: desktop mode held as gamepad mode while the library is in front");
-        try { await _agent!.Call("set_gamepad_mode", JsonValue.Create("xinput")); }
+        try { await _agent!.Call("set_gamepad_mode", JsonValue.Create("xinput"), JsonValue.Create(false)); }
         catch (Exception ex) { _gpDesktopHeld = false; Log.Warn($"gamepad hold: {ex.Message}"); }
         if (_gpOpen) _ = GpRefresh();
     }
@@ -412,7 +412,7 @@ public sealed partial class WallStage
         if (version != _gpHoldVersion || _windowActive || !_gpDesktopHeld) return;
         _gpDesktopHeld = false;
         Log.Info("gamepad: library left the foreground, back to desktop mode");
-        try { await _agent!.Call("set_gamepad_mode", JsonValue.Create("desktop")); }
+        try { await _agent!.Call("set_gamepad_mode", JsonValue.Create("desktop"), JsonValue.Create(false)); }
         catch (Exception ex) { Log.Warn($"gamepad release: {ex.Message}"); }
     }
 

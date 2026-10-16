@@ -215,7 +215,7 @@ public sealed partial class WallStage
             }
             default:
                 it.Value = desktop ? GpDesktopSummary(src) : GpKeySummary(src);
-                it.Stock = desktop ? it.Value == "默认" : GpActs(src) == null && GpFirmwareCodes(src) is var c && (c.Length == 0 || c.Length == 1 && c[0] == GpNativeCode(src));
+                it.Stock = desktop ? GpDesktopStock(src) : GpActs(src) == null && GpFirmwareCodes(src) is var c && (c.Length == 0 || c.Length == 1 && c[0] == GpNativeCode(src));
                 it.Press = () => GpOpenPicker(src, desktop);
                 break;
         }
@@ -231,13 +231,24 @@ public sealed partial class WallStage
         "M1" => "M1 背键", "M2" => "M2 背键", _ => $"{src} 键",
     };
 
-    /// <summary>桌面模式下这个键映射到什么：我们写过的从 desktopKeys 读，没写过是固件的桌面默认。</summary>
+    /// <summary>
+    /// 桌面模式下这个键发的键码：后台从固件读（手柄模式时是「下次切到桌面要写的」）。固件只有一张键表，
+    /// 没改过的键在桌面模式下也是它自己的键码。读不到给 null。
+    /// </summary>
+    private int[]? GpDesktopCodes(string src)
+    {
+        var node = _gpFw?["desktopKeys"]?[src];
+        var arr = node as JsonArray ?? node?["codes"] as JsonArray;
+        return arr?.Select(n => Int(n)).Where(c => c is > 0 and <= 0xFF).ToArray();
+    }
+
+    private bool GpDesktopStock(string src) => GpDesktopCodes(src) is not { Length: > 0 } c || c.Length == 1 && c[0] == GpNativeCode(src);
+
+    /// <summary>桌面模式下这个键映射到什么：直接写键值（没改过就是这个键自己）。</summary>
     private string GpDesktopSummary(string src)
     {
-        if (_gpFw == null) return "—";
-        if (_gpFw["desktopKeys"]?[src] is not JsonArray arr) return "默认";
-        var codes = arr.Select(n => Int(n)).Where(c => c is > 0 and <= 0xFF).ToArray();
-        return codes.Length == 0 ? "默认" : GpCodesText(codes);
+        if (_gpFw == null || _gpFw["desktopKeys"] == null) return "—";
+        return GpDesktopStock(src) ? GpNativeName(src) : GpCodesText(GpDesktopCodes(src)!);
     }
 
     private static int GpNativeCode(string src) => src switch

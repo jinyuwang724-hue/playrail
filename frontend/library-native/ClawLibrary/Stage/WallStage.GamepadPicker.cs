@@ -298,7 +298,7 @@ public sealed partial class WallStage
             rows.Add(new PerfRow { Section = true, Title = "桌面模式" });
             rows.Add(new PerfRow { Title = "指令", Value = GpDesktopSummary(src) + "  ›", Press = () => { p.Act = 0; p.Level = GpSubLevel.Chooser; p.Cell = 0; p.InTabs = false; p.Chord.Clear(); PaintGpBody(); } });
             rows.Add(new PerfRow { Title = "禁用这个键", Value = "按下不起作用  ›", Press = () => GpWriteFirmware(p, new[] { 0xFF }) });
-            rows.Add(new PerfRow { Title = "恢复默认", Value = "固件的桌面默认  ›", Press = () => { _ = GpWrite("restore_gamepad", JsonValue.Create("dkey." + src)); p.KeyFocus = 1; } });
+            rows.Add(new PerfRow { Title = "恢复原键位", Value = $"{GpSourceName(src)}自己  ›", Press = () => { _ = GpWrite("restore_gamepad", JsonValue.Create("dkey." + src)); p.KeyFocus = 1; } });
             return rows;
         }
         var acts = GpActs(src);
@@ -637,7 +637,7 @@ public sealed partial class WallStage
         }
         else if (p.Desktop)
         {
-            foreach (var c in _gpFw?["desktopKeys"]?[p.Source] as JsonArray ?? new JsonArray()) currentCodes.Add(Int(c));
+            foreach (var c in GpDesktopCodes(p.Source) ?? Array.Empty<int>()) currentCodes.Add(c);
         }
         else foreach (var c in GpFirmwareCodes(p.Source)) currentCodes.Add(c);
 
