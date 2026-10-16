@@ -326,3 +326,18 @@ M 键功能：MSI 枚举 0 宏、1 组合、2 禁用；hid-msi（v5 起特意交
 
 测试中出过的问题：第一轮里我用 0x23 验证 ROM，把灯光区弄乱了，后面几次自动存 ROM 很可能也把乱的灯光区存了进去。
 已用写入前的备份把整个灯光区（0x24A–0x5BC）写回并存 ROM，整片内存和备份一致；第二轮去掉 0x23 后全部通过。
+
+## 模式切换的检测和桌面摇杆死区（2026-10-16，0.17.13）
+
+照 MSI Center M：固件长按 ≡ 切换（或它快速设置里的 ControlMode 磁贴）→ 固件上报 GamepadModeUpdated → MSI 弹 OSD、写注册表 `ControlModeUpdated`、
+切到桌面时同步桌面摇杆死区（默认 DeadZone 10 / Edge 100）、按模式设模式指示灯。我们的做法：
+
+- **检测**：不靠 MSI 的服务（它禁用着）。手柄每次切模式都用另一个产品号重新枚举（`0x1901` XInput、`0x1902` DInput、`0x1903` 桌面），
+  `ModeWatcher` 每秒列一次 HID 接口路径看产品号，不发任何命令；长按 ≡ 和 `set_gamepad_mode` 一样能看到。重新枚举中间的空档不算。
+- **提示**：见 `docs/gamepad-input-layer.md`「手柄模式」——自己的 OSD（不要 MSI 的红条）+ 推送事件 `gamepad_mode` + `get_gamepad_state().modeChangedAt`。不写 MSI 的注册表。
+- **桌面摇杆死区**：摇杆块（0x22A / 0x23A）只有一套，MSI 每次切模式重写。我们同样：桌面那套存成只在桌面模式生效的项 `dstick.left/right`
+  （第一次进桌面时按 MSI 默认死区 10 / 外圈 100 建，接口 `set_desktop_stick_deadzone(side, deadzone, outer)` 可改），回到手柄模式写回手柄那套
+  （用户设过的 `stick.*`，没设过就是接管前的原值）。只在桌面模式生效的项现在优先于不分模式的项。
+- **模式指示灯**：灯光是 modeinfo 时，切模式后的 `enforce("mode")` 按新模式换色（之前就有）。
+
+真机：检测 / 死区同步只用假手柄测过；没有真的切模式（用户之前要求先保留）。

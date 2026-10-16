@@ -47,7 +47,7 @@ METHODS = {
     "get_gamepad_state", "set_gamepad_mode", "set_stick_deadzone", "set_stick_swap", "set_trigger_range",
     "set_quick_trigger", "set_back_key", "set_key_map", "set_desktop_key_map", "set_light", "restore_gamepad",
     "get_input_layer_state", "set_input_layer_enabled", "get_input_layout", "save_input_layout",
-    "get_input_layer_catalog", "test_input_layer",
+    "get_input_layer_catalog", "test_input_layer", "set_desktop_stick_deadzone",
     "get_magpie_state", "get_magpie_targets", "get_magpie_catalog", "apply_magpie", "stop_magpie",
     "set_magpie_plain", "toggle_magpie", "magpie_auto_start", "set_magpie_pause",
     "get_game_picker_path", "get_game_picker_locations", "inspect_game_file",

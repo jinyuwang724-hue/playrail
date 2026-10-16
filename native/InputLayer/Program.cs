@@ -21,6 +21,7 @@ using Microsoft.Win32;
 //                                    translates it by the layout and writes a ViGEm Xbox 360 pad + SendInput.
 //   --guard <pid> <dataDir>          started by the engine: if the engine dies or stops ticking, unhides the pad.
 //   --restore <dataDir>              undo a hiding left behind (the agent runs it at start).
+//   --osd <gamepad|desktop>          the pad-mode notice (Osd.cs), started by the agent on a mode change.
 // Every path that can end the engine ends in Hiding.Restore: the pad is never left hidden.
 namespace ClawInput {
     public static class Program {
@@ -36,6 +37,7 @@ namespace ClawInput {
                 if (args.Length == 4 && args[0] == "--serve") return Serve(args[1], int.Parse(args[2]), args[3]);
                 if (args.Length == 3 && args[0] == "--guard") return Guard.Run(int.Parse(args[1]), args[2]);
                 if (args.Length == 2 && args[0] == "--restore") return RestoreCommand(args[1]);
+                if (args.Length == 2 && args[0] == "--osd") return ModeOsd.Run(args[1]);
                 throw new ArgumentException("启动参数错误");
             } catch (Exception error) {
                 Console.WriteLine(Json(new Dictionary<string, object> { { "type", "fatal" }, { "error", error.Message } }));
@@ -287,29 +289,36 @@ namespace ClawInput {
         List<string> Apps() {
             var list = new List<string> { Process.GetCurrentProcess().MainModule.FileName };
             list.AddRange(extraApps);
-            list.AddRange(LibraryPaths());
+            list.AddRange(PackagedApps());
             var result = new List<string>();
             foreach (var p in list) { string image = HidHide.ImagePath(p); if (!result.Contains(image)) result.Add(image); }
             return result;
         }
 
-        // The game library keeps its own gamepad navigation: its installed package(s) and running copies.
-        static List<string> LibraryPaths() {
+        // Packaged apps that keep their own gamepad navigation on the real pad (outside games the virtual
+        // pad stays at rest): the game library, Xbox Game Bar and the toolbox's Game Bar widget.
+        // Installed packages from this user's package registry, plus copies that are running.
+        static readonly string[,] Packaged = { { "ClawToolbox.Library_", "ClawLibrary.exe" },
+            { "Microsoft.XboxGamingOverlay_", "GameBar.exe" }, { "ClawToolbox.GameBarWidget_", "ClawWidget.exe" } };
+
+        static List<string> PackagedApps() {
             var result = new List<string>();
             try {
                 using (var root = Registry.CurrentUser.OpenSubKey(@"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages"))
-                    if (root != null) foreach (var name in root.GetSubKeyNames()) {
-                        if (!name.StartsWith("ClawToolbox.Library_", StringComparison.OrdinalIgnoreCase)) continue;
-                        using (var key = root.OpenSubKey(name)) {
-                            var folder = key == null ? null : key.GetValue("PackageRootFolder") as string;
-                            if (folder != null && File.Exists(Path.Combine(folder, "ClawLibrary.exe"))) result.Add(Path.Combine(folder, "ClawLibrary.exe"));
+                    if (root != null) foreach (var name in root.GetSubKeyNames())
+                        for (int i = 0; i < Packaged.GetLength(0); i++) {
+                            if (!name.StartsWith(Packaged[i, 0], StringComparison.OrdinalIgnoreCase)) continue;
+                            using (var key = root.OpenSubKey(name)) {
+                                var folder = key == null ? null : key.GetValue("PackageRootFolder") as string;
+                                if (folder != null && File.Exists(Path.Combine(folder, Packaged[i, 1]))) result.Add(Path.Combine(folder, Packaged[i, 1]));
+                            }
                         }
-                    }
             } catch (Exception) { }
-            foreach (var p in Process.GetProcessesByName("ClawLibrary")) {
-                try { var path = Foreground.ImagePath((uint)p.Id); if (path != null && !result.Contains(path)) result.Add(path); } catch { }
-                p.Dispose();
-            }
+            for (int i = 0; i < Packaged.GetLength(0); i++)
+                foreach (var p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(Packaged[i, 1]))) {
+                    try { var path = Foreground.ImagePath((uint)p.Id); if (path != null && !result.Contains(path)) result.Add(path); } catch { }
+                    p.Dispose();
+                }
             return result;
         }
 
@@ -484,7 +493,10 @@ namespace ClawInput {
                         frame.Pressed[Sources.M1] = h.M1; frame.Pressed[Sources.M2] = h.M2;
                         if (h.M1 != m1 || h.M2 != m2) { fresh = true; m1 = h.M1; m2 = h.M2; }
                     }
-                    var report = translator.Update(frame, now, events);
+                    // Outside games the virtual pad rests at zero: Steam, the game library, Game Bar read the
+                    // real pad themselves (they are whitelisted), and a mirrored copy would get Steam's desktop
+                    // configuration on top (left stick moving the mouse).
+                    var report = active == null ? new PadReport() : translator.Update(frame, now, events);
                     bool wrote = false, typed = false;
                     if (!sentOnce || !report.Same(last)) {
                         if (pad != null && pad.Send(report)) { last = report; sentOnce = true; wrote = true; sent++; }

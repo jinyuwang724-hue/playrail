@@ -8,15 +8,26 @@
 | 层 | 做什么 | 什么时候用 |
 |---|---|---|
 | 固件（`claw_gamepad_fw.py`） | 一个键 → 最多 5 个键码，零延迟、不常驻 | 软件层关着；或者某个键只要简单改键 |
-| 软件输入层（本文） | 长按 / 双击 / 组合键 / 连发 / 切换 / 延迟、键鼠、系统动作 | 打开「输入层」后 |
+| 软件输入层（本文） | 长按 / 双击 / 组合键 / 连发 / 切换 / 延迟、键鼠、系统动作 | 有布局绑了键时自动开（见下） |
 
 规则：布局里用到的键，软件层开着时固件里一律放回原键（M1 / M2 改成 F22 / F23 交给钩子），关掉时按原样放回。见「固件协调」。
+
+## 无感：没有开关（0.17.13 起）
+
+用户不用管「谁接管手柄」：
+- **全局或任何一个游戏的布局里有键**（`buttons` 非空，列出来但禁用的键 `[]` 也算）→ 后台自动保持输入层开着；全部为空 → 自动关掉。
+- 后台启动时、`save_input_layout` 之后、手柄模式变了之后都马上按这条规则开 / 关。
+- 手柄不在手柄（XInput）模式时一律关（见「手柄模式」）。
+- 引擎意外退出：先解除隐藏、放回固件，5 秒后自动再开；10 分钟内最多自动重开 3 次，再坏就停在 `phase: error`，等下一次保存布局 / 后台重启。
+- `set_input_layer_enabled(true / false)` 只留着调试：临时盖过规则，`null` 回到规则；不保存，后台重启后照规则。界面不调用。
 
 ## 组成
 
 ```
 游戏库 / Game Bar 小组件 / Decky ──JSON──▶ 工具箱后台 claw_agent.py
-                                               └ claw_input_layer.py（布局、开关、冲突、固件协调）
+                                               ├ claw_gamepad_fw.py（固件；ModeWatcher 每秒看手柄模式）
+                                               └ claw_input_layer.py（布局、按规则开关、冲突、固件协调）
+                                                   ├ ClawInput-<版本>.exe --osd  模式切换提示
                                                    └ ClawInput-<版本>.exe  桥（普通权限，stdin/stdout）
                                                          └ ClawInput --serve   引擎（管理员，命名管道）
                                                                ├ ClawInput --guard   守护（引擎死了 / 卡住 → 解除隐藏）
@@ -29,7 +40,7 @@
 
 - 引擎要管理员权限：本机 Steam 以管理员运行，游戏也是管理员，低权限进程的 SendInput 会被 UIPI 丢掉，低级钩子也收不到发往它们的键。
   照 ClawPower 的做法：桥用 `runas` 起引擎（本机 UAC 不弹框），两者用只许本用户 / 管理员 / SYSTEM 的命名管道相连，并核对对方进程号。
-- 输入层只在打开时有进程；关掉就整个退出（「不常驻」）。
+- 输入层只在开着时有进程；关掉就整个退出（「不常驻」）。
 - 不依赖第三方 DLL：ViGEm 和 HidHide 都直接发驱动的 IOCTL（`native/InputLayer/Devices.cs`）。本机 ViGEmBus 1.22、HidHide 1.5（ClawTweaks 装的那套）。
 
 源码：`native/InputLayer/`（Engine.cs 触发逻辑、Devices.cs 设备、Hiding.cs 隐藏记录、LayoutJson.cs、Program.cs 进程角色和主循环），
@@ -43,7 +54,11 @@
 看得见（HidHide 白名单，开启时加进去，关闭时只撤自己加的）：
 - 引擎自己 `ClawInput-<版本>.exe`；
 - 后台的 `pythonw.exe`（导航震动按 0DB0:1901 找真手柄）；
-- 游戏库 `ClawLibrary.exe`：从本用户的包注册表（`ClawToolbox.Library_*` 的 `PackageRootFolder`）和正在运行的进程找路径，每 5 秒再找一次。
+- **Steam**：`steam.exe` 和 `bin\cef\*\steamwebhelper.exe`（路径从 `HKCU\Software\Valve\Steam\SteamPath` 找，换成磁盘上的大小写）。
+  Steam 大屏幕、它的导航始终读真手柄；输入层开着之后 Steam 重启也照样读得到。
+- 游戏库 `ClawLibrary.exe`、Xbox Game Bar `GameBar.exe`、工具箱的 Game Bar 小组件 `ClawWidget.exe`：从本用户的包注册表
+  （`ClawToolbox.Library_*`、`Microsoft.XboxGamingOverlay_*`、`ClawToolbox.GameBarWidget_*` 的 `PackageRootFolder`）和正在运行的进程找路径，每 5 秒再找一次。
+  它们在游戏外用自己的手柄导航，读真手柄（游戏外虚拟手柄是全零，见下）。
 
 开启之后才启动的程序（游戏、ClawRouter……）只看见虚拟手柄（`045E:028E`），而且它在这些程序里就是 0 号手柄（真机实测）。
 **开启前就在运行、已经打开过手柄的程序（Steam、已经打开的游戏）仍能读到真手柄**：HidHide 只拦新的打开。
@@ -53,8 +68,9 @@
 ## 前台和布局
 
 引擎每 100 ms 看一次前台进程（exe 名，小写）：
-- **不是游戏**（Steam 界面、游戏库、Game Bar、桌面、终端……沿用功耗页的 `NOT_GAMES` 名单，加上所有 `claw*` 开头的程序）→ **直通**：虚拟手柄原样镜像真手柄，不发任何键鼠。
-  所以游戏库不管读到真手柄还是虚拟手柄，导航都和原来一样；Game Bar、Steam 大屏幕也照常。
+- **不是游戏**（Steam 界面、游戏库、Game Bar、桌面、终端……沿用功耗页的 `NOT_GAMES` 名单，加上所有 `claw*` 开头的程序）→ **虚拟手柄保持全零**，不发任何键鼠。
+  Steam、游戏库、Game Bar 都在白名单里，自己读真手柄，导航和原来一样。
+  （0.17.12 时这里是「原样镜像真手柄」：Steam 把这个虚拟 Xbox 手柄套上桌面配置，结果手柄模式下左摇杆能移动鼠标。0.17.13 改成全零。）
 - 是游戏 → 有这个 exe 的专用布局就用它，否则用全局布局。切换时先松开所有按住的键 / 鼠标键。
 
 ## 布局数据格式
@@ -153,8 +169,8 @@
 |---|---|---|
 | `get_input_layer_catalog()` | — | 源键、触发方式、默认值和范围、全部指令选项（手柄键、键名、鼠标、系统动作）、第二批清单 |
 | `get_input_layout(game=None)` | `game`：exe 文件名（如 `eldenring.exe`），不给 = 全局 | `{"game", "source": "game"/"global"/"default", "layout": {…补全默认值的布局}, "games": [有专用布局的 exe…]}`。游戏没有专用布局时返回全局布局、`source = "global"` |
-| `save_input_layout(layout, game=None)` | 布局对象；`game` 同上。`layout = null` + `game` = 删掉这个游戏的专用布局（全局不能删） | 同 `get_input_layout`，加 `"saved": true/false`。不合法抛错，消息是给人看的中文。输入层开着时立即生效 |
-| `set_input_layer_enabled(enabled)` | `true` = 我们接管手柄，`false` = 关闭 | 同 `get_input_layer_state`。设置会记住，后台重启后按它恢复 |
+| `save_input_layout(layout, game=None)` | 布局对象；`game` 同上。`layout = null` + `game` = 删掉这个游戏的专用布局（全局不能删） | 同 `get_input_layout`，加 `"saved": true/false`。不合法抛错，消息是给人看的中文。存完立即生效，并按规则开 / 关输入层 |
+| `set_input_layer_enabled(enabled)` | 仅调试：`true` / `false` 临时盖过规则，`null` 回到规则 | 同 `get_input_layer_state`。不保存；界面不调用 |
 | `get_input_layer_state()` | — | 见下 |
 | `test_input_layer(steps, layout_for=None)` | 真机自检用：`steps = [{"at": 毫秒, "buttons": ["A", …]}, …]` 代替真手柄跑一遍，`layout_for` 指定按哪个游戏的布局 | 引擎输出时间线（虚拟手柄按键位、键鼠事件，带 QPC 毫秒） |
 
@@ -164,7 +180,11 @@
 
 ```json
 {
- "owner": "toolbox",                     // 设置：toolbox = 我们接管 / off = 关闭
+ "owner": "toolbox",                     // 现在：toolbox = 输入层在跑 / off = 没跑
+ "auto": true,                           // true = 按规则（没有调试覆盖）
+ "wanted": true,                         // 规则要求的状态（有布局绑了键，且手柄在 XInput 模式）
+ "override": null,                       // set_input_layer_enabled 的调试覆盖
+ "padMode": "xinput",                    // xinput / dinput / desktop（ModeWatcher）
  "phase": "active",                      // off / starting / active / stopping / error
  "error": null,                          // 出错或警告（给人看）
  "notes": ["开启前就在运行的程序……"],       // 开着时的固定提示
@@ -189,7 +209,7 @@
 }
 ```
 
-界面建议：`owner` 做开关；`phase = error` 时显示 `error`；`conflicts.warnings` 逐条列出；`layout` / `foreground` 显示「现在用哪个布局」；`latency.p99Ms` 显示延迟。
+界面：没有开关（0.17.13）。需要时可以显示 `phase = error` 的 `error`、`layout` / `foreground`（现在用哪个布局）、`latency.p99Ms`。
 
 ## 固件协调
 
@@ -214,15 +234,34 @@ HidHide 的设置是持久的（重启也还在），所以每一次修改先写
 | 引擎卡死（主循环 3 秒没心跳） | 守护进程解除隐藏并结束引擎（心跳用不含睡眠时间的时钟，睡眠唤醒不会误判） |
 | 断电 / 全部进程都没了 | 下次后台启动先跑 `ClawInput --restore`（记录里的引擎不在了才恢复） |
 
+引擎意外退出后，后台按规则 5 秒后自动重开（10 分钟内最多 3 次）。
+
 虚拟手柄：ViGEmBus 在打开它的句柄关闭时自动拔掉，引擎怎么死都不会留下一个假手柄。
 HidHide 被别的程序改掉（ClawTweaks 会自己改 HidHide）：引擎每秒检查，缺了就补回去，状态里 `hidhide.reapplied` 计数并提示。
 
 ## 冲突检测（开启时和每次读状态时报告，不自动处理）
 
 - **ClawTweaks**：`XboxGamingBarHelper.exe` / `CTW_Center.exe` 在运行；它的后台本来就在 HidHide 白名单里，仍能读真手柄；它也用 HidHide + ViGEm，可能改我们的设置。
-- **Steam 输入**：Steam 在运行，且「Xbox 配置支持」开着（能从配置里读到时）→ 开了 Steam 输入的游戏会把我们的虚拟手柄再映射一遍；Steam 进了 HidHide 白名单 → 会同时看到真手柄。
+- **Steam 输入**：Steam 在运行，且「Xbox 配置支持」开着（能从配置里读到时）→ 开了 Steam 输入的游戏会把我们的虚拟手柄再映射一遍。
+  Steam 在白名单里、能看到真手柄是有意的（0.17.13）：游戏里如果同时开着 Steam 输入，Steam 还会按它自己的配置翻译真手柄——这种游戏只用一种映射。
 - **别的虚拟 Xbox 手柄**（不是我们的那个）：游戏会看到多个手柄。
 - **HidHide 里别人藏的设备**：隐藏开关是全局的，打开后它们也会被藏起来。
+
+## 手柄模式：桌面模式暂停、模式切换提示（0.17.13）
+
+手柄每次切模式（长按 ≡，或 `set_gamepad_mode`）都会用另一个 USB 产品号重新枚举：`1901` 手柄（XInput）、`1902` DInput、`1903` 桌面。
+`claw_gamepad_fw.ModeWatcher` 每秒列一次 HID 接口路径（不打开手柄）看是哪个产品号；重新枚举中间的空档不算变化。看到变化时，按顺序：
+1. **模式提示（OSD）**：后台起 `ClawInput-<版本>.exe --osd gamepad|desktop`（`native/InputLayer/Osd.cs`）。屏幕上方居中的小窗，深色半透明圆角，
+   左边手柄 / 显示器图标（Segoe Fluent Icons / MDL2），右边「手柄模式」/「桌面模式」，淡入 0.15 秒、停 1.15 秒、淡出 0.35 秒（约 1.6 秒）。
+   置顶、不抢焦点（`WS_EX_NOACTIVATE`）、点不到（`WS_EX_TRANSPARENT`）、不进任务栏；每帧重新置顶，盖得住窗口化和无边框全屏的游戏。
+   **独占全屏的游戏看不到**（它独占显示输出），这种情况只能靠应用内提示。没有 MSI 的红条。
+2. 推送事件 `gamepad_mode`：`{"mode": "desktop", "previous": "xinput", "at": 毫秒时间戳}`。
+3. 输入层：不在 XInput 模式 → 暂停（引擎退出：不隐藏真手柄、拔掉虚拟手柄、放回 M1 / M2）；回到 XInput 模式 → 按规则恢复。
+4. 固件（照 MSI Center M）：切到桌面时，桌面摇杆死区第一次用就设成 MSI 的默认值（死区 10 / 外圈 100，`dstick.left/right`），
+   然后写这个模式该有的字节：桌面模式写桌面那套摇杆死区和桌面键位，回到手柄模式写回手柄那套；模式指示灯（灯光 = modeinfo 时）跟着换色。
+
+`get_gamepad_state()` 加了：`modeChangedAt`（最近一次看到切换的毫秒时间戳，后台启动以来没切过 = `null`）、`modeChangedTo`、`desktopSticks`。
+前端拿 `modeChangedAt` 变没变弹应用内提示。新接口 `set_desktop_stick_deadzone(side, deadzone, outer)`（范围同手柄的，只在桌面模式生效）。
 
 ## 延迟
 
@@ -235,7 +274,9 @@ HidHide 被别的程序改掉（ClawTweaks 会自己改 HidHide）：引擎每�
 ## 测试
 
 - `tests/InputLayerTests.cs`（`test.ps1` 里跑）：51 项，触发方式的时间（长按 / 双击 / 可中断 / 组合键 / 切换 / 连发 / 启停延迟）、输出合并（多键同一输出、键盘组合键顺序、扳机当按键、摇杆方向、滚轮、切换布局松键）、引擎格式解析、HidHide 记录（只撤自己加的、别人的隐藏开关保留、补回被改掉的）。
-- `tests/input_layer_backend_test.py`（自带 Python 运行时直接跑）：布局校验 / 补全 / 编译、按游戏存储（拒绝路径穿越）、开关流程（假引擎 + 假固件：M1 → F22、被改过的 A 放回、关闭时放回）、引擎崩溃后放回固件、冲突报告。
+- `tests/input_layer_backend_test.py`（自带 Python 运行时直接跑）：布局校验 / 补全 / 编译、按游戏存储（拒绝路径穿越）、按规则开关（第一个绑键的布局打开、游戏布局也算、最后一个键去掉就关、调试覆盖和 `null`）、
+  桌面模式暂停 / 恢复、固件（M1 → F22、被改过的 A 放回、不再用到立即放回）、引擎崩溃后放回固件并自动重开、后台重启后照规则、白名单带 Steam、冲突报告。
+- `tests/gamepad_fw_backend_test.py` 的 `mode_watch`：产品号变化 → 通知一次、记时间；枚举空档不算；第一次进桌面写 10 / 100，回手柄写回手柄那套，两套各自可改。
 
 ## 真机测试（2026-10-16，经已安装的后台 0.17.12）
 
@@ -268,10 +309,30 @@ HidHide 被别的程序改掉（ClawTweaks 会自己改 HidHide）：引擎每�
 没测的：真人按真手柄（用户说用脚本测就行）——真机读数的延迟、M1 / M2 经 F22 / F23 的钩子都要等真按键才有数据；
 游戏的震动转发（状态里 `rumbleRequests` 有计数，强度没核对）。
 
+## 真机测试第二轮（2026-10-16，0.17.13）
+
+同样可撤销：测前测后 HidHide 逐项相同；没切手柄模式（见下）；没睡眠 / 重启。
+
+| 检查 | 结果 |
+|---|---|
+| 后台启动、没有布局 | `phase off`、`auto true`、`wanted false`、`padMode xinput`；`get_gamepad_state` 有 `modeChangedAt: null`、`modeChangedTo: "xinput"` ✅ |
+| 存一个绑了键的布局（不调开关） | 0.8 秒后 `active` ✅ |
+| 白名单 | 引擎、后台 python、`C:\Software\steam.exe`、两个 `steamwebhelper.exe`、`ClawWidget.exe`、`ClawLibrary.exe`、`GameBar.exe` ✅ |
+| 游戏在前台 | 长按 A → B；B + Y + LB 原样 ✅ |
+| 前台是 Steam / 游戏库（脚本按 A、B、Y、LB） | 虚拟手柄一次都没写，保持全零；「游戏」探针只看到前一段的输出 ✅ |
+| 强杀引擎 | 守护进程解除隐藏 → `phase error` → 3.5 秒起重开 → 6 秒新引擎 `active` ✅ |
+| 存一个空布局 | 自动 `off` ✅ |
+| 模式提示 | 直接起 `ClawInput --osd desktop / gamepad` 截图：上方居中、深色圆角、图标 + 字，盖在全屏的游戏库上；约 1.2 秒后进程自己退出 ✅ |
+| 收尾 | 删掉测试布局；HidHide、固件（M1 Alt+F12、M2 0x12、A 原键）和测试前相同；`desktopSticks` 为空（没进过桌面模式） |
+
+没在真机上做的：**真的切一次手柄模式**。用户之前要求切模式先保留，这次没有新的明确同意，所以「长按 ≡ / set_gamepad_mode → 检测 → 提示 → 输入层暂停 / 恢复 → 桌面死区」
+这一串只在测试里用假手柄验证过（`mode_watch`、`switch`），OSD 单独在真机上显示过。真机切一次：手柄在旁边时长按 ≡ 切到桌面再切回来即可（固件自己的功能，随时能切回）。
+
 ## 已知限制
 
-- 只认 XInput 模式（`0DB0:1901`）。切到桌面模式后引擎找不到手柄，虚拟手柄保持中立，切回来自动接上。
+- 只在 XInput 模式（`0DB0:1901`）工作；桌面 / DInput 模式时输入层暂停，切回来自动恢复。
+- 模式提示在独占全屏的游戏里看不到。
 - 开启前就在运行的程序（Steam、已打开的游戏）仍能读到真手柄，会同时看到两个手柄；游戏重启后正常（见「隐藏什么」）。
-- Game Bar 打开时前台是 Game Bar → 直通；Steam 游戏内覆盖层画在游戏窗口里，前台还是游戏 → 布局照常生效（和 Steam 一样）。
+- Game Bar 打开时前台是 Game Bar → 虚拟手柄全零，Game Bar 读真手柄；Steam 游戏内覆盖层画在游戏窗口里，前台还是游戏 → 布局照常生效（和 Steam 一样）。
 - MSI 键 / 快速设置键不经过这一层（还是 ClawRouter 管）。
 - 陀螺仪：本机手柄当 Xbox 手柄认，没有陀螺仪数据，不在这一层。

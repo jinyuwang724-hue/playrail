@@ -167,6 +167,14 @@ class FakeGamepad:
         self.calls.append(("restore", what))
 
 
+async def settle(layer, phase, engines=None, count=None):
+    for _ in range(300):
+        if layer._phase == phase and (count is None or len(engines) == count):
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("phase %s, wanted %s" % (layer._phase, phase))
+
+
 async def switch():
     with tempfile.TemporaryDirectory() as folder:
         root = Path(folder) / "plugin"
@@ -182,60 +190,92 @@ async def switch():
             return engines[-1]
 
         pad = FakeGamepad()
-        layer = il.InputLayer(root, Path(folder) / "data", emit, gamepad=pad, not_games=["steam.exe"],
-                              python="C:\\py\\pythonw.exe", spawn=spawn, processes=lambda: {"steam.exe"},
-                              xbox_support=lambda: True)
+        data = Path(folder) / "data"
+
+        def make():
+            layer = il.InputLayer(root, data, emit, gamepad=pad, not_games=["steam.exe"], python="C:\\py\\pythonw.exe",
+                                  spawn=spawn, processes=lambda: {"steam.exe"}, xbox_support=lambda: True,
+                                  extra_apps=lambda: ["C:\\Steam\\steam.exe", "C:\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe"])
+            layer.RETRY_DELAY = 0.01
+            return layer
+
+        layer = make()
+        await layer.start(pad_mode="xinput")
+        state = await layer.state()
+        assert state["phase"] == "off" and state["auto"] and not state["wanted"] and engines == [], "no layout binds a key: off"
+
+        # The first layout that binds a key starts the layer, no switch involved.
         layout = dict(DEMO, buttons=dict(DEMO["buttons"], M1=[{"trigger": "regular", "command": {"type": "keyboard", "keys": ["F5"]}}]))
         await layer.save_layout(layout)
-        state = await layer.set_enabled(True)
-        assert state["owner"] == "toolbox" and state["phase"] == "active", state
-        sent = [c["command"] for c in engines[0].commands]
-        assert sent == ["configure", "enable"], sent
+        state = await layer.state()
+        assert state["phase"] == "active" and state["owner"] == "toolbox" and state["wanted"] and state["auto"], state
+        assert [c["command"] for c in engines[0].commands] == ["configure", "enable"]
         configure = engines[0].commands[0]
         assert configure["layouts"]["global"]["buttons"]["A"][0]["command"] == {"kind": "pad", "pad": 0x2000}
-        assert "clawlibrary.exe" in configure["notGames"] and configure["whitelist"] == ["C:\\py\\pythonw.exe"]
+        assert "clawlibrary.exe" in configure["notGames"]
+        assert configure["whitelist"] == ["C:\\py\\pythonw.exe", "C:\\Steam\\steam.exe", "C:\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe"]
         # M1 used -> F22; A (remapped to B in the firmware) used -> back to A. M2 and B untouched.
         assert pad.calls == [("back", "m1", [0x9D]), ("key", "A", [0x09])], pad.calls
-        record = json.loads((Path(folder) / "data" / "input-layer" / "firmware.json").read_text(encoding="utf-8"))
+        record = json.loads((data / "input-layer" / "firmware.json").read_text(encoding="utf-8"))
         assert record["items"] == {"m1": {"codes": [118, 62], "managed": True}, "key.A": {"codes": [10], "managed": False}}
-        assert state["conflicts"]["steamInput"] == {"steamRunning": True, "xboxSupport": True, "steamSeesPad": False}
+        assert not any("白名单" in w for w in state["conflicts"]["warnings"]), "Steam seeing the pad is intended now"
         assert any("Xbox 配置支持" in w for w in state["conflicts"]["warnings"])
 
-        # Saving a layout without M1 while on: the engine gets it at once and M1 goes back.
+        # Saving without M1 while on: the engine gets it at once and M1 goes back; still on.
         pad.calls.clear()
         await layer.save_layout(DEMO)
-        assert engines[0].commands[-1]["command"] == "configure"
+        assert engines[0].commands[-1]["command"] == "configure" and layer._phase == "active"
         assert pad.calls == [("back", "m1", [118, 62])], pad.calls
 
+        # A per-game layout keeps it on even when the global one binds nothing.
+        await layer.save_layout({"buttons": {"Y": []}}, "game.exe")
         pad.calls.clear()
-        state = await layer.set_enabled(False)
-        assert state["owner"] == "off" and state["phase"] == "off" and engines[0].returncode == 0
-        assert engines[0].commands[-1]["command"] == "stop"
-        assert pad.calls == [("restore", "key.A")], pad.calls
-        assert not (Path(folder) / "data" / "input-layer" / "firmware.json").exists()
-        settings = json.loads((Path(folder) / "data" / "input-layer" / "settings.json").read_text(encoding="utf-8"))
-        assert settings["owner"] == "off"
+        await layer.save_layout({"name": "空"})
+        assert layer._phase == "active" and len(engines) == 1, "game.exe still binds Y (disabled counts as bound)"
+        assert pad.calls == [("restore", "key.A")], "A is no longer used anywhere: back at once"
 
-        # A crash: the firmware goes back and the state says so; the owner stays on for the next start.
+        # Last bound key gone: off.
+        pad.calls.clear()
+        await layer.save_layout(None, "game.exe")
+        state = await layer.state()
+        assert state["phase"] == "off" and not state["wanted"] and engines[0].returncode == 0
+        assert engines[0].commands[-1]["command"] == "stop"
+        assert pad.calls == [], pad.calls
+        assert not (data / "input-layer" / "firmware.json").exists()
+
+        # Debug override: on without layouts, back to the rule with None.
+        state = await layer.set_enabled(True)
+        assert state["phase"] == "active" and state["override"] is True and not state["auto"] and len(engines) == 2
+        state = await layer.set_enabled(None)
+        assert state["phase"] == "off" and state["auto"] and engines[1].returncode == 0
+
+        # Desktop mode pauses the layer, gamepad mode resumes it.
         await layer.save_layout(layout)
-        await layer.set_enabled(True)
+        assert layer._phase == "active" and len(engines) == 3
+        await layer.set_pad_mode("desktop")
+        state = await layer.state()
+        assert state["phase"] == "off" and not state["wanted"] and state["padMode"] == "desktop" and engines[2].returncode == 0
+        await layer.set_pad_mode("xinput")
+        assert layer._phase == "active" and len(engines) == 4
+
+        # A crash: firmware goes back, then the layer starts again by itself.
         pad.calls.clear()
         engines[-1].end()
-        for _ in range(50):
-            await asyncio.sleep(0.01)
-            if layer._phase == "error" and pad.calls:
-                break
-        state = await layer.state()
-        assert state["phase"] == "error" and "意外退出" in state["error"], state
+        await settle(layer, "active", engines, 5)
         assert ("back", "m1", [118, 62]) in pad.calls and ("restore", "key.A") in pad.calls, pad.calls
-        assert any(event == "input_layer" for event, _ in events)
+        assert ("back", "m1", [0x9D]) in pad.calls, "taken again on the restart"
+        assert any(event == "input_layer" and value["phase"] == "error" for event, value in events)
 
-        # Next agent start with the owner still "toolbox" starts the engine again.
-        again = il.InputLayer(root, Path(folder) / "data", emit, gamepad=pad, spawn=spawn, processes=set, xbox_support=lambda: None)
-        await again.start()
+        # Next agent start: the rule again (layouts still bind keys).
+        await layer.close()
+        again = make()
+        await again.start(pad_mode="xinput")
         assert again._phase == "active" and engines[-1].commands[-1]["command"] == "enable"
         await again.close()
         assert engines[-1].returncode == 0
+        desktop = make()
+        await desktop.start(pad_mode="desktop")
+        assert desktop._phase == "off", "started in desktop mode: stays off"
 
 
 def conflict_report():
@@ -247,6 +287,8 @@ def conflict_report():
     assert report["clawTweaks"] == {"running": True, "processes": ["xboxgamingbarhelper.exe"], "helperSeesPad": True}
     assert report["otherHiddenDevices"] == ["HID\\OTHER"] and report["otherVirtualPads"] == 1
     assert len(report["warnings"]) == 3, report["warnings"]
+    seen = il.conflicts(dict(status, hidhide=dict(status["hidhide"], whitelist=["\\Device\\H\\Steam\\steam.exe"])), {"steam.exe"}, False)
+    assert seen["steamInput"]["steamSeesPad"] and not any("Steam" in w for w in seen["warnings"])
     assert il.conflicts({}, set(), None)["warnings"] == []
 
 

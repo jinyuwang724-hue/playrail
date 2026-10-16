@@ -20,7 +20,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Touch bridge build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Management.dll ("/out:" + (Join-Path $taskOutput 'ClawPower.exe')) (Join-Path $taskRoot 'native\ClawPower.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Power helper build failed.' }
-& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Core.dll ("/out:" + (Join-Path $taskOutput 'ClawInput.exe')) (Get-ChildItem -LiteralPath (Join-Path $taskRoot 'native\InputLayer') -Filter *.cs | ForEach-Object FullName)
+& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Core.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll ("/out:" + (Join-Path $taskOutput 'ClawInput.exe')) (Get-ChildItem -LiteralPath (Join-Path $taskRoot 'native\InputLayer') -Filter *.cs | ForEach-Object FullName)
 if ($LASTEXITCODE -ne 0) { throw 'Input layer build failed.' }
 if (-not $RouterOnly) {
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:winexe /platform:x64 /reference:System.Web.Extensions.dll ("/win32manifest:" + (Join-Path $taskRoot 'native\SteamAdminLauncher.manifest')) ("/out:" + (Join-Path $taskOutput 'SteamAdminLauncher.exe')) (Join-Path $taskRoot 'native\SteamAdminLauncher.cs') (Join-Path $taskRoot 'native\SteamPaths.cs')

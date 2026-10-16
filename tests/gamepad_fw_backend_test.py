@@ -259,10 +259,52 @@ async def control_flow():
         await control.close()
 
 
+async def mode_watch():
+    """Holding the menu key switches mode: the pad re-enumerates with another product id."""
+    with tempfile.TemporaryDirectory() as folder:
+        pad = FakePad(claw_8_ex_memory())
+        xinput, desktop = r"\\?\hid#vid_0db0&pid_1901&mi_01#7&1", r"\\?\hid#vid_0db0&pid_1903&mi_01#7&2"
+        paths, seen = [xinput], []
+        watcher = fw.ModeWatcher(paths=lambda: list(paths), clock=lambda: 1000.0)
+        control = fw.GamepadControl(folder, fw.GamepadFirmware(pad), watcher=watcher)
+
+        async def note(mode, previous):
+            seen.append((mode, previous))
+        watcher.listeners.insert(0, note)
+        assert await watcher.poll() == "xinput" and seen == [] and watcher.changed_at is None, "first look is no change"
+
+        pad.mode, paths[:] = (0x04, 0x00), []
+        assert await watcher.poll() == "xinput", "between enumerations: keep the last mode"
+        paths[:] = [desktop]
+        assert await watcher.poll() == "desktop" and seen == [("desktop", "xinput")] and watcher.changed_at == 1000000
+        # MSI's desktop stick dead zones (10 / 100) on the first switch to desktop.
+        assert [pad.memory[a] for a in (0x22C, 0x234, 0x23C, 0x244)] == [10, 100, 10, 100]
+        state = await control.read()
+        assert state["modeChangedAt"] == 1000000 and state["modeChangedTo"] == "desktop"
+        assert state["desktopSticks"] == {"left": {"deadzone": 10, "outer": 100}, "right": {"deadzone": 10, "outer": 100}}
+
+        pad.mode, paths[:] = (0x01, 0x00), [xinput]
+        await watcher.poll()
+        assert [pad.memory[a] for a in (0x22C, 0x234, 0x23C, 0x244)] == [5, 100, 5, 100], "gamepad dead zones come back"
+        await control.set_stick_deadzone("left", 12, 90)
+        assert pad.memory[0x22C] == 12
+        pad.mode, paths[:] = (0x04, 0x00), [desktop]
+        await watcher.poll()
+        assert pad.memory[0x22C] == 10 and pad.memory[0x234] == 100, "desktop set wins in desktop mode"
+        await control.set_desktop_stick_deadzone("left", 20, 95)
+        assert pad.memory[0x22C] == 20
+        pad.mode, paths[:] = (0x01, 0x00), [xinput]
+        await watcher.poll()
+        assert pad.memory[0x22C] == 12 and pad.memory[0x234] == 90, "and the user's gamepad set in gamepad mode"
+        assert seen[-1] == ("xinput", "desktop") and len(seen) == 4
+        await control.close()
+
+
 def main():
     reading()
     light_effects()
     asyncio.run(control_flow())
+    asyncio.run(mode_watch())
     if "--live" in sys.argv:
         print(json.dumps(fw.GamepadState().read(), ensure_ascii=False, indent=1))
     print("gamepad firmware checks passed")

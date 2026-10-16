@@ -134,6 +134,10 @@ def hex_color(zone):
     return "#%02x%02x%02x" % tuple(zone)
 
 
+# Desktop-mode stick dead zones MSI Center M writes when the pad switches to desktop mode.
+DESKTOP_STICK_DEFAULT = (10, 100)
+
+
 def mode_class(mode):
     return "desktop" if mode == 4 else "msi" if mode == 3 else "gamepad"
 
@@ -434,6 +438,63 @@ def _side(side):
     return side
 
 
+class ModeWatcher:
+    """Which mode the pad is in, from the USB product id it enumerates with (it re-enumerates on every
+    switch, whether by holding the ≡ key or by set_gamepad_mode). Polled once a second; only HID
+    interface paths are listed, the pad is not opened."""
+    INTERVAL = 1.0
+
+    def __init__(self, paths=None, clock=time.time):
+        self._paths = paths
+        self._clock = clock
+        self.mode = None          # xinput / dinput / desktop
+        self.changed_at = None    # epoch ms of the last change seen since the agent started
+        self.listeners = []       # async callables (mode, previous)
+        self._task = None
+
+    def _present(self):
+        if self._paths is None:
+            channel = _rumble_default.HidChannel(tuple(PRODUCTS))
+            self._paths = channel._paths
+        lowered = " ".join(self._paths()).lower()
+        for product, name in PRODUCTS.items():
+            if "vid_0db0&pid_%04x" % product in lowered:
+                return name
+        return None
+
+    async def poll(self):
+        try:
+            mode = await asyncio.get_running_loop().run_in_executor(None, self._present)
+        except Exception:
+            return self.mode
+        if mode is None or mode == self.mode:
+            return self.mode  # None: between two enumerations
+        previous, self.mode = self.mode, mode
+        if previous is not None:
+            self.changed_at = int(self._clock() * 1000)
+            for listener in list(self.listeners):
+                try:
+                    await listener(mode, previous)
+                except Exception:
+                    pass
+        return mode
+
+    def start(self):
+        async def run():
+            while True:
+                await self.poll()
+                await asyncio.sleep(self.INTERVAL)
+        self._task = asyncio.create_task(run())
+
+    async def close(self):
+        if self._task and not self._task.done():
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+
 class GamepadControl:
     """Service-side owner of the firmware settings.
 
@@ -446,8 +507,10 @@ class GamepadControl:
     RECHECK_INTERVAL = 60
     ENFORCE_SYNC_INTERVAL = 600
 
-    def __init__(self, data_dir, firmware=None, log=None, clock=time.monotonic):
+    def __init__(self, data_dir, firmware=None, log=None, clock=time.monotonic, watcher=None):
         self._path = Path(data_dir) / "gamepad.json"
+        self.watcher = watcher or ModeWatcher()
+        self.watcher.listeners.append(self._mode_changed)
         self._firmware = firmware or GamepadFirmware()
         self._log = log or (lambda *args: None)
         self._clock = clock
@@ -479,7 +542,8 @@ class GamepadControl:
         original = self._original()
         desired = {}
         touched = set()
-        for name in sorted(self._config["items"]):
+        # Mode-specific items (desktop stick dead zones, desktop key map) win over the general ones.
+        for name in sorted(self._config["items"], key=lambda n: (self._config["items"][n].get("mode") is not None, n)):
             item = self._config["items"][name]
             touched.update(address for address, _, _ in item["bytes"])
             if item.get("mode") not in (None, mode):
@@ -566,6 +630,27 @@ class GamepadControl:
         _int(outer, 75, 100, "摇杆外圈阈值")
         return await self._set_items({"stick." + side: ([(base + 1, 0xFF, 1), (base + 2, 0xFF, deadzone),
                                                          (base + 9, 0xFF, 1), (base + 10, 0xFF, outer)], None)})
+
+    async def set_desktop_stick_deadzone(self, side, deadzone, outer):
+        """Desktop-mode stick dead zones: written when the pad is in desktop mode, the gamepad ones come back
+        when it returns (like MSI Center M, which keeps two sets and rewrites on every switch)."""
+        base = LEFT_STICK if _side(side) == "left" else RIGHT_STICK
+        _int(deadzone, 0, 50, "摇杆死区")
+        _int(outer, 75, 100, "摇杆外圈阈值")
+        return await self._set_items({"dstick." + side: ([(base + 1, 0xFF, 1), (base + 2, 0xFF, deadzone),
+                                                          (base + 9, 0xFF, 1), (base + 10, 0xFF, outer)], "desktop")})
+
+    async def _mode_changed(self, mode, previous):
+        """A mode switch seen by the watcher: desktop stick defaults on first use, then this mode's bytes."""
+        self._log("Claw pad mode %s -> %s" % (previous, mode))
+        if mode == "desktop":
+            for side in ("left", "right"):
+                if "dstick." + side not in self._config["items"]:
+                    try:
+                        await self.set_desktop_stick_deadzone(side, *DESKTOP_STICK_DEFAULT)
+                    except Exception as error:
+                        self._log("Claw pad desktop dead zone failed: %s" % error)
+        await self.enforce("mode")
 
     async def set_stick_swap(self, enabled):
         if type(enabled) is not bool:
@@ -665,6 +750,7 @@ class GamepadControl:
 
     async def restore(self, what="all"):
         groups = {"sticks": ("stick.left", "stick.right", "stick.swap"),
+                  "desktopsticks": ("dstick.left", "dstick.right"),
                   "triggers": ("trigger.left", "trigger.right", "quick.left", "quick.right"),
                   "backkeys": ("m1", "m2"), "light": ("light",)}
         names = set(self._config["items"])
@@ -694,7 +780,8 @@ class GamepadControl:
         try:
             state = await self._run(self._firmware.read_state)
         except Exception as error:
-            return {"available": False, "error": str(error), "managed": self.managed()}
+            return {"available": False, "error": str(error), "managed": self.managed(),
+                    "modeChangedAt": self.watcher.changed_at, "modeChangedTo": self.watcher.mode}
         self._mode = mode_class(state["modeRaw"])
         light = self._config["light"]
         if light and "light" in self._config["items"]:
@@ -710,6 +797,10 @@ class GamepadControl:
                     state["light"]["color"] = rgb(light["color"])
         state["light"]["managed"] = "light" in self._config["items"]
         state["managed"] = self.managed()
+        # When the watcher last saw a mode switch (epoch ms, null: none since the agent started).
+        state["modeChangedAt"], state["modeChangedTo"] = self.watcher.changed_at, self.watcher.mode
+        state["desktopSticks"] = {name[7:]: {"deadzone": item["bytes"][1][2], "outer": item["bytes"][3][2]}
+                                  for name, item in self._config["items"].items() if name.startswith("dstick.")}
         state["desktopKeys"] = {name[5:]: [value for address, mask, value in item["bytes"][-5:] if value]
                                 for name, item in self._config["items"].items() if name.startswith("dkey.")}
         return state
@@ -752,6 +843,7 @@ class GamepadControl:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        await self.watcher.close()
         try:
             await self.flush()
         except Exception:

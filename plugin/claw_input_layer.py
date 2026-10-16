@@ -1,5 +1,8 @@
 """Software input layer: the half of the mixed mapping the pad firmware cannot do (docs/gamepad-input-layer.md).
 
+There is no switch for the user: the layer runs whenever any stored layout (global or per game) binds a
+button, and only while the pad is in gamepad (XInput) mode.
+
 The engine (bin/ClawInput-<version>.exe, native/InputLayer) hides the real pad with HidHide, reads it at
 ~1 kHz, translates it by the active layout and writes a ViGEm Xbox 360 pad plus keyboard / mouse
 input. This module owns everything around it: the stored layouts (one global, optional per game),
@@ -315,6 +318,19 @@ def steam_xbox_support():
     return None
 
 
+def steam_apps():
+    """steam.exe and its web helper(s): Steam (Big Picture, its navigation) keeps reading the real pad."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+            steam = Path(winreg.QueryValueEx(key, "SteamPath")[0])
+    except OSError:
+        return []
+    found = [steam / "steam.exe"] + sorted((steam / "bin" / "cef").glob("*/steamwebhelper.exe"))
+    # SteamPath is stored lower-case ("c:/software"); HidHide gets the path as it is on disk.
+    return [os.path.realpath(path) for path in found if path.is_file()]
+
+
 def conflicts(engine_status, processes=None, xbox_support=None):
     processes = running_processes() if processes is None else processes
     hidhide = (engine_status or {}).get("hidhide") or {}
@@ -335,8 +351,6 @@ def conflicts(engine_status, processes=None, xbox_support=None):
         warnings.append("还有 %d 个别的虚拟 Xbox 手柄（ClawTweaks / 别的映射工具？），游戏会看到多个手柄" % virtual)
     if steam and xbox_support:
         warnings.append("Steam 开着「Xbox 配置支持」：游戏开了 Steam 输入时，Steam 会把我们的虚拟手柄再映射一遍")
-    if steam_sees:
-        warnings.append("Steam 在 HidHide 白名单里，能看到真手柄，会和虚拟手柄重复")
     if others:
         warnings.append("HidHide 里还有别人隐藏的设备，开启隐藏后它们也会被藏起来：" + "、".join(others[:4]))
     return {"clawTweaks": {"running": bool(tweaks), "processes": tweaks, "helperSeesPad": tweaks_sees},
@@ -399,12 +413,20 @@ class Layouts:
 
 # ---- the switch --------------------------------------------------------------------------------------
 
+def layouts_bind_buttons(layouts):
+    """The rule: the layer runs while any layout binds a button."""
+    return any(layout["buttons"] for layout in [layouts["global"]] + list(layouts["games"].values()))
+
+
 class InputLayer:
-    """Who owns the pad: "toolbox" (this layer) or "off" (firmware only, nothing hidden)."""
+    """Runs by the rule (layouts bind buttons, pad in gamepad mode); set_enabled() overrides it for debugging."""
     REQUEST_TIMEOUT = 20
+    RETRY_DELAY = 5
+    RETRIES = 3          # automatic restarts after an engine crash ...
+    RETRY_WINDOW = 600   # ... per 10 minutes
 
     def __init__(self, plugin_root, data_dir, emit, gamepad=None, not_games=(), python=None, log=None,
-                 spawn=None, processes=running_processes, xbox_support=steam_xbox_support):
+                 spawn=None, processes=running_processes, xbox_support=steam_xbox_support, extra_apps=steam_apps):
         self._root = Path(plugin_root)
         self._data = Path(data_dir) / "input-layer"
         self._data.mkdir(parents=True, exist_ok=True)
@@ -412,6 +434,11 @@ class InputLayer:
         self._gamepad = gamepad
         self._not_games = sorted(set(not_games) | {"clawlibrary.exe"})
         self._python = python
+        self._extra_apps = extra_apps
+        self._override = None    # set_enabled(): True / False beats the rule until set back to None
+        self._pad_mode = None    # xinput / dinput / desktop, from the gamepad's mode watcher
+        self._crashes = []
+        self._osd = None
         self._log = log or logging.info
         self._spawn = spawn or self._spawn_engine
         self._processes = processes
@@ -419,7 +446,7 @@ class InputLayer:
         self.layouts = Layouts(self._data / "layouts")
         self._settings_path = self._data / "settings.json"
         self._firmware_path = self._data / "firmware.json"
-        self._settings = {"owner": "off", "pollHz": 1000}
+        self._settings = {"pollHz": 1000}
         self._process = None
         self._reader = None
         self._ids = 0
@@ -435,8 +462,6 @@ class InputLayer:
         self._closing = False
         try:
             saved = json.loads(self._settings_path.read_text(encoding="utf-8"))
-            if saved.get("owner") in ("toolbox", "off"):
-                self._settings["owner"] = saved["owner"]
             if type(saved.get("pollHz")) is int and 250 <= saved["pollHz"] <= 1000:
                 self._settings["pollHz"] = saved["pollHz"]
         except (OSError, ValueError, AttributeError):
@@ -447,18 +472,58 @@ class InputLayer:
         version = json.loads((self._root / "plugin.json").read_text(encoding="utf-8"))["version"]
         return self._root / "bin" / ("ClawInput-" + version + ".exe")
 
-    def _save_settings(self):
-        temp = self._settings_path.with_suffix(".tmp")
-        temp.write_text(json.dumps(self._settings), encoding="utf-8")
-        os.replace(temp, self._settings_path)
+    def wanted(self):
+        if self._pad_mode not in (None, "xinput"):
+            return False  # desktop / DInput mode: no XInput pad to read, nothing hidden
+        if self._override is not None:
+            return self._override
+        return layouts_bind_buttons(self.layouts.all())
 
-    async def start(self):
-        await self._restore_leftovers("agent-start", firmware=self._settings["owner"] == "off")
-        if self._settings["owner"] == "toolbox":
+    async def start(self, pad_mode=None):
+        self._pad_mode = pad_mode
+        await self._restore_leftovers("agent-start", firmware=not self.wanted())
+        await self.reconcile("agent-start")
+
+    async def reconcile(self, why):
+        """Start or stop the engine to match the rule. Never raises: a failure lands in the state."""
+        async with self._lock:
+            want = self.wanted()
+            running = self._phase == "active" and self._process is not None
             try:
-                await self._enable()
+                if want and not running:
+                    self._log("Input layer on (%s)" % why)
+                    await self._enable()
+                elif not want and (running or self._process is not None or self._phase == "error"):
+                    self._log("Input layer off (%s)" % why)
+                    self._phase = "stopping"
+                    await self._publish()
+                    self._phase = "off"
+                    self._error = None
+                    await self._disable()
             except Exception as error:
-                self._log("Input layer could not start: %s" % error)
+                self._log("Input layer %s failed: %s" % (why, error))
+        await self._publish()
+
+    async def set_pad_mode(self, mode):
+        if mode == self._pad_mode:
+            return
+        self._pad_mode = mode
+        await self.reconcile("pad mode " + str(mode))
+
+    async def show_mode_osd(self, mode):
+        """The mode notice (ClawInput --osd), replacing one that is still fading."""
+        if self._osd and self._osd.returncode is None:
+            try:
+                self._osd.kill()
+            except OSError:
+                pass
+        try:
+            self._osd = await asyncio.create_subprocess_exec(
+                str(self.exe), "--osd", "desktop" if mode == "desktop" else "gamepad",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW)
+        except OSError as error:
+            self._log("Mode notice failed: %s" % error)
 
     async def _restore_leftovers(self, why, firmware=True):
         """A hiding or firmware takeover left by a crashed engine / agent goes back first."""
@@ -530,6 +595,13 @@ class InputLayer:
     async def _after_crash(self):
         await self._restore_leftovers("engine-exit")
         await self._publish()
+        # No switch for the user to flip back: start again, a few times at most.
+        now = time.monotonic()
+        self._crashes = [t for t in self._crashes if now - t < self.RETRY_WINDOW] + [now]
+        if len(self._crashes) <= self.RETRIES and not self._closing:
+            await asyncio.sleep(self.RETRY_DELAY)
+            if not self._closing and self._phase == "error":
+                await self.reconcile("restart after crash")
 
     async def _call(self, command, timeout=None, **args):
         self._ids += 1
@@ -565,7 +637,8 @@ class InputLayer:
         layouts = self.layouts.all()
         return {"layouts": {"global": compile_layout(layouts["global"]),
                             "games": {game: compile_layout(layout) for game, layout in layouts["games"].items()}},
-                "notGames": self._not_games, "whitelist": [self._python] if self._python else [],
+                "notGames": self._not_games,
+                "whitelist": ([self._python] if self._python else []) + list(self._extra_apps() if self._extra_apps else []),
                 "pollHz": self._settings["pollHz"]}
 
     # ---- firmware: every key belongs to one layer -------------------------------------------------
@@ -675,20 +748,12 @@ class InputLayer:
             self._phase = "off"
 
     async def set_enabled(self, enabled):
-        if type(enabled) is not bool:
-            raise ValueError("enabled 要是 true / false")
-        async with self._lock:
-            self._settings["owner"] = "toolbox" if enabled else "off"
-            self._save_settings()
-            if enabled:
-                if self._phase != "active":
-                    await self._enable()
-            else:
-                self._phase = "stopping"
-                await self._publish()
-                self._phase = "off"
-                await self._disable()
-                self._error = None
+        """Debugging only (the UI has no switch): true / false overrides the rule, null goes back to it.
+        Not saved: the next agent start follows the rule again."""
+        if enabled is not None and type(enabled) is not bool:
+            raise ValueError("enabled 要是 true / false / null")
+        self._override = enabled
+        await self.reconcile("override %s" % enabled)
         return await self.state()
 
     # ---- layouts -------------------------------------------------------------------------------------
@@ -706,6 +771,7 @@ class InputLayer:
             if self._phase == "active" and self._process:
                 await self._call("configure", **self._configure_args())
                 await self._take_firmware()
+        await self.reconcile("layout saved")  # first bound button starts the layer, last one removed stops it
         result = await self.get_layout(game)
         result["saved"] = saved is not None
         return result
@@ -747,8 +813,9 @@ class InputLayer:
             self._conflicts_at = now
         engine = self._engine or {}
         notes = [OPEN_BEFORE_NOTE] if self._phase == "active" else []
-        return {"owner": self._settings["owner"], "phase": self._phase, "error": self._error or engine.get("error"),
-                "notes": notes,
+        return {"owner": "toolbox" if self._phase == "active" else "off", "auto": self._override is None,
+                "wanted": self.wanted(), "override": self._override, "padMode": self._pad_mode,
+                "phase": self._phase, "error": self._error or engine.get("error"), "notes": notes,
                 "pollHz": self._settings["pollHz"], "engine": engine or None,
                 "latency": engine.get("latency"), "layout": engine.get("layout"), "foreground": engine.get("foreground"),
                 "conflicts": self._conflicts, "firmware": self._firmware_record()["items"],

@@ -115,6 +115,8 @@ class Service:
                                                not_games=_power_module.NOT_GAMES, python=sys.executable,
                                                log=logging.info)
         self._input_task = None
+        # Pad mode switches (holding ≡, or set_gamepad_mode): notice first, then the firmware listener.
+        self._gamepad.watcher.listeners.insert(0, self._pad_mode_changed)
         self._settings_path = self._data / "settings.json"
         self._task = None
         self._recent = []
@@ -146,7 +148,7 @@ class Service:
         self._power.start()
         self._rumble.start()
         self._gamepad.start()
-        self._input_task = asyncio.create_task(self._input.start())
+        self._input_task = asyncio.create_task(self._start_input())
 
     def _schedule_compatibility(self):
         if self._stopping or (self._compatibility_task and not self._compatibility_task.done()):
@@ -345,6 +347,9 @@ class Service:
     async def set_stick_deadzone(self, side, deadzone, outer):
         return await self._gamepad_write(self._gamepad.set_stick_deadzone, side, deadzone, outer)
 
+    async def set_desktop_stick_deadzone(self, side, deadzone, outer):
+        return await self._gamepad_write(self._gamepad.set_desktop_stick_deadzone, side, deadzone, outer)
+
     async def set_stick_swap(self, enabled):
         return await self._gamepad_write(self._gamepad.set_stick_swap, enabled)
 
@@ -370,6 +375,17 @@ class Service:
         return await self._gamepad_write(self._gamepad.restore, what)
 
     # ---- software input layer (docs/gamepad-input-layer.md) ----
+
+    async def _start_input(self):
+        mode = await self._gamepad.watcher.poll()  # the mode before the layer decides anything
+        self._gamepad.watcher.start()
+        await self._input.start(pad_mode=mode)
+
+    async def _pad_mode_changed(self, mode, previous):
+        await self._input.show_mode_osd(mode)
+        await self._emit("gamepad_mode", {"mode": mode, "previous": previous, "at": self._gamepad.watcher.changed_at})
+        # Desktop mode pauses the layer (nothing hidden, no virtual pad), gamepad mode resumes it.
+        asyncio.create_task(self._input.set_pad_mode(mode))
 
     async def get_input_layer_state(self):
         return await self._input.state()
