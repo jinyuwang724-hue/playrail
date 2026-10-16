@@ -2,7 +2,8 @@
 // 肩键 / 扳机 / View / Menu / 快速设置 / Claw / 背键挂在线稿左右两侧，底下压紧的四栏：左摇杆、十字键、右摇杆、正面按键。
 // 每行 = 这个键的小图标 + 它现在映射到什么（键盘画键帽、鼠标画鼠标、手柄键画手柄键的图标），尽量不用字；没改过的写一个淡淡的「原键」。
 // 焦点到 M1 / M2 时线稿翻到背面（GpPageFaces）。焦点那行白字，线稿上它管的那块染强调色。
-// 线稿整层（_gpArtPage）在映射页缩小一点、往上挪（合成层弹簧），换回别的分类再回到原位。
+// 线稿整层（_gpArtPage）在映射页几乎保持原大、往左上挪一点给两侧和底部让位（合成层弹簧），换回别的分类再回到原位。
+// 底部四栏压成两行，整页内容竖向居中，视线落在线稿上。
 using System.Numerics;
 using System.Text.Json.Nodes;
 using Microsoft.Graphics.Canvas;
@@ -14,14 +15,20 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     // ---- 几何（设计 px） ----
-    /// <summary>映射页线稿：整层缩到 0.92（760 → 700 宽，380…1080），中心上移到 y 304（线稿 144…464）。</summary>
-    private const float GpMapScale = 0.92f, GpMapCy = 304;
-    /// <summary>两侧：左边右对齐到 366，右边从 1094 起；第一行 y 196，行距 34。</summary>
-    private const float GpMapLeftX = 366, GpMapRightX = 1094, GpMapSideY = 196, GpMapSideStep = 34;
-    /// <summary>底部四栏：栏标题 y 520，第一行 y 548，行距 28；栏从 380 起，栏宽 178。</summary>
-    private const float GpMapColHeadY = 520, GpMapColY = 548, GpMapColStep = 28, GpMapColX = 380, GpMapColW = 178;
-    /// <summary>映射值最宽多少（放不下的键帽串截掉、加「…」）。</summary>
-    private const float GpMapTargetW = 132;
+    /// <summary>
+    /// 映射页线稿：整层 0.99（752 宽），中心挪到 (712, 348)，线稿 336…1088 × 176…520 —— 比其他页只小一点点，
+    /// 往左挪一点是给右侧那列映射值留出屏幕边距。
+    /// </summary>
+    private const float GpMapScale = 0.99f, GpMapCx = 712, GpMapCy = 348;
+    /// <summary>两侧：左边图标右缘贴 322，右边图标从 1102 起；第一行 y 228，行距 36（挨着线稿上半截的肩部和握把）。</summary>
+    private const float GpMapLeftX = 322, GpMapRightX = 1102, GpMapSideY = 228, GpMapSideStep = 36;
+    /// <summary>
+    /// 底部四栏压成两行：栏标题 y 560，第一行 y 588，行距 28；栏从 336 起、栏宽 188（和线稿同宽），
+    /// 每栏里两个小格一行（摇杆：方向 + 按下；十字键、ABXY 各 2×2），小格宽 94。
+    /// </summary>
+    private const float GpMapColHeadY = 560, GpMapColY = 588, GpMapColStep = 28, GpMapColX = 336, GpMapColW = 188, GpMapSubW = 94;
+    /// <summary>映射值最宽多少（放不下的键帽串截掉、加「…」）：两侧 124，底部小格 58。</summary>
+    private const float GpMapTargetW = 124, GpMapSubTargetW = 58;
 
     private static readonly string[] GpMapColTitles = { "左摇杆", "十字键", "右摇杆", "正面按键" };
 
@@ -55,15 +62,17 @@ public sealed partial class WallStage
             it.Side = col == -1 ? -1 : 1;
             it.X = x;
             it.Y = y;
-            it.Cx = col == -1 ? x - 70 : x + 70;
+            it.Cx = col == -1 ? x - 70 : col == -2 ? x + 70 : x + 40;
             it.Cy = y;
             it.Tokens = GpMapTokens(src, desktop, it);
             _gpItems.Add(it);
         }
         for (int i = 0; i < sideL.Length; i++) Add(sideL[i], -1, GpMapLeftX, GpMapSideY + i * GpMapSideStep);
         for (int i = 0; i < sideR.Length; i++) Add(sideR[i], -2, GpMapRightX, GpMapSideY + i * GpMapSideStep);
+        // 每栏两个小格一行：摇杆（方向、按下）一行；十字键 ↑ ↓ / ← →、正面按键 A B / X Y 各两行
         for (int c = 0; c < cols.Length; c++)
-            for (int r = 0; r < cols[c].Length; r++) Add(cols[c][r], c, GpMapColX + c * GpMapColW, GpMapColY + r * GpMapColStep);
+            for (int r = 0; r < cols[c].Length; r++)
+                Add(cols[c][r], c, GpMapColX + c * GpMapColW + r % 2 * GpMapSubW, GpMapColY + r / 2 * GpMapColStep);
         if (_gpFocus >= _gpItems.Count) _gpFocus = 0;
     }
 
@@ -71,9 +80,9 @@ public sealed partial class WallStage
     private void GpPlaceArt(bool instant = false)
     {
         if (_gp == null) return;
-        float k = _ccK, m = GpIsMapPage ? GpMapScale : 1, cy = GpIsMapPage ? GpMapCy : GpCy;
+        float k = _ccK, m = GpIsMapPage ? GpMapScale : 1, cx = GpIsMapPage ? GpMapCx : GpCx, cy = GpIsMapPage ? GpMapCy : GpCy;
         var scale = new Vector3(m, m, 1);
-        var off = new Vector3((GpCx - GpCx * m) * k, (cy - GpCy * m) * k, 0);
+        var off = new Vector3((cx - GpCx * m) * k, (cy - GpCy * m) * k, 0);
         if (instant || Reduced)
         {
             _gpArtPage.StopAnimation("Scale"); _gpArtPage.StopAnimation("Offset");
@@ -209,7 +218,7 @@ public sealed partial class WallStage
         var glyphCol = Gfx.WithAlpha(CcText, focused ? 1f : it.Disabled ? 0.38f : 0.7f);
         var toks = it.Tokens ?? new List<GpTok>();
         if (editing && it.Choices != null) toks = new List<GpTok> { new(GpTokKind.Text, it.Choices[it.Choice]) };
-        toks = GpFitTokens(ds, toks, GpMapTargetW);
+        toks = GpFitTokens(ds, toks, it.Col >= 0 ? GpMapSubTargetW : GpMapTargetW);
 
         // 摇杆那格（Key 为空，点亮 LS / RS）画摇杆图标
         string glyph = it.Key.Length > 0 ? it.Key : it.Lights?[0] == "RS" ? "RStick" : "LStick";
