@@ -212,6 +212,8 @@ public static class Bench
     }
 
     /// <summary>手柄页：开 → 一路 ↓ 到底（看滚动和左栏描圈）→ 再回顶 → B。只挪焦点，不改设置。</summary>
+    private static async Task Go2(WallStage s, Func<int, Action, Task> step, params Direction[] ds) { foreach (var d in ds) await step(650, () => s.Move(d)); }
+
     private static async Task RecGamepadAsync(WallStage s)
     {
         await Task.Delay(1500);
@@ -224,17 +226,21 @@ public static class Bench
         await Step(500, () => s.Move(Direction.Right));
         await Step(700, () => s.Move(Direction.Right));
         await Step(3000, s.Activate);
-        // 只挪焦点；只按一次「测试震动」（震一下，不改设置）
-        var D = Direction.Down; var U = Direction.Up; var R = Direction.Right; var L = Direction.Left;
-        async Task Go(params Direction[] ds) { foreach (var d in ds) await Step(650, () => s.Move(d)); }
-        await Step(700, () => { });
-        await Go(D, D, D, D);                              // 震动
-        await Go(R, R, D);                                 // 进：左侧震动 → 右侧震动 → 测试震动
-        await Step(1600, s.Activate);                      // 测试震动
-        await Step(650, s.Back);
-        await Go(D, D, D, D, R);                           // 灯光
-        await Step(1500, () => { });
-        await Step(650, s.Back);
+        // 按键映射的几层：只看，不在「选择指令」里按 A，不改任何映射
+        var D = Direction.Down; var R = Direction.Right;
+        await Step(700, () => s.Move(D));                  // 分类：按键映射
+        await Step(700, () => s.Move(R));                  // 进：LT
+        await Go2(s, Step, Direction.Down, Direction.Down, Direction.Right, Direction.Right, Direction.Right, Direction.Right, Direction.Right);   // 走到 A
+        await Step(1200, s.Activate);                      // 按键页
+        await Step(700, () => s.Move(D));                  // 指令
+        await Step(1200, s.Activate);                      // 选择指令：手柄
+        for (int i = 0; i < 4; i++) await Step(1100, () => s.SwitchTab(1));   // 鼠标 / 键盘 / 数字键盘 / 系统
+        await Step(800, s.Back);                           // 回按键页
+        await Step(700, () => s.Move(D));                  // 设置
+        await Step(1200, s.Activate);                      // 触发设置
+        await Step(700, s.Back);
+        await Step(700, s.Back);                           // 关按键页
+        await Step(700, s.Back);                           // 回分类
         await Step(1000, s.Back);
         await Step(1200, s.Back);
         int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "gamepad"), mark);

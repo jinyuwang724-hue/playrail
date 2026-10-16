@@ -553,7 +553,7 @@ public sealed partial class WallStage
         _gpBody.Size = new Vector2(1280 * k, 800 * k);
         _gpBody.Offset = Vector3.Zero;
         // 映射选择盖在线稿上时把线稿和暗光压下去
-        float artAlpha = _gpPicker != null ? 0.1f : 1f;
+        float artAlpha = _gpPicker != null ? 0f : 1f;
         if (_gpSpot.Opacity != artAlpha)
         {
             _gpSpot.Opacity = artAlpha;
