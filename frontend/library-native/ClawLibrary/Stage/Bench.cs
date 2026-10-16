@@ -224,9 +224,8 @@ public static class Bench
         await Step(500, () => s.Move(Direction.Right));
         await Step(700, () => s.Move(Direction.Right));
         await Step(3000, s.Activate);
-        for (int i = 0; i < 16; i++) await Step(450, () => s.Move(Direction.Down));
-        await Step(800, () => { });
-        for (int i = 0; i < 16; i++) await Step(120, () => s.Move(Direction.Up));
+        foreach (var d in new[] { Direction.Down, Direction.Down, Direction.Down, Direction.Down, Direction.Down, Direction.Right, Direction.Right, Direction.Right, Direction.Up, Direction.Right, Direction.Up, Direction.Up, Direction.Left })
+            await Step(650, () => s.Move(d));
         await Step(1000, s.Back);
         await Step(1200, s.Back);
         int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "gamepad"), mark);
