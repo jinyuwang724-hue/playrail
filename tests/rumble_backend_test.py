@@ -80,6 +80,18 @@ def main():
             assert again.view()["strength"] == 40 and again.view()["original"] == [90, 80]
             restored = await again.restore()
             assert restored["current"] == [90, 80] and not restored["managed"]
+            # Left and right apart; one argument still sets both.
+            view = await again.set_strength(30, 60)
+            assert view["current"] == [30, 60] and (view["left"], view["right"], view["strength"]) == (30, 60, 45)
+            assert rumble.RumbleControl(folder, rumble.ClawRumble(pad)).view()["left"] == 30
+            assert (await again.set_strength(70))["current"] == [70, 70]
+            for bad in ((30, 101), (30, -1), (30, 5.0)):
+                try:
+                    await again.set_strength(*bad)
+                except ValueError:
+                    continue
+                raise AssertionError(bad)
+            assert (await again.restore())["current"] == [90, 80]
     asyncio.run(plugin_flow())
 
     if "--live" in sys.argv:

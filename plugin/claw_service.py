@@ -105,7 +105,8 @@ class Service:
         self._overlay_frames = _frames_module.OverlayFrames()
         self._power = _power_module.PowerControl(PLUGIN_ROOT, self._data, self._emit_power)
         self._rumble = _rumble_module.RumbleControl(self._data, log=logging.info)
-        self._gamepad = _gamepad_fw_module.GamepadState()
+        self._gamepad = _gamepad_fw_module.GamepadControl(
+            self._data, _gamepad_fw_module.GamepadFirmware(rumble=_rumble_module), log=logging.info)
         self._settings_path = self._data / "settings.json"
         self._task = None
         self._recent = []
@@ -136,6 +137,7 @@ class Service:
         self._schedule_compatibility()
         self._power.start()
         self._rumble.start()
+        self._gamepad.start()
 
     def _schedule_compatibility(self):
         if self._stopping or (self._compatibility_task and not self._compatibility_task.done()):
@@ -307,10 +309,11 @@ class Service:
     async def get_rumble_state(self):
         return await self._rumble.refresh()
 
-    async def set_rumble_strength(self, strength):
+    async def set_rumble_strength(self, strength, right=None):
+        # set_rumble_strength(both) or set_rumble_strength(left, right).
         if self._stopping:
             raise RuntimeError("工具箱后台正在退出，请稍候")
-        return await self._rumble.set_strength(strength)
+        return await self._rumble.set_strength(strength, right)
 
     async def restore_rumble(self):
         if self._stopping:
@@ -318,8 +321,44 @@ class Service:
         return await self._rumble.restore()
 
     async def get_gamepad_state(self):
-        # Read only: pad mode, M1/M2, dead zones, lights. Never writes the pad.
-        return await asyncio.get_running_loop().run_in_executor(None, self._gamepad.read)
+        # Pad mode, button mapping, M1/M2, dead zones, triggers, lights as the firmware has them now.
+        return await self._gamepad.read()
+
+    async def _gamepad_write(self, call, *args):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        await call(*args)
+        return await self._gamepad.read()
+
+    async def set_gamepad_mode(self, mode):
+        return await self._gamepad_write(self._gamepad.set_mode, mode)
+
+    async def set_stick_deadzone(self, side, deadzone, outer):
+        return await self._gamepad_write(self._gamepad.set_stick_deadzone, side, deadzone, outer)
+
+    async def set_stick_swap(self, enabled):
+        return await self._gamepad_write(self._gamepad.set_stick_swap, enabled)
+
+    async def set_trigger_range(self, side, start, end):
+        return await self._gamepad_write(self._gamepad.set_trigger_range, side, start, end)
+
+    async def set_quick_trigger(self, side, enabled):
+        return await self._gamepad_write(self._gamepad.set_quick_trigger, side, enabled)
+
+    async def set_back_key(self, key, codes):
+        return await self._gamepad_write(self._gamepad.set_back_key, key, codes)
+
+    async def set_key_map(self, source, codes):
+        return await self._gamepad_write(self._gamepad.set_key_map, source, codes)
+
+    async def set_desktop_key_map(self, source, codes):
+        return await self._gamepad_write(self._gamepad.set_desktop_key_map, source, codes)
+
+    async def set_light(self, effect, color=None, brightness=100, speed=1, direction="cw", frames=None):
+        return await self._gamepad_write(self._gamepad.set_light, effect, color, brightness, speed, direction, frames)
+
+    async def restore_gamepad(self, what="all"):
+        return await self._gamepad_write(self._gamepad.restore, what)
 
     async def test_rumble(self):
         if self._stopping:
@@ -566,6 +605,7 @@ class Service:
         self._overlay_frames.close()
         await self._power.close()
         await self._rumble.close()
+        await self._gamepad.close()
         await self._magpie.close()
         if self._compatibility_task:
             await self._compatibility_task

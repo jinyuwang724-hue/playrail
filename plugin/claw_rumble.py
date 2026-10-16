@@ -74,6 +74,7 @@ class _Overlapped(ctypes.Structure):
 
 
 _INVALID = ctypes.c_void_p(-1).value
+CHANNEL_LOCK = threading.Lock()
 
 
 class HidChannel:
@@ -213,10 +214,11 @@ class HidChannel:
 class ClawRumble:
     """Read and write the firmware rumble ceiling. Writes only when it differs."""
 
-    def __init__(self, channel_factory=HidChannel, clock=time.monotonic):
+    def __init__(self, channel_factory=HidChannel, clock=time.monotonic, lock=None):
         self._factory = channel_factory
         self._clock = clock
-        self._lock = threading.Lock()
+        # Shared with claw_gamepad_fw: every open handle sees every reply, so one request at a time.
+        self._lock = lock or CHANNEL_LOCK
 
     def _await(self, channel, accept, timeout=0.3):
         deadline = self._clock() + timeout
@@ -299,7 +301,12 @@ class RumbleControl:
 
     @staticmethod
     def _valid_strength(value):
-        return value is None or (type(value) is int and 0 <= value <= 100)
+        # One value for both motors, or [left, right].
+        return value is None or (type(value) is int and 0 <= value <= 100) or RumbleControl._valid_pair(value)
+
+    def _pair(self):
+        strength = self._config["strength"]
+        return None if strength is None else (list(strength) if isinstance(strength, list) else [strength, strength])
 
     @staticmethod
     def _valid_pair(value):
@@ -312,10 +319,11 @@ class RumbleControl:
         os.replace(temp, self._path)
 
     def view(self):
-        current = self._current
-        return {"strength": self._config["strength"] if self._config["strength"] is not None
-                else (round(sum(current) / 2) if current else None),
-                "managed": self._config["strength"] is not None,
+        current, pair = self._current, self._pair()
+        shown = pair or current
+        return {"strength": round(sum(shown) / 2) if shown else None,
+                "left": shown[0] if shown else None, "right": shown[1] if shown else None,
+                "managed": pair is not None,
                 "current": current, "original": self._config["original"], "error": self._error}
 
     async def _run(self, function, *args):
@@ -330,11 +338,11 @@ class RumbleControl:
         return self.view()
 
     async def enforce(self, reason):
-        strength = self._config["strength"]
-        if strength is None:
+        pair = self._pair()
+        if pair is None:
             return self.view()
         try:
-            result = await self._run(self._rumble.write, strength, strength)
+            result = await self._run(self._rumble.write, *pair)
             self._current, self._error = result["after"], None
             if result["written"]:
                 self._log("Claw rumble %s: %s -> %s" % (reason, result["before"], result["after"]))
@@ -342,9 +350,13 @@ class RumbleControl:
             self._error = str(error)
         return self.view()
 
-    async def set_strength(self, strength):
-        if type(strength) is not int or not 0 <= strength <= 100:
-            raise ValueError("震动强度需在 0 到 100 之间")
+    async def set_strength(self, strength, right=None):
+        """set_strength(both) or set_strength(left, right)."""
+        for value in (strength, strength if right is None else right):
+            if type(value) is not int or not 0 <= value <= 100:
+                raise ValueError("震动强度需在 0 到 100 之间")
+        if right is not None and right != strength:
+            strength = [strength, right]
         if self._config["original"] is None:
             # Back up the pad's own value before the first write.
             self._current = await self._run(self._rumble.read)
