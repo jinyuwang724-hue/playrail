@@ -37,6 +37,9 @@ _power_spec.loader.exec_module(_power_module)
 _rumble_spec = importlib.util.spec_from_file_location("claw_toolbox_rumble", PLUGIN_ROOT / "claw_rumble.py")
 _rumble_module = importlib.util.module_from_spec(_rumble_spec)
 _rumble_spec.loader.exec_module(_rumble_module)
+_gamepad_fw_spec = importlib.util.spec_from_file_location("claw_toolbox_gamepad_fw", PLUGIN_ROOT / "claw_gamepad_fw.py")
+_gamepad_fw_module = importlib.util.module_from_spec(_gamepad_fw_spec)
+_gamepad_fw_spec.loader.exec_module(_gamepad_fw_module)
 
 # ControllerHapticsService.PlayPattern in Playhub 2.1.0 executes the first step.
 HAPTIC_PATTERNS = {
@@ -102,6 +105,7 @@ class Service:
         self._overlay_frames = _frames_module.OverlayFrames()
         self._power = _power_module.PowerControl(PLUGIN_ROOT, self._data, self._emit_power)
         self._rumble = _rumble_module.RumbleControl(self._data, log=logging.info)
+        self._gamepad = _gamepad_fw_module.GamepadState()
         self._settings_path = self._data / "settings.json"
         self._task = None
         self._recent = []
@@ -312,6 +316,10 @@ class Service:
         if self._stopping:
             raise RuntimeError("工具箱后台正在退出，请稍候")
         return await self._rumble.restore()
+
+    async def get_gamepad_state(self):
+        # Read only: pad mode, M1/M2, dead zones, lights. Never writes the pad.
+        return await asyncio.get_running_loop().run_in_executor(None, self._gamepad.read)
 
     async def test_rumble(self):
         if self._stopping:

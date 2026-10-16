@@ -79,7 +79,9 @@ _INVALID = ctypes.c_void_p(-1).value
 class HidChannel:
     """One open config collection. Opened per operation, never held while idle."""
 
-    def __init__(self):
+    def __init__(self, products=(_HARDWARE[1],)):
+        # The pad re-enumerates with another product id per mode (0x1901 XInput, 0x1902 DInput, 0x1903 desktop).
+        self._products = tuple(products)
         self._k = ctypes.WinDLL("kernel32", use_last_error=True)
         self._hid = ctypes.WinDLL("hid", use_last_error=True)
         self._setup = ctypes.WinDLL("setupapi", use_last_error=True)
@@ -114,6 +116,7 @@ class HidChannel:
         s.SetupDiDestroyDeviceInfoList.argtypes = [wintypes.HANDLE]
         self._handle = None
         self.version = None
+        self.product = None
 
     def _paths(self):
         guid = _Guid()
@@ -136,7 +139,7 @@ class HidChannel:
                 if self._setup.SetupDiGetDeviceInterfaceDetailW(info, ctypes.byref(data), buffer, needed,
                                                                 None, None):
                     path = ctypes.wstring_at(ctypes.addressof(buffer) + 4)
-                    if "vid_0db0&pid_1901" in path.lower():
+                    if any("vid_0db0&pid_%04x" % product in path.lower() for product in self._products):
                         paths.append(path)
         finally:
             self._setup.SetupDiDestroyDeviceInfoList(info)
@@ -153,7 +156,7 @@ class HidChannel:
                 attributes = _Attributes(size=ctypes.sizeof(_Attributes))
                 caps, parsed = _Caps(), ctypes.c_void_p()
                 if (self._hid.HidD_GetAttributes(handle, ctypes.byref(attributes))
-                        and (attributes.vendor, attributes.product) == _HARDWARE
+                        and attributes.vendor == _HARDWARE[0] and attributes.product in self._products
                         and self._hid.HidD_GetPreparsedData(handle, ctypes.byref(parsed))):
                     try:
                         ok = self._hid.HidP_GetCaps(parsed, ctypes.byref(caps)) == 0x00110000
@@ -162,16 +165,16 @@ class HidChannel:
                     # The vendor config collection: 64-byte in/out reports, vendor usage page.
                     if (ok and caps.usage_page >= 0xFF00 and caps.output_length == _PACKET
                             and caps.input_length == _PACKET):
-                        matches.append((handle, attributes.version))
+                        matches.append((handle, attributes.version, attributes.product))
                         keep = True
             finally:
                 if not keep:
                     self._k.CloseHandle(handle)
         if len(matches) != 1:
-            for handle, _ in matches:
+            for handle, _, _ in matches:
                 self._k.CloseHandle(handle)
             raise OSError("没有找到唯一的 Claw 手柄配置接口")
-        self._handle, self.version = matches[0]
+        self._handle, self.version, self.product = matches[0]
         return self
 
     def close(self):

@@ -26,7 +26,7 @@ function Get-Relative([string]$Root, [string]$Folder) {
 
 # 1. The agent: everything that runs on the device, independent of Steam and Decky.
 $agentApp = Join-Path $AgentHome 'app'
-$agentFiles = @(('bin\ClawRouter-'+$taskVersion+'.exe'),('bin\ClawTouchBridge-'+$taskVersion+'.exe'),'bin\SteamAdminLauncher.exe','bin\CompatibilityUtility.exe',('bin\ClawPower-'+$taskVersion+'.exe'),'bin\pawnio\IntelMSR.bin','resources\clawtweaks-home.patch.gz','claw_agent.py','claw_service.py','claw_compatibility.py','claw_navigation_haptics.py','claw_magpie.py','claw_overlay_frames.py','claw_power.py','claw_rumble.py','plugin.json')
+$agentFiles = @(('bin\ClawRouter-'+$taskVersion+'.exe'),('bin\ClawTouchBridge-'+$taskVersion+'.exe'),'bin\SteamAdminLauncher.exe','bin\CompatibilityUtility.exe',('bin\ClawPower-'+$taskVersion+'.exe'),'bin\pawnio\IntelMSR.bin','resources\clawtweaks-home.patch.gz','claw_agent.py','claw_service.py','claw_compatibility.py','claw_navigation_haptics.py','claw_magpie.py','claw_overlay_frames.py','claw_power.py','claw_rumble.py','claw_gamepad_fw.py','plugin.json')
 $agentFiles += Get-Relative $taskSource 'bin\magpie'
 Copy-Changed $taskSource $agentApp $agentFiles $null
 
