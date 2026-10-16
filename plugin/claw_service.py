@@ -287,6 +287,34 @@ class Service:
     async def set_refresh_rate(self, hz):
         return await self._power.system_set("refresh_set", hz=self._number(hz, 24, 500))
 
+    # ---- 显示与声音 (ClawLibrary control centre) ---------------------------------------
+    async def get_display_state(self):
+        return await self._power.display()
+
+    async def set_resolution(self, width, height):
+        return await self._power.display("resolution_set", width=self._number(width, 640, 7680),
+                                         height=self._number(height, 480, 4320))
+
+    async def set_vrr(self, enabled):
+        if type(enabled) is not bool:
+            raise ValueError("可变刷新率开关格式错误")
+        return await self._power.display("vrr_set", enabled=enabled)
+
+    async def set_hdr(self, enabled):
+        if type(enabled) is not bool:
+            raise ValueError("HDR 开关格式错误")
+        return await self._power.display("hdr_set", enabled=enabled)
+
+    async def set_audio_output(self, output):
+        if type(output) is not str or not output or len(output) > 400:
+            raise ValueError("输出设备格式错误")
+        return await self._power.display("audio_output_set", output=output)
+
+    async def set_mic_mute(self, muted):
+        if type(muted) is not bool:
+            raise ValueError("麦克风开关格式错误")
+        return await self._power.display("mic_mute_set", muted=muted)
+
     async def set_fps_limit(self, fps):
         game = (self._power.sys_cache or {}).get("game") or {}
         return await self._power.system_set("fps_limit_set", fps=self._number(fps, 0, 360), exe=game.get("exe") or "")

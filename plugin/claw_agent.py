@@ -55,6 +55,8 @@ METHODS = {
     # Game Bar widget
     "widget_state", "set_brightness", "set_volume", "set_mute", "set_refresh_rate", "set_fps_limit",
     "close_game", "power_action", "toggle_keyboard", "screenshot",
+    # ClawLibrary 显示与声音
+    "get_display_state", "set_resolution", "set_vrr", "set_hdr", "set_audio_output", "set_mic_mute",
 }
 
 

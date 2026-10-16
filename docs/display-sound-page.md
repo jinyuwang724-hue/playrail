@@ -41,14 +41,21 @@
 | `set_volume` | 0–100 | 有 |
 | `set_mute` | bool | 有 |
 | `set_refresh_rate` | hz | 有 |
-| `set_resolution` | w, h | 新 |
-| `set_vrr` | bool | 新 |
-| `set_hdr` | bool | 新 |
+| `set_resolution` | w, h | 有（2026-10-16，未真机测）|
+| `set_vrr` | bool | 有（2026-10-16，未真机测）|
+| `set_hdr` | bool | 有（2026-10-16，未真机测）|
 | `set_auto_brightness` | bool | 新 |
 | `set_night_light` | on, strength 0–100 | 新 |
 | `set_display_scale` | percent | 新 |
-| `set_audio_output` | endpoint id | 新 |
-| `set_mic_mute` | bool | 新 |
+| `set_audio_output` | endpoint id | 有（2026-10-16，未真机测）|
+| `set_mic_mute` | bool | 有（2026-10-16，未真机测）|
 | `set_gpu_option` | name, value（name = gpu 里的字段名） | 新 |
 
 新方法都要加进 `plugin/claw_agent.py` 的白名单。
+
+## 实现位置
+
+- 读和「有」的几项：`native/ClawDisplay.cs`（ClawPower.exe 里的 `DisplayAudio`），命令 `display_read` / `resolution_set` / `vrr_set` / `hdr_set` / `audio_output_set` / `mic_mute_set`，回 `reply["display"]`；Python 侧 `ClawPower.display()`、`ClawService.get_display_state` 等。
+- VRR 写的是 `HKCU\Software\Microsoft\DirectX\UserGpuPreferences` 的 `DirectXUserGlobalSettings` 里的 `VRROptimizeEnable`（设置 → 显示 → 图形里的开关）。注意 ClawPower 是提权跑的：同一个用户账户时 HKCU 一致，要真机确认。
+- 输出设备切换用未公开的 `IPolicyConfig`（三个角色都设）。
+- 还没写：自动亮度、夜间模式、屏幕缩放、显卡（IGCL）各项，前端显示「后台还没接上」。
