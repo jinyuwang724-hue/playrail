@@ -277,3 +277,26 @@ M 键功能：MSI 枚举 0 宏、1 组合、2 禁用；hid-msi（v5 起特意交
 
 没有装到 `%LOCALAPPDATA%\ClawToolbox\app`：安装基线分支那边还有别的会话没提交的改动，装上需要后台换版本重启。
 合进安装基线后按 `install.ps1` 正常装即可（从 Claude 应用里要经 `tools\Invoke-OutsideApp.ps1`）。
+
+## 已实现的写入接口（2026-10-16，分支 claude/gamepad-fw-readonly 的 c1cf329）
+
+范围全部照 MSI Center M，超出直接返回错误。每个写入方法成功后都返回一份新的 `get_gamepad_state()`。
+
+| 方法 | 参数 | 说明 |
+|---|---|---|
+| `set_stick_deadzone(side, deadzone, outer)` | side `left`/`right`；死区 0–50；外圈 75–100 | |
+| `set_stick_swap(enabled)` | bool | 左摇杆块 +3=1、+6=2，右摇杆块 +3=1、+6=1（同 MSI）；false = 放回原值 |
+| `set_trigger_range(side, start, end)` | 0–100，start < end | 同时把死区开关位置 1 |
+| `set_quick_trigger(side, enabled)` | bool | 0x35 / 0x36 |
+| `set_back_key(key, codes)` | `m1`/`m2`；1–5 个键码，`[0xFF]` = 不映射 | 序号 1、映射位开、连发关；恢复用 `restore_gamepad("m1")` |
+| `set_key_map(source, codes)` | source：A B X Y LB RB LT RT LS RS Up Down Left Right | `[自己的键码]` = 放回原值。LT/RT 写扳机块 +5，标志位只动 bit0/bit2 |
+| `set_desktop_key_map(source, codes)` | 同上 | 只在手柄处于桌面模式时写进去，回到手柄模式自动放回（同 MSI） |
+| `set_light(effect, color, brightness, speed, direction, frames)` | effect：off / monocolor / breathe / rainbow / ripple / custom / modeinfo；color `#rrggbb`；亮度 0–100；速度 0 慢 / 1 中 / 2 快；direction `cw`/`ccw`（水波）；frames（custom，1–8 帧，每帧一个颜色或 9 个区的颜色） | 帧按 MSI 布局写在槽 0。MSI 的速度：呼吸 11/14/17、幻彩 13/15/17、水波 14/17/20（固件字节 = 20 − 速度）；常亮 17、关闭 15 |
+| `set_gamepad_mode(mode)` | `xinput` / `desktop` | 0x24 后等手柄报告新模式，再写当前模式该有的映射和模式指示灯。**还没在真机上试过**（用户要求先保留） |
+| `restore_gamepad(what)` | `all` / `sticks` / `triggers` / `backkeys` / `keys` / `desktopkeys` / `light` / 单项名（如 `stick.left`、`m1`） | 写回第一次写之前存的原值 |
+| `set_rumble_strength(left, right)` | 各 0–100；只给一个参数 = 左右相同 | `get_rumble_state` 返回 `current [左, 右]`、`left`、`right` |
+
+`get_gamepad_state()` 新增：`keys`（14 个源键当前映射）、`sticks.swap`、`light.speedLevel`（0–2）、`light.color` 改成 `[r, g, b]`、`light.managed`、`managed`（我们接管的项目）、`desktopKeys`。
+固件里的灯光只存帧，所以读回时：和我们写进去的一致就报我们设的效果 / 速度 / 方向，否则按帧推断。
+
+后台每分钟检查一次接管的字节（启动后 3 / 30 / 120 秒也查），被 ClawTweaks 等改掉就写回去；定时检查最多 10 分钟存一次 ROM。
