@@ -1,6 +1,10 @@
-// 手柄线稿高亮区域：在 4 倍放大的线稿上从种子点漫水填充（碰到线条停），外扩一点盖住线的半边，
-// 描出外轮廓 → 抽稀 → Chaikin 平滑，输出原图像素坐标的闭合多边形（regions.txt），运行时用 Win2D 抗锯齿填充。
-// 用法：tracer <front.png> <back.png> <regions.txt> <preview.png>
+// 手柄线稿素材工具（游戏库原生版 Assets/Pad 用）。
+//   clean <src.png> <dst.png>
+//       去掉 MSI 示意图里的半透明红色填充，得到干净线稿（见 Clean.cs）。
+//   regions <spec.txt> <regions.txt> <preview-dir>
+//       按 spec 每行「名字 面 图 方式 种子x,种子y 外扩 最小y」描高亮区域：在 4 倍放大的图上从种子点漫水填充
+//       （clear = 透明像素、碰到线条停；solid = 不透明的实心块；red = MSI 涂红的那块），外扩一点盖住线的半边，
+//       描外轮廓 → Douglas–Peucker 抽稀 → Chaikin 平滑，输出原图像素坐标的闭合多边形；运行时用 Win2D 抗锯齿填充。
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -9,76 +13,98 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 
 const int K = 4;
-var front = Load(args[0], out int fw, out int fh);
-var back = Load(args[1], out int bw, out int bh);
-var jobs = new (string Name, bool Back, int X, int Y, bool Clear, int Grow, int MinY)[]
+
+if (args[0] == "clean") { Clean.Run(args[1], args[2]); return; }
+
+string specDir = Path.GetDirectoryName(Path.GetFullPath(args[1]))!;
+var sb = new StringBuilder("# 手柄线稿高亮区域：名字 面 之后是该面原图像素坐标的闭合轮廓 x,y（tools/PadRegions 按 regions.spec 生成）\n");
+var images = new Dictionary<string, (byte[] Px, int W, int H)>();
+var previews = new Dictionary<string, List<List<Point>>>();
+var faceImage = new Dictionary<string, string>();
+foreach (var raw in File.ReadAllLines(args[1]))
 {
-    ("GripL", false, 40, 240, true, 3, 150), ("GripR", false, 660, 240, true, 3, 150),
-    ("LB", false, 75, 22, true, 3, 0), ("RB", false, 625, 22, true, 3, 0),
-    ("M1", true, 112, 125, false, 2, 0), ("M2", true, 586, 125, false, 2, 0),
-};
-var sb = new StringBuilder("# 手柄线稿高亮区域：名字 面(front/back) 之后是原图像素坐标的闭合轮廓 x,y（tools 里的 tracer 从线稿生成）\n");
-var polys = new List<(bool Back, List<Point> Pts)>();
-foreach (var j in jobs)
-{
-    var px = j.Back ? back : front; int w = (j.Back ? bw : fw) * K, h = (j.Back ? bh : fh) * K;
-    var m = Fill(px, w, h, j.X * K, j.Y * K, j.Clear, j.Grow, j.MinY * K);
-    var pts = Smooth(Simplify(Outline(m, w, h), 1.2), 2).Select(p => new Point(p.X / K, p.Y / K)).ToList();
-    sb.Append(j.Name).Append(' ').Append(j.Back ? "back" : "front");
+    var line = raw.Trim();
+    if (line.Length == 0 || line[0] == '#') continue;
+    var f = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+    string name = f[0], face = f[1], image = Path.Combine(specDir, f[2]), mode = f[3];
+    var seed = f[4].Split(',').Select(int.Parse).ToArray();
+    int grow = int.Parse(f[5]), minY = int.Parse(f[6]);
+    if (!images.TryGetValue(image, out var img)) images[image] = img = Load(image);
+    faceImage[face] = image;
+    var m = Fill(img.Px, img.W, img.H, seed[0] * K, seed[1] * K, mode, grow, minY * K);
+    var pts = Smooth(Simplify(Outline(m, img.W, img.H), 1.2), 2).Select(p => new Point(p.X / K, p.Y / K)).ToList();
+    sb.Append(name).Append(' ').Append(face);
     foreach (var p in pts) sb.Append(' ').Append(p.X.ToString("0.##", CultureInfo.InvariantCulture)).Append(',').Append(p.Y.ToString("0.##", CultureInfo.InvariantCulture));
     sb.Append('\n');
-    polys.Add((j.Back, pts));
-    Console.WriteLine($"{j.Name}: {pts.Count} pts");
+    (previews.TryGetValue(face, out var list) ? list : previews[face] = new()).Add(pts);
+    Console.WriteLine($"{name} ({face}): {pts.Count} pts");
 }
 File.WriteAllText(args[2], sb.ToString(), new UTF8Encoding(false));
 
-// 预览：线稿 2 倍 + 区域半透明青色
-var dv = new DrawingVisual();
-using (var dc = dv.RenderOpen())
+// 预览：每个面一张，线稿 2 倍 + 区域半透明青色
+Directory.CreateDirectory(args[3]);
+foreach (var (face, polys) in previews)
 {
-    dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(30, 30, 34)), null, new Rect(0, 0, fw * 2, fh * 4));
-    dc.DrawImage(new BitmapImage(new Uri(Path.GetFullPath(args[0]))), new Rect(0, 0, fw * 2, fh * 2));
-    dc.DrawImage(new BitmapImage(new Uri(Path.GetFullPath(args[1]))), new Rect(0, fh * 2, fw * 2, fh * 2));
-    var brush = new SolidColorBrush(Color.FromArgb(110, 100, 220, 220));
-    foreach (var (isBack, pts) in polys)
+    var src = new BitmapImage(new Uri(faceImage[face]));
+    int w = src.PixelWidth * 2, h = src.PixelHeight * 2;
+    var dv = new DrawingVisual();
+    using (var dc = dv.RenderOpen())
     {
-        var g = new StreamGeometry();
-        using (var c = g.Open())
+        dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(30, 30, 34)), null, new Rect(0, 0, w, h));
+        dc.DrawImage(src, new Rect(0, 0, w, h));
+        var brush = new SolidColorBrush(Color.FromArgb(110, 100, 220, 220));
+        foreach (var pts in polys)
         {
-            double oy = isBack ? fh * 2 : 0;
-            c.BeginFigure(new Point(pts[0].X * 2, pts[0].Y * 2 + oy), true, true);
-            c.PolyLineTo(pts.Skip(1).Select(p => new Point(p.X * 2, p.Y * 2 + oy)).ToList(), true, true);
+            var g = new StreamGeometry();
+            using (var c = g.Open())
+            {
+                c.BeginFigure(new Point(pts[0].X * 2, pts[0].Y * 2), true, true);
+                c.PolyLineTo(pts.Skip(1).Select(p => new Point(p.X * 2, p.Y * 2)).ToList(), true, true);
+            }
+            dc.DrawGeometry(brush, null, g);
         }
-        dc.DrawGeometry(brush, null, g);
     }
+    var rt = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+    rt.Render(dv);
+    var enc = new PngBitmapEncoder();
+    enc.Frames.Add(BitmapFrame.Create(rt));
+    using var fs = File.Create(Path.Combine(args[3], $"preview-{face}.png"));
+    enc.Save(fs);
 }
-var rt = new RenderTargetBitmap(fw * 2, fh * 4, 96, 96, PixelFormats.Pbgra32);
-rt.Render(dv);
-var enc = new PngBitmapEncoder();
-enc.Frames.Add(BitmapFrame.Create(rt));
-using (var fs = File.Create(args[3])) enc.Save(fs);
 
-// 线稿放大 K 倍（高质量插值）后取 BGRA 像素
-static byte[] Load(string path, out int w, out int h)
+// 图放大 K 倍（高质量插值）后取 BGRA 像素
+static (byte[] Px, int W, int H) Load(string path)
 {
     var src = new BitmapImage(new Uri(Path.GetFullPath(path)));
-    w = src.PixelWidth; h = src.PixelHeight;
+    int w = src.PixelWidth * K, h = src.PixelHeight * K;
     var dv = new DrawingVisual();
     RenderOptions.SetBitmapScalingMode(dv, BitmapScalingMode.HighQuality);
-    using (var dc = dv.RenderOpen()) dc.DrawImage(src, new Rect(0, 0, w * K, h * K));
-    var rt = new RenderTargetBitmap(w * K, h * K, 96, 96, PixelFormats.Pbgra32);
+    using (var dc = dv.RenderOpen()) dc.DrawImage(src, new Rect(0, 0, w, h));
+    var rt = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
     rt.Render(dv);
-    var px = new byte[w * K * h * K * 4];
-    rt.CopyPixels(px, w * K * 4, 0);
-    return px;
+    var px = new byte[w * h * 4];
+    rt.CopyPixels(px, w * 4, 0);
+    return (px, w, h);
 }
 
-static bool[] Fill(byte[] px, int w, int h, int sx, int sy, bool clear, int grow, int minY)
+static bool[] Fill(byte[] px, int w, int h, int sx, int sy, string mode, int grow, int minY)
 {
-    bool Open(int i) => clear ? px[i * 4 + 3] < 70 : px[i * 4 + 3] >= 70;
+    // 像素是预乘过的 BGRA：红块判断要先除回 alpha
+    bool Open(int i)
+    {
+        byte a = px[i * 4 + 3];
+        return mode switch
+        {
+            "clear" => a < 70,
+            "solid" => a >= 70,
+            _ => a > 8 && Clean.IsRed((byte)Math.Min(255, px[i * 4] * 255 / a), (byte)Math.Min(255, px[i * 4 + 1] * 255 / a), (byte)Math.Min(255, px[i * 4 + 2] * 255 / a), a),
+        };
+    }
     var m = new bool[w * h];
     var q = new Queue<int>();
-    int s0 = sy * w + sx; m[s0] = true; q.Enqueue(s0);
+    int s0 = sy * w + sx;
+    if (!Open(s0)) throw new InvalidOperationException($"种子点 {sx / K},{sy / K} 不在区域里");
+    m[s0] = true; q.Enqueue(s0);
     while (q.Count > 0)
     {
         int i = q.Dequeue(), x = i % w, y = i / w;
