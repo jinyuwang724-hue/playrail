@@ -390,6 +390,20 @@ public static class Bench
                 case "recperfmodes": await RecPerfModesAsync(s); break;
                 case "recgamepad": await RecGamepadAsync(s); break;
                 case "recpicker": await RecPickerAsync(s); break;
+                case "recdisplay":
+                {
+                    // 显示与声音：进页面，焦点从上走到下（只挪焦点，不改亮度、音量）
+                    await Task.Delay(1500);
+                    int step = 0;
+                    async Task Step(int ms, Action a) { a(); Log.Info($"bench step {++step}"); await Task.Delay(ms); }
+                    await Step(1500, s.ToggleControlCenter);
+                    for (int i = 0; i < 3; i++) await Step(500, () => s.Move(Direction.Right));
+                    await Step(3000, s.Activate);
+                    for (int i = 0; i < 4; i++) await Step(1500, () => s.Move(Direction.Down));
+                    await Step(800, s.Back);
+                    await Step(800, s.Back);
+                    break;
+                }
                 case "perfsave": await PerfSaveTestAsync(s); break;
                 case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
