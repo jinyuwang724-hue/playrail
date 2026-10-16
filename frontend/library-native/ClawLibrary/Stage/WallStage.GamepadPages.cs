@@ -18,16 +18,12 @@ public sealed partial class WallStage
     private static readonly string[] GpSpecialChoices = { "原功能", "主菜单", "快速访问", "超分开关", "不做事" };
     private const string GpLater = "后台的手柄固件写入还没上线，接上后这里就能改";
 
-    /// <summary>手柄模式的映射：左右两列，各自按手柄上从上到下（扳机、肩键、小按键、摇杆、十字键 / ABXY、背键）。</summary>
-    private static readonly string[] GpMapLeft = { "LT", "LB", "Back", "QS", "LStick", "LS", "Up", "Down", "Left", "Right", "M1" };
-    private static readonly string[] GpMapRight = { "RT", "RB", "Start", "Claw", "Y", "X", "B", "A", "RStick", "RS", "M2" };
-    /// <summary>桌面模式的映射：只有固件管得到的键（桌面模式下固件直接发键鼠，软件输入层不参与）。</summary>
-    private static readonly string[] GpDesktopLeft = { "LT", "LB", "LS", "Up", "Down", "Left", "Right" };
-    private static readonly string[] GpDesktopRight = { "RT", "RB", "Y", "X", "B", "A", "RS" };
+    // 按键映射页（手柄模式 / 桌面模式）的格子和布局在 WallStage.GamepadMap.cs。
 
     private void BuildGpItems()
     {
         _gpItems.Clear();
+        if (GpIsMapPage) { BuildGpMapItems(GpCatId == "dkmap"); return; }
         var left = new List<GpItem>();
         var right = new List<GpItem>();
         GpItem? center = null;
@@ -37,13 +33,6 @@ public sealed partial class WallStage
 
         switch (GpCatId)
         {
-            case "gpmap" or "dkmap":
-            {
-                bool desktop = GpCatId == "dkmap";
-                foreach (var src in desktop ? GpDesktopLeft : GpMapLeft) left.Add(GpMapCell(src, desktop));
-                foreach (var src in desktop ? GpDesktopRight : GpMapRight) right.Add(GpMapCell(src, desktop));
-                break;
-            }
             case "stick":
             {
                 foreach (var (side, list, key) in new[] { ("left", left, "LS"), ("right", right, "RS") })

@@ -100,6 +100,11 @@ public sealed partial class WallStage
         public Func<int, string>? Format;
         public Action<int>? SetNumber;
         public Action? Press;
+        /// <summary>按键映射页的格子（WallStage.GamepadMap.cs）：Col -1 = 左侧、-2 = 右侧、0…3 = 底部四栏；Cx / Cy 是找焦点用的中心；Tokens = 映射值的图标块。</summary>
+        public bool Map;
+        public int Col;
+        public float Cx, Cy;
+        public List<GpTok>? Tokens;
         public bool Adjustable => !Disabled && (Choices != null || Number != null);
     }
 
@@ -143,6 +148,7 @@ public sealed partial class WallStage
         _gpInSide = true;
         _gpFocus = 0;
         BuildGpItems();
+        GpPlaceArt(instant: true);
         GpShowFaces(GpPageFaces(), instant: true);
         _gpShown = _pad?.Last ?? default;
         PaintGp();
@@ -502,6 +508,7 @@ public sealed partial class WallStage
                 _gpCat = c;
                 _gpFocus = 0;
                 BuildGpItems();
+                GpPlaceArt();
                 GpShowFaces(GpPageFaces());
                 PaintGpBody();
             }
@@ -556,7 +563,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>设置项的中心（设计 px），按方位找下一个焦点用：说明文字那块。</summary>
-    private static Vector2 GpCenter(GpItem it) =>
+    private static Vector2 GpCenter(GpItem it) => it.Map ? new(it.Cx, it.Cy) :
         new(it.Side < 0 ? it.X - 80 : it.Side > 0 ? it.X + 80 : it.X, it.Y + (it.Compact ? 10 : 13));
 
     private void GpEnterContent()
@@ -619,6 +626,7 @@ public sealed partial class WallStage
             }));
             _gpSpot.Size = new Vector2(sw * k, sh * k);
             _gpSpot.Offset = new Vector3((GpCx - sw / 2) * k, (GpCy - sh / 2) * k, 0);
+            GpPlaceArt(instant: true);   // 线稿整层的位移是物理像素，缩放变了要重算
             if (_gpArtLoaded)
             {
                 _gpArtK = k;
@@ -680,11 +688,13 @@ public sealed partial class WallStage
 
         PaintGpSidebar(ds);
         if (_gpPicker != null) { PaintGpPicker(ds, accent); return; }
-        if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpCy, 300);
+        if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpIsMapPage ? GpMapCy : GpCy, 300);
+        if (GpIsMapPage) PaintGpMapHeads(ds);
 
         var focus = GpFocusItem;
         // 两侧的设置：焦点那项拉一根细线到它管的键（摇杆映射那种没有 Key 的，连到它点亮的那块）
-        string target = focus == null || focus.Side == 0 ? "" : focus.Key.Length > 0 ? focus.Key : focus.Lights?.FirstOrDefault() ?? "";
+        // 按键映射页不拉线：焦点那行白字，线稿上它管的那块染色就够了
+        string target = focus == null || focus.Side == 0 || focus.Map ? "" : focus.Key.Length > 0 ? focus.Key : focus.Lights?.FirstOrDefault() ?? "";
         if (focus != null && target.Length > 0 && GpKeys.TryGetValue(target, out var fk) && _gpFacesShown.Contains(fk.Face))
         {
             var r = GpKeyRect(fk);
@@ -698,7 +708,9 @@ public sealed partial class WallStage
             ds.FillCircle(start, 3, accent);
         }
 
-        foreach (var it in _gpItems) PaintGpItem(ds, it, it == focus);
+        foreach (var it in _gpItems)
+            if (it.Map) PaintGpMapRow(ds, it, it == focus);
+            else PaintGpItem(ds, it, it == focus);
 
         // 底部的按键提示（按键图标 + 字）
         if (GpIsMapPage)
