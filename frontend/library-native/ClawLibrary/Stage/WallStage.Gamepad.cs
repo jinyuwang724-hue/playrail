@@ -114,6 +114,9 @@ public sealed partial class WallStage
     private readonly List<GpItem> _gpItems = new();
     private JsonObject? _gpSettings;
     private JsonNode? _gpFw;
+    /// <summary>软件输入层：全局布局（get_input_layout 的 layout）和开关 / 状态（get_input_layer_state）。后台没有输入层时都是 null。</summary>
+    private JsonObject? _gpLayout;
+    private JsonNode? _gpLayer;
     /// <summary>左右马达的震动强度（0–100），读自 get_rumble_state 的 current。</summary>
     private int? _gpRumbleL, _gpRumbleR;
     private string? _gpError, _gpFwError;
@@ -269,6 +272,12 @@ public sealed partial class WallStage
                 _gpFwError = _gpFw == null ? Str(fw?["error"]) ?? "读不到手柄固件" : null;
             }
             catch (Exception ex) { _gpFw = null; _gpFwError = ex.Message.Contains("不支持") ? "后台还没有固件读取" : ex.Message; }
+            try
+            {
+                _gpLayer = await _agent.Call("get_input_layer_state");
+                if (_gpLayoutEdits == 0 && (await _agent.Call("get_input_layout"))?["layout"] is JsonObject lay) _gpLayout = (JsonObject)lay.DeepClone();
+            }
+            catch { _gpLayer = null; _gpLayout = null; }
         }
         catch (Exception ex)
         {

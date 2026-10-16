@@ -1,10 +1,12 @@
 // 控制中心 → 手柄 → 按键映射里，选中线稿上一个键按 A 之后的几层（结构照 Steam 输入，样式是我们自己的设计系统）：
-//   按键页：这个键的触发方式列表（触发方式 / 指令 / 设置），移除指令、恢复原键位、添加触发方式。
+//   按键页：这个键的触发方式（每个一组：触发方式 / 指令 / 设置），添加触发方式、禁用这个键、恢复原键位。
 //   选择指令：顶上一排页签（手柄 / 鼠标 / 键盘 / 数字键盘 / 系统，LB / RB 或在页签上 ← → 切），下面按实物布局摆键；
-//            键盘里 Ctrl / Shift / Alt / Win 按一下是叠加（组合键），再按一个普通键完成。最多 5 个键码（固件上限）。
-//   触发设置：连发、触感、延迟、切换、可中断……照 Steam；这些要软件输入层，先摆上、写「开发中」。
-// 写入：普通按压 + 手柄 / 键盘 / 鼠标 / 媒体键 → 固件（后台 set_back_key / set_key_map / set_desktop_key_map），零延迟；
-// 长按、双击、组合触发、系统动作等要软件输入层（另一个会话在做），没上线时提示。键码照 MSI KeyMapDefine。
+//            键盘里 Ctrl / Shift / Alt / Win 按一下是叠加（组合键），再按一个普通键完成。
+//   触发设置：长按时间、双击间隔、连发、切换、启动 / 结束延迟、可中断（触感、指令循环、反转输入第二批）。
+// 混合映射，每个键只归一层管（见 docs/gamepad-input-layer.md）：
+//   只用「普通按压 + 固件发得出的键」→ 写固件（set_back_key / set_key_map），零延迟，不用开输入层；
+//   用到长按 / 双击 / 组合触发、触发设置、系统动作 → 这个键进软件输入层的全局布局（save_input_layout），
+//   输入层开着时后台会把这个键在固件里放回原键、交给软件层。恢复原键位 = 从布局里拿掉 + 固件放回原键。
 using System.Numerics;
 using System.Text.Json.Nodes;
 using ClawLibrary.Engine;
@@ -19,43 +21,48 @@ public sealed partial class WallStage
 {
     private enum GpSubLevel { Key, Chooser, Settings }
 
-    /// <summary>键格：名字、键码（-1 = 要软件输入层）、位置（以格为单位的列、行）、宽度（格）。</summary>
-    private readonly record struct GpCell(string Label, int Code, float Col, float Row, float Units = 1);
+    /// <summary>
+    /// 键格：名字、固件键码（0 = 固件发不出）、软件层指令（"pad:B" "key:Tab" "mouse:Left" "wheel:Up" "sys:screenshot"，空 = 软件层也没有）、
+    /// 位置（以格为单位的列、行）、宽度（格）。
+    /// </summary>
+    private readonly record struct GpCell(string Label, int Code, string Cmd, float Col, float Row, float Units = 1);
 
     private sealed class GpPickerState
     {
         public string Source = "";
         public bool Desktop;
         public GpSubLevel Level = GpSubLevel.Key;
-        public int KeyFocus = 1, SettingsFocus = 1, Tab, Cell;
+        public int KeyFocus = 1, SettingsFocus = 1, Tab, Cell, Act;
         public bool InTabs;
-        public readonly List<int> Chord = new();
-        public int[] Current = Array.Empty<int>();
+        public readonly List<GpCell> Chord = new();
     }
 
     private GpPickerState? _gpPicker;
+    private int _gpLayoutEdits;
 
     private static readonly string[] GpActTypes = { "普通按压", "长按", "双击", "开始按压", "释放按压", "组合键" };
+    private static readonly string[] GpActIds = { "regular", "long", "double", "start", "release", "chord" };
     private static readonly string[] GpChooserTabs = { "手柄", "鼠标", "键盘", "数字键盘", "系统" };
-    private const string GpNeedsLayer = "要用软件输入层（另一个会话正在做），上线后就能用";
+    private static readonly string[] GpLayoutSources = { "A", "B", "X", "Y", "LB", "RB", "LT", "RT", "Back", "Start", "Guide", "LS", "RS", "Up", "Down", "Left", "Right", "M1", "M2" };
 
     // ---------------- 键表（按实物布局摆，列 / 行以格为单位） ----------------
 
     private static readonly GpCell[] GpPadCells =
     {
-        new("LT", 0x13, 0, 0, 2), new("LB", 0x05, 0, 1, 2),
-        new("↑", 0x15, 1, 2.6f), new("←", 0x17, 0, 3.6f), new("L 按下", 0x07, 1, 3.6f), new("→", 0x18, 2, 3.6f), new("↓", 0x16, 1, 4.6f),
-        new("上", 0x01, 1, 6), new("左", 0x03, 0, 7), new("右", 0x04, 2, 7), new("下", 0x02, 1, 8),
-        new("View", 0x0E, 5.5f, 0, 1.5f), new("Menu", 0x0F, 7.5f, 0, 1.5f), new("Xbox", 0x0D, 5.5f, 1, 1.5f), new("截图", 0x10, 7.5f, 1, 1.5f),
-        new("RT", 0x14, 12, 0, 2), new("RB", 0x06, 12, 1, 2),
-        new("Y", 0x0C, 13, 2.6f), new("X", 0x0B, 12, 3.6f), new("B", 0x0A, 14, 3.6f), new("A", 0x09, 13, 4.6f),
-        new("↑", 0x19, 13, 6), new("←", 0x1B, 12, 7), new("R 按下", 0x08, 13, 7), new("→", 0x1C, 14, 7), new("↓", 0x1A, 13, 8),
+        new("LT", 0x13, "pad:LT", 0, 0, 2), new("LB", 0x05, "pad:LB", 0, 1, 2),
+        new("↑", 0x15, "pad:LStickUp", 1, 2.6f), new("←", 0x17, "pad:LStickLeft", 0, 3.6f), new("L 按下", 0x07, "pad:LS", 1, 3.6f), new("→", 0x18, "pad:LStickRight", 2, 3.6f), new("↓", 0x16, "pad:LStickDown", 1, 4.6f),
+        new("上", 0x01, "pad:Up", 1, 6), new("左", 0x03, "pad:Left", 0, 7), new("右", 0x04, "pad:Right", 2, 7), new("下", 0x02, "pad:Down", 1, 8),
+        new("View", 0x0E, "pad:Back", 5.5f, 0, 1.5f), new("Menu", 0x0F, "pad:Start", 7.5f, 0, 1.5f), new("Xbox", 0x0D, "pad:Guide", 5.5f, 1, 1.5f), new("截图", 0x10, "", 7.5f, 1, 1.5f),
+        new("RT", 0x14, "pad:RT", 12, 0, 2), new("RB", 0x06, "pad:RB", 12, 1, 2),
+        new("Y", 0x0C, "pad:Y", 13, 2.6f), new("X", 0x0B, "pad:X", 12, 3.6f), new("B", 0x0A, "pad:B", 14, 3.6f), new("A", 0x09, "pad:A", 13, 4.6f),
+        new("↑", 0x19, "pad:RStickUp", 13, 6), new("←", 0x1B, "pad:RStickLeft", 12, 7), new("R 按下", 0x08, "pad:RS", 13, 7), new("→", 0x1C, "pad:RStickRight", 14, 7), new("↓", 0x1A, "pad:RStickDown", 13, 8),
     };
 
     private static readonly GpCell[] GpMouseCells =
     {
-        new("左键", 0xC8, 0, 0, 3), new("中键", 0xC9, 0, 1, 3), new("右键", 0xCA, 0, 2, 3), new("前进键", 0xCC, 0, 3.4f, 3), new("后退键", 0xCB, 0, 4.4f, 3),
-        new("滚轮上", 0xCD, 5, 0, 3), new("滚轮下", 0xCE, 5, 1, 3), new("移动至指定位置", -1, 5, 3.4f, 3), new("按像素量移动", -1, 5, 4.4f, 3),
+        new("左键", 0xC8, "mouse:Left", 0, 0, 3), new("中键", 0xC9, "mouse:Middle", 0, 1, 3), new("右键", 0xCA, "mouse:Right", 0, 2, 3),
+        new("前进键", 0xCC, "mouse:Forward", 0, 3.4f, 3), new("后退键", 0xCB, "mouse:Back", 0, 4.4f, 3),
+        new("滚轮上", 0xCD, "wheel:Up", 5, 0, 3), new("滚轮下", 0xCE, "wheel:Down", 5, 1, 3), new("滚轮左", 0, "wheel:Left", 5, 2, 3), new("滚轮右", 0, "wheel:Right", 5, 3, 3),
     };
 
     private static readonly GpCell[] GpKeyboardCells = BuildKeyboardCells();
@@ -63,68 +70,159 @@ public sealed partial class WallStage
     private static GpCell[] BuildKeyboardCells()
     {
         var cells = new List<GpCell>();
-        void Row(float row, params (string Label, int Code, float Units)[] keys)
+        void Row(float row, params (string Label, int Code, string Name, float Units)[] keys)
         {
             float col = 0;
-            foreach (var (label, code, units) in keys) { cells.Add(new(label, code, col, row, units)); col += units + 0.12f; }
+            foreach (var (label, code, name, units) in keys) { cells.Add(new(label, code, "key:" + name, col, row, units)); col += units + 0.12f; }
         }
-        (string, int, float) K(string l, int c, float u = 1) => (l, c, u);
-        Row(0, new[] { K("Esc", 0x32) }.Concat(Enumerable.Range(0, 12).Select(i => K($"F{i + 1}", 0x33 + i))).ToArray());
-        Row(1.1f, new[] { K("`", 0x3F) }.Concat("1 2 3 4 5 6 7 8 9 0".Split(' ').Select((l, i) => K(l, 0x40 + i))).Concat(new[] { K("-", 0x4A), K("=", 0x4B), K("Backspace", 0x4C, 2) }).ToArray());
-        Row(2.2f, new[] { K("Tab", 0x4D, 1.5f) }.Concat("Q W E R T Y U I O P".Split(' ').Select((l, i) => K(l, 0x4E + i))).Concat(new[] { K("[", 0x58), K("]", 0x59), K("\\", 0x5A, 1.5f) }).ToArray());
-        Row(3.3f, new[] { K("Caps", 0x5B, 1.75f) }.Concat("A S D F G H J K L".Split(' ').Select((l, i) => K(l, 0x5C + i))).Concat(new[] { K(";", 0x65), K("'", 0x66), K("Enter", 0x67, 2.4f) }).ToArray());
-        Row(4.4f, new[] { K("Shift", 0x68, 2.3f) }.Concat("Z X C V B N M".Split(' ').Select((l, i) => K(l, 0x69 + i))).Concat(new[] { K(",", 0x70), K(".", 0x71), K("/", 0x72), K("Shift", 0x73, 2.9f) }).ToArray());
-        Row(5.5f, K("Ctrl", 0x74, 1.5f), K("Win", 0x75, 1.5f), K("Alt", 0x76, 1.5f), K("空格", 0x77, 6.2f), K("Alt", 0x78, 1.5f), K("Ctrl", 0x79, 1.5f));
+        (string, int, string, float) K(string l, int c, string name, float u = 1) => (l, c, name, u);
+        Row(0, new[] { K("Esc", 0x32, "Esc") }.Concat(Enumerable.Range(0, 12).Select(i => K($"F{i + 1}", 0x33 + i, $"F{i + 1}"))).ToArray());
+        Row(1.1f, new[] { K("`", 0x3F, "Grave") }.Concat("1 2 3 4 5 6 7 8 9 0".Split(' ').Select((l, i) => K(l, 0x40 + i, l)))
+            .Concat(new[] { K("-", 0x4A, "Minus"), K("=", 0x4B, "Equals"), K("Backspace", 0x4C, "Backspace", 2) }).ToArray());
+        Row(2.2f, new[] { K("Tab", 0x4D, "Tab", 1.5f) }.Concat("Q W E R T Y U I O P".Split(' ').Select((l, i) => K(l, 0x4E + i, l)))
+            .Concat(new[] { K("[", 0x58, "LeftBracket"), K("]", 0x59, "RightBracket"), K("\\", 0x5A, "Backslash", 1.5f) }).ToArray());
+        Row(3.3f, new[] { K("Caps", 0x5B, "CapsLock", 1.75f) }.Concat("A S D F G H J K L".Split(' ').Select((l, i) => K(l, 0x5C + i, l)))
+            .Concat(new[] { K(";", 0x65, "Semicolon"), K("'", 0x66, "Quote"), K("Enter", 0x67, "Enter", 2.4f) }).ToArray());
+        Row(4.4f, new[] { K("Shift", 0x68, "LShift", 2.3f) }.Concat("Z X C V B N M".Split(' ').Select((l, i) => K(l, 0x69 + i, l)))
+            .Concat(new[] { K(",", 0x70, "Comma"), K(".", 0x71, "Period"), K("/", 0x72, "Slash"), K("Shift", 0x73, "RShift", 2.9f) }).ToArray());
+        Row(5.5f, K("Ctrl", 0x74, "LCtrl", 1.5f), K("Win", 0x75, "LWin", 1.5f), K("Alt", 0x76, "LAlt", 1.5f), K("空格", 0x77, "Space", 6.2f), K("Alt", 0x78, "RAlt", 1.5f), K("Ctrl", 0x79, "RCtrl", 1.5f));
         return cells.ToArray();
     }
 
     private static readonly GpCell[] GpNumpadCells =
     {
-        new("Insert", 0x7A, 0, 0, 1.3f), new("Home", 0x7B, 1.42f, 0, 1.3f), new("PgUp", 0x7C, 2.84f, 0, 1.3f),
-        new("Delete", 0x7D, 0, 1.1f, 1.3f), new("End", 0x7E, 1.42f, 1.1f, 1.3f), new("PgDn", 0x7F, 2.84f, 1.1f, 1.3f),
-        new("↑", 0x80, 1.42f, 3.3f, 1.3f), new("←", 0x82, 0, 4.4f, 1.3f), new("↓", 0x81, 1.42f, 4.4f, 1.3f), new("→", 0x83, 2.84f, 4.4f, 1.3f),
-        new("播放", 0x95, 5, 0, 1.4f), new("停止", 0x96, 6.52f, 0, 1.4f), new("上一首", 0x98, 5, 1.1f, 1.4f), new("下一首", 0x97, 6.52f, 1.1f, 1.4f),
-        new("Num", 0x84, 9.5f, 0), new("/", 0x85, 10.62f, 0), new("*", 0x86, 11.74f, 0), new("-", 0x87, 12.86f, 0),
-        new("7", 0x92, 9.5f, 1.1f), new("8", 0x93, 10.62f, 1.1f), new("9", 0x94, 11.74f, 1.1f), new("+", 0x88, 12.86f, 1.1f),
-        new("4", 0x8F, 9.5f, 2.2f), new("5", 0x90, 10.62f, 2.2f), new("6", 0x91, 11.74f, 2.2f),
-        new("1", 0x8C, 9.5f, 3.3f), new("2", 0x8D, 10.62f, 3.3f), new("3", 0x8E, 11.74f, 3.3f), new("Enter", 0x8A, 12.86f, 3.3f),
-        new("0", 0x8B, 9.5f, 4.4f, 2.12f), new(".", 0x89, 11.74f, 4.4f),
+        new("Insert", 0x7A, "key:Insert", 0, 0, 1.3f), new("Home", 0x7B, "key:Home", 1.42f, 0, 1.3f), new("PgUp", 0x7C, "key:PageUp", 2.84f, 0, 1.3f),
+        new("Delete", 0x7D, "key:Delete", 0, 1.1f, 1.3f), new("End", 0x7E, "key:End", 1.42f, 1.1f, 1.3f), new("PgDn", 0x7F, "key:PageDown", 2.84f, 1.1f, 1.3f),
+        new("↑", 0x80, "key:Up", 1.42f, 3.3f, 1.3f), new("←", 0x82, "key:Left", 0, 4.4f, 1.3f), new("↓", 0x81, "key:Down", 1.42f, 4.4f, 1.3f), new("→", 0x83, "key:Right", 2.84f, 4.4f, 1.3f),
+        new("播放", 0x95, "key:MediaPlayPause", 5, 0, 1.4f), new("停止", 0x96, "key:MediaStop", 6.52f, 0, 1.4f),
+        new("上一首", 0x98, "key:MediaPrev", 5, 1.1f, 1.4f), new("下一首", 0x97, "key:MediaNext", 6.52f, 1.1f, 1.4f),
+        new("Num", 0x84, "key:NumLock", 9.5f, 0), new("/", 0x85, "key:NumDivide", 10.62f, 0), new("*", 0x86, "key:NumMultiply", 11.74f, 0), new("-", 0x87, "key:NumSubtract", 12.86f, 0),
+        new("7", 0x92, "key:Num7", 9.5f, 1.1f), new("8", 0x93, "key:Num8", 10.62f, 1.1f), new("9", 0x94, "key:Num9", 11.74f, 1.1f), new("+", 0x88, "key:NumAdd", 12.86f, 1.1f),
+        new("4", 0x8F, "key:Num4", 9.5f, 2.2f), new("5", 0x90, "key:Num5", 10.62f, 2.2f), new("6", 0x91, "key:Num6", 11.74f, 2.2f),
+        new("1", 0x8C, "key:Num1", 9.5f, 3.3f), new("2", 0x8D, "key:Num2", 10.62f, 3.3f), new("3", 0x8E, "key:Num3", 11.74f, 3.3f), new("Enter", 0x8A, "key:NumEnter", 12.86f, 3.3f),
+        new("0", 0x8B, "key:Num0", 9.5f, 4.4f, 2.12f), new(".", 0x89, "key:NumDecimal", 11.74f, 4.4f),
     };
 
     private static readonly GpCell[] GpSystemCells =
     {
-        new("音量 +", 0x99, 0, 0, 2.5f), new("音量 −", 0x9A, 0, 1.1f, 2.5f), new("静音", 0x9B, 0, 2.2f, 2.5f),
-        new("截图", -1, 3.2f, 0, 3), new("显示键盘", -1, 3.2f, 1.1f, 3), new("强制关闭游戏", -1, 3.2f, 2.2f, 3),
-        new("打开控制中心", -1, 6.9f, 0, 3), new("Steam 快速菜单", -1, 6.9f, 1.1f, 3), new("切换超分", -1, 6.9f, 2.2f, 3),
+        new("音量 +", 0x99, "sys:volumeUp", 0, 0, 2.5f), new("音量 −", 0x9A, "sys:volumeDown", 0, 1.1f, 2.5f), new("静音", 0x9B, "sys:mute", 0, 2.2f, 2.5f),
+        new("截图", 0, "sys:screenshot", 3.2f, 0, 3), new("显示键盘", 0, "sys:keyboard", 3.2f, 1.1f, 3), new("强制关闭游戏", 0, "", 3.2f, 2.2f, 3),
+        new("打开控制中心", 0, "", 6.9f, 0, 3), new("Steam 快速菜单", 0, "", 6.9f, 1.1f, 3), new("切换超分", 0, "", 6.9f, 2.2f, 3),
     };
 
     private static GpCell[] GpChooserCells(int tab) => tab switch { 0 => GpPadCells, 1 => GpMouseCells, 2 => GpKeyboardCells, 3 => GpNumpadCells, _ => GpSystemCells };
+    private static IEnumerable<GpCell> GpAllCells => GpPadCells.Concat(GpMouseCells).Concat(GpKeyboardCells).Concat(GpNumpadCells).Concat(GpSystemCells);
+    private static bool GpIsModifier(GpCell c) => c.Cmd is "key:LShift" or "key:RShift" or "key:LCtrl" or "key:RCtrl" or "key:LWin" or "key:LAlt" or "key:RAlt";
 
-    private static readonly int[] GpModifiers = { 0x68, 0x73, 0x74, 0x75, 0x76, 0x78, 0x79 };
-
-    /// <summary>键码 → 显示名（映射说明里用）。</summary>
+    /// <summary>固件键码 → 显示名（映射说明里用）。</summary>
     private static string GpCodeName(int code)
     {
-        foreach (var (cells, prefix) in new[] { (GpPadCells, "手柄 "), (GpMouseCells, "鼠标"), (GpKeyboardCells, ""), (GpNumpadCells, ""), (GpSystemCells, "") })
-            foreach (var c in cells)
-                if (c.Code == code)
-                    return cells == GpPadCells && code is >= 0x15 and <= 0x18 ? $"左摇杆 {c.Label}"
-                         : cells == GpPadCells && code is >= 0x19 and <= 0x1C ? $"右摇杆 {c.Label}"
-                         : cells == GpNumpadCells && code is >= 0x84 and <= 0x94 ? $"小键盘 {c.Label}" : prefix + c.Label;
+        foreach (var c in GpAllCells)
+            if (c.Code == code) return GpCellName(c);
         return code switch { 0x11 => "M1", 0x12 => "M2", 0x9C => "F23", 0x9D => "F22", 0xFF => "不映射", _ => $"0x{code:X2}" };
     }
+
+    private static string GpCellName(GpCell c) => c.Cmd switch
+    {
+        var s when s.StartsWith("pad:LStick") => $"左摇杆 {c.Label}",
+        var s when s.StartsWith("pad:RStick") => $"右摇杆 {c.Label}",
+        var s when s.StartsWith("pad:") => $"手柄 {c.Label}",
+        var s when s.StartsWith("mouse:") => $"鼠标{c.Label}",
+        var s when s.StartsWith("key:Num") && s != "key:NumLock" || s is "key:NumLock" => $"小键盘 {c.Label}",
+        _ => c.Label,
+    };
+
+    // ---------------- 软件层布局的读写 ----------------
+
+    /// <summary>这个键在软件层布局里的触发方式列表；不在布局里（归固件管）是 null。</summary>
+    private JsonArray? GpActs(string src) => _gpLayout?["buttons"]?[src] as JsonArray;
+
+    /// <summary>把这个键搬进布局：现在的固件映射变成一个「普通按压」触发方式（原键就是发它自己）。</summary>
+    private JsonArray GpEnsureActs(string src)
+    {
+        if (GpActs(src) is JsonArray acts) return acts;
+        _gpLayout ??= new JsonObject();
+        if (_gpLayout["buttons"] is not JsonObject buttons) _gpLayout["buttons"] = buttons = new JsonObject();
+        var codes = GpFirmwareCodes(src);
+        var cmd = codes.Length == 0 || codes.Length == 1 && codes[0] == GpNativeCode(src) ? GpPadCommand(src) : GpCommandFromCodes(codes);
+        var list = new JsonArray(new JsonObject { ["trigger"] = "regular", ["command"] = cmd });
+        buttons[src] = list;
+        return list;
+    }
+
+    private static JsonObject GpPadCommand(string src) => src is "M1" or "M2"
+        ? new JsonObject { ["type"] = "none" }
+        : new JsonObject { ["type"] = "gamepad", ["button"] = src };
+
+    /// <summary>固件键码 → 软件层指令：全是键盘键 → keyboard（组合）；一个手柄键 / 鼠标键 → 对应指令。</summary>
+    private static JsonObject GpCommandFromCodes(int[] codes)
+    {
+        var cells = codes.Select(c => GpAllCells.FirstOrDefault(x => x.Code == c)).Where(c => c.Cmd?.Length > 0).ToList();
+        if (cells.Count == 0) return new JsonObject { ["type"] = "none" };
+        if (cells.All(c => c.Cmd.StartsWith("key:")) && cells.Count <= 4)
+            return new JsonObject { ["type"] = "keyboard", ["keys"] = new JsonArray(cells.Select(c => (JsonNode?)c.Cmd[4..]).ToArray()) };
+        return GpCommandFromCell(cells[0], new List<GpCell>());
+    }
+
+    private static JsonObject GpCommandFromCell(GpCell cell, List<GpCell> chord)
+    {
+        var parts = cell.Cmd.Split(':', 2);
+        return parts[0] switch
+        {
+            "pad" => new JsonObject { ["type"] = "gamepad", ["button"] = parts[1] },
+            "key" => new JsonObject { ["type"] = "keyboard", ["keys"] = new JsonArray(chord.Append(cell).Take(4).Select(c => (JsonNode?)c.Cmd[4..]).ToArray()) },
+            "mouse" => new JsonObject { ["type"] = "mouse", ["button"] = parts[1] },
+            "wheel" => new JsonObject { ["type"] = "mouse", ["wheel"] = parts[1] },
+            "sys" => new JsonObject { ["type"] = "system", ["action"] = parts[1] },
+            _ => new JsonObject { ["type"] = "none" },
+        };
+    }
+
+    private static string GpCommandText(JsonNode? cmd)
+    {
+        string? Find(string c) => GpAllCells.Where(x => x.Cmd == c).Select(GpCellName).FirstOrDefault();
+        return Str(cmd?["type"]) switch
+        {
+            "gamepad" => Find("pad:" + Str(cmd!["button"])) ?? $"手柄 {Str(cmd!["button"])}",
+            "keyboard" => string.Join(" + ", (cmd!["keys"] as JsonArray ?? new JsonArray()).Select(k => Find("key:" + Str(k)) ?? Str(k))),
+            "mouse" => cmd!["wheel"] != null ? Find("wheel:" + Str(cmd["wheel"])) ?? "滚轮" : Find("mouse:" + Str(cmd["button"])) ?? "鼠标",
+            "system" => Find("sys:" + Str(cmd!["action"])) ?? Str(cmd!["action"]) ?? "系统",
+            _ => "无",
+        };
+    }
+
+    private int[] GpFirmwareCodes(string src)
+    {
+        JsonNode? codes = src switch
+        {
+            "M1" => _gpFw?["backKeys"]?["m1"]?["codes"], "M2" => _gpFw?["backKeys"]?["m2"]?["codes"],
+            _ => _gpFw?["keys"]?[src]?["codes"],
+        };
+        return (codes as JsonArray)?.Select(n => Int(n)).Where(c => c is > 0 and <= 0xFF).ToArray() ?? Array.Empty<int>();
+    }
+
+    /// <summary>存布局：本地先改（界面立刻跟着变），停手 400 ms 后存一次；后台校验不过会回中文错误，然后读回真实值。</summary>
+    private void GpSaveLayout()
+    {
+        int v = ++_gpLayoutEdits;
+        BuildGpItems();
+        PaintGpBody();
+        After(400, async () =>
+        {
+            if (v != _gpLayoutEdits || _gpLayout == null) return;
+            await GpWrite("save_input_layout", _gpLayout.DeepClone());
+            if (v == _gpLayoutEdits) _gpLayoutEdits = 0;
+            if (!GpLayerOn && _gpOpen) Toast("已存进软件输入层的布局；输入层现在关着，打开后才生效（「当前模式」页）");
+        });
+    }
+
+    private bool GpLayerOn => Str(_gpLayer?["owner"]) == "toolbox";
 
     // ---------------- 开 / 关 ----------------
 
     private void GpOpenPicker(string source, bool desktop)
     {
-        JsonNode? codes = source switch
-        {
-            "M1" => _gpFw?["backKeys"]?["m1"]?["codes"], "M2" => _gpFw?["backKeys"]?["m2"]?["codes"],
-            _ => desktop ? _gpFw?["desktopKeys"]?[source]?["codes"] : _gpFw?["keys"]?[source]?["codes"],
-        };
-        var current = (codes as JsonArray)?.Select(n => Int(n)).Where(c => c is > 0 and <= 0xFF).ToArray() ?? Array.Empty<int>();
-        _gpPicker = new GpPickerState { Source = source, Desktop = desktop, Current = current };
+        _gpPicker = new GpPickerState { Source = source, Desktop = desktop };
         PaintGpBody();
     }
 
@@ -133,6 +231,7 @@ public sealed partial class WallStage
         var p = _gpPicker!;
         if (p.Level != GpSubLevel.Key) { p.Level = GpSubLevel.Key; p.Chord.Clear(); p.InTabs = false; PaintGpBody(); return; }
         _gpPicker = null;
+        BuildGpItems();
         PaintGpBody();
     }
 
@@ -147,46 +246,153 @@ public sealed partial class WallStage
         PaintGpBody();
     }
 
-    // ---------------- 按键页 / 触发设置的行 ----------------
+    // ---------------- 按键页的行 ----------------
 
-    private string GpCurrentText(GpPickerState p) =>
-        p.Current.Length == 0 ? (_gpFw == null ? "—" : "原键位")
-        : p.Current.Length == 1 && p.Current[0] == GpNativeCode(p.Source) ? "原键位"
-        : string.Join(" + ", p.Current.Select(GpCodeName));
-
-    private List<PerfRow> GpKeyRows(GpPickerState p) => new()
+    /// <summary>这个键现在映射到什么（线稿旁的说明、按键页标题下）。</summary>
+    private string GpKeySummary(string src)
     {
-        new() { Section = true, Title = "触发 1" },
-        new()
+        if (GpActs(src) is JsonArray acts)
         {
-            Title = "触发方式", Choices = GpActTypes, Choice = 0,
-            Step = d => { if (d > 0) Toast($"{GpActTypes[1]}、{GpActTypes[2]}等{GpNeedsLayer}"); },
-            Press = () => Toast($"{GpActTypes[1]}、{GpActTypes[2]}等{GpNeedsLayer}"),
-        },
-        new() { Title = "指令", Value = GpCurrentText(p) + "  ›", Press = () => { p.Level = GpSubLevel.Chooser; p.Cell = 0; p.InTabs = false; PaintGpBody(); } },
-        new() { Title = "设置", Value = "连发 关 · 切换 关 · 延迟 0 ms  ›", Press = () => { p.Level = GpSubLevel.Settings; p.SettingsFocus = 1; PaintGpBody(); } },
-        new() { Section = true, Title = "这个键" },
-        new() { Title = "添加触发方式", Value = "开发中", Disabled = true, Press = () => Toast($"一个键叠多个触发方式{GpNeedsLayer}") },
-        new() { Title = "移除指令", Value = "按下不起作用  ›", Press = () => GpApplyMapping(new[] { 0xFF }) },
-        new() { Title = "恢复原键位", Value = $"{GpSourceName(p.Source)}自己  ›", Press = () => GpApplyMapping(new[] { GpNativeCode(p.Source) }) },
-    };
+            if (acts.Count == 0) return "禁用";
+            return string.Join("  ·  ", acts.Take(3).Select(a =>
+            {
+                int t = Math.Max(0, Array.IndexOf(GpActIds, Str(a?["trigger"]) ?? "regular"));
+                return (t == 0 && acts.Count == 1 ? "" : GpActTypes[t] + " ") + GpCommandText(a?["command"]);
+            })) + (acts.Count > 3 ? " …" : "");
+        }
+        var codes = GpFirmwareCodes(src);
+        if (codes.Length == 0) return _gpFw == null ? "—" : "原键位";
+        if (codes.Length == 1 && codes[0] == GpNativeCode(src)) return "原键位";
+        return string.Join(" + ", codes.Select(GpCodeName));
+    }
 
-    private List<PerfRow> GpSettingsRows()
+    private List<PerfRow> GpKeyRows(GpPickerState p)
     {
-        PerfRow Later(string title, string value) => new() { Title = title, Value = value, Disabled = true, Press = () => Toast(GpNeedsLayer) };
-        return new List<PerfRow>
+        string src = p.Source;
+        var rows = new List<PerfRow>();
+        var acts = GpActs(src);
+        int count = acts?.Count ?? 1;
+        for (int i = 0; i < count; i++)
         {
-            new() { Section = true, Title = "普通按压设置" },
-            Later("按住以重复（连发）", "关"),
-            Later("连发频率", "—"),
-            Later("触感强度", "关闭"),
-            Later("触发启动延迟", "0 ms"),
-            Later("触发结束延迟", "0 ms"),
-            Later("指令循环", "关"),
-            Later("切换", "关"),
-            Later("可中断", "开"),
-            Later("反转输入", "关"),
-        };
+            int idx = i;
+            var act = acts?[i];
+            int t = Math.Max(0, Array.IndexOf(GpActIds, Str(act?["trigger"]) ?? "regular"));
+            string cmdText = acts != null ? GpCommandText(act?["command"]) : GpKeySummary(src);
+            rows.Add(new PerfRow { Section = true, Title = count > 1 ? $"触发 {i + 1}" : "触发" });
+            rows.Add(new PerfRow
+            {
+                Title = "触发方式", Choices = GpActTypes, Choice = t,
+                Step = d =>
+                {
+                    int nt = Math.Clamp(t + d, 0, GpActIds.Length - 1);
+                    if (nt == t) return;
+                    var list = GpEnsureActs(src);
+                    var a = (JsonObject)list[idx]!;
+                    a["trigger"] = GpActIds[nt];
+                    if (GpActIds[nt] == "chord" && a["chordWith"] == null) a["chordWith"] = src == "LB" ? "RB" : "LB";
+                    GpSaveLayout();
+                },
+            });
+            if (t == 5)
+            {
+                string with = Str(act?["chordWith"]) ?? "LB";
+                var others = GpLayoutSources.Where(s => s != src).ToArray();
+                int wi = Math.Max(0, Array.IndexOf(others, with));
+                rows.Add(new PerfRow
+                {
+                    Title = "按住哪个键时触发", Value = GpSourceName(with), Numeric = true,
+                    Step = d => { var a = (JsonObject)GpEnsureActs(src)[idx]!; a["chordWith"] = others[(wi + d + others.Length) % others.Length]; GpSaveLayout(); },
+                });
+            }
+            rows.Add(new PerfRow { Title = "指令", Value = cmdText + "  ›", Press = () => { p.Act = idx; p.Level = GpSubLevel.Chooser; p.Cell = 0; p.InTabs = false; p.Chord.Clear(); PaintGpBody(); } });
+            rows.Add(new PerfRow { Title = "设置", Value = GpActSettingsText(act) + "  ›", Press = () => { p.Act = idx; p.Level = GpSubLevel.Settings; p.SettingsFocus = 1; PaintGpBody(); } });
+            if (count > 1)
+                rows.Add(new PerfRow { Title = "删除这个触发方式", Value = "›", Press = () => { GpEnsureActs(src).RemoveAt(idx); GpSaveLayout(); p.KeyFocus = 1; } });
+        }
+        rows.Add(new PerfRow { Section = true, Title = "这个键" });
+        rows.Add(new PerfRow
+        {
+            Title = "添加触发方式", Value = "长按、双击、组合键……  ›",
+            Press = () =>
+            {
+                var list = GpEnsureActs(src);
+                if (list.Count >= 8) { Toast("一个键最多 8 个触发方式"); return; }
+                list.Add(new JsonObject { ["trigger"] = "long", ["command"] = new JsonObject { ["type"] = "none" } });
+                GpSaveLayout();
+            },
+        });
+        rows.Add(new PerfRow
+        {
+            Title = "禁用这个键", Value = "按下不起作用  ›",
+            Press = () =>
+            {
+                if (GpActs(src) != null) { GpEnsureActs(src).Clear(); GpSaveLayout(); }
+                else GpWriteFirmware(p, new[] { 0xFF });
+            },
+        });
+        rows.Add(new PerfRow { Title = "恢复原键位", Value = $"{GpSourceName(src)}自己  ›", Press = () => GpRestoreKey(p) });
+        return rows;
+    }
+
+    private static string GpActSettingsText(JsonNode? act)
+    {
+        if (act == null) return "默认";
+        var parts = new List<string>();
+        string t = Str(act["trigger"]) ?? "regular";
+        if (t == "long") parts.Add($"长按 {Int(act["longPressMs"], 300)} ms");
+        if (t == "double") parts.Add($"间隔 {Int(act["doublePressMs"], 250)} ms");
+        int hz = Int(act["repeatHz"]);
+        if (hz > 0) parts.Add($"连发 {hz} 次/秒");
+        if (Bool(act["toggle"])) parts.Add("切换");
+        int sd = Int(act["startDelayMs"]), ed = Int(act["endDelayMs"]);
+        if (sd > 0 || ed > 0) parts.Add($"延迟 {sd}/{ed} ms");
+        return parts.Count == 0 ? "默认" : string.Join(" · ", parts);
+    }
+
+    /// <summary>触发设置：改任何一项都会把这个键搬进软件层布局。</summary>
+    private List<PerfRow> GpSettingsRows(GpPickerState p)
+    {
+        string src = p.Source;
+        var act = GpActs(src)?[Math.Min(p.Act, Math.Max(0, (GpActs(src)?.Count ?? 1) - 1))];
+        string t = Str(act?["trigger"]) ?? "regular";
+        PerfRow Num(string title, string field, int def, int min, int max, int step, Func<int, string> fmt)
+        {
+            int v = Int(act?[field], def);
+            return new PerfRow
+            {
+                Title = title, Value = fmt(v), Numeric = true,
+                Step = d => { int nv = Math.Clamp(v + d * step, min, max); if (nv == v) return; GpActObj(p)[field] = nv; GpSaveLayout(); },
+            };
+        }
+        PerfRow Toggle(string title, string field, bool def)
+        {
+            bool v = act?[field] is JsonValue jv && jv.TryGetValue(out bool b) ? b : def;
+            return new PerfRow
+            {
+                Title = title, Choices = new[] { "关", "开" }, Choice = v ? 1 : 0,
+                Step = d => { bool nv = d > 0; if (nv == v) return; GpActObj(p)[field] = nv; GpSaveLayout(); },
+                Press = () => { GpActObj(p)[field] = !v; GpSaveLayout(); },
+            };
+        }
+        PerfRow Later(string title, string value) => new() { Title = title, Value = value + " · 第二批", Disabled = true, Press = () => Toast("这一项在软件输入层的第二批里做") };
+        var rows = new List<PerfRow> { new() { Section = true, Title = $"{GpActTypes[Math.Max(0, Array.IndexOf(GpActIds, t))]}设置" } };
+        if (t == "long") rows.Add(Num("长按时间", "longPressMs", 300, 50, 5000, 50, v => $"{v} ms"));
+        if (t == "double") rows.Add(Num("双击间隔", "doublePressMs", 250, 50, 2000, 25, v => $"{v} ms"));
+        rows.Add(Num("按住以重复（连发）", "repeatHz", 0, 0, 60, 5, v => v == 0 ? "关" : $"{v} 次/秒"));
+        rows.Add(Toggle("切换", "toggle", false));
+        rows.Add(Num("触发启动延迟", "startDelayMs", 0, 0, 5000, 50, v => $"{v} ms"));
+        rows.Add(Num("触发结束延迟", "endDelayMs", 0, 0, 5000, 50, v => $"{v} ms"));
+        rows.Add(Toggle("可中断", "interruptible", true));
+        rows.Add(Later("触感强度", "关闭"));
+        rows.Add(Later("指令循环", "关"));
+        rows.Add(Later("反转输入", "关"));
+        return rows;
+    }
+
+    private JsonObject GpActObj(GpPickerState p)
+    {
+        var list = GpEnsureActs(p.Source);
+        return (JsonObject)list[Math.Clamp(p.Act, 0, list.Count - 1)]!;
     }
 
     // ---------------- 输入 ----------------
@@ -198,8 +404,8 @@ public sealed partial class WallStage
         {
             case GpSubLevel.Key or GpSubLevel.Settings:
             {
-                var rows = p.Level == GpSubLevel.Key ? GpKeyRows(p) : GpSettingsRows();
-                int focus = p.Level == GpSubLevel.Key ? p.KeyFocus : p.SettingsFocus;
+                var rows = p.Level == GpSubLevel.Key ? GpKeyRows(p) : GpSettingsRows(p);
+                int focus = Math.Clamp(p.Level == GpSubLevel.Key ? p.KeyFocus : p.SettingsFocus, 0, rows.Count - 1);
                 if (dir is Direction.Up or Direction.Down)
                 {
                     int d = dir == Direction.Up ? -1 : 1;
@@ -248,35 +454,62 @@ public sealed partial class WallStage
         var p = _gpPicker!;
         if (p.Level is GpSubLevel.Key or GpSubLevel.Settings)
         {
-            var rows = p.Level == GpSubLevel.Key ? GpKeyRows(p) : GpSettingsRows();
+            var rows = p.Level == GpSubLevel.Key ? GpKeyRows(p) : GpSettingsRows(p);
             int focus = p.Level == GpSubLevel.Key ? p.KeyFocus : p.SettingsFocus;
             if (focus >= 0 && focus < rows.Count) rows[focus].Press?.Invoke();
             return;
         }
         if (p.InTabs) { p.InTabs = false; PaintGpBody(); return; }
         var cell = GpChooserCells(p.Tab)[p.Cell];
-        if (cell.Code < 0) { Toast($"「{cell.Label}」{GpNeedsLayer}"); return; }
-        if (p.Tab == 2 && Array.IndexOf(GpModifiers, cell.Code) >= 0)
+        if (cell.Cmd.Length == 0 && cell.Code == 0) { Toast($"「{cell.Label}」之后做"); return; }
+        if (p.Tab == 2 && GpIsModifier(cell))
         {
             // 修饰键：叠加 / 取消，等普通键来完成组合
-            if (!p.Chord.Remove(cell.Code) && p.Chord.Count < 4) p.Chord.Add(cell.Code);
+            if (!p.Chord.Remove(cell) && p.Chord.Count < 3) p.Chord.Add(cell);
             PaintGpBody();
             return;
         }
-        GpApplyMapping(p.Chord.Append(cell.Code).Take(5).ToArray());
+        GpChooseCommand(p, cell);
     }
 
-    /// <summary>写映射（固件）：背键 set_back_key，其余 set_key_map / set_desktop_key_map；写完回到按键页，读回真实值。</summary>
-    private void GpApplyMapping(int[] codes)
+    /// <summary>
+    /// 选定一个指令：这个键已经在软件层布局里 → 改它那个触发方式的指令；
+    /// 不在布局里、而且固件发得出（普通按压，键码 ≤ 5 个）→ 写固件；固件发不出（截图、滚轮左右……）→ 搬进布局。
+    /// </summary>
+    private void GpChooseCommand(GpPickerState p, GpCell cell)
     {
-        var p = _gpPicker!;
-        p.Current = codes;
-        p.Level = GpSubLevel.Key;
+        var chord = p.Chord.ToList();
         p.Chord.Clear();
+        p.Level = GpSubLevel.Key;
+        bool firmwareOk = cell.Code > 0 && chord.All(c => c.Code > 0);
+        if (GpActs(p.Source) == null && firmwareOk)
+        {
+            GpWriteFirmware(p, chord.Select(c => c.Code).Append(cell.Code).Take(5).ToArray());
+            return;
+        }
+        if (cell.Cmd.Length == 0) { Toast($"「{cell.Label}」软件输入层还没有"); PaintGpBody(); return; }
+        GpActObj(p)["command"] = GpCommandFromCell(cell, chord);
+        GpSaveLayout();
+    }
+
+    /// <summary>写固件映射：背键 set_back_key，其余 set_key_map / set_desktop_key_map；后台读回后界面跟着变。</summary>
+    private void GpWriteFirmware(GpPickerState p, int[] codes)
+    {
         var arr = new JsonArray(codes.Select(c => (JsonNode?)JsonValue.Create(c)).ToArray());
         if (p.Desktop) _ = GpWrite("set_desktop_key_map", JsonValue.Create(p.Source), arr);
         else if (p.Source is "M1" or "M2") _ = GpWrite("set_back_key", JsonValue.Create(p.Source.ToLowerInvariant()), arr);
         else _ = GpWrite("set_key_map", JsonValue.Create(p.Source), arr);
+        PaintGpBody();
+    }
+
+    /// <summary>恢复原键位：从软件层布局里拿掉这个键，固件也放回原键。</summary>
+    private void GpRestoreKey(GpPickerState p)
+    {
+        if (_gpLayout?["buttons"] is JsonObject buttons && buttons.ContainsKey(p.Source)) { buttons.Remove(p.Source); GpSaveLayout(); }
+        int native = GpNativeCode(p.Source);
+        if (!(GpFirmwareCodes(p.Source) is { Length: 1 } c && c[0] == native) && !p.Desktop)
+            GpWriteFirmware(p, new[] { native });
+        p.KeyFocus = 1;
         PaintGpBody();
     }
 
@@ -292,18 +525,28 @@ public sealed partial class WallStage
         var ui = TextKit.Ui(400);
         var muted = Gfx.WithAlpha(CcText, 0.5);
         string where = p.Desktop ? "（桌面模式）" : "";
+        bool layered = GpActs(p.Source) != null;
+        string layer = layered ? (GpLayerOn ? "软件输入层（已打开）" : "软件输入层（现在关着，打开后才生效）") : "手柄固件，改了立刻生效、零延迟";
         switch (p.Level)
         {
             case GpSubLevel.Key:
+            {
+                var rows = GpKeyRows(p);
+                p.KeyFocus = Math.Clamp(p.KeyFocus, 0, rows.Count - 1);
                 PText(ds, GpSourceName(p.Source) + where, TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
-                PText(ds, $"现在：{GpCurrentText(p)}  ·  只用普通按压时写进手柄固件，改了立刻生效、零延迟", ui, 13, muted, GpPickX, 170, 900);
-                PaintGpRows(ds, GpKeyRows(p), p.KeyFocus);
+                PText(ds, $"现在：{GpKeySummary(p.Source)}  ·  {layer}", ui, 13, muted, GpPickX, 170, 900);
+                PaintGpRows(ds, rows, p.KeyFocus);
                 break;
+            }
             case GpSubLevel.Settings:
-                PText(ds, $"{GpSourceName(p.Source)}{where} · 普通按压", TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
-                PText(ds, "这些设置照 Steam 输入；要用软件输入层，正在开发", ui, 13, muted, GpPickX, 170, 900);
-                PaintGpRows(ds, GpSettingsRows(), p.SettingsFocus);
+            {
+                var rows = GpSettingsRows(p);
+                p.SettingsFocus = Math.Clamp(p.SettingsFocus, 0, rows.Count - 1);
+                PText(ds, $"{GpSourceName(p.Source)}{where} · 触发设置", TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
+                PText(ds, $"照 Steam 输入；改这些会把这个键交给软件输入层  ·  {layer}", ui, 13, muted, GpPickX, 170, 900);
+                PaintGpRows(ds, rows, p.SettingsFocus);
                 break;
+            }
             default:
                 PaintGpChooser(ds, p, accent);
                 break;
@@ -324,8 +567,10 @@ public sealed partial class WallStage
     {
         var ui = TextKit.Ui(400);
         var muted = Gfx.WithAlpha(CcText, 0.5);
-        PText(ds, $"选择一个{GpChooserTabs[p.Tab]}指令：{GpSourceName(p.Source)} → 普通按压", TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
-        // 页签：和性能页的几选一同一种写法，平铺文字、当前项下划线；LB / RB 切
+        var acts = GpActs(p.Source);
+        var act = acts != null && acts.Count > 0 ? acts[Math.Clamp(p.Act, 0, acts.Count - 1)] : null;
+        string actName = GpActTypes[Math.Max(0, Array.IndexOf(GpActIds, Str(act?["trigger"]) ?? "regular"))];
+        PText(ds, $"选择一个{GpChooserTabs[p.Tab]}指令：{GpSourceName(p.Source)} → {actName}", TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
         float x = GpPickX, ty = 188;
         PText(ds, "LB", TextKit.Ui(600), 11, Gfx.WithAlpha(CcText, 0.4f), x, ty, 30);
         x += 34;
@@ -340,7 +585,22 @@ public sealed partial class WallStage
         }
         PText(ds, "RB", TextKit.Ui(600), 11, Gfx.WithAlpha(CcText, 0.4f), x, ty, 30);
 
-        // 键格：细边框；当前映射的键描强调色边，焦点键填强调色，叠加中的修饰键淡填；要软件层的写淡一点
+        // 当前指令：软件层看指令名，固件看键码
+        var currentCmds = new HashSet<string>();
+        var currentCodes = new HashSet<int>();
+        if (act != null)
+        {
+            var cmd = act["command"];
+            switch (Str(cmd?["type"]))
+            {
+                case "gamepad": currentCmds.Add("pad:" + Str(cmd!["button"])); break;
+                case "keyboard": foreach (var k in cmd!["keys"] as JsonArray ?? new JsonArray()) currentCmds.Add("key:" + Str(k)); break;
+                case "mouse": currentCmds.Add(cmd!["wheel"] != null ? "wheel:" + Str(cmd["wheel"]) : "mouse:" + Str(cmd["button"])); break;
+                case "system": currentCmds.Add("sys:" + Str(cmd!["action"])); break;
+            }
+        }
+        else foreach (var c in GpFirmwareCodes(p.Source)) currentCodes.Add(c);
+
         using var font = new CanvasTextFormat { FontFamily = TextKit.Ui(400).Family, FontSize = 14, HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
         var cells = GpChooserCells(p.Tab);
         float bottom = 0;
@@ -350,23 +610,20 @@ public sealed partial class WallStage
             var rect = GpCellRect(cell);
             bottom = Math.Max(bottom, (float)(rect.Y + rect.Height));
             bool focused = !p.InTabs && i == p.Cell;
-            bool current = cell.Code > 0 && Array.IndexOf(p.Current, cell.Code) >= 0;
-            bool chord = p.Chord.Contains(cell.Code);
-            bool later = cell.Code < 0;
+            bool current = currentCmds.Contains(cell.Cmd) || cell.Code > 0 && currentCodes.Contains(cell.Code);
+            bool chord = p.Chord.Contains(cell);
+            bool later = cell.Cmd.Length == 0 && cell.Code == 0;
             if (focused) ds.FillRoundedRectangle(rect, 7, 7, Gfx.WithAlpha(accent, 0.45f));
             else if (chord) ds.FillRoundedRectangle(rect, 7, 7, Gfx.WithAlpha(accent, 0.22f));
             ds.DrawRoundedRectangle(rect, 7, 7, current || chord ? Gfx.WithAlpha(accent, 0.95f) : Gfx.WithAlpha(CcText, focused ? 0.6f : later ? 0.08f : 0.16f), current ? 1.6f : 1f);
             ds.DrawText(cell.Label, rect, focused ? CcText : Gfx.WithAlpha(CcText, later ? 0.35f : 0.8f), font);
         }
         if (p.Tab == 0)
-        {
-            // 手柄页：左右两组上面标一下是哪个摇杆 / 十字键
             foreach (var (label, col, row) in new[] { ("左摇杆", 0f, 2.6f), ("十字键", 0f, 6f), ("右摇杆", 12f, 6f) })
                 PText(ds, label, ui, 11, Gfx.WithAlpha(CcText, 0.38f), GpPickX + col * GpCellStepX + 140, GpChooserTop + row * GpCellStepY + 22, 80);
-        }
         string hint = p.Tab == 2
-            ? (p.Chord.Count > 0 ? $"组合：{string.Join(" + ", p.Chord.Select(GpCodeName))} + …  再按一个普通键完成" : "Ctrl / Shift / Alt / Win 按一下是叠加，可以组合；再按一个普通键完成")
-            : p.Tab == 4 ? "音量、静音直接写进固件；其余系统动作要软件输入层" : "A 选定  ·  LB / RB 换页签  ·  B 返回";
+            ? (p.Chord.Count > 0 ? $"组合：{string.Join(" + ", p.Chord.Select(GpCellName))} + …  再按一个普通键完成" : "Ctrl / Shift / Alt / Win 按一下是叠加，可以组合；再按一个普通键完成")
+            : p.Tab == 4 ? "音量、静音固件就能发；截图、显示键盘走软件输入层；其余之后做" : "A 选定  ·  LB / RB 换页签  ·  B 返回";
         PText(ds, hint, ui, 13, muted, GpPickX, bottom + 30, 900);
     }
 }

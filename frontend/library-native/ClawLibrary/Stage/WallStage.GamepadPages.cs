@@ -47,8 +47,30 @@ public sealed partial class WallStage
                 mode.SetChoice = i => _ = GpWrite("set_gamepad_mode", JsonValue.Create(i == 1 ? "desktop" : "xinput"));
                 mode.Lights = idx == 1 ? GpDesktopKeys : new[] { "ABXY", "LS", "RS", "Dpad", "LB", "RB" };
                 left.Add(mode);
-                right.Add(Item("长按 ≡ 两秒", "Menu", "手柄 / 桌面互切", "这是手柄固件自带的组合键，不能改"));
-                right.Add(Item("自动切换", "", "之后", "之后做：进游戏切手柄模式、回到桌面切桌面模式"));
+                left.Add(Item("长按 ≡ 两秒", "Menu", "手柄 / 桌面互切", "这是手柄固件自带的组合键，不能改"));
+                left.Add(Item("自动切换", "", "之后", "之后做：进游戏切手柄模式、回到桌面切桌面模式"));
+                // 软件输入层：开关、状态（阶段、延迟、生效的布局）、冲突提示
+                var lay = _gpLayer;
+                bool layerOn = Str(lay?["owner"]) == "toolbox";
+                var sw = Item("软件输入层", "", lay == null ? "—" : layerOn ? "开" : "关", lay == null ? "后台还没有软件输入层" : null);
+                sw.Lights = new[] { "ABXY", "LS", "RS", "Dpad", "LB", "RB" };
+                sw.Press = () => _ = GpWrite("set_input_layer_enabled", JsonValue.Create(!layerOn));
+                right.Add(sw);
+                string phase = Str(lay?["phase"]) ?? "off";
+                double p99 = Num(lay?["latency"]?["p99Ms"]) ?? 0;
+                string where = Str(lay?["layout"]) switch { "passthrough" => "前台不是游戏，原样直通", "global" => "用全局布局", var s when s?.StartsWith("game:") == true => $"用 {s[5..]} 的布局", _ => "" };
+                string state = lay == null ? "—" : phase switch
+                {
+                    "active" => $"运行中{(p99 > 0 ? $" · 延迟 {p99:0.0} ms" : "")}",
+                    "starting" => "正在打开…", "stopping" => "正在关闭…", "error" => Str(lay["error"]) ?? "出错了", _ => "关着",
+                };
+                var warnings = (lay?["conflicts"]?["warnings"] as JsonArray)?.Select(w => Str(w)).Where(w => w != null).ToArray() ?? Array.Empty<string?>();
+                var notes = (lay?["notes"] as JsonArray)?.Select(w => Str(w)).Where(w => w != null).ToArray() ?? Array.Empty<string?>();
+                var st = Item("状态", "", state + (where.Length > 0 && phase == "active" ? $" · {where}" : ""));
+                st.Press = () => Toast(warnings.Length + notes.Length == 0 ? "没有冲突提示" : string.Join("；", warnings.Concat(notes)));
+                right.Add(st);
+                right.Add(Item("冲突提示", "", warnings.Length == 0 ? "没有" : $"{warnings.Length} 条 · 按 A 看", null));
+                right[^1].Press = st.Press;
                 break;
             }
             case "gpmap":
@@ -237,7 +259,7 @@ public sealed partial class WallStage
         var it = new GpItem
         {
             Hotspot = true, Key = src, Side = left ? -1 : 1, X = left ? GpLeftEdge : GpRightEdge, Y = Math.Clamp(pos.Y - 13, GpY - 10, GpY + GpH - 30),
-            Title = $"{GpSourceName(src)}  →", Value = desktop ? "—" : GpMappingText(src),
+            Title = $"{GpSourceName(src)}  →", Value = desktop ? "—" : GpKeySummary(src),
         };
         it.Press = () => GpOpenPicker(src, desktop);
         return it;

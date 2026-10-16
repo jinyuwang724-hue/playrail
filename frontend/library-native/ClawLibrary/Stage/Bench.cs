@@ -226,19 +226,17 @@ public static class Bench
         await Step(500, () => s.Move(Direction.Right));
         await Step(700, () => s.Move(Direction.Right));
         await Step(3000, s.Activate);
-        // 按键映射的几层：只看，不在「选择指令」里按 A，不改任何映射
+        // 当前模式页看软件输入层的开关和状态；按键映射：LT 的触发方式改成长按（存进布局，输入层关着不生效），再恢复原键位
         var D = Direction.Down; var R = Direction.Right;
+        await Step(700, () => s.Move(R));                  // 进当前模式页
+        await Step(1500, () => { });
+        await Step(700, s.Back);
         await Step(700, () => s.Move(D));                  // 分类：按键映射
         await Step(700, () => s.Move(R));                  // 进：LT
-        await Go2(s, Step, Direction.Down, Direction.Down, Direction.Right, Direction.Right, Direction.Right, Direction.Right, Direction.Right);   // 走到 A
-        await Step(1200, s.Activate);                      // 按键页
-        await Step(700, () => s.Move(D));                  // 指令
-        await Step(1200, s.Activate);                      // 选择指令：手柄
-        for (int i = 0; i < 4; i++) await Step(1100, () => s.SwitchTab(1));   // 鼠标 / 键盘 / 数字键盘 / 系统
-        await Step(800, s.Back);                           // 回按键页
-        await Step(700, () => s.Move(D));                  // 设置
-        await Step(1200, s.Activate);                      // 触发设置
-        await Step(700, s.Back);
+        await Step(1200, s.Activate);                      // LT 的按键页
+        await Step(1800, () => s.Move(R));                 // 触发方式 → 长按（存布局）
+        for (int i = 0; i < 6; i++) await Step(450, () => s.Move(D));   // 走到「恢复原键位」
+        await Step(1800, s.Activate);                      // 恢复原键位
         await Step(700, s.Back);                           // 关按键页
         await Step(700, s.Back);                           // 回分类
         await Step(1000, s.Back);
