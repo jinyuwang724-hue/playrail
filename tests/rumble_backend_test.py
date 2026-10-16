@@ -94,6 +94,26 @@ def main():
             assert (await again.restore())["current"] == [90, 80]
     asyncio.run(plugin_flow())
 
+    # The test pulse is asked for from the game library too: Steam need not be in front, but never during a game.
+    haptics_spec = importlib.util.spec_from_file_location("claw_haptics", ROOT / "claw_navigation_haptics.py")
+    haptics = importlib.util.module_from_spec(haptics_spec)
+    haptics_spec.loader.exec_module(haptics)
+
+    class FakeOutput:
+        steam_in_front, game_running, writes = False, False, []
+        def allowed(self): return self.steam_in_front and not self.game_running
+        def can_recover(self): return not self.game_running
+        def targets(self): return [0]
+        def write(self, index, left, right): self.writes.append((left, right)); return 0
+    output = FakeOutput()
+    pad_haptics = haptics.ClawNavigationHaptics(output)
+    assert pad_haptics.test_pulse(20)["path"] == "claw-xinput" and output.writes[0] == (1, 1)
+    navigation = {"requestId": 99, "vendorId": 0x0DB0, "productId": 0x1901, "durationMs": 20, "side": 2, "magnitude": 1}
+    assert pad_haptics.request(navigation)["path"] == "steam-ui-only"  # navigation feedback keeps its rule
+    output.game_running = True
+    assert pad_haptics.test_pulse(20)["path"] == "game-running"
+    pad_haptics.close()
+
     if "--live" in sys.argv:
         print("live pad:", rumble.ClawRumble().read())
     print("rumble backend checks passed")

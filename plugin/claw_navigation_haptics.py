@@ -119,7 +119,8 @@ class ClawNavigationHaptics:
                 pass
         self._index = None
 
-    def request(self, request):
+    def request(self, request, gate=None):
+        # gate: when the pulse may run (default: Steam UI in front, no game running).
         if not isinstance(request, dict):
             return {"handled": False, "path": "invalid-request"}
         request_id = request.get("requestId")
@@ -149,9 +150,10 @@ class ClawNavigationHaptics:
                     return {"handled": True, "path": "stopped"}
                 if self._output is None:
                     self._output = WindowsOutput()
-                if not self._output.allowed():
+                allowed = gate or self._output.allowed
+                if not allowed():
                     self._stop()
-                    return {"handled": True, "path": "steam-ui-only"}
+                    return {"handled": True, "path": "steam-ui-only" if gate is None else "game-running"}
                 targets = self._output.targets()
                 if len(targets) != 1:
                     self._stop()
@@ -169,7 +171,7 @@ class ClawNavigationHaptics:
                     self._stop()
                     return {"handled": False, "path": "xinput-error", "code": result}
                 worker = threading.Thread(target=self._finish,
-                    args=(request_id, duration, self._cancel), daemon=True)
+                    args=(request_id, duration, self._cancel, allowed), daemon=True)
                 worker.start()
                 return {"handled": True, "path": "claw-xinput", "index": index, "durationMs": duration}
         except Exception:
@@ -177,14 +179,14 @@ class ClawNavigationHaptics:
                 self._stop()
             return {"handled": False, "path": "xinput-unavailable"}
 
-    def _finish(self, request_id, duration, cancellation):
+    def _finish(self, request_id, duration, cancellation, allowed):
         deadline = time.monotonic() + duration / 1000
         while not cancellation.wait(min(0.008, max(0, deadline - time.monotonic()))):
             with self._lock:
                 if request_id != self._request_id or self._closed:
                     return
                 try:
-                    active = self._output.allowed()
+                    active = allowed()
                 except Exception:
                     active = False
                 if time.monotonic() >= deadline or not active:
@@ -195,8 +197,11 @@ class ClawNavigationHaptics:
         """One full-strength pulse so the firmware strength can be felt."""
         with self._lock:
             request_id = self._request_id + 1
+        # Asked for from any front end (the game library, the Game Bar widget), so the Steam-in-front
+        # rule of navigation feedback does not apply; it still never pulses while a game runs.
         return self.request({"requestId": request_id, "vendorId": _HARDWARE[0], "productId": _HARDWARE[1],
-                             "durationMs": duration, "side": 2, "magnitude": 1})
+                             "durationMs": duration, "side": 2, "magnitude": 1},
+                            gate=lambda: self._output.can_recover())
 
     def close(self):
         with self._lock:
