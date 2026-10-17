@@ -23,7 +23,7 @@ public sealed partial class WallStage
     private void BuildGpItems()
     {
         _gpItems.Clear();
-        if (GpIsMapPage) { BuildGpMapItems(GpCatId == "dkmap"); return; }
+        if (GpIsMapPage) { BuildGpMapItems(GpCatId == "dkmap"); _gpItems.Add(GpModeItem()); return; }
         var left = new List<GpItem>();
         var right = new List<GpItem>();
         GpItem? center = null;
@@ -135,7 +135,26 @@ public sealed partial class WallStage
             center.Y = GpCy + GpSideH / 2 + 34;
             _gpItems.Add(center);
         }
+        // 放在最后：进到内容时焦点先落在这一页自己的设置上，不会一按 A 就切了模式
+        _gpItems.Add(GpModeItem());
         if (_gpFocus >= _gpItems.Count) _gpFocus = 0;
+    }
+
+    /// <summary>
+    /// 手柄 / 桌面模式：每一页线稿上方居中那项，和快速触发一样 A 切换、值从固件读回。
+    /// 游戏库在前台时桌面模式不生效（这里没法用键鼠操作），所以切到桌面模式时写「离开游戏库后生效」，离开前台才真的切（GpToggleMode）。
+    /// </summary>
+    private GpItem GpModeItem()
+    {
+        string? fw = Str(_gpFw?["mode"]);
+        var it = new GpItem
+        {
+            Title = "模式", Side = 0, X = GpIsMapPage ? GpMapCx : GpCx, Y = 112,
+            Value = fw == null ? "—" : !GpWantDesktop ? "手柄模式 · 手柄输出" : _gpDesktopHeld ? "桌面模式 · 离开游戏库后生效" : "桌面模式 · 键盘鼠标",
+            Disabled = fw == null, Why = _gpFwError ?? "正在读取…",
+        };
+        it.Press = () => _ = GpToggleMode();
+        return it;
     }
 
     /// <summary>快速触发左右一起写：先左后右，写完读回。</summary>
