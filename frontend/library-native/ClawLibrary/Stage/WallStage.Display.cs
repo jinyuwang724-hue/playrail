@@ -1,5 +1,5 @@
 // 控制中心 → 显示与声音：和性能页同一套 3:7 两栏（用户说先这样做出来看效果，可能不要两栏）。
-// 左栏只看：屏幕（按分辨率比例画的一块屏，亮度和夜间模式直接反映在上面）和声音（音量条、输出设备、麦克风）；右栏只改。
+// 左栏只看：屏幕（按分辨率比例画的一块屏，亮度直接反映在上面）和声音（音量条、输出设备、麦克风）；右栏只改。
 // 全部是全局设置，不按游戏（用户 2026-10-16：Magpie、小黄鸭这些画面缩放归游戏配置页，不在这页）。
 // 读：工具箱后台 get_display_state（docs/display-sound-page.md 写了字段）；老后台没有它时退回 widget_state 里的 system（只有亮度、音量、静音、刷新率），
 // 其余行变暗、写「后台还没接上」。写：每项一个 set_*，本地先改（界面立刻跟着变），亮度 / 音量这种连按的 150 ms 内合成一次。
@@ -307,22 +307,6 @@ public sealed partial class WallStage
         // ---- 更多显示 ----
         _dsRows.Add(new PerfRow { Section = true, Title = "更多显示" });
         _dsRows.Add(Toggle("自动亮度", "autoBrightness", "set_auto_brightness"));
-        if (v["nightLight"] is JsonObject night)
-        {
-            bool on = Bool(night["on"]);
-            int strength = Int(night["strength"], 50);
-            void SetNight(bool o, int s) { night["on"] = o; night["strength"] = s; DsSet("set_night_light", 200, JsonValue.Create(o), JsonValue.Create(s)); }
-            _dsRows.Add(new PerfRow
-            {
-                Title = "夜间模式", Choices = new[] { "关", "开" }, Choice = on ? 1 : 0,
-                Step = d => { if ((d > 0) != on) SetNight(d > 0, strength); },
-                Press = () => SetNight(!on, strength),
-            });
-            var sr = Number("夜间模式强度", "", 0, 100, 5, x => $"{x} %", x => SetNight(on, x), strength);
-            if (!on) { sr.Disabled = true; sr.Skip = true; sr.Value = "夜间模式开着才用"; }
-            _dsRows.Add(sr);
-        }
-        else _dsRows.Add(Later("夜间模式", "nightLight"));
         _dsRows.Add(Toggle("HDR", "hdr", "set_hdr"));
         if (v["scales"] is JsonArray scales && scales.Count > 0)
         {
@@ -436,9 +420,7 @@ public sealed partial class WallStage
         string resText = res?.Count == 2 ? $"{Int(res[0])} × {Int(res[1])}" : "—";
         string hzText = hz > 0 ? $"{hz} Hz" : "—";
         string vrr = v?["vrr"] is JsonValue ? (Bool(v["vrr"]) ? "开" : "关") : "—";
-        var night = v?["nightLight"] as JsonObject;
-        string nightText = night == null ? "—" : Bool(night["on"]) ? $"开 · {Int(night["strength"], 50)} %" : "关";
-        var screenRows = new List<(string, string)> { ("分辨率", resText), ("刷新率", hzText), ("可变刷新率", vrr), ("夜间模式", nightText) };
+        var screenRows = new List<(string, string)> { ("分辨率", resText), ("刷新率", hzText), ("可变刷新率", vrr) };
         if (v?["hdr"] is JsonValue) screenRows.Add(("HDR", Bool(v["hdr"]) ? "开" : "关"));
         float rowsTop = briY + 14;
         Rows(rowsTop, screenRows.ToArray());

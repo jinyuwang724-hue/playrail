@@ -14,7 +14,6 @@
   "resolution": [1920, 1200], "resolutions": [[1920, 1200], [1680, 1050], [1280, 800]],   // 当前刷新率下的，按面积从大到小
   "vrr": true,                      // Windows「可变刷新率」开关
   "hdr": false,                     // 屏幕不支持 → unsupported 里写 "hdr"
-  "nightLight": { "on": false, "strength": 50 },
   "scale": 150, "scales": [100, 125, 150, 175],          // Windows 文字和界面大小（%）
   "volume": 40, "muted": false,
   "outputs": [{ "id": "{0.0.0.00000000}.{…}", "name": "扬声器" }], "output": "{0.0.0.00000000}.{…}",
@@ -45,7 +44,6 @@
 | `set_vrr` | bool | 有（2026-10-17 真机测过）|
 | `set_hdr` | bool | 有（2026-10-17 真机测过）|
 | `set_auto_brightness` | bool | 有；本机没有光线传感器 → `unsupported` 里写 `autoBrightness`，调用回「这台机器没有光线传感器」|
-| `set_night_light` | on, strength 0–100 | 新 |
 | `set_display_scale` | percent | 有（2026-10-17 真机测过：150 ⇄ 125；读回 `scale`、`scales`、`scaleRecommended`）|
 | `set_audio_output` | endpoint id | 有（2026-10-17 真机测过）|
 | `set_mic_mute` | bool | 有（2026-10-17 真机测过）|
@@ -62,4 +60,4 @@
 - 设备枚举器按 CLSID 建、直接转接口：它是 COM 单例，SystemControls 已经用自己的 ComImport 类包过一次，再 new 同 CLSID 的类会 InvalidCastException（2026-10-17 实测踩到）。
 - 屏幕缩放用 DisplayConfig 没公开的 DPI 缩放项（GET -3 / SET -4，相对推荐档的偏移）；自动亮度是电源设置 ADAPTBRIGHT（插电、电池一起写）。
 - 显卡：`native/ClawGpu.cs`，Intel ControlLib.dll（IGCL）的全局 3D 设置（ctlGetSet3DFeature，应用名为空 = 全局）。init 参数结构 36 字节（ApplicationUID 的 Data4 按 1 对齐），用 8 字节对齐会报 0x4000000F 尺寸不对。
-- 还没写：夜间模式（这版 Windows 用按设备的 CloudStore 数据块，格式没公开，要先在设置里开关一次看清楚再写）。前端显示「后台还没接上」。
+- 夜间模式不做（用户 2026-10-17：没用），页面上不放这一项。
