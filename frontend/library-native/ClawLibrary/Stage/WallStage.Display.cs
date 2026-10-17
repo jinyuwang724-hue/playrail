@@ -389,8 +389,8 @@ public sealed partial class WallStage
     }
 
     /// <summary>
-    /// 左栏：上半是「屏幕」—— 按当前分辨率的比例画一块圆角屏，里面的亮度跟着亮度值走、夜间模式开着时偏暖，屏上写分辨率和刷新率；
-    /// 下半是「声音」—— 一根粗音量条（静音时变灰、写「静音」），下面是输出设备和麦克风。和性能页左栏同样的标题 + 读数行。
+    /// 左栏只放读数，和性能页左栏一个写法：「屏幕」标题 + 亮度值、一根亮度条、下面几行当前的显示设置；
+    /// 「声音」标题 + 音量值、一根音量条（静音时变灰、写「静音」）、下面输出设备和麦克风。
     /// </summary>
     private void PaintDsLeft(CanvasDrawingSession ds, float h)
     {
@@ -400,7 +400,7 @@ public sealed partial class WallStage
         var accent = PerfAccent;
         var muted = Gfx.WithAlpha(CcText, 0.5);
         var bright = Gfx.WithAlpha(CcText, 0.88);
-        const float header = 30, rowH = 28, gap = 10, between = 32;
+        const float header = 30, rowH = 28, between = 32;
 
         void Header(float top, string title, string value, Color vc)
         {
@@ -420,49 +420,43 @@ public sealed partial class WallStage
             }
         }
 
+        void Bar(float y, int value, bool dim)
+        {
+            ds.FillRoundedRectangle(0, y - 3, W, 6, 3, 3, Gfx.WithAlpha(CcText, 0.14f));
+            if (value > 0)
+                ds.FillRoundedRectangle(0, y - 3, Math.Max(6, W * value / 100f), 6, 3, 3, dim ? Gfx.WithAlpha(CcText, 0.35f) : accent);
+        }
+
         // ---- 屏幕 ----
         int bri = Int(v?["brightness"], -1), hz = Int(v?["refresh"]);
-        var res = v?["resolution"] as JsonArray;
-        int rw = res?.Count == 2 ? Int(res[0]) : 1920, rh = res?.Count == 2 ? Int(res[1]) : 1200;
         Header(0, "屏幕", bri >= 0 ? $"{bri} %" : "—", accent);
-        float screenH = Math.Min(W * rh / rw, h * 0.34f), screenW = screenH * rw / rh;
-        float sx = (W - screenW) / 2, sy = header + 6;
-        var night = v?["nightLight"] as JsonObject;
-        bool nightOn = night != null && Bool(night["on"]);
-        float lum = bri >= 0 ? 0.08f + 0.5f * bri / 100f : 0.12f;
-        var top = nightOn ? Gfx.Rgba(255, 196, 140, lum) : Gfx.WithAlpha(accent, lum);
-        var bottom = nightOn ? Gfx.Rgba(255, 150, 90, lum * 0.5) : Gfx.WithAlpha(accent, lum * 0.35f);
-        using (var fill = new CanvasLinearGradientBrush(ds, top, bottom) { StartPoint = new Vector2(0, sy), EndPoint = new Vector2(0, sy + screenH) })
-            ds.FillRoundedRectangle(sx, sy, screenW, screenH, 10, 10, fill);
-        ds.DrawRoundedRectangle(sx, sy, screenW, screenH, 10, 10, Gfx.WithAlpha(CcText, 0.55f), 1.4f);
-        string resText = res?.Count == 2 ? $"{rw} × {rh}" : "—";
-        float rtw = PWidth(ds, resText, TextKit.Ui(300), 26);
-        PText(ds, resText, TextKit.Ui(300), 26, CcText, sx + (screenW - rtw) / 2, sy + screenH / 2 - 10, rtw + 4);
-        string hzText = hz > 0 ? $"{hz} Hz" : "";
-        float htw = PWidth(ds, hzText, ui, 15);
-        PText(ds, hzText, ui, 15, Gfx.WithAlpha(CcText, 0.75f), sx + (screenW - htw) / 2, sy + screenH / 2 + 20, htw + 4);
-        if (_dsAgentDown || v == null)
-            PText(ds, _dsAgentDown ? "连不上工具箱后台" : "正在读取…", ui, 13, muted, sx + 16, sy + screenH - 18, screenW - 32);
-
+        float briY = header + 14;
+        Bar(briY, bri, false);
+        var res = v?["resolution"] as JsonArray;
+        string resText = res?.Count == 2 ? $"{Int(res[0])} × {Int(res[1])}" : "—";
+        string hzText = hz > 0 ? $"{hz} Hz" : "—";
         string vrr = v?["vrr"] is JsonValue ? (Bool(v["vrr"]) ? "开" : "关") : "—";
-        string scale = v?["scale"] is JsonValue ? $"{Int(v["scale"])} %" : "—";
-        string nightText = night == null ? "—" : nightOn ? $"开 · {Int(night["strength"], 50)} %" : "关";
-        float rowsTop = sy + screenH + gap + 4;
-        Rows(rowsTop, new[] { ("可变刷新率", vrr), ("夜间模式", nightText), ("屏幕缩放", scale) });
+        var night = v?["nightLight"] as JsonObject;
+        string nightText = night == null ? "—" : Bool(night["on"]) ? $"开 · {Int(night["strength"], 50)} %" : "关";
+        var screenRows = new List<(string, string)> { ("分辨率", resText), ("刷新率", hzText), ("可变刷新率", vrr), ("夜间模式", nightText) };
+        if (v?["hdr"] is JsonValue) screenRows.Add(("HDR", Bool(v["hdr"]) ? "开" : "关"));
+        float rowsTop = briY + 14;
+        Rows(rowsTop, screenRows.ToArray());
 
         // ---- 声音 ----
-        float aTop = rowsTop + 3 * rowH + between;
+        float aTop = rowsTop + screenRows.Count * rowH + between;
         int vol = Int(v?["volume"], -1);
         bool isMuted = Bool(v?["muted"]);
         Header(aTop, "声音", vol < 0 ? "—" : isMuted ? "静音" : $"{vol} %", isMuted ? Gfx.WithAlpha(CcText, 0.55f) : accent);
         float barY = aTop + header + 14;
-        ds.FillRoundedRectangle(0, barY - 3, W, 6, 3, 3, Gfx.WithAlpha(CcText, 0.14f));
-        if (vol > 0)
-            ds.FillRoundedRectangle(0, barY - 3, Math.Max(6, W * vol / 100f), 6, 3, 3, isMuted ? Gfx.WithAlpha(CcText, 0.35f) : accent);
+        Bar(barY, vol, isMuted);
         string output = "—";
         if (v?["outputs"] is JsonArray outs && Str(v["output"]) is string oid)
             output = outs.FirstOrDefault(o => Str(o?["id"]) == oid) is JsonNode on ? Str(on["name"]) ?? "—" : "—";
         string mic = v?["micMuted"] is JsonValue ? (Bool(v["micMuted"]) ? "静音" : "开") : "—";
         Rows(barY + 14, new[] { ("输出设备", output), ("麦克风", mic) });
+
+        if (_dsAgentDown || v == null)
+            PText(ds, _dsAgentDown ? "连不上工具箱后台" : "正在读取…", ui, 13, muted, 0, h - 12, W);
     }
 }

@@ -41,14 +41,25 @@
 | `set_volume` | 0–100 | 有 |
 | `set_mute` | bool | 有 |
 | `set_refresh_rate` | hz | 有 |
-| `set_resolution` | w, h | 新 |
-| `set_vrr` | bool | 新 |
-| `set_hdr` | bool | 新 |
-| `set_auto_brightness` | bool | 新 |
+| `set_resolution` | w, h | 有（2026-10-17 真机测过：1920×1200 ⇄ 1280×800，刷新率保持 120 Hz）|
+| `set_vrr` | bool | 有（2026-10-17 真机测过）|
+| `set_hdr` | bool | 有（2026-10-17 真机测过）|
+| `set_auto_brightness` | bool | 有；本机没有光线传感器 → `unsupported` 里写 `autoBrightness`，调用回「这台机器没有光线传感器」|
 | `set_night_light` | on, strength 0–100 | 新 |
-| `set_display_scale` | percent | 新 |
-| `set_audio_output` | endpoint id | 新 |
-| `set_mic_mute` | bool | 新 |
-| `set_gpu_option` | name, value（name = gpu 里的字段名） | 新 |
+| `set_display_scale` | percent | 有（2026-10-17 真机测过：150 ⇄ 125；读回 `scale`、`scales`、`scaleRecommended`）|
+| `set_audio_output` | endpoint id | 有（2026-10-17 真机测过）|
+| `set_mic_mute` | bool | 有（2026-10-17 真机测过）|
+| `set_gpu_option` | name, value（name = gpu 里的字段名） | 有：lowLatency（off / on / boost）、frameSync（app / vsyncOff / vsync / smooth / speed / capped）、xessFg（bool），全局设置；2026-10-17 真机逐项改回测过。锐化、饱和度等按显示输出的项还没接 |
 
 新方法都要加进 `plugin/claw_agent.py` 的白名单。
+
+## 实现位置
+
+- 读和「有」的几项：`native/ClawDisplay.cs`（ClawPower.exe 里的 `DisplayAudio`），命令 `display_read` / `resolution_set` / `vrr_set` / `hdr_set` / `audio_output_set` / `mic_mute_set`，回 `reply["display"]`；Python 侧 `ClawPower.display()`、`ClawService.get_display_state` 等。
+- VRR 写的是 `HKCU\Software\Microsoft\DirectX\UserGpuPreferences` 的 `DirectXUserGlobalSettings` 里的 `VRROptimizeEnable`（设置 → 显示 → 图形里的开关）。注意 ClawPower 是提权跑的：同一个用户账户时 HKCU 一致，要真机确认。
+- 输出设备切换用未公开的 `IPolicyConfig`（三个角色都设）。
+- 读失败的项不给字段，原因写在 `errors`（如 `{"outputs": "…"}`）。
+- 设备枚举器按 CLSID 建、直接转接口：它是 COM 单例，SystemControls 已经用自己的 ComImport 类包过一次，再 new 同 CLSID 的类会 InvalidCastException（2026-10-17 实测踩到）。
+- 屏幕缩放用 DisplayConfig 没公开的 DPI 缩放项（GET -3 / SET -4，相对推荐档的偏移）；自动亮度是电源设置 ADAPTBRIGHT（插电、电池一起写）。
+- 显卡：`native/ClawGpu.cs`，Intel ControlLib.dll（IGCL）的全局 3D 设置（ctlGetSet3DFeature，应用名为空 = 全局）。init 参数结构 36 字节（ApplicationUID 的 Data4 按 1 对齐），用 8 字节对齐会报 0x4000000F 尺寸不对。
+- 还没写：夜间模式（这版 Windows 用按设备的 CloudStore 数据块，格式没公开，要先在设置里开关一次看清楚再写）。前端显示「后台还没接上」。

@@ -676,6 +676,9 @@ class PowerControl:
             if command in ("sys_read", "brightness_set", "volume_set", "mute_set", "refresh_set", "fps_limit_set",
                            "kill", "power_action", "keyboard", "screenshot"):
                 return reply.get("sys") or {}
+            if command in ("display_read", "resolution_set", "vrr_set", "hdr_set", "audio_output_set", "mic_mute_set",
+                           "scale_set", "auto_brightness_set", "gpu_set"):
+                return reply.get("display") or {}
             if command == "cpu_info":
                 return reply.get("cpu") or {}
             if command == "ecore_set":
@@ -1050,6 +1053,15 @@ class PowerControl:
                           ("brightness", "volume", "muted", "refresh", "refreshRates", "fpsLimit")}}
         self.sys_at = time.monotonic()
         return self.sys_cache
+
+    async def display(self, command="display_read", **args):
+        """The 显示与声音 page: the sys readings plus resolution, VRR, HDR, audio outputs and microphone.
+        Setters answer with the whole fresh reading, so the page shows what Windows actually took."""
+        result = await self._call(command, **args)
+        self.sys_cache = {**(self.sys_cache or {}), **{k: v for k, v in result.items() if k in
+                          ("brightness", "volume", "muted", "refresh", "refreshRates", "fpsLimit")}}
+        self.sys_at = time.monotonic()
+        return result
 
     async def close_game(self, pid):
         game = await asyncio.to_thread(foreground_game)
