@@ -456,6 +456,26 @@ public sealed partial class WallStage
         string mic = v?["micMuted"] is JsonValue ? (Bool(v["micMuted"]) ? "静音" : "开") : "—";
         Rows(barY + 14, new[] { ("输出设备", output), ("麦克风", mic) });
 
+        // ---- 显卡（Intel 驱动的全局 3D 设置；后台没给的项不列，整组拿不到就不画这一段） ----
+        if (v?["gpu"] is JsonObject gpu && Bool(gpu["available"]))
+        {
+            var gpuRows = new List<(string, string)>();
+            if (Str(gpu["lowLatency"]) is string ll)
+                gpuRows.Add(("低延迟", Array.IndexOf(DsLowLatency, ll) is int li && li >= 0 ? DsLowLatencyNames[li] : ll));
+            if (Str(gpu["frameSync"]) is string fs)
+                gpuRows.Add(("帧同步", (gpu["frameSyncOptions"] as JsonArray)?.FirstOrDefault(o => Str(o?["id"]) == fs) is JsonNode fo ? Str(fo["name"]) ?? fs : fs));
+            if (gpu["xessFg"] is JsonValue)
+                gpuRows.Add(("XeSS 插帧", Bool(gpu["xessFg"]) ? "开" : "关"));
+            if (Str(gpu["scaling"]) is string sc)
+                gpuRows.Add(("显卡缩放", Array.IndexOf(DsScaling, sc) is int si && si >= 0 ? DsScalingNames[si] : sc));
+            if (gpuRows.Count > 0)
+            {
+                float gTop = barY + 14 + 2 * rowH + between;
+                Header(gTop, "显卡", "Intel", CcText);
+                Rows(gTop + header + 4, gpuRows.ToArray());
+            }
+        }
+
         if (_dsAgentDown || v == null)
             PText(ds, _dsAgentDown ? "连不上工具箱后台" : "正在读取…", ui, 13, muted, 0, h - 12, W);
     }
