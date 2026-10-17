@@ -323,6 +323,19 @@ class Service:
             raise ValueError("自动亮度开关格式错误")
         return await self._power.display("auto_brightness_set", enabled=enabled)
 
+    async def set_gpu_option(self, name, value):
+        """Intel 显卡的全局 3D 设置：lowLatency = off / on / boost，frameSync = app / vsyncOff / vsync / smooth / speed / capped，xessFg = bool。"""
+        allowed = {"lowLatency": ("off", "on", "boost"), "frameSync": ("app", "vsyncOff", "vsync", "smooth", "speed", "capped")}
+        if name in allowed:
+            if value not in allowed[name]:
+                raise ValueError("显卡选项的值不对")
+        elif name == "xessFg":
+            if type(value) is not bool:
+                raise ValueError("XeSS 插帧开关格式错误")
+        else:
+            raise ValueError("没有这个显卡选项")
+        return await self._power.display("gpu_set", name=name, value=value)
+
     async def set_fps_limit(self, fps):
         game = (self._power.sys_cache or {}).get("game") or {}
         return await self._power.system_set("fps_limit_set", fps=self._number(fps, 0, 360), exe=game.get("exe") or "")

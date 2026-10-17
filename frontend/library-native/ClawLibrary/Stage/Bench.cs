@@ -399,7 +399,7 @@ public static class Bench
                     await Step(1500, s.ToggleControlCenter);
                     for (int i = 0; i < 3; i++) await Step(500, () => s.Move(Direction.Right));
                     await Step(3000, s.Activate);
-                    for (int i = 0; i < 4; i++) await Step(1500, () => s.Move(Direction.Down));
+                    for (int i = 0; i < 10; i++) await Step(1200, () => s.Move(Direction.Down));
                     await Step(800, s.Back);
                     await Step(800, s.Back);
                     break;

@@ -677,7 +677,7 @@ class PowerControl:
                            "kill", "power_action", "keyboard", "screenshot"):
                 return reply.get("sys") or {}
             if command in ("display_read", "resolution_set", "vrr_set", "hdr_set", "audio_output_set", "mic_mute_set",
-                           "scale_set", "auto_brightness_set"):
+                           "scale_set", "auto_brightness_set", "gpu_set"):
                 return reply.get("display") or {}
             if command == "cpu_info":
                 return reply.get("cpu") or {}

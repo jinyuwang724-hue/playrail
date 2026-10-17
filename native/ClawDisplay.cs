@@ -48,6 +48,7 @@ static class DisplayAudio {
             if (HasLightSensor()) result["autoBrightness"] = AutoBrightness();
             else unsupported.Add("autoBrightness");
         } catch (Exception e) { errors["autoBrightness"] = e.Message; }
+        try { result["gpu"] = IntelGpu.Read(); } catch (Exception e) { errors["gpu"] = e.Message; }
         result["unsupported"] = unsupported;
         if (errors.Count > 0) result["errors"] = errors;
         return result;
