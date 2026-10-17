@@ -23,7 +23,13 @@ public sealed partial class WallStage
     private void BuildGpItems()
     {
         _gpItems.Clear();
-        if (GpIsMapPage) { BuildGpMapItems(GpCatId == "dkmap"); _gpItems.Add(GpModeItem()); return; }
+        if (GpIsMapPage)
+        {
+            BuildGpMapItems(GpCatId == "dkmap");
+            _gpItems.Add(GpModeItem());
+            if (_gpFocus >= _gpItems.Count) _gpFocus = 0;
+            return;
+        }
         var left = new List<GpItem>();
         var right = new List<GpItem>();
         GpItem? center = null;

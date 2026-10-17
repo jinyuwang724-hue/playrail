@@ -73,7 +73,6 @@ public sealed partial class WallStage
         for (int c = 0; c < cols.Length; c++)
             for (int r = 0; r < cols[c].Length; r++)
                 Add(cols[c][r], c, GpMapColX + c * GpMapColW + r % 2 * GpMapSubW, GpMapColY + r / 2 * GpMapColStep);
-        if (_gpFocus >= _gpItems.Count) _gpFocus = 0;
     }
 
     /// <summary>线稿整层的位置：映射页缩小上移，别的分类原位。弹簧，打断时从当前值接着走。</summary>
