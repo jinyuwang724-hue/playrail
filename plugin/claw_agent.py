@@ -57,6 +57,7 @@ METHODS = {
     "close_game", "power_action", "toggle_keyboard", "screenshot",
     # ClawLibrary 显示与声音
     "get_display_state", "set_resolution", "set_vrr", "set_hdr", "set_audio_output", "set_mic_mute",
+    "set_display_scale", "set_auto_brightness",
 }
 
 

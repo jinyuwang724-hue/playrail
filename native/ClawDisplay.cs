@@ -15,29 +15,41 @@ static class DisplayAudio {
     public static Dictionary<string, object> Read() {
         var result = SystemControls.Read();
         var unsupported = new List<string>();
+        var errors = new Dictionary<string, object>();   // 读失败的项和原因（字段不给，原因写这里，界面和日志都看得到）
         try {
             var current = Current();
             result["resolution"] = new[] { current.dmPelsWidth, current.dmPelsHeight };
             result["resolutions"] = Resolutions(current);
-        } catch (Exception) { }
-        try { result["vrr"] = VrrEnabled(); } catch (Exception) { }
+        } catch (Exception e) { errors["resolution"] = e.Message; }
+        try { result["vrr"] = VrrEnabled(); } catch (Exception e) { errors["vrr"] = e.Message; }
         try {
             bool supported, enabled;
             if (AdvancedColor(out supported, out enabled)) {
                 if (supported) result["hdr"] = enabled; else unsupported.Add("hdr");
             }
-        } catch (Exception) { }
+        } catch (Exception e) { errors["hdr"] = e.Message; }
         try {
             string current;
             var outputs = Outputs(out current);
             result["outputs"] = outputs;
             if (current != null) result["output"] = current;
             if (outputs.Count == 0) unsupported.Add("outputs");
-        } catch (Exception) { }
+        } catch (Exception e) { errors["outputs"] = e.GetType().Name + ": " + e.Message; }
         try { result["micMuted"] = MicMuted(); }
         catch (NoDeviceException) { unsupported.Add("micMuted"); }
-        catch (Exception) { }
+        catch (Exception e) { errors["micMuted"] = e.GetType().Name + ": " + e.Message; }
+        try {
+            int recommended; List<int> options;
+            result["scale"] = Scale(out recommended, out options);
+            result["scales"] = options;
+            result["scaleRecommended"] = recommended;
+        } catch (Exception e) { errors["scale"] = e.Message; }
+        try {
+            if (HasLightSensor()) result["autoBrightness"] = AutoBrightness();
+            else unsupported.Add("autoBrightness");
+        } catch (Exception e) { errors["autoBrightness"] = e.Message; }
         result["unsupported"] = unsupported;
+        if (errors.Count > 0) result["errors"] = errors;
         return result;
     }
 
@@ -211,9 +223,113 @@ static class DisplayAudio {
         return Read();
     }
 
+    // ---------------- 屏幕缩放（设置 → 显示 → 缩放；DisplayConfig 没公开的 DPI 缩放项，设置页自己用的就是它） ----------------
+    // 值是相对「推荐」的档位偏移：推荐档 = DpiSteps[-min]，当前 = DpiSteps[-min + cur]，能选 min…max。
+
+    static readonly int[] DpiSteps = { 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500 };
+    [StructLayout(LayoutKind.Sequential)]
+    struct DISPLAYCONFIG_SOURCE_DPI_SCALE_GET { public DISPLAYCONFIG_DEVICE_INFO_HEADER header; public int minScaleRel, curScaleRel, maxScaleRel; }
+    [StructLayout(LayoutKind.Sequential)]
+    struct DISPLAYCONFIG_SOURCE_DPI_SCALE_SET { public DISPLAYCONFIG_DEVICE_INFO_HEADER header; public int scaleRel; }
+    [DllImport("user32.dll")] static extern int DisplayConfigGetDeviceInfo(ref DISPLAYCONFIG_SOURCE_DPI_SCALE_GET info);
+    [DllImport("user32.dll")] static extern int DisplayConfigSetDeviceInfo(ref DISPLAYCONFIG_SOURCE_DPI_SCALE_SET info);
+
+    /// <summary>第一块活动屏的源（缩放挂在源上，不是目标）。</summary>
+    static bool FirstSource(out LUID adapter, out uint source) {
+        adapter = new LUID(); source = 0;
+        uint pathCount, modeCount;
+        if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, out pathCount, out modeCount) != 0 || pathCount == 0) return false;
+        var paths = new DISPLAYCONFIG_PATH_INFO[pathCount];
+        var modes = new DISPLAYCONFIG_MODE_INFO[modeCount];
+        if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, ref pathCount, paths, ref modeCount, modes, IntPtr.Zero) != 0 || pathCount == 0) return false;
+        adapter = paths[0].sourceAdapterId; source = paths[0].sourceId;
+        return true;
+    }
+
+    /// <summary>当前缩放（%）、推荐缩放、可选的几档；读不到抛错。</summary>
+    static int Scale(out int recommended, out List<int> options) {
+        LUID adapter; uint source;
+        if (!FirstSource(out adapter, out source)) throw new InvalidOperationException("找不到屏幕");
+        var info = new DISPLAYCONFIG_SOURCE_DPI_SCALE_GET();
+        info.header.type = -3;   // DISPLAYCONFIG_DEVICE_INFO_GET_DPI_SCALE
+        info.header.size = Marshal.SizeOf(typeof(DISPLAYCONFIG_SOURCE_DPI_SCALE_GET));
+        info.header.adapterId = adapter; info.header.id = source;
+        int code = DisplayConfigGetDeviceInfo(ref info);
+        if (code != 0) throw new InvalidOperationException("读不到缩放（" + code + "）");
+        int baseIdx = -info.minScaleRel;
+        if (baseIdx < 0 || baseIdx >= DpiSteps.Length) throw new InvalidOperationException("缩放档位超出范围");
+        recommended = DpiSteps[baseIdx];
+        options = new List<int>();
+        for (int rel = info.minScaleRel; rel <= info.maxScaleRel; rel++)
+            if (baseIdx + rel >= 0 && baseIdx + rel < DpiSteps.Length) options.Add(DpiSteps[baseIdx + rel]);
+        int cur = baseIdx + info.curScaleRel;
+        return cur >= 0 && cur < DpiSteps.Length ? DpiSteps[cur] : recommended;
+    }
+
+    public static Dictionary<string, object> SetScale(int percent) {
+        int recommended; List<int> options;
+        Scale(out recommended, out options);
+        if (!options.Contains(percent)) throw new ArgumentException("这块屏幕没有 " + percent + "% 这一档");
+        LUID adapter; uint source;
+        FirstSource(out adapter, out source);
+        var set = new DISPLAYCONFIG_SOURCE_DPI_SCALE_SET();
+        set.header.type = -4;   // DISPLAYCONFIG_DEVICE_INFO_SET_DPI_SCALE
+        set.header.size = Marshal.SizeOf(typeof(DISPLAYCONFIG_SOURCE_DPI_SCALE_SET));
+        set.header.adapterId = adapter; set.header.id = source;
+        set.scaleRel = Array.IndexOf(DpiSteps, percent) - Array.IndexOf(DpiSteps, recommended);
+        int code = DisplayConfigSetDeviceInfo(ref set);
+        if (code != 0) throw new InvalidOperationException("改缩放失败（" + code + "）");
+        return Read();
+    }
+
+    // ---------------- 自动亮度（电源设置 ADAPTBRIGHT；没有光线传感器的机器写进 unsupported） ----------------
+
+    static bool HasLightSensor() {
+        // 光线传感器的设备接口类 GUID_DEVINTERFACE_SENSOR + ALS 类别：直接问传感器 API 太重，这里看注册的环境光传感器设备
+        using (var searcher = new System.Management.ManagementObjectSearcher("SELECT Name FROM Win32_PnPEntity WHERE PNPClass = 'Sensor'"))
+            foreach (System.Management.ManagementObject o in searcher.Get()) {
+                string name = Convert.ToString(o["Name"]) ?? "";
+                if (name.IndexOf("Light", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("光", StringComparison.Ordinal) >= 0) return true;
+            }
+        return false;
+    }
+
+    static readonly Guid SubVideo = new Guid("7516b95f-f776-4464-8c53-06167f40cc99"), AdaptBright = new Guid("fbd9aa66-9553-4097-ba44-ed6e9d65eab8");
+    [DllImport("powrprof.dll")] static extern uint PowerGetActiveScheme(IntPtr root, out IntPtr scheme);
+    [DllImport("powrprof.dll")] static extern uint PowerReadACValueIndex(IntPtr root, ref Guid scheme, ref Guid sub, ref Guid setting, out uint value);
+    [DllImport("powrprof.dll")] static extern uint PowerWriteACValueIndex(IntPtr root, ref Guid scheme, ref Guid sub, ref Guid setting, uint value);
+    [DllImport("powrprof.dll")] static extern uint PowerWriteDCValueIndex(IntPtr root, ref Guid scheme, ref Guid sub, ref Guid setting, uint value);
+    [DllImport("powrprof.dll")] static extern uint PowerSetActiveScheme(IntPtr root, ref Guid scheme);
+    [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr mem);
+
+    static Guid ActiveScheme() {
+        IntPtr p;
+        if (PowerGetActiveScheme(IntPtr.Zero, out p) != 0) throw new InvalidOperationException("读不到电源方案");
+        try { return (Guid)Marshal.PtrToStructure(p, typeof(Guid)); } finally { LocalFree(p); }
+    }
+
+    static bool AutoBrightness() {
+        Guid scheme = ActiveScheme(), sub = SubVideo, setting = AdaptBright; uint value;
+        if (PowerReadACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref setting, out value) != 0) throw new InvalidOperationException("读不到自动亮度");
+        return value != 0;
+    }
+
+    /// <summary>插电、电池两边一起改，再重新激活当前方案让它生效。</summary>
+    public static Dictionary<string, object> SetAutoBrightness(bool enabled) {
+        if (!HasLightSensor()) throw new InvalidOperationException("这台机器没有光线传感器");
+        Guid scheme = ActiveScheme(), sub = SubVideo, setting = AdaptBright;
+        uint v = enabled ? 1u : 0u;
+        if (PowerWriteACValueIndex(IntPtr.Zero, ref scheme, ref sub, ref setting, v) != 0 || PowerWriteDCValueIndex(IntPtr.Zero, ref scheme, ref sub, ref setting, v) != 0)
+            throw new InvalidOperationException("改自动亮度失败");
+        PowerSetActiveScheme(IntPtr.Zero, ref scheme);
+        return Read();
+    }
+
     // ---------------- 音频设备（Core Audio） ----------------
 
-    [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumeratorCo { }
+    // 设备枚举器按 CLSID 建、直接转成接口：它是 COM 单例，SystemControls 已经用自己的 ComImport 类包过一次，
+    // 再 new 一个同 CLSID 的 ComImport 类会撞上已有的包装（InvalidCastException MMDeviceEnumerator → MMDeviceEnumeratorCo）。
+    static IMMDeviceEnumerator Enumerator() { return (IMMDeviceEnumerator)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("BCDE0395-E52F-467C-8E3D-C4579291692E"))); }
     [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IMMDeviceEnumerator {
         [PreserveSig] int EnumAudioEndpoints(int dataFlow, int stateMask, out IMMDeviceCollection devices);
@@ -254,7 +370,7 @@ static class DisplayAudio {
     static readonly Guid FriendlyNameFmt = new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0");
 
     static List<Dictionary<string, object>> Outputs(out string current) {
-        var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorCo();
+        var enumerator = Enumerator();
         current = null;
         IMMDevice def;
         if (enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia, out def) == 0 && def != null) def.GetId(out current);
@@ -297,7 +413,7 @@ static class DisplayAudio {
     }
 
     static SystemControls.IAudioEndpointVolume Mic() {
-        var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorCo();
+        var enumerator = Enumerator();
         IMMDevice device;
         if (enumerator.GetDefaultAudioEndpoint(eCapture, eConsole, out device) != 0 || device == null) throw new NoDeviceException("没有麦克风");
         var iid = typeof(SystemControls.IAudioEndpointVolume).GUID; object endpoint;

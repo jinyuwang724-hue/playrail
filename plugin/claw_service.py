@@ -315,6 +315,14 @@ class Service:
             raise ValueError("麦克风开关格式错误")
         return await self._power.display("mic_mute_set", muted=muted)
 
+    async def set_display_scale(self, percent):
+        return await self._power.display("scale_set", percent=self._number(percent, 100, 500))
+
+    async def set_auto_brightness(self, enabled):
+        if type(enabled) is not bool:
+            raise ValueError("自动亮度开关格式错误")
+        return await self._power.display("auto_brightness_set", enabled=enabled)
+
     async def set_fps_limit(self, fps):
         game = (self._power.sys_cache or {}).get("game") or {}
         return await self._power.system_set("fps_limit_set", fps=self._number(fps, 0, 360), exe=game.get("exe") or "")
