@@ -29,10 +29,11 @@ public sealed partial class Backdrop
     {
         if (_settings == settings) return;
         var oldKind = _settings.Kind;
-        bool filmLayoutChanged = oldKind == BackgroundKind.Filmstrip && settings.Kind == BackgroundKind.Filmstrip && _settings.FilmLayout != settings.FilmLayout;
+        bool filmGeometryChanged = oldKind == BackgroundKind.Filmstrip && settings.Kind == BackgroundKind.Filmstrip
+            && (_settings.FilmLayout != settings.FilmLayout || _settings.FilmStripCount != settings.FilmStripCount);
         bool reload = oldKind != settings.Kind || _settings.MonetStreaks != settings.MonetStreaks;
         _settings = settings;
-        if (oldKind == BackgroundKind.Filmstrip && (settings.Kind != BackgroundKind.Filmstrip || filmLayoutChanged)) ReleaseFilm();
+        if (oldKind == BackgroundKind.Filmstrip && (settings.Kind != BackgroundKind.Filmstrip || filmGeometryChanged)) ReleaseFilm();
         InvalidateImageFrame();
         _dirty = true;
         if (reload && _postImage != null) LoadCoverImage(_coverPath, _postImage);

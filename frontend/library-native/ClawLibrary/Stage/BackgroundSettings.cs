@@ -14,6 +14,7 @@ public sealed record BackgroundSettings
     public bool MonetDrift { get; init; } = true;
     public bool MonetStreaks { get; init; } = true;
     public FilmLayout FilmLayout { get; init; } = FilmLayout.Horizontal;
+    public int FilmStripCount { get; init; } // 0 keeps the original screen-sized layout.
     public int FilmSpeed { get; init; } = 100;
     public int FilmAngle { get; init; } = 15;
     public int FilmDarkness { get; init; } = 70;
@@ -43,6 +44,7 @@ public sealed record BackgroundSettings
                     case "drift" when bool.TryParse(p[1], out var d): result = result with { MonetDrift = d }; break;
                     case "streaks" when bool.TryParse(p[1], out var s): result = result with { MonetStreaks = s }; break;
                     case "filmLayout" when Enum.TryParse<FilmLayout>(p[1], out var fl) && Enum.IsDefined(fl): result = result with { FilmLayout = fl }; break;
+                    case "filmStrips" when int.TryParse(p[1], out var fc): result = result with { FilmStripCount = fc == 0 ? 0 : Math.Clamp(fc, 3, 16) }; break;
                     case "filmSpeed" when int.TryParse(p[1], out var fs): result = result with { FilmSpeed = Math.Clamp(fs, 25, 200) }; break;
                     case "filmAngle" when int.TryParse(p[1], out var fa): result = result with { FilmAngle = Math.Clamp(fa, 0, 45) }; break;
                     case "filmDarkness" when int.TryParse(p[1], out var fd): result = result with { FilmDarkness = Math.Clamp(fd, 0, 90) }; break;
@@ -57,7 +59,7 @@ public sealed record BackgroundSettings
         try
         {
             Directory.CreateDirectory(App.CacheDir);
-            File.WriteAllLines(FilePath + ".tmp", new[] { $"kind={Kind}", $"latent={Latent}", $"nomand={Nomand}", $"drift={MonetDrift}", $"streaks={MonetStreaks}", $"filmLayout={FilmLayout}", $"filmSpeed={FilmSpeed}", $"filmAngle={FilmAngle}", $"filmDarkness={FilmDarkness}" });
+            File.WriteAllLines(FilePath + ".tmp", new[] { $"kind={Kind}", $"latent={Latent}", $"nomand={Nomand}", $"drift={MonetDrift}", $"streaks={MonetStreaks}", $"filmLayout={FilmLayout}", $"filmStrips={FilmStripCount}", $"filmSpeed={FilmSpeed}", $"filmAngle={FilmAngle}", $"filmDarkness={FilmDarkness}" });
             File.Move(FilePath + ".tmp", FilePath, true);
         }
         catch (Exception ex) { Log.Warn($"background settings save: {ex.Message}"); }

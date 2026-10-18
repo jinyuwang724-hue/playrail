@@ -127,6 +127,7 @@ public sealed partial class WallStage
             else if (_backgroundSettings.Kind == BackgroundKind.Filmstrip)
             {
                 m.Settings.Add(("封面排列", _backgroundSettings.FilmLayout == FilmLayout.Horizontal ? "横向条带" : "竖向条带"));
+                m.Settings.Add(("条带数量", _backgroundSettings.FilmStripCount == 0 ? "自动" : $"{_backgroundSettings.FilmStripCount} 条"));
                 m.Settings.Add(("滑动速度", $"{_backgroundSettings.FilmSpeed}%"));
                 m.Settings.Add(("倾斜角度", $"{_backgroundSettings.FilmAngle}°"));
                 m.Settings.Add(("背景暗化", $"{_backgroundSettings.FilmDarkness}%"));
@@ -305,12 +306,13 @@ public sealed partial class WallStage
                 _backgroundSettings = i switch
                 {
                     1 => _backgroundSettings with { FilmLayout = _backgroundSettings.FilmLayout == FilmLayout.Horizontal ? FilmLayout.Vertical : FilmLayout.Horizontal },
-                    2 => _backgroundSettings with { FilmSpeed = Math.Clamp(_backgroundSettings.FilmSpeed + step * 25, 25, 200) },
-                    3 => _backgroundSettings with { FilmAngle = Math.Clamp(_backgroundSettings.FilmAngle + step * 5, 0, 45) },
-                    4 => _backgroundSettings with { FilmDarkness = Math.Clamp(_backgroundSettings.FilmDarkness + step * 10, 0, 90) },
+                    2 => _backgroundSettings with { FilmStripCount = StepFilmStripCount(step) },
+                    3 => _backgroundSettings with { FilmSpeed = Math.Clamp(_backgroundSettings.FilmSpeed + step * 25, 25, 200) },
+                    4 => _backgroundSettings with { FilmAngle = Math.Clamp(_backgroundSettings.FilmAngle + step * 5, 0, 45) },
+                    5 => _backgroundSettings with { FilmDarkness = Math.Clamp(_backgroundSettings.FilmDarkness + step * 10, 0, 90) },
                     _ => _backgroundSettings,
                 };
-                if (i is < 1 or > 4) { CloseBackgroundSettings(); return; }
+                if (i is < 1 or > 5) { CloseBackgroundSettings(); return; }
             }
             else if (i == 1)
             {
@@ -349,6 +351,13 @@ public sealed partial class WallStage
         SetBackgroundPreview(false);
         _railFocus = 1;
         RepaintRail();
+    }
+
+    private int StepFilmStripCount(int step)
+    {
+        int current = _backgroundSettings.FilmStripCount;
+        if (current == 3 && step < 0) return 0; // 最少条带之后可回到原来的自动布局。
+        return Math.Clamp((current == 0 ? _backdrop.AutoFilmStripCount : current) + step, 3, 16);
     }
 
     // The background page itself is a full-screen preview; the existing settings rail stays usable.

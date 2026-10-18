@@ -7,6 +7,7 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class Backdrop
 {
+    private const float FilmLaneOverlap = .86f;
     private string[] _filmCoverPaths = Array.Empty<string>();
     private CanvasRenderTarget[]? _filmAtlases;
     private Action<Action>? _postFilm;
@@ -14,6 +15,18 @@ public sealed partial class Backdrop
     private int _filmPendingWidth;
     public string? FilmAccentCover => _coverPath;
     public double FilmTime { get { lock (_gate) return _imageTime; } }
+    public int AutoFilmStripCount
+    {
+        get
+        {
+            bool vertical = _settings.FilmLayout == FilmLayout.Vertical;
+            int coverW = Math.Clamp(_cw / 10, 120, 184);
+            int edge = Math.Max(17, coverW / 9);
+            int band = (vertical ? coverW : coverW * 3 / 2) + edge * 2;
+            int crossDim = vertical ? _cw : _ch;
+            return Math.Clamp((int)MathF.Round(crossDim / (band * FilmLaneOverlap)), 3, 16);
+        }
+    }
     public void SetFilmTime(double seconds)
     {
         lock (_gate) { _imageTime = seconds; InvalidateImageFrame(); _dirty = true; }
@@ -36,9 +49,10 @@ public sealed partial class Backdrop
     {
         var post = _postFilm;
         var paths = _filmCoverPaths;
-        int width = _cw;
+        int width = _cw, height = _ch;
         var layout = _settings.FilmLayout;
-        if (post == null || width == 0 || paths.Length == 0) return;
+        int stripCount = _settings.FilmStripCount;
+        if (post == null || width == 0 || height == 0 || paths.Length == 0) return;
         if (!force && (_filmAtlases != null || _filmPendingWidth == width)) return;
         int version = ++_filmVersion;
         _filmPendingWidth = width;
@@ -47,7 +61,7 @@ public sealed partial class Backdrop
             CanvasRenderTarget[]? ready = null;
             try
             {
-                ready = await BuildFilmAtlases(paths, width, layout);
+                ready = await BuildFilmAtlases(paths, width, height, layout, stripCount);
                 var complete = ready;
                 post(() =>
                 {
@@ -72,17 +86,24 @@ public sealed partial class Backdrop
         });
     }
 
-    private async Task<CanvasRenderTarget[]> BuildFilmAtlases(string[] paths, int width, FilmLayout layout)
+    private async Task<CanvasRenderTarget[]> BuildFilmAtlases(string[] paths, int width, int height, FilmLayout layout, int stripCount)
     {
         const int lanes = 4, framesPerLane = 12;
         bool vertical = layout == FilmLayout.Vertical;
-        int coverW = Math.Clamp(width / 10, 120, 184);
+        int crossDim = vertical ? width : height;
+        float bandFactor = vertical ? 1f + 2f / 9 : 1.5f + 2f / 9;
+        int coverW = stripCount == 0 ? Math.Clamp(width / 10, 120, 184)
+            : Math.Clamp((int)MathF.Round(crossDim / (stripCount * FilmLaneOverlap * bandFactor)), 24, 650);
         int coverH = coverW * 3 / 2;
-        int edge = Math.Max(17, coverW / 9);
-        int pitch = (vertical ? coverH : coverW) + 9;
+        int edge = Math.Max(stripCount == 0 ? 17 : 5, coverW / 9);
+        int pitch = (vertical ? coverH : coverW) + (stripCount == 0 ? 9 : Math.Max(3, coverW / 20));
         int band = (vertical ? coverW : coverH) + edge * 2;
         int atlasW = vertical ? band : pitch * framesPerLane;
         int atlasH = vertical ? pitch * framesPerLane : band;
+        int holeInset = stripCount == 0 ? 5 : Math.Max(1, (edge - 8) / 2);
+        int holeShort = stripCount == 0 ? 8 : Math.Clamp(edge - 2, 3, 8);
+        int holeLong = stripCount == 0 ? 14 : Math.Clamp(coverW / 11, 5, 14);
+        int holeStep = stripCount == 0 ? 32 : Math.Max(12, coverW / 5);
         int count = Math.Min(lanes * framesPerLane, paths.Length);
         var selected = Enumerable.Range(0, count)
             .Select(i => paths[i * paths.Length / count]).ToArray();
@@ -102,10 +123,10 @@ public sealed partial class Backdrop
                         ds.FillRectangle(edge + coverW, 0, edge, atlasH, Gfx.Rgba(0x18, 0x1a, 0x20));
                         ds.DrawLine(edge - 1, 0, edge - 1, atlasH, Gfx.Rgba(0x4b, 0x49, 0x4d), 1);
                         ds.DrawLine(edge + coverW, 0, edge + coverW, atlasH, Gfx.Rgba(0x4b, 0x49, 0x4d), 1);
-                        for (int y = 9; y < atlasH; y += 32)
+                        for (int y = 9; y < atlasH; y += holeStep)
                         {
-                            ds.FillRoundedRectangle(new Rect(5, y, 8, 14), 2, 2, Gfx.Rgba(0x6e, 0x70, 0x77));
-                            ds.FillRoundedRectangle(new Rect(band - 13, y, 8, 14), 2, 2, Gfx.Rgba(0x6e, 0x70, 0x77));
+                            ds.FillRoundedRectangle(new Rect(holeInset, y, holeShort, holeLong), 2, 2, Gfx.Rgba(0x6e, 0x70, 0x77));
+                            ds.FillRoundedRectangle(new Rect(band - holeInset - holeShort, y, holeShort, holeLong), 2, 2, Gfx.Rgba(0x6e, 0x70, 0x77));
                         }
                     }
                     else
@@ -114,10 +135,10 @@ public sealed partial class Backdrop
                         ds.FillRectangle(0, edge + coverH, atlasW, edge, Gfx.Rgba(0x18, 0x1a, 0x20));
                         ds.DrawLine(0, edge - 1, atlasW, edge - 1, Gfx.Rgba(0x4b, 0x49, 0x4d), 1);
                         ds.DrawLine(0, edge + coverH, atlasW, edge + coverH, Gfx.Rgba(0x4b, 0x49, 0x4d), 1);
-                        for (int x = 9; x < atlasW; x += 32)
+                        for (int x = 9; x < atlasW; x += holeStep)
                         {
-                            ds.FillRoundedRectangle(new Rect(x, 5, 14, 8), 2, 2, Gfx.Rgba(0x6e, 0x70, 0x77));
-                            ds.FillRoundedRectangle(new Rect(x, band - 13, 14, 8), 2, 2, Gfx.Rgba(0x6e, 0x70, 0x77));
+                            ds.FillRoundedRectangle(new Rect(x, holeInset, holeLong, holeShort), 2, 2, Gfx.Rgba(0x6e, 0x70, 0x77));
+                            ds.FillRoundedRectangle(new Rect(x, band - holeInset - holeShort, holeLong, holeShort), 2, 2, Gfx.Rgba(0x6e, 0x70, 0x77));
                         }
                     }
                 }
@@ -183,8 +204,8 @@ public sealed partial class Backdrop
             float sin = MathF.Abs(MathF.Sin(angle)), cos = MathF.Abs(MathF.Cos(angle));
             float period = vertical ? atlases[0].SizeInPixels.Height : atlases[0].SizeInPixels.Width;
             float band = vertical ? atlases[0].SizeInPixels.Width : atlases[0].SizeInPixels.Height;
-            float lanePitch = band * .86f; // 邻带轻微重叠，保持胶片墙满屏
             float axisDim = vertical ? _ch : _cw, crossDim = vertical ? _cw : _ch;
+            float lanePitch = _settings.FilmStripCount == 0 ? band * FilmLaneOverlap : crossDim / _settings.FilmStripCount;
             float axisExtent = vertical ? sin * _cw + cos * _ch : cos * _cw + sin * _ch;
             float crossExtent = vertical ? cos * _cw + sin * _ch : sin * _cw + cos * _ch;
             float crossStart = (crossDim - crossExtent) / 2 - band;
