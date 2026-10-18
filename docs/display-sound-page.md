@@ -9,7 +9,7 @@
 ```jsonc
 {
   "brightness": 62,                 // 0–100；没有可调亮度的屏幕时不给
-  "autoBrightness": false,          // 有光感才给；没有光感 → 写进 unsupported
+  "autoBrightness": false,          // 有光感才给；没有光感 → 写进 unsupported，前端隐藏该行
   "refresh": 120, "refreshRates": [120, 60],
   "resolution": [1920, 1200], "resolutions": [[1920, 1200], [1680, 1050], [1280, 800]],   // 当前刷新率下的，按面积从大到小
   "vrr": true,                      // Windows「可变刷新率」开关
@@ -21,7 +21,7 @@
   "gpu": {                          // Intel 驱动控制接口（IGCL / ControlLib）；拿不到的项不给
     "available": true, "error": null,
     "lowLatency": "off",            // off | on | boost
-    "frameSync": "app", "frameSyncOptions": [{ "id": "app", "name": "应用决定" }, { "id": "vsync", "name": "垂直同步" }, { "id": "smooth", "name": "智能同步" }],
+    "frameSync": "app", "frameSyncOptions": [{ "id": "app", "name": "应用决定" }, { "id": "vsync", "name": "垂直同步" }, { "id": "smooth", "name": "平滑同步" }], // 按驱动能力过滤
     "xessFg": false,
     "scaling": "aspect",            // aspect | full | center | integer | retro
     "sharpen": 0, "saturation": 50, "contrast": 50, "gamma": 50   // 0–100
@@ -60,4 +60,6 @@
 - 设备枚举器按 CLSID 建、直接转接口：它是 COM 单例，SystemControls 已经用自己的 ComImport 类包过一次，再 new 同 CLSID 的类会 InvalidCastException（2026-10-17 实测踩到）。
 - 屏幕缩放用 DisplayConfig 没公开的 DPI 缩放项（GET -3 / SET -4，相对推荐档的偏移）；自动亮度是电源设置 ADAPTBRIGHT（插电、电池一起写）。
 - 显卡：`native/ClawGpu.cs`，Intel ControlLib.dll（IGCL）的全局 3D 设置（ctlGetSet3DFeature，应用名为空 = 全局）。init 参数结构 36 字节（ApplicationUID 的 Data4 按 1 对齐），用 8 字节对齐会报 0x4000000F 尺寸不对。
+- 帧同步选项通过 `ctlGetSupported3DCapabilities` 的支持位过滤；本机当前驱动为 `0x2d`，只提供应用决定、垂直同步、平滑同步、限制到刷新率。不能把 API 中定义的全部模式当成当前驱动支持。
+- 前端写入由 `SettingsWriteQueue` 按操作顺序执行：同一项连续调整合并，不同项分别保留；写完统一读取真实状态，旧回复不会覆盖新修改。
 - 夜间模式不做（用户 2026-10-17：没用），页面上不放这一项。

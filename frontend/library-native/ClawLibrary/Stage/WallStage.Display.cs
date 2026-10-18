@@ -25,7 +25,8 @@ public sealed partial class WallStage
     private ContainerVisual _dsRightView = null!;
     private SpriteVisual _dsTitle = null!, _dsLeft = null!, _dsRight = null!;
     private bool _dsOpen, _dsBusy, _dsAgentDown;
-    private int _dsFocus, _dsVersion, _dsEdits;
+    private int _dsFocus, _dsVersion;
+    private SettingsWriteQueue? _dsWrites;
     private float _dsScroll, _dsScrollY = float.NaN;
     /// <summary>后台的显示与声音状态（get_display_state 的结果，或老后台 widget_state 里的 system）。本地改动直接写在这里。</summary>
     private JsonObject? _dsView;
@@ -99,7 +100,7 @@ public sealed partial class WallStage
         var t = _dq.CreateTimer();
         t.Interval = TimeSpan.FromSeconds(2);
         t.IsRepeating = true;
-        t.Tick += (_, _) => { if (_dsOpen && _dsEdits == 0) _ = DsRefresh(); };
+        t.Tick += (_, _) => { if (_dsOpen && _dsWrites?.IsBusy != true) _ = DsRefresh(); };
         return t;
     }
 
@@ -107,8 +108,9 @@ public sealed partial class WallStage
 
     private async Task DsRefresh()
     {
-        if (_dsBusy) return;
+        if (_dsBusy || _dsWrites?.IsBusy == true) return;
         _dsBusy = true;
+        long revision = _dsWrites?.Revision ?? 0;
         try
         {
             _agent ??= new AgentClient();
@@ -117,13 +119,14 @@ public sealed partial class WallStage
             {
                 view = await _agent.Call("get_display_state");
             }
-            catch (Exception ex) when (ex.Message.Contains("不支持"))
+            catch (Exception ex) when (ex.Message.Contains("不支持的后台调用"))
             {
                 // 老后台：只有小组件用的那几项
                 view = (await _agent.Call("widget_state"))?["system"];
             }
             _dsAgentDown = false;
-            if (_dsEdits == 0 && view is JsonObject o) _dsView = (JsonObject)o.DeepClone();
+            if (_dsWrites?.IsBusy != true && revision == (_dsWrites?.Revision ?? 0) && view is JsonObject o)
+                _dsView = (JsonObject)o.DeepClone();
         }
         catch (Exception ex)
         {
@@ -132,31 +135,27 @@ public sealed partial class WallStage
         }
         finally { _dsBusy = false; }
         if (!_dsOpen) return;
+        if (_dsWrites?.IsBusy != true && revision != (_dsWrites?.Revision ?? 0)) { _ = DsRefresh(); return; }
         BuildDsRows();
         PaintDs();
     }
 
     /// <summary>
-    /// 写一项：本地已经改好了（界面先变），delayMs 内的连续改动只写最后一次。后台答回来的是新状态就直接用，
-    /// 没有这个方法时提示一句、读回真实值。
+    /// 同一项的连续修改只写最后一次，各项之间不会互相取消。全部写完后读回真实值，避免旧回复覆盖待写的本地值。
     /// </summary>
     private void DsSet(string method, int delayMs, params JsonNode?[] args)
     {
-        int edits = ++_dsEdits;
+        _dsWrites ??= new SettingsWriteQueue(
+            ex => Toast(ex.Message.Contains("不支持的后台调用") ? $"这一项{DsLater}" : $"没有改成：{ex.Message}"),
+            () => { _ = DsRefresh(); });
+        string key = method == "set_gpu_option" ? $"{method}:{Str(args[0])}" : method;
+        _ = _dsWrites.Enqueue(key, delayMs, async () =>
+        {
+            _agent ??= new AgentClient();
+            await _agent.Call(method, args);
+        });
         BuildDsRows();
         PaintDs();
-        After(delayMs, async () =>
-        {
-            if (edits != _dsEdits || _agent == null) return;
-            try
-            {
-                var res = await _agent.Call(method, args);
-                if (edits == _dsEdits && res is JsonObject o && _dsView != null)
-                    foreach (var (key, value) in o) if (key != "game" && key != "charging") _dsView[key] = value?.DeepClone();
-            }
-            catch (Exception ex) { Toast(ex.Message.Contains("不支持") ? $"这一项{DsLater}" : $"没有改成：{ex.Message}"); }
-            if (edits == _dsEdits) { _dsEdits = 0; _ = DsRefresh(); }
-        });
     }
 
     // ---------------- 右栏的行 ----------------
@@ -242,12 +241,7 @@ public sealed partial class WallStage
         _dsRows.Add(new PerfRow { Section = true, Title = "声音" });
         bool muted = Bool(v["muted"]);
         _dsRows.Add(Number("音量", "volume", 0, 100, 2, x => muted ? $"{x} % · 静音" : $"{x} %", x => { v["volume"] = x; DsSet("set_volume", 120, JsonValue.Create(x)); }));
-        _dsRows.Add(new PerfRow
-        {
-            Title = "静音", Choices = new[] { "关", "开" }, Choice = muted ? 1 : 0,
-            Step = d => { if ((d > 0) != muted) { v["muted"] = d > 0; DsSet("set_mute", 0, JsonValue.Create(d > 0)); } },
-            Press = () => { v["muted"] = !muted; DsSet("set_mute", 0, JsonValue.Create(!muted)); },
-        });
+        _dsRows.Add(Toggle("静音", "muted", "set_mute"));
         if (v["outputs"] is JsonArray outs && outs.Count > 0)
         {
             var ids = outs.Select(o => Str(o?["id"]) ?? "").ToArray();
@@ -306,7 +300,8 @@ public sealed partial class WallStage
 
         // ---- 更多显示 ----
         _dsRows.Add(new PerfRow { Section = true, Title = "更多显示" });
-        _dsRows.Add(Toggle("自动亮度", "autoBrightness", "set_auto_brightness"));
+        if (!unsupported.Contains("autoBrightness") && v["autoBrightness"] is JsonValue)
+            _dsRows.Add(Toggle("自动亮度", "autoBrightness", "set_auto_brightness"));
         _dsRows.Add(Toggle("HDR", "hdr", "set_hdr"));
         if (v["scales"] is JsonArray scales && scales.Count > 0)
         {

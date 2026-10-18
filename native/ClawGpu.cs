@@ -35,12 +35,22 @@ static class IntelGpu {
         [FieldOffset(48)] public IntPtr CustomValue;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct FeatureCaps {
+        public uint Size;
+        public byte Version;
+        public uint Count;
+        public IntPtr Details;
+    }
+
     [DllImport("ControlLib.dll")] static extern uint ctlInit(ref InitArgs args, out IntPtr api);
     [DllImport("ControlLib.dll")] static extern uint ctlClose(IntPtr api);
     [DllImport("ControlLib.dll")] static extern uint ctlEnumerateDevices(IntPtr api, ref uint count, [Out] IntPtr[] devices);
     [DllImport("ControlLib.dll")] static extern uint ctlGetSet3DFeature(IntPtr device, ref Feature3D feature);
+    [DllImport("ControlLib.dll")] static extern uint ctlGetSupported3DCapabilities(IntPtr device, ref FeatureCaps caps);
 
     static IntPtr api, device, emptyName;
+    static uint? gamingFlipMask;
 
     /// <summary>第一次用时初始化，之后一直用同一个句柄（ClawPower 常驻）。</summary>
     static void Open() {
@@ -74,6 +84,37 @@ static class IntelGpu {
     static readonly string[] FlipIds = { "app", "vsyncOff", "vsync", "smooth", "speed", "capped" };
     static readonly string[] FlipNames = { "应用决定", "关闭垂直同步", "垂直同步", "平滑同步", "极速帧", "限制到刷新率" };
 
+    static uint GamingFlipMask() {
+        if (gamingFlipMask.HasValue) return gamingFlipMask.Value;
+        var caps = new FeatureCaps { Size = (uint)Marshal.SizeOf(typeof(FeatureCaps)) };
+        uint r = ctlGetSupported3DCapabilities(device, ref caps);
+        if (r != 0 || caps.Count == 0 || caps.Count > 256) throw new InvalidOperationException("读不到帧同步支持列表");
+        // igcl_api.h: ctl_3d_feature_details_t is 72 bytes on x64; EnumType.SupportedTypes is at byte 8.
+        IntPtr details = Marshal.AllocHGlobal((int)caps.Count * 72);
+        try {
+            for (int i = 0; i < caps.Count * 72; i += 8) Marshal.WriteInt64(details, i, 0);
+            caps.Details = details;
+            r = ctlGetSupported3DCapabilities(device, ref caps);
+            if (r != 0) throw new InvalidOperationException("读不到帧同步支持列表");
+            for (int i = 0; i < caps.Count; i++) {
+                IntPtr item = IntPtr.Add(details, i * 72);
+                if (Marshal.ReadInt32(item) == FeatureGamingFlipModes && Marshal.ReadInt32(item, 4) == ValueTypeEnum) {
+                    gamingFlipMask = unchecked((uint)Marshal.ReadInt64(item, 8));
+                    return gamingFlipMask.Value;
+                }
+            }
+            throw new InvalidOperationException("驱动没有提供帧同步能力");
+        } finally { Marshal.FreeHGlobal(details); }
+    }
+
+    internal static List<Dictionary<string, object>> FrameSyncOptions(uint supported) {
+        var options = new List<Dictionary<string, object>>();
+        for (int i = 0; i < FlipIds.Length; i++)
+            if ((supported & (1u << i)) != 0)
+                options.Add(new Dictionary<string, object> { { "id", FlipIds[i] }, { "name", FlipNames[i] } });
+        return options;
+    }
+
     public static Dictionary<string, object> Read() {
         var gpu = new Dictionary<string, object>();
         try { Open(); }
@@ -87,10 +128,13 @@ static class IntelGpu {
         if (r == 0) {
             int bit = 0;
             for (int i = 0; i < FlipIds.Length; i++) if ((v & (1u << i)) != 0) { bit = i; break; }
-            gpu["frameSync"] = FlipIds[bit];
-            var options = new List<Dictionary<string, object>>();
-            for (int i = 0; i < FlipIds.Length; i++) options.Add(new Dictionary<string, object> { { "id", FlipIds[i] }, { "name", FlipNames[i] } });
-            gpu["frameSyncOptions"] = options;
+            try {
+                var options = FrameSyncOptions(GamingFlipMask());
+                if (options.Count > 0) {
+                    gpu["frameSync"] = FlipIds[bit];
+                    gpu["frameSyncOptions"] = options;
+                }
+            } catch (Exception e) { errors.Add(e.Message); }
         } else errors.Add(string.Format("帧同步 0x{0:X8}", r));
         r = Call(FeatureFrameGeneration, false, 0, out v);
         if (r == 0) gpu["xessFg"] = v != 0; else errors.Add(string.Format("XeSS 插帧 0x{0:X8}", r));
@@ -112,6 +156,7 @@ static class IntelGpu {
             case "frameSync": {
                 int i = Array.IndexOf(FlipIds, Convert.ToString(value));
                 if (i < 0) throw new ArgumentException("没有这个帧同步模式");
+                if ((GamingFlipMask() & (1u << i)) == 0) throw new InvalidOperationException("当前显卡驱动不支持这个帧同步模式");
                 r = Call(FeatureGamingFlipModes, true, 1u << i, out result);
                 break;
             }
