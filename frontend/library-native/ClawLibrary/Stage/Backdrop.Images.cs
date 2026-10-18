@@ -19,14 +19,19 @@ public sealed partial class Backdrop
     private bool _disposed;
     private double _imageTime, _imageFadeMs = 800;
     private MonetColors _monetColors = MonetColors.Default, _previousMonetColors = MonetColors.Default;
-    private bool Animated => _settings.Kind == BackgroundKind.Latent || (_settings.Kind == BackgroundKind.Monet && _settings.MonetDrift && _poster != null);
-    private bool ImageFading => _settings.Kind == BackgroundKind.Monet && _previousPoster != null && _imageFadeMs < 800;
+    private bool Animated => _settings.Kind == BackgroundKind.Latent
+        || (_settings.Kind == BackgroundKind.Monet && _settings.MonetDrift && _poster != null)
+        || (_settings.Kind == BackgroundKind.Filmstrip && _filmAtlases != null);
+    private bool ImageFading => _imageFadeMs < 800
+        && ((_settings.Kind == BackgroundKind.Monet && _previousPoster != null) || _settings.Kind == BackgroundKind.Filmstrip);
 
     public void Configure(BackgroundSettings settings)
     {
         if (_settings == settings) return;
-        bool reload = _settings.Kind != settings.Kind || _settings.MonetStreaks != settings.MonetStreaks;
+        var oldKind = _settings.Kind;
+        bool reload = oldKind != settings.Kind || _settings.MonetStreaks != settings.MonetStreaks;
         _settings = settings;
+        if (oldKind == BackgroundKind.Filmstrip && settings.Kind != BackgroundKind.Filmstrip) ReleaseFilm();
         InvalidateImageFrame();
         _dirty = true;
         if (reload && _postImage != null) LoadCoverImage(_coverPath, _postImage);
@@ -50,9 +55,25 @@ public sealed partial class Backdrop
             _previousPoster?.Dispose(); _previousPoster = null;
             _previousReadability?.Dispose(); _previousReadability = null;
             InvalidateImageFrame(); _dirty = true;
+            if (_settings.Kind == BackgroundKind.Filmstrip)
+            {
+                _previousMonetColors = _monetColors;
+                _monetColors = MonetColors.Default;
+                _imageFadeMs = InstantColors ? 800 : 0;
+            }
             return;
         }
         if (_settings.Kind == BackgroundKind.Latent) return;
+        if (_settings.Kind == BackgroundKind.Filmstrip)
+        {
+            _cover?.Dispose(); _cover = null;
+            _poster?.Dispose(); _poster = null;
+            _previousPoster?.Dispose(); _previousPoster = null;
+            _readability?.Dispose(); _readability = null;
+            _previousReadability?.Dispose(); _previousReadability = null;
+            LoadFilmAccent(path, post, version);
+            return;
+        }
         var settings = _settings;
         // Win2D's device is free-threaded. Decode and process away from input / composition callbacks.
         _ = Task.Run(async () =>
@@ -192,6 +213,13 @@ public sealed partial class Backdrop
 
     private void EnsureImageFrame()
     {
+        if (_settings.Kind == BackgroundKind.Filmstrip)
+        {
+            _imageFrame ??= new CanvasRenderTarget(_g.Device, _cw, _ch, 96);
+            using var film = _imageFrame.CreateDrawingSession();
+            DrawFilmWall(film);
+            return;
+        }
         if (_imageFrame != null) return;
         _imageFrame = new CanvasRenderTarget(_g.Device,_cw,_ch,96);
         using var ds = _imageFrame.CreateDrawingSession();
@@ -295,6 +323,7 @@ public sealed partial class Backdrop
     private void DisposeImages()
     {
         _disposed=true; ++_imageVersion;
+        ReleaseFilm();
         _cover?.Dispose(); _noise?.Dispose(); _poster?.Dispose(); _previousPoster?.Dispose(); _previousReadability?.Dispose();
         _lens?.Dispose(); _paper?.Dispose(); InvalidateImageFrame();
     }

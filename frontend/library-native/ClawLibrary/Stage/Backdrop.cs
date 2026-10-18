@@ -98,7 +98,11 @@ public sealed partial class Backdrop : IDisposable
         double maxPixels = _settings.Kind == BackgroundKind.Latent ? 1280 * 720 : 1920 * 1080;
         if (px > maxPixels) scale *= Math.Sqrt(maxPixels / px);
         int cw = Math.Max(1, (int)Math.Round(w * scale)), ch = Math.Max(1, (int)Math.Round(h * scale));
-        if (cw == _cw && ch == _ch && _surface != null) return;
+        if (cw == _cw && ch == _ch && _surface != null)
+        {
+            if (_settings.Kind == BackgroundKind.Filmstrip) LoadFilmAtlases();
+            return;
+        }
         lock (_gate)
         {
         _cw = cw; _ch = ch; _pixelRatio = (float)scale;
@@ -118,6 +122,7 @@ public sealed partial class Backdrop : IDisposable
         catch (Exception ex) { Log.Error("latent surface", ex); _surface = null; }
         }
         Log.Info($"latent backdrop canvas {cw}x{ch} (pixel ratio {scale:F3})");
+        if (_settings.Kind == BackgroundKind.Filmstrip) LoadFilmAtlases(force: true);
     }
 
     public bool Visible { set => Root.IsVisible = value; }

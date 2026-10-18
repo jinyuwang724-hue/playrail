@@ -351,6 +351,7 @@ public sealed partial class WallStage
         if (MorphSlow != 1) G.C.GlobalPlaybackRate = (float)(1 / MorphSlow);   // --slow=N（测试）
         _ccBack = new Backdrop(G) { Dpi = Chrome.Dpi };
         _ccBack.Configure(_backgroundSettings);
+        _ccBack.SetFilmCovers(FilmCoverPaths(), a => _dq.TryEnqueue(() => { a(); CcBackLoop(); }));
         _ccDim = G.Sprite(G.Solid(Gfx.Rgba(0, 0, 0, 0.20)));
         _ccRow = G.Container();
         _ccTitle = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);

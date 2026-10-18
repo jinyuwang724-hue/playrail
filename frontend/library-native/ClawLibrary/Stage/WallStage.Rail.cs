@@ -120,7 +120,8 @@ public sealed partial class WallStage
                 m.Settings.Add(("缓慢漂移", _backgroundSettings.MonetDrift ? "开" : "关"));
                 m.Settings.Add(("竖向纹理", _backgroundSettings.MonetStreaks ? "开" : "关"));
             }
-            else m.Settings.Add((_backgroundSettings.Kind == BackgroundKind.Latent ? "显示模式" : "背景效果", _backgroundSettings.Variant));
+            else if (_backgroundSettings.Kind != BackgroundKind.Filmstrip)
+                m.Settings.Add((_backgroundSettings.Kind == BackgroundKind.Latent ? "显示模式" : "背景效果", _backgroundSettings.Variant));
             m.Settings.Add(("完成", "返回设置"));
         }
         return m;
@@ -288,7 +289,8 @@ public sealed partial class WallStage
         if (_backgroundSettingsOpen)
         {
             bool monet = _backgroundSettings.Kind == BackgroundKind.Monet;
-            if (i == 0) _backgroundSettings = _backgroundSettings with { Kind = (BackgroundKind)(((int)_backgroundSettings.Kind + step + 3) % 3) };
+            if (i == 0) _backgroundSettings = _backgroundSettings with { Kind = (BackgroundKind)(((int)_backgroundSettings.Kind + step + 4) % 4) };
+            else if (_backgroundSettings.Kind == BackgroundKind.Filmstrip) { CloseBackgroundSettings(); return; }
             else if (i == 1)
             {
                 _backgroundSettings = _backgroundSettings.Kind switch
@@ -632,6 +634,14 @@ public sealed partial class WallStage
     }
 
     // ---------------- 动态背景 ----------------
+
+    private string[] FilmCoverPaths() => _lib.Games
+        .Where(g => g.Art?.Has('q') == true)
+        .OrderByDescending(g => g.Installed)
+        .ThenBy(g => g.LastPlayedDays ?? int.MaxValue)
+        .Select(g => g.Art!.File('q'))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
     private void UpdateBackdropKey(SlotKey? key, bool animate)
     {

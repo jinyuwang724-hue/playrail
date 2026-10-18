@@ -1,6 +1,6 @@
 namespace ClawLibrary.Stage;
 
-public enum BackgroundKind { Latent, Monet, Nomand }
+public enum BackgroundKind { Latent, Monet, Nomand, Filmstrip }
 public enum LatentLayers { Mixed, Pixels, Fluid }
 public enum NomandEffect { Lens, Paper }
 
@@ -12,10 +12,11 @@ public sealed record BackgroundSettings
     public NomandEffect Nomand { get; init; }
     public bool MonetDrift { get; init; } = true;
     public bool MonetStreaks { get; init; } = true;
-    public string Name => Kind switch { BackgroundKind.Monet => "莫奈", BackgroundKind.Nomand => "漫游", _ => "隐现" };
+    public string Name => Kind switch { BackgroundKind.Monet => "莫奈", BackgroundKind.Nomand => "漫游", BackgroundKind.Filmstrip => "胶片封面墙", _ => "隐现" };
     public string Variant => Kind switch
     {
         BackgroundKind.Nomand => Nomand == NomandEffect.Lens ? "镜头畸变" : "纸张纹理",
+        BackgroundKind.Filmstrip => "斜向滑动",
         BackgroundKind.Latent => Latent switch { LatentLayers.Pixels => "像素", LatentLayers.Fluid => "流体", _ => "混合" },
         _ => "全屏叠色",
     };
