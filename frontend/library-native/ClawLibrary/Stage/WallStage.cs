@@ -297,8 +297,6 @@ public sealed partial class WallStage : IDisposable
             catch (Exception ex) { Log.Error($"art kit {g.Id}", ex); }
         }
         Log.Info($"art kits built in {sw.ElapsedMilliseconds}ms");
-        _backdrop.SetFilmCovers(FilmCoverPaths(), a => _dq.TryEnqueue(() => { a(); EnsureBackdropLoop(); }));
-        _ccBack?.SetFilmCovers(FilmCoverPaths(), a => _dq.TryEnqueue(() => { a(); CcBackLoop(); }));
     }
 
     private void RefreshItem(string id)
@@ -343,7 +341,6 @@ public sealed partial class WallStage : IDisposable
         Expr(wallR, "Opacity", "p.fade");
         _backdrop = new Backdrop(G) { Dpi = Chrome.Dpi };
         _backdrop.Configure(_backgroundSettings);
-        _backdrop.SetFilmCovers(FilmCoverPaths(), a => _dq.TryEnqueue(() => { a(); EnsureBackdropLoop(); }));
         _root.Children.InsertAtBottom(_backdrop.Root);
         Expr(_backdrop.Root, "Opacity", "p.fade");
         // 背景跟着缝走：画布按「缝在首页的位置」来画（bhome / bsw：缝第一次打开时的屏幕位置和宽度；缝越宽越往画布正中靠，

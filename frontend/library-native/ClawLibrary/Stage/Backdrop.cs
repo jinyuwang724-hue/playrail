@@ -98,11 +98,7 @@ public sealed partial class Backdrop : IDisposable
         double maxPixels = _settings.Kind == BackgroundKind.Latent ? 1280 * 720 : 1920 * 1080;
         if (px > maxPixels) scale *= Math.Sqrt(maxPixels / px);
         int cw = Math.Max(1, (int)Math.Round(w * scale)), ch = Math.Max(1, (int)Math.Round(h * scale));
-        if (cw == _cw && ch == _ch && _surface != null)
-        {
-            if (_settings.Kind == BackgroundKind.Filmstrip) LoadFilmAtlases();
-            return;
-        }
+        if (cw == _cw && ch == _ch && _surface != null) return;
         lock (_gate)
         {
         _cw = cw; _ch = ch; _pixelRatio = (float)scale;
@@ -122,7 +118,6 @@ public sealed partial class Backdrop : IDisposable
         catch (Exception ex) { Log.Error("latent surface", ex); _surface = null; }
         }
         Log.Info($"latent backdrop canvas {cw}x{ch} (pixel ratio {scale:F3})");
-        if (_settings.Kind == BackgroundKind.Filmstrip) LoadFilmAtlases(force: true);
     }
 
     public bool Visible { set => Root.IsVisible = value; }
@@ -163,11 +158,10 @@ public sealed partial class Backdrop : IDisposable
             lock (_gate) { need = NeedsFrames; left = _stripLeft; width = _stripWidth; }
             if (!need) { _wake.WaitOne(500); last = 0; continue; }
             DwmFlush();   // 等到这一帧合成完，下一帧开始画
-            if (_stop) break;
             long now = Stopwatch.GetTimestamp();
             double dt = last == 0 ? 16.7 : Math.Min(100, (now - last) * 1000.0 / Stopwatch.Frequency);
             last = now;
-            try { lock (_gate) { if (_stop) break; Frame(dt, left, width); } }
+            try { lock (_gate) Frame(dt, left, width); }
             catch (Exception ex) { Log.Error("latent loop", ex); Thread.Sleep(500); }
         }
     }
@@ -458,12 +452,9 @@ public sealed partial class Backdrop : IDisposable
         _stop = true;
         _wake.Set();
         _thread?.Join(500);
-        lock (_gate)
-        {
-            _strip?.Dispose();
-            _blur?.Dispose();
-            _effect?.Dispose();
-            DisposeImages();
-        }
+        _strip?.Dispose();
+        _blur?.Dispose();
+        _effect?.Dispose();
+        DisposeImages();
     }
 }

@@ -12,37 +12,30 @@ public sealed partial class Backdrop
 {
     private BackgroundSettings _settings = new();
     private CanvasBitmap? _cover, _noise;
-    private CanvasRenderTarget? _imageFrame, _poster, _previousPoster, _readability, _previousReadability;
+    private CanvasRenderTarget? _imageFrame, _poster, _previousPoster, _readability;
     private PixelShaderEffect? _lens, _paper;
     private Action<Action>? _postImage;
     private int _imageVersion;
     private bool _disposed;
     private double _imageTime, _imageFadeMs = 800;
-    private MonetColors _monetColors = MonetColors.Default, _previousMonetColors = MonetColors.Default;
-    private bool Animated => _settings.Kind == BackgroundKind.Latent
-        || (_settings.Kind == BackgroundKind.Monet && _settings.MonetDrift && _poster != null)
-        || (_settings.Kind == BackgroundKind.Filmstrip && _filmAtlases != null);
-    private bool ImageFading => _imageFadeMs < 800
-        && ((_settings.Kind == BackgroundKind.Monet && _previousPoster != null) || _settings.Kind == BackgroundKind.Filmstrip);
+    private bool Animated => _settings.Kind == BackgroundKind.Latent || (_settings.Kind == BackgroundKind.Monet && _settings.MonetDrift && _poster != null);
+    private bool ImageFading => _settings.Kind == BackgroundKind.Monet && _previousPoster != null && _imageFadeMs < 800;
 
     public void Configure(BackgroundSettings settings)
     {
         if (_settings == settings) return;
-        var oldKind = _settings.Kind;
-        bool filmLayoutChanged = oldKind == BackgroundKind.Filmstrip && settings.Kind == BackgroundKind.Filmstrip && _settings.FilmLayout != settings.FilmLayout;
-        bool reload = oldKind != settings.Kind || _settings.MonetStreaks != settings.MonetStreaks;
+        bool reload = _settings.Kind != settings.Kind || _settings.MonetStreaks != settings.MonetStreaks;
         _settings = settings;
-        if (oldKind == BackgroundKind.Filmstrip && (settings.Kind != BackgroundKind.Filmstrip || filmLayoutChanged)) ReleaseFilm();
         InvalidateImageFrame();
         _dirty = true;
         if (reload && _postImage != null) LoadCoverImage(_coverPath, _postImage);
         Log.Info($"background: {settings.Name} / {settings.Variant}");
     }
 
-    private void InvalidateImageFrame(bool keepReadability = false)
+    private void InvalidateImageFrame()
     {
         _imageFrame?.Dispose(); _imageFrame = null;
-        if (!keepReadability) { _readability?.Dispose(); _readability = null; }
+        _readability?.Dispose(); _readability = null;
     }
 
     private void LoadCoverImage(string? path, Action<Action> post)
@@ -54,27 +47,10 @@ public sealed partial class Backdrop
             _cover?.Dispose(); _cover = null;
             _poster?.Dispose(); _poster = null;
             _previousPoster?.Dispose(); _previousPoster = null;
-            _previousReadability?.Dispose(); _previousReadability = null;
             InvalidateImageFrame(); _dirty = true;
-            if (_settings.Kind == BackgroundKind.Filmstrip)
-            {
-                _previousMonetColors = _monetColors;
-                _monetColors = MonetColors.Default;
-                _imageFadeMs = InstantColors ? 800 : 0;
-            }
             return;
         }
         if (_settings.Kind == BackgroundKind.Latent) return;
-        if (_settings.Kind == BackgroundKind.Filmstrip)
-        {
-            _cover?.Dispose(); _cover = null;
-            _poster?.Dispose(); _poster = null;
-            _previousPoster?.Dispose(); _previousPoster = null;
-            _readability?.Dispose(); _readability = null;
-            _previousReadability?.Dispose(); _previousReadability = null;
-            LoadFilmAccent(path, post, version);
-            return;
-        }
         var settings = _settings;
         // Win2D's device is free-threaded. Decode and process away from input / composition callbacks.
         _ = Task.Run(async () =>
@@ -84,40 +60,17 @@ public sealed partial class Backdrop
             try
             {
                 cover = await CanvasBitmap.LoadAsync(_g.Device, path, 96);
-                var colors = _monetColors;
-                if (settings.Kind == BackgroundKind.Monet)
-                {
-                    Vector4[] samples;
-                    lock (ColorCache) ColorCache.TryGetValue(path, out samples!);
-                    if (samples == null)
-                    {
-                        samples = await RepresentativeColors(path, 6);
-                        lock (ColorCache) ColorCache[path] = samples;
-                    }
-                    colors = MonetColors.FromCover(samples);
-                    poster = BuildMonetPoster(cover, settings.MonetStreaks, colors);
-                }
+                if (settings.Kind == BackgroundKind.Monet) poster = BuildMonetPoster(cover, settings.MonetStreaks);
                 var readyCover = cover; var readyPoster = poster;
                 post(() =>
                 {
                     if (_disposed || version != _imageVersion) { readyCover.Dispose(); readyPoster?.Dispose(); return; }
                     _cover?.Dispose(); _cover = readyCover;
                     _previousPoster?.Dispose();
-                    _previousReadability?.Dispose();
                     _previousPoster = _poster;
-                    _previousReadability = _readability;
-                    _readability = null;
-                    _previousMonetColors = _monetColors;
-                    _monetColors = colors;
                     _poster = readyPoster;
                     _imageFadeMs = InstantColors ? 800 : 0;
-                    if (_previousPoster == null || _poster == null || InstantColors)
-                    {
-                        _imageFadeMs = 800;
-                        _previousPoster?.Dispose(); _previousPoster = null;
-                        _previousReadability?.Dispose(); _previousReadability = null;
-                    }
-                    InvalidateImageFrame(keepReadability: true); _dirty = true;
+                    InvalidateImageFrame(); _dirty = true;
                 });
             }
             catch (Exception ex)
@@ -129,7 +82,6 @@ public sealed partial class Backdrop
                     _cover?.Dispose(); _cover = null;
                     _poster?.Dispose(); _poster = null;
                     _previousPoster?.Dispose(); _previousPoster = null;
-                    _previousReadability?.Dispose(); _previousReadability = null;
                     InvalidateImageFrame(); _dirty = true;
                 });
                 Log.Warn($"background cover: {ex.Message}");
@@ -139,14 +91,14 @@ public sealed partial class Backdrop
 
     // Folia's default Monet treatment: fixed 1920×1080 cover crop, 6 px blur,
     // saturation 1.05, theme luminance wash .34, overlay .74, bloom, veil and 18 streaks.
-    private CanvasRenderTarget BuildMonetPoster(CanvasBitmap cover, bool streaks, MonetColors theme)
+    private CanvasRenderTarget BuildMonetPoster(CanvasBitmap cover, bool streaks)
     {
         const int w = 1920, h = 1080;
         const float overlay = .74f;
         using var crop = new CanvasRenderTarget(_g.Device, w, h, 96);
         using (var ds = crop.CreateDrawingSession())
         {
-            ds.Clear(theme.BackgroundColor);
+            ds.Clear(Theme.Bg);
             var size = cover.Size;
             float scale = Math.Max(w / (float)size.Width, h / (float)size.Height);
             ds.DrawImage(cover, new Rect((w-size.Width*scale)/2, (h-size.Height*scale)/2, size.Width*scale, size.Height*scale));
@@ -155,7 +107,7 @@ public sealed partial class Backdrop
         using (var blur = new GaussianBlurEffect { Source = crop, BlurAmount = 6, BorderMode = EffectBorderMode.Hard })
         using (var ds = result.CreateDrawingSession()) ds.DrawImage(blur);
         var pixels = result.GetPixelBytes(); // BGRA8
-        var bg = theme.Background; var accent = theme.Accent; var primary = theme.Primary;
+        var bg = ThemeBg; var accent = ThemeAccent; var primary = ThemePrimary;
         for (int i = 0; i < pixels.Length; i += 4)
         {
             var rgb = new Vector3(pixels[i+2], pixels[i+1], pixels[i]) / 255f;
@@ -168,16 +120,16 @@ public sealed partial class Backdrop
         using (var ds = result.CreateDrawingSession())
         {
             using var gradient = new CanvasLinearGradientBrush(_g.Device, new[] {
-                Stop(0, theme.AccentColor, .08f+overlay*.62f), Stop(.44f, theme.BackgroundColor, .16f+overlay*.58f), Stop(1, theme.PrimaryColor, .06f+overlay*.36f)
+                Stop(0, Gfx.Rgba(0xfd,0x5c,0x47), .08f+overlay*.62f), Stop(.44f, Theme.Bg, .16f+overlay*.58f), Stop(1, Gfx.Rgba(0xf7,0xf4,0xee), .06f+overlay*.36f)
             }) { StartPoint = Vector2.Zero, EndPoint = new Vector2(w,h) };
             ds.FillRectangle(0,0,w,h,gradient);
-            using var bloom = new CanvasRadialGradientBrush(_g.Device, new[] { Stop(0,theme.AccentColor,overlay*.42f), Stop(1,theme.BackgroundColor,0) })
+            using var bloom = new CanvasRadialGradientBrush(_g.Device, new[] { Stop(0,Gfx.Rgba(0xfd,0x5c,0x47),overlay*.42f), Stop(1,Theme.Bg,0) })
                 { Center = new Vector2(w*.18f,h*.34f), RadiusX = w*.55f, RadiusY = w*.55f };
             ds.FillRectangle(0,0,w,h,bloom);
-            using var veil = new CanvasLinearGradientBrush(_g.Device, new[] { Stop(0,theme.BackgroundColor,0), Stop(1,theme.BackgroundColor,.18f+overlay*.38f) })
+            using var veil = new CanvasLinearGradientBrush(_g.Device, new[] { Stop(0,Theme.Bg,0), Stop(1,Theme.Bg,.18f+overlay*.38f) })
                 { StartPoint = new Vector2(w*.45f,0), EndPoint = new Vector2(w,0) };
             ds.FillRectangle(0,0,w,h,veil);
-            if (streaks) for (int i=0;i<18;i++) ds.FillRectangle(i*127%w, i*211%h-40, 1, h*.28f, Gfx.WithAlpha(theme.BackgroundColor,.1f+overlay*.08f));
+            if (streaks) for (int i=0;i<18;i++) ds.FillRectangle(i*127%w, i*211%h-40, 1, h*.28f, Gfx.WithAlpha(Theme.Bg,.1f+overlay*.08f));
         }
         return result;
     }
@@ -185,42 +137,8 @@ public sealed partial class Backdrop
     private static byte Byte(float v) => (byte)Math.Clamp((int)MathF.Round(v*255),0,255);
     private static CanvasGradientStop Stop(float at, Color color, float alpha) => new() { Position = at, Color = Gfx.WithAlpha(color,alpha) };
 
-    private readonly record struct MonetColors(Vector4 Background, Vector4 Accent, Vector4 Primary)
-    {
-        public static MonetColors Default => new(ThemeBg, ThemeAccent, ThemePrimary);
-        public Color BackgroundColor => Gfx.Rgba(Byte(Background.X), Byte(Background.Y), Byte(Background.Z));
-        public Color AccentColor => Gfx.Rgba(Byte(Accent.X), Byte(Accent.Y), Byte(Accent.Z));
-        public Color PrimaryColor => Gfx.Rgba(Byte(Primary.X), Byte(Primary.Y), Byte(Primary.Z));
-
-        public static MonetColors FromCover(IReadOnlyList<Vector4> samples)
-        {
-            if (samples.Count == 0) return Default;
-            // Weighted median-cut samples are sorted by covered area. Use the first
-            // visible color so a small, vivid logo cannot override a broad cover hue.
-            // Skip dark/nearly gray areas when a colored part of the cover exists.
-            var best = samples[0];
-            foreach (var color in samples)
-            {
-                float max = MathF.Max(color.X, MathF.Max(color.Y, color.Z));
-                float min = MathF.Min(color.X, MathF.Min(color.Y, color.Z));
-                if (max >= .25f && max - min >= .14f) { best = color; break; }
-            }
-            var accent = Vector4.Lerp(best, new Vector4(.5f,.5f,.5f,1), .12f);
-            var bg = Vector4.Lerp(new Vector4(.065f,.07f,.08f,1), accent, .20f);
-            var primary = Vector4.Lerp(accent, new Vector4(1,1,1,1), .7f);
-            return new MonetColors(bg, accent, primary);
-        }
-    }
-
     private void EnsureImageFrame()
     {
-        if (_settings.Kind == BackgroundKind.Filmstrip)
-        {
-            _imageFrame ??= new CanvasRenderTarget(_g.Device, _cw, _ch, 96);
-            using var film = _imageFrame.CreateDrawingSession();
-            DrawFilmWall(film);
-            return;
-        }
         if (_imageFrame != null) return;
         _imageFrame = new CanvasRenderTarget(_g.Device,_cw,_ch,96);
         using var ds = _imageFrame.CreateDrawingSession();
@@ -278,21 +196,13 @@ public sealed partial class Backdrop
                     var previous = new Transform2DEffect { Source=_previousPoster,TransformMatrix=matrix,InterpolationMode=CanvasImageInterpolation.Linear };
                     // CSS ease-in-out (0.42,0,0.58,1), 800 ms.
                     float a = MonetDrift.Fade((float)(_imageFadeMs/800));
-                    var oldVeil = _previousReadability ??= Readability(_previousMonetColors);
-                    var currentVeil = _readability ??= Readability(_monetColors);
-                    var oldLayer = new CompositeEffect { Sources = { previous, oldVeil } };
-                    var currentLayer = new CompositeEffect { Sources = { current, currentVeil } };
-                    var mix = new ArithmeticCompositeEffect { Source1=oldLayer,Source2=currentLayer,Source1Amount=1-a,Source2Amount=a,MultiplyAmount=0,Offset=0 };
-                    disposable.Add(previous); disposable.Add(oldLayer); disposable.Add(currentLayer); disposable.Add(mix); image=mix;
+                    var mix = new ArithmeticCompositeEffect { Source1=previous,Source2=current,Source1Amount=1-a,Source2Amount=a,MultiplyAmount=0,Offset=0 };
+                    disposable.Add(previous); disposable.Add(mix); image=mix;
                 }
-                else
-                {
-                    if (_previousPoster != null) { _previousPoster.Dispose(); _previousPoster=null; }
-                    if (_previousReadability != null) { _previousReadability.Dispose(); _previousReadability=null; }
-                    _readability ??= Readability(_monetColors);
-                    var composite = new CompositeEffect { Sources = { image, _readability } };
-                    disposable.Add(composite); image=composite;
-                }
+                else if (_previousPoster != null) { _previousPoster.Dispose(); _previousPoster=null; }
+                _readability ??= Readability();
+                var composite = new CompositeEffect { Sources = { image, _readability } };
+                disposable.Add(composite); image=composite;
             }
             if (BlurDip>0)
             {
@@ -310,12 +220,12 @@ public sealed partial class Backdrop
         finally { for(int i=disposable.Count-1;i>=0;i--) disposable[i].Dispose(); }
     }
 
-    private CanvasRenderTarget Readability(MonetColors theme)
+    private CanvasRenderTarget Readability()
     {
         var rt=new CanvasRenderTarget(_g.Device,_cw,_ch,96);
         using var ds=rt.CreateDrawingSession();
         ds.Clear(Microsoft.UI.Colors.Transparent);
-        using var veil=new CanvasLinearGradientBrush(_g.Device,new[] { Stop(0,theme.BackgroundColor,.18f),Stop(.34f,theme.BackgroundColor,.32f),Stop(.7f,theme.BackgroundColor,.66f),Stop(1,theme.BackgroundColor,.82f) })
+        using var veil=new CanvasLinearGradientBrush(_g.Device,new[] { Stop(0,Theme.Bg,.18f),Stop(.34f,Theme.Bg,.32f),Stop(.7f,Theme.Bg,.66f),Stop(1,Theme.Bg,.82f) })
             { StartPoint=Vector2.Zero,EndPoint=new Vector2(_cw,0) };
         ds.FillRectangle(0,0,_cw,_ch,veil);
         return rt;
@@ -324,8 +234,7 @@ public sealed partial class Backdrop
     private void DisposeImages()
     {
         _disposed=true; ++_imageVersion;
-        ReleaseFilm();
-        _cover?.Dispose(); _noise?.Dispose(); _poster?.Dispose(); _previousPoster?.Dispose(); _previousReadability?.Dispose();
+        _cover?.Dispose(); _noise?.Dispose(); _poster?.Dispose(); _previousPoster?.Dispose();
         _lens?.Dispose(); _paper?.Dispose(); InvalidateImageFrame();
     }
 }

@@ -59,11 +59,10 @@ for (const [file, exported, constants] of [['lens-distortion','lensDistortionFra
   s=s.slice(0,last)+'\n  float3 opaque = fragColor.rgb + themeBg.rgb*(1.-fragColor.a);\n  return float4(lerp(opaque, themeBg.rgb, .35), 1);\n'+s.slice(last);
   s=splats(s);
   const defaults=Object.entries(constants).map(([k,v])=>`static const float u_${k} = ${v};`).join('\n');
-  fs.writeFileSync(path.join(target,'Shaders',file==='lens-distortion'?'NomandLens.hlsl':'NomandPaper.hlsl'),(common+defaults+'\n'+s).replace(/[ \t]+$/gm,''));
+  fs.writeFileSync(path.join(target,'Shaders',file==='lens-distortion'?'NomandLens.hlsl':'NomandPaper.hlsl'),common+defaults+'\n'+s);
 }
 const noise=fs.readFileSync(path.join(source,'dist/get-shader-noise-texture.js'),'utf8').match(/data:image\/png;base64,([^\"]+)/)[1];
 fs.writeFileSync(path.join(target,'Assets/PaperNoise.png'),Buffer.from(noise,'base64'));
 fs.mkdirSync(path.join(target,'Assets/Licenses'),{recursive:true});
 fs.copyFileSync(path.join(source,'LICENSE'),path.join(target,'Assets/Licenses/Paper-Shaders-Apache-2.0.txt'));
-fs.copyFileSync(path.join(source,'NOTICE'),path.join(target,'Assets/Licenses/Paper-Shaders-NOTICE.txt'));
-console.log('Imported lens, paper, original noise texture, license and notice from Paper Shaders 0.0.80.');
+console.log('Imported lens, paper, original noise texture and license from Paper Shaders 0.0.80.');
