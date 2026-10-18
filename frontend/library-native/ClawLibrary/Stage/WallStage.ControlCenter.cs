@@ -109,6 +109,7 @@ public sealed partial class WallStage
     /// <summary>≡：墙上 = 打开控制中心（出场形变），控制中心里 = 关掉。</summary>
     public void ToggleControlCenter()
     {
+        if (_backgroundSettingsOpen) CloseBackgroundSettings();
         MarkInput();
         if (MorphIntercept()) return;
         if (_ccOpen) CloseControlCenter(); else OpenControlCenter();
@@ -349,6 +350,7 @@ public sealed partial class WallStage
 
         if (MorphSlow != 1) G.C.GlobalPlaybackRate = (float)(1 / MorphSlow);   // --slow=N（测试）
         _ccBack = new Backdrop(G) { Dpi = Chrome.Dpi };
+        _ccBack.Configure(_backgroundSettings);
         _ccDim = G.Sprite(G.Solid(Gfx.Rgba(0, 0, 0, 0.20)));
         _ccRow = G.Container();
         _ccTitle = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);

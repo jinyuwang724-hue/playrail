@@ -22,13 +22,12 @@ using Windows.UI;
 
 namespace ClawLibrary.Stage;
 
-public sealed class Backdrop : IDisposable
+public sealed partial class Backdrop : IDisposable
 {
     // folia DEFAULT_LATENT_BACKGROUND_TUNING
     private const float MeshSpeed = 0.3f, MeshDistortion = 0.8f, MeshSwirl = 0.1f, GrainOverlay = 0.01f;
     private const float DitherSpeed = 0.1f, DitherSize = 2.5f, DitherOpacity = 0.55f, DitherScale = 0.6f;
     private const float OverlayOpacity = 0.35f;
-    private const double MaxShaderPixels = 1280 * 720;
     private const double ColorFadeMs = 800;
 
     // 主题（folia 午夜主题的底色 / 主色 / 强调色）
@@ -96,12 +95,14 @@ public sealed class Backdrop : IDisposable
         if (_shader == null) return;
         double scale = Math.Max(Dpi, 1);
         double px = w * scale * h * scale;
-        if (px > MaxShaderPixels) scale *= Math.Sqrt(MaxShaderPixels / px);
+        double maxPixels = _settings.Kind == BackgroundKind.Latent ? 1280 * 720 : 1920 * 1080;
+        if (px > maxPixels) scale *= Math.Sqrt(maxPixels / px);
         int cw = Math.Max(1, (int)Math.Round(w * scale)), ch = Math.Max(1, (int)Math.Round(h * scale));
         if (cw == _cw && ch == _ch && _surface != null) return;
         lock (_gate)
         {
         _cw = cw; _ch = ch; _pixelRatio = (float)scale;
+        InvalidateImageFrame();
         try
         {
             _effect ??= new PixelShaderEffect(_shader);
@@ -166,7 +167,7 @@ public sealed class Backdrop : IDisposable
     }
 
     /// <summary>还要不要逐帧画（在跑、或颜色还在渐变、或有待画的一帧）。</summary>
-    public bool NeedsFrames => _surface != null && (_running || _dirty || _stripChanged || _fadeMs < ColorFadeMs);
+    public bool NeedsFrames => _surface != null && ((_running && Animated) || _dirty || _stripChanged || (_settings.Kind == BackgroundKind.Latent && _fadeMs < ColorFadeMs) || ImageFading);
     private bool _stripChanged;
 
     /// <summary>换封面：后台缩到 50×50 取代表色，颜色在 800 ms 里渐变过去。post 把结果送回 UI 线程。</summary>
@@ -174,6 +175,7 @@ public sealed class Backdrop : IDisposable
     {
         if (imagePath == _coverPath) return;
         _coverPath = imagePath;
+        LoadCoverImage(imagePath, post);
         if (imagePath == null) { SetPalette(Palette(Array.Empty<Vector4>())); return; }
         // 同一张封面取过色就直接用（两块背景、反复开关控制中心都不再解码）
         lock (ColorCache)
@@ -225,14 +227,16 @@ public sealed class Backdrop : IDisposable
     {
         if (_surface == null || _effect == null) return;
         _stripChanged = false;
-        if (_running)
+        if (_running && Animated)
         {
             // folia：currentFrame += dt × speed，u_time = currentFrame / 1000
             _meshTime += dtMs * MeshSpeed / 1000;
             _ditherTime += dtMs * DitherSpeed / 1000;
+            _imageTime += dtMs / 1000;
         }
-        bool fading = _fadeMs < ColorFadeMs;
+        bool fading = (_settings.Kind == BackgroundKind.Latent && _fadeMs < ColorFadeMs) || ImageFading;
         if (fading && !hold) _fadeMs += dtMs;
+        if (ImageFading && !hold) _imageFadeMs += dtMs;
         int x0 = Math.Clamp((int)Math.Floor((left - 6) * _pixelRatio), 0, _cw);
         int x1 = Math.Clamp((int)Math.Ceiling((left + width + 6) * _pixelRatio), 0, _cw);
         if (x1 - x0 < 1) return;
@@ -248,7 +252,7 @@ public sealed class Backdrop : IDisposable
             _validX0 = Math.Min(_validX0, x0); _validX1 = Math.Max(_validX1, x1);
             return;
         }
-        if (!hold && !_running && !_dirty && !moved && !fading) return;
+        if (!hold && !(_running && Animated) && !_dirty && !moved && !fading) return;
         _dirty = false;
         _lastX0 = x0; _lastX1 = x1;
         _validX0 = x0; _validX1 = x1;
@@ -270,6 +274,11 @@ public sealed class Backdrop : IDisposable
                 int alloc = Math.Min(_cw, (sw + 63) / 64 * 64);
                 _strip = new CanvasRenderTarget(_g.Device, alloc, _ch, 96);
             }
+            if (_settings.Kind != BackgroundKind.Latent)
+            {
+                DrawImageRange(x0, sw);
+                return;
+            }
             var colors = CurrentColors();
             var p = _effect.Properties;
             p["resolution"] = new Vector2(_cw, _ch);
@@ -284,6 +293,7 @@ public sealed class Backdrop : IDisposable
             p["ditherScale"] = DitherScale;
             p["ditherOpacity"] = DitherOpacity;
             p["overlayOpacity"] = OverlayOpacity;
+            p["displayMode"] = (float)_settings.Latent;
             for (int i = 0; i < 6; i++) p[$"c{i}"] = colors[i];
             p["ditherBack"] = ThemeBg;
             p["ditherFront"] = colors[6];
@@ -392,5 +402,6 @@ public sealed class Backdrop : IDisposable
         _strip?.Dispose();
         _blur?.Dispose();
         _effect?.Dispose();
+        DisposeImages();
     }
 }
