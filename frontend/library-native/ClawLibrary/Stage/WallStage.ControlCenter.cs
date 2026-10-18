@@ -427,7 +427,8 @@ public sealed partial class WallStage
             b.Cover.Clip = G.C.CreateGeometricClip(RoundRect(img, img, CcImgRadius * _ccK));
         }
         _ccBack!.Dpi = Chrome.Dpi;
-        _ccBack.BlurDip = 24 * _ccK / CcBoost;   // folia：首页显示时把下面的播放页（动态壁纸）模糊 24 px
+        _ccBack.BlurDip = _backgroundSettings.Kind == BackgroundKind.Filmstrip ? 0 : 24 * _ccK / CcBoost;
+        _ccDim.IsVisible = _backgroundSettings.Kind != BackgroundKind.Filmstrip;
         _ccBack.Build(vw, vh);
         _ccBack.SetStrip(0, vw);
         CcPaintShadows();
@@ -613,7 +614,9 @@ public sealed partial class WallStage
     private void CcBackStart()
     {
         if (_ccBack == null) return;
-        var cover = _ccBlocks[0].CoverPath;
+        var film = _backgroundSettings.Kind == BackgroundKind.Filmstrip;
+        var cover = film ? _backdrop.FilmAccentCover : _ccBlocks[0].CoverPath;
+        if (film) _ccBack.SetFilmTime(_backdrop.FilmTime);
         // 控制中心还没露出来（被墙和背景板盖着）：直接换成这款游戏的颜色，不做渐变 —— 渐变期间每帧都要在 UI 线程上重画
         // 整张着色器 + 模糊，正好压在起飞那几帧上（实测每次起飞都掉一帧）
         _ccBack.InstantColors = true;
