@@ -385,16 +385,39 @@ public sealed partial class WallStage
         if (_gpDesktopHeld) _ = GpReleaseDesktopMode(v);
     }
 
-    /// <summary>激活时读一次手柄模式：桌面模式就先切成手柄模式。</summary>
+    private bool _gpInputCheckRunning;
+
+    /// <summary>激活时确认手柄模式，并检查当前游戏库是否在输入层白名单里。</summary>
     private async Task GpCheckDesktopMode()
     {
+        if (_gpInputCheckRunning) return;
+        _gpInputCheckRunning = true;
         try
         {
             _agent ??= new AgentClient();
             var fw = await _agent.Call("get_gamepad_state");
             if (Str(fw?["mode"]) == "desktop" && _windowActive) await GpHoldGamepadMode();
+            if (_windowActive) await GpEnsureInputLayerAllowsLibrary();
         }
         catch (Exception ex) { Log.Warn($"gamepad mode check: {ex.Message}"); }
+        finally { _gpInputCheckRunning = false; }
+    }
+
+    /// <summary>MSIX 升级会改可执行文件路径；HidHide 仍放行旧路径时刷新输入层。</summary>
+    private async Task GpEnsureInputLayerAllowsLibrary()
+    {
+        string package = Path.GetFileName(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory));
+        if (!package.StartsWith("ClawToolbox.Library_", StringComparison.OrdinalIgnoreCase)) return;
+        var state = await _agent!.Call("get_input_layer_state");
+        if (Str(state?["phase"]) != "active" || (bool?)state?["engine"]?["hidhide"]?["cloak"] != true) return;
+        if (state?["engine"]?["hidhide"]?["whitelist"] is not JsonArray allowed) return;
+        string current = $"\\{package}\\ClawLibrary.exe";
+        if (allowed.Any(path => Str(path)?.EndsWith(current, StringComparison.OrdinalIgnoreCase) == true)) return;
+
+        Log.Warn($"gamepad: current library package missing from input whitelist ({package}); refreshing input layer");
+        JsonNode? previousOverride = state?["override"]?.DeepClone();
+        try { await _agent.Call("set_input_layer_enabled", JsonValue.Create(false)); }
+        finally { await _agent.Call("set_input_layer_enabled", previousOverride); }
     }
 
     private async Task GpHoldGamepadMode()
