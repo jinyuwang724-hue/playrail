@@ -18,7 +18,7 @@ $taskOutput = Join-Path $taskRoot 'plugin\bin'
 if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:winexe /platform:x64 ("/out:" + (Join-Path $taskOutput 'ClawTouchBridge.exe')) (Join-Path $taskRoot 'native\ClawTouchBridge.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Touch bridge build failed.' }
-& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Management.dll ("/out:" + (Join-Path $taskOutput 'ClawPower.exe')) (Join-Path $taskRoot 'native\ClawPower.cs')
+& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Management.dll ("/out:" + (Join-Path $taskOutput 'ClawPower.exe')) (Join-Path $taskRoot 'native\ClawPower.cs') (Join-Path $taskRoot 'native\ClawDisplay.cs') (Join-Path $taskRoot 'native\ClawGpu.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Power helper build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Core.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll ("/out:" + (Join-Path $taskOutput 'ClawInput.exe')) (Get-ChildItem -LiteralPath (Join-Path $taskRoot 'native\InputLayer') -Filter *.cs | ForEach-Object FullName)
 if ($LASTEXITCODE -ne 0) { throw 'Input layer build failed.' }

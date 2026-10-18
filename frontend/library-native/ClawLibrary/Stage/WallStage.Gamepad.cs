@@ -3,7 +3,8 @@
 // 线稿后面压一圈柔和的暗光把视线收到中间。焦点所在的设置拉一根细线到它管的键上，那块区域整块染强调色（矢量轮廓，抗锯齿）。
 // 按键映射页：线稿照常大小，每个键映射到什么紧凑地列在线稿两侧（按手柄上的位置从上到下），A 打开「映射到」（WallStage.GamepadPicker.cs）。
 // 实时输入只点亮这一页管的东西：映射页亮按键、摇杆页亮摇杆、扳机页亮扳机；扳机只在侧视图上亮（正面肩部那块只归肩键）。
-// 手柄 / 桌面模式：游戏库在前台时一律是手柄模式（桌面模式下这里没法操作），离开前台再切回桌面模式；切模式的入口之后放进 Game Bar 小组件。
+// 手柄 / 桌面模式：游戏库在前台时一律是手柄模式（桌面模式下这里没法操作），离开前台再切回桌面模式。
+// 切模式的入口是每页线稿上方居中的「模式」（A 切换，GpToggleMode）；不做手柄组合键。
 // 软件输入层不露面：映射用到它时后台自己开、布局清空时自己关（见 docs/gamepad-input-layer.md）。
 // 各分类的内容在 WallStage.GamepadPages.cs。读：工具箱后台 get_gamepad_state、get_state、get_rumble_state、get_input_layout。
 using System.Numerics;
@@ -100,6 +101,11 @@ public sealed partial class WallStage
         public Func<int, string>? Format;
         public Action<int>? SetNumber;
         public Action? Press;
+        /// <summary>按键映射页的格子（WallStage.GamepadMap.cs）：Col -1 = 左侧、-2 = 右侧、0…3 = 底部四栏；Cx / Cy 是找焦点用的中心；Tokens = 映射值的图标块。</summary>
+        public bool Map;
+        public int Col;
+        public float Cx, Cy;
+        public List<GpTok>? Tokens;
         public bool Adjustable => !Disabled && (Choices != null || Number != null);
     }
 
@@ -143,6 +149,7 @@ public sealed partial class WallStage
         _gpInSide = true;
         _gpFocus = 0;
         BuildGpItems();
+        GpPlaceArt(instant: true);
         GpShowFaces(GpPageFaces(), instant: true);
         _gpShown = _pad?.Last ?? default;
         PaintGp();
@@ -416,6 +423,38 @@ public sealed partial class WallStage
         catch (Exception ex) { Log.Warn($"gamepad release: {ex.Message}"); }
     }
 
+    /// <summary>要的是桌面模式：固件已经在桌面模式，或者游戏库在前台、离开后要切回桌面模式。</summary>
+    private bool GpWantDesktop => _gpDesktopHeld || Str(_gpFw?["mode"]) == "desktop";
+
+    /// <summary>
+    /// 手柄页的模式开关（A）：切到手柄模式立刻写固件、取消「离开后切回桌面」；切到桌面模式时游戏库在前台，
+    /// 就照 GpHoldGamepadMode 的规矩记下来，离开前台 1.5 秒后由 GpReleaseDesktopMode 真的切。界面先改，再读回固件。
+    /// </summary>
+    private async Task GpToggleMode()
+    {
+        bool toDesktop = !GpWantDesktop;
+        ++_gpHoldVersion;   // 作废还在等的切回
+        try
+        {
+            _agent ??= new AgentClient();
+            if (!toDesktop)
+            {
+                _gpDesktopHeld = false;
+                if (Str(_gpFw?["mode"]) == "desktop") await _agent.Call("set_gamepad_mode", JsonValue.Create("xinput"), JsonValue.Create(false));
+                Log.Info("gamepad: mode set to gamepad from the gamepad page");
+            }
+            else if (_windowActive)
+            {
+                _gpDesktopHeld = true;
+                Log.Info("gamepad: desktop mode chosen, applied when the library leaves the foreground");
+            }
+            else await _agent.Call("set_gamepad_mode", JsonValue.Create("desktop"), JsonValue.Create(false));
+        }
+        catch (Exception ex) { Toast($"没有切过去：{ex.Message}"); }
+        if (_gpOpen) { BuildGpItems(); PaintGpBody(); }
+        _ = GpRefresh();
+    }
+
     /// <summary>手柄页里的 X / Y：震动页 X 测试震动、Y 恢复原来的强度；别的页不做事。</summary>
     private void GpPadButton(bool isY)
     {
@@ -502,6 +541,7 @@ public sealed partial class WallStage
                 _gpCat = c;
                 _gpFocus = 0;
                 BuildGpItems();
+                GpPlaceArt();
                 GpShowFaces(GpPageFaces());
                 PaintGpBody();
             }
@@ -556,7 +596,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>设置项的中心（设计 px），按方位找下一个焦点用：说明文字那块。</summary>
-    private static Vector2 GpCenter(GpItem it) =>
+    private static Vector2 GpCenter(GpItem it) => it.Map ? new(it.Cx, it.Cy) :
         new(it.Side < 0 ? it.X - 80 : it.Side > 0 ? it.X + 80 : it.X, it.Y + (it.Compact ? 10 : 13));
 
     private void GpEnterContent()
@@ -619,6 +659,7 @@ public sealed partial class WallStage
             }));
             _gpSpot.Size = new Vector2(sw * k, sh * k);
             _gpSpot.Offset = new Vector3((GpCx - sw / 2) * k, (GpCy - sh / 2) * k, 0);
+            GpPlaceArt(instant: true);   // 线稿整层的位移是物理像素，缩放变了要重算
             if (_gpArtLoaded)
             {
                 _gpArtK = k;
@@ -680,11 +721,13 @@ public sealed partial class WallStage
 
         PaintGpSidebar(ds);
         if (_gpPicker != null) { PaintGpPicker(ds, accent); return; }
-        if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpCy, 300);
+        if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpIsMapPage ? GpMapCy : GpCy, 300);
+        if (GpIsMapPage) PaintGpMapHeads(ds);
 
         var focus = GpFocusItem;
         // 两侧的设置：焦点那项拉一根细线到它管的键（摇杆映射那种没有 Key 的，连到它点亮的那块）
-        string target = focus == null || focus.Side == 0 ? "" : focus.Key.Length > 0 ? focus.Key : focus.Lights?.FirstOrDefault() ?? "";
+        // 按键映射页不拉线：焦点那行白字，线稿上它管的那块染色就够了
+        string target = focus == null || focus.Side == 0 || focus.Map ? "" : focus.Key.Length > 0 ? focus.Key : focus.Lights?.FirstOrDefault() ?? "";
         if (focus != null && target.Length > 0 && GpKeys.TryGetValue(target, out var fk) && _gpFacesShown.Contains(fk.Face))
         {
             var r = GpKeyRect(fk);
@@ -698,10 +741,13 @@ public sealed partial class WallStage
             ds.FillCircle(start, 3, accent);
         }
 
-        foreach (var it in _gpItems) PaintGpItem(ds, it, it == focus);
+        foreach (var it in _gpItems)
+            if (it.Map) PaintGpMapRow(ds, it, it == focus);
+            else PaintGpItem(ds, it, it == focus);
 
         // 底部的按键提示（按键图标 + 字）
-        if (GpIsMapPage)
+        if (focus != null && focus.Title == "模式" && focus.Side == 0) GpHints(ds, ("A", GpWantDesktop ? "切到手柄模式" : "切到桌面模式"));
+        else if (GpIsMapPage)
         {
             if (focus == null) GpHints(ds, ("→", "进去选键"));
             else if (_gpEditing) GpHints(ds, ("← →", "改"), ("A", "完成"));
@@ -754,7 +800,7 @@ public sealed partial class WallStage
     {
         var ui = TextKit.Ui(400);
         int cat = 0;
-        string? mode = Str(_gpFw?["mode"]);
+        string? mode = GpWantDesktop ? "desktop" : Str(_gpFw?["mode"]);
         for (int i = 0; i < GpSidebar.Length; i++)
         {
             var e = GpSidebar[i];

@@ -178,6 +178,15 @@ class Executor : IDisposable {
             else if (command == "volume_set") reply["sys"] = SystemControls.SetVolume(Convert.ToInt32(Number(request, "value")), null);
             else if (command == "mute_set") reply["sys"] = SystemControls.SetVolume(-1, true.Equals(request.ContainsKey("muted") ? request["muted"] : false));
             else if (command == "refresh_set") reply["sys"] = SystemControls.SetRefresh(Convert.ToInt32(Number(request, "hz")));
+            else if (command == "display_read") reply["display"] = DisplayAudio.Read();
+            else if (command == "resolution_set") reply["display"] = DisplayAudio.SetResolution(Convert.ToInt32(Number(request, "width")), Convert.ToInt32(Number(request, "height")));
+            else if (command == "vrr_set") reply["display"] = DisplayAudio.SetVrr(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
+            else if (command == "hdr_set") reply["display"] = DisplayAudio.SetHdr(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
+            else if (command == "audio_output_set") reply["display"] = DisplayAudio.SetOutput(Convert.ToString(request["output"]));
+            else if (command == "mic_mute_set") reply["display"] = DisplayAudio.SetMicMute(true.Equals(request.ContainsKey("muted") ? request["muted"] : false));
+            else if (command == "scale_set") reply["display"] = DisplayAudio.SetScale(Convert.ToInt32(Number(request, "percent")));
+            else if (command == "auto_brightness_set") reply["display"] = DisplayAudio.SetAutoBrightness(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
+            else if (command == "gpu_set") { IntelGpu.Set(Convert.ToString(request["name"]), request.ContainsKey("value") ? request["value"] : null); reply["display"] = DisplayAudio.Read(); }
             else if (command == "fps_limit_set") reply["sys"] = SystemControls.SetFpsLimit(Convert.ToInt32(Number(request, "fps")), request.ContainsKey("exe") ? Convert.ToString(request["exe"]) : null);
             else if (command == "kill") reply["sys"] = SystemControls.Kill(Convert.ToInt32(Number(request, "pid")));
             else if (command == "power_action") reply["sys"] = SystemControls.Power(Convert.ToString(request["action"]));
