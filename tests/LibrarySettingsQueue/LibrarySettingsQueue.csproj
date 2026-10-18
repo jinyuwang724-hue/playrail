@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../frontend/library-native/ClawLibrary/Data/SettingsWriteQueue.cs" Link="SettingsWriteQueue.cs" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/Engine/SettingsPointer.cs" Link="SettingsPointer.cs" />
   </ItemGroup>
 </Project>

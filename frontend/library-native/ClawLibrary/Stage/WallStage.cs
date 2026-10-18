@@ -1188,10 +1188,17 @@ public sealed partial class WallStage : IDisposable
         _rootEl.PointerPressed += OnPointerPressed;
         _rootEl.PointerMoved += OnPointerMoved;
         _rootEl.PointerReleased += OnPointerReleased;
-        _rootEl.PointerCanceled += OnPointerReleased;
+        _rootEl.PointerCanceled += OnPointerCanceled;
+        _rootEl.PointerCaptureLost += OnPointerCanceled;
         _rootEl.PointerWheelChanged += (_, e) =>
         {
             var p = e.GetCurrentPoint(_rootEl).Properties;
+            if (_ccOpen && _dsOpen)
+            {
+                if (!p.IsHorizontalMouseWheel) DsWheel(p.MouseWheelDelta);
+                e.Handled = true;
+                return;
+            }
             if (_railModel.SettingsOpen && _railFocused && !p.IsHorizontalMouseWheel)
             {
                 Move(p.MouseWheelDelta > 0 ? Direction.Up : Direction.Down);
@@ -1240,6 +1247,18 @@ public sealed partial class WallStage : IDisposable
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         var pt = e.GetCurrentPoint(_rootEl);
+        if (_ccOpen && _dsOpen)
+        {
+            e.Handled = true;
+            if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;
+            MarkInput();
+            if (DsPointerBegin(pt.PointerId, pt.Position.X, pt.Position.Y))
+            {
+                if (!_rootEl.CapturePointer(e.Pointer)) { DsPointerCancel(pt.PointerId); return; }
+                _rootEl.Focus(FocusState.Pointer);
+            }
+            return;
+        }
         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, 0, 0, 0, pt.PointerId);
         _glide = Vector2.Zero;
         _rootEl.CapturePointer(e.Pointer);
@@ -1248,6 +1267,13 @@ public sealed partial class WallStage : IDisposable
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
     {
+        if (_dsGesture.Owns(e.Pointer.PointerId))
+        {
+            var point = e.GetCurrentPoint(_rootEl);
+            DsPointerMove(point.PointerId, point.Position.X, point.Position.Y);
+            e.Handled = true;
+            return;
+        }
         if (_drag is not { } d) return;
         var pt = e.GetCurrentPoint(_rootEl);
         if (pt.PointerId != d.id) return;
@@ -1260,6 +1286,14 @@ public sealed partial class WallStage : IDisposable
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        if (_dsGesture.Owns(e.Pointer.PointerId))
+        {
+            var point = e.GetCurrentPoint(_rootEl);
+            DsPointerEnd(point.PointerId, point.Position.X, point.Position.Y);
+            _rootEl.ReleasePointerCapture(e.Pointer);
+            e.Handled = true;
+            return;
+        }
         if (_drag is not { } d) return;
         var pt = e.GetCurrentPoint(_rootEl);
         if (pt.PointerId != d.id) return;
@@ -1277,6 +1311,12 @@ public sealed partial class WallStage : IDisposable
     }
 
     // ---------------- 计时 ----------------
+
+    private void OnPointerCanceled(object sender, PointerRoutedEventArgs e)
+    {
+        DsPointerCancel(e.Pointer.PointerId);
+        if (_drag?.id == e.Pointer.PointerId) _drag = null;
+    }
 
     public DispatcherQueueTimer After(double ms, Action action)
     {

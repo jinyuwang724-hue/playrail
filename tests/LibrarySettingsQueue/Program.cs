@@ -1,4 +1,5 @@
 using ClawLibrary.Data;
+using ClawLibrary.Engine;
 
 static void Check(bool condition, string message)
 {
@@ -69,4 +70,46 @@ static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuations
     delay.SetResult();
     await Task.WhenAll(bad, good).WaitAsync(TimeSpan.FromSeconds(2));
     Check(errors == 1 && sent == 1 && drained == 1 && !queue.IsBusy, "failed setting recovers and allows the next edit and readback");
+}
+
+// The gesture classifier is shared by mouse, touch and pen Pointer events.
+{
+    var gesture = new SettingsPointerGesture();
+    Check(gesture.Begin(1, 100, 100, true), "first pointer starts a gesture");
+    Check(gesture.Move(1, 104, 103) == SettingsPointerMode.Pending && gesture.End(1) == SettingsPointerMode.Pending,
+        "small finger movement stays a tap until release");
+    Check(gesture.End(1) == SettingsPointerMode.None, "duplicate release cannot activate a control twice");
+
+    gesture.Begin(2, 100, 100, true);
+    Check(gesture.Move(2, 103, 120) == SettingsPointerMode.Scroll, "vertical swipe over a slider scrolls without changing its value");
+    Check(gesture.Move(2, 180, 125) == SettingsPointerMode.Scroll && gesture.End(2) == SettingsPointerMode.Scroll,
+        "scroll intent stays locked when a finger later moves sideways");
+
+    gesture.Begin(3, 100, 100, true);
+    Check(gesture.Move(3, 125, 102) == SettingsPointerMode.Slider && gesture.End(3) == SettingsPointerMode.Slider,
+        "horizontal slider drag is distinct from vertical scrolling");
+
+    gesture.Begin(4, 100, 100, false);
+    Check(!gesture.Begin(5, 100, 100, true) && gesture.Move(5, 200, 200) == SettingsPointerMode.None
+        && gesture.End(5) == SettingsPointerMode.None && gesture.Owns(4), "secondary finger cannot replace or release the active pointer");
+    gesture.Cancel(5);
+    Check(gesture.Owns(4), "capture loss for another pointer does not cancel the primary gesture");
+    gesture.Cancel(4);
+    Check(!gesture.Active && gesture.End(4) == SettingsPointerMode.None, "cancellation never produces a tap");
+
+    gesture.Begin(6, 100, 100, false);
+    Check(gesture.Move(6, 140, 100) == SettingsPointerMode.Scroll, "dragging a choice row never changes its option");
+    gesture.Reset();
+    Check(!gesture.Active, "closing the page discards its captured gesture");
+
+    Check(SettingsPointerGesture.SliderValue(-40, 100, 200, 0, 100, 5) == 0
+        && SettingsPointerGesture.SliderValue(450, 100, 200, 0, 100, 5) == 100
+        && SettingsPointerGesture.SliderValue(201, 100, 200, 0, 100, 5) == 50,
+        "slider values snap to supported steps and clamp outside the track");
+    Check(SettingsPointerGesture.SliderValue(150, 100, 200, 100, 200, 25) == 125,
+        "slider mapping preserves nonzero minima");
+    Check(SettingsPointerGesture.Scroll(-20, 900, 664) == 0 && SettingsPointerGesture.Scroll(500, 900, 664) == 236
+        && SettingsPointerGesture.Scroll(100, 300, 664) == 0, "scrolling clamps at both ends and handles a short list");
+    var hit = new SettingsPointerTarget(3, SettingsTargetKind.Choice, 100, 80, 44, 42, 1);
+    Check(hit.Contains(100, 80) && !hit.Contains(144, 80) && !hit.Contains(120, 122), "adjacent hit targets have unambiguous boundaries");
 }

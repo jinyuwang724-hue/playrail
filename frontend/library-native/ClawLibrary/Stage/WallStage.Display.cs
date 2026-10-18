@@ -4,6 +4,7 @@
 // 读：工具箱后台 get_display_state（docs/display-sound-page.md 写了字段）；老后台没有它时退回 widget_state 里的 system（只有亮度、音量、静音、刷新率），
 // 其余行变暗、写「后台还没接上」。写：每项一个 set_*，本地先改（界面立刻跟着变），亮度 / 音量这种连按的 150 ms 内合成一次。
 // 手柄：↑ ↓ 选项，← → 改值，A 开关，B 回控制中心。
+// 鼠标 / 触控：点选选项，点按或横向拖动数值滑条；纵向拖动和滚轮只滚动列表，顶部箭头返回。
 using System.Numerics;
 using System.Text.Json.Nodes;
 using ClawLibrary.Data;
@@ -23,7 +24,7 @@ public sealed partial class WallStage
 
     private ContainerVisual? _ds;
     private ContainerVisual _dsRightView = null!;
-    private SpriteVisual _dsTitle = null!, _dsLeft = null!, _dsRight = null!;
+    private SpriteVisual _dsTitle = null!, _dsBackButton = null!, _dsLeft = null!, _dsRight = null!;
     private bool _dsOpen, _dsBusy, _dsAgentDown;
     private int _dsFocus, _dsVersion;
     private SettingsWriteQueue? _dsWrites;
@@ -45,6 +46,8 @@ public sealed partial class WallStage
         if (_cc == null) return;
         EnsureDsVisuals();
         _dsOpen = true;
+        _dsManualScroll = false;
+        _dsGesture.Reset();
         ++_dsVersion;
         BuildDsRows();
         _dsFocus = _dsRows.FindIndex(r => !r.Section && !r.Skip);
@@ -65,6 +68,7 @@ public sealed partial class WallStage
     {
         if (!_dsOpen || _ds == null) return;
         _dsOpen = false;
+        _dsGesture.Reset();
         _dsTimer?.Stop();
         int v = ++_dsVersion;
         if (instant || Reduced)
@@ -85,12 +89,13 @@ public sealed partial class WallStage
         _ds = G.Container();
         _ds.IsVisible = false;
         _dsTitle = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+        _dsBackButton = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _dsLeft = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _dsRight = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _dsRightView = G.Container(relative: false);
         _dsRightView.Clip = G.C.CreateInsetClip();
         _dsRightView.Children.InsertAtTop(_dsRight);
-        foreach (var s in new Visual[] { _dsTitle, _dsLeft, _dsRightView }) _ds.Children.InsertAtTop(s);
+        foreach (var s in new Visual[] { _dsTitle, _dsBackButton, _dsLeft, _dsRightView }) _ds.Children.InsertAtTop(s);
         _cc!.Children.InsertAtTop(_ds);
     }
 
@@ -100,7 +105,7 @@ public sealed partial class WallStage
         var t = _dq.CreateTimer();
         t.Interval = TimeSpan.FromSeconds(2);
         t.IsRepeating = true;
-        t.Tick += (_, _) => { if (_dsOpen && _dsWrites?.IsBusy != true) _ = DsRefresh(); };
+        t.Tick += (_, _) => { if (_dsOpen && !_dsGesture.Active && _dsWrites?.IsBusy != true) _ = DsRefresh(); };
         return t;
     }
 
@@ -108,7 +113,7 @@ public sealed partial class WallStage
 
     private async Task DsRefresh()
     {
-        if (_dsBusy || _dsWrites?.IsBusy == true) return;
+        if (_dsBusy || _dsGesture.Active || _dsWrites?.IsBusy == true) return;
         _dsBusy = true;
         long revision = _dsWrites?.Revision ?? 0;
         try
@@ -125,7 +130,7 @@ public sealed partial class WallStage
                 view = (await _agent.Call("widget_state"))?["system"];
             }
             _dsAgentDown = false;
-            if (_dsWrites?.IsBusy != true && revision == (_dsWrites?.Revision ?? 0) && view is JsonObject o)
+            if (!_dsGesture.Active && _dsWrites?.IsBusy != true && revision == (_dsWrites?.Revision ?? 0) && view is JsonObject o)
                 _dsView = (JsonObject)o.DeepClone();
         }
         catch (Exception ex)
@@ -185,6 +190,7 @@ public sealed partial class WallStage
                 Title = title, Choices = new[] { "关", "开" }, Choice = on ? 1 : 0,
                 Step = d => { if ((d > 0) != on) Set(d > 0); },
                 Press = () => Set(!on),
+                Select = i => Set(i == 1),
             };
         }
         PerfRow Number(string title, string field, int min, int max, int step, Func<int, string> fmt, Action<int> send, int? cur = null)
@@ -194,6 +200,8 @@ public sealed partial class WallStage
             return new PerfRow
             {
                 Title = title, Value = fmt(value), Numeric = true,
+                Number = value, Minimum = min, Maximum = max, Increment = step,
+                SetNumber = send,
                 Step = d => { int nv = Math.Clamp(value + d * step, min, max); if (nv != value) send(nv); },
             };
         }
@@ -207,6 +215,7 @@ public sealed partial class WallStage
                     Title = title, Choices = names, Choice = idx,
                     Step = d => { int ni = Math.Clamp(idx + d, 0, names.Length - 1); if (ni != idx) set(ni); },
                     Press = () => set((idx + 1) % names.Length),
+                    Select = set,
                 };
             return new PerfRow
             {
@@ -258,6 +267,7 @@ public sealed partial class WallStage
                 Title = "麦克风", Choices = new[] { "开", "静音" }, Choice = mic ? 1 : 0,
                 Step = d => { if ((d > 0) != mic) { v["micMuted"] = d > 0; DsSet("set_mic_mute", 0, JsonValue.Create(d > 0)); } },
                 Press = () => { v["micMuted"] = !mic; DsSet("set_mic_mute", 0, JsonValue.Create(!mic)); },
+                Select = i => { v["micMuted"] = i == 1; DsSet("set_mic_mute", 0, JsonValue.Create(i == 1)); },
             });
         }
         else _dsRows.Add(Later("麦克风", "micMuted"));
@@ -286,6 +296,7 @@ public sealed partial class WallStage
                     Title = "XeSS 插帧", Choices = new[] { "关", "开" }, Choice = fg ? 1 : 0,
                     Step = d => { if ((d > 0) != fg) SetGpu("xessFg", JsonValue.Create(d > 0)); },
                     Press = () => SetGpu("xessFg", JsonValue.Create(!fg)),
+                    Select = i => SetGpu("xessFg", JsonValue.Create(i == 1)),
                 });
             }
             if (Str(gpu["scaling"]) is string sc)
@@ -322,6 +333,7 @@ public sealed partial class WallStage
 
     private void DsMove(Direction dir)
     {
+        DsResumeKeyboard();
         if (dir is Direction.Up or Direction.Down)
         {
             int d = dir == Direction.Up ? -1 : 1;
@@ -334,6 +346,7 @@ public sealed partial class WallStage
 
     private void DsActivate()
     {
+        DsResumeKeyboard();
         if (_dsFocus < 0 || _dsFocus >= _dsRows.Count) return;
         var r = _dsRows[_dsFocus];
         if (r.Disabled) { if (r.Value == DsLater) Toast($"这一项{DsLater}"); return; }
@@ -355,13 +368,18 @@ public sealed partial class WallStage
             float w = (float)bb.Width + 4, th = (float)bb.Height + 4;
             CcSet(_dsTitle, CcDraw(w, th, raster, ds => ds.DrawTextLayout(tl, -(float)bb.X, -(float)bb.Y, CcText)));
             _dsTitle.Size = new Vector2(w * k, th * k);
-            _dsTitle.Offset = new Vector3(40 * k, 32 * k, 0);
+            _dsTitle.Offset = new Vector3(80 * k, 32 * k, 0);
         }
-        CcSet(_dsRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _dsRows, _dsFocus)));
+        CcSet(_dsBackButton, CcDraw(44, 44, raster, ds => DrawChevron(ds, 24, 22, true, CcText)));
+        _dsBackButton.Size = new Vector2(44 * k, 44 * k);
+        _dsBackButton.Offset = new Vector3(20 * k, 24 * k, 0);
+        _dsTargets.Clear();
+        CcSet(_dsRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _dsRows, _dsFocus, _dsTargets)));
         _dsRight.Size = new Vector2(PerfRightW * k, h * k);
         _dsRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _dsRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
-        RowScrollTo(_dsRight, _dsRows, _dsFocus, ref _dsScroll, ref _dsScrollY, h, vh, _dsOpen);
+        // 指针命中使用同一滚动位置；直接滚动避免动画中看到的位置与命中区域不一致。
+        RowScrollTo(_dsRight, _dsRows, _dsManualScroll ? -1 : _dsFocus, ref _dsScroll, ref _dsScrollY, h, vh, false);
         CcSet(_dsLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintDsLeft(ds, vh)));
         _dsLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _dsLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);

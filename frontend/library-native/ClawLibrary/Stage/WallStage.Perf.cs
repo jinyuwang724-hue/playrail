@@ -29,6 +29,8 @@ public sealed partial class WallStage
         public bool Skip;
         public Action<int>? Step;
         public Action? Press;
+        public Action<int>? Select, SetNumber;
+        public int Number, Minimum, Maximum, Increment = 1;
     }
 
     // 设计 px（× _ccK），1280×800 舞台：左栏 348、右栏 812、中间 40
@@ -489,7 +491,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>控制中心子页右栏的设置列表（性能、手柄共用）：分组标题、行号、焦点 ▸、几选一下划线、焦点数值 ‹ ›。</summary>
-    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus)
+    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus, List<SettingsPointerTarget>? targets = null)
     {
         var ui = TextKit.Ui(400);
         var mono = new FontSpec("Cascadia Mono", 400);
@@ -505,6 +507,7 @@ public sealed partial class WallStage
                 continue;
             }
             n++;
+            targets?.Add(new(i, SettingsTargetKind.Row, 0, y, W, PerfRowH));
             bool f = i == focus;
             float cy = y + PerfRowH / 2;
             float a = r.Disabled ? 0.32f : 1;
@@ -517,7 +520,19 @@ public sealed partial class WallStage
             }
             else PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(CcText, 0.32f * a), 0, cy, 40);
             PText(ds, r.Title, ui, 17, Gfx.WithAlpha(CcText, (f ? 1f : 0.88f) * a), 36, cy, 400);
-            if (r.Choices != null)
+            if (targets != null && r.SetNumber != null && !r.Disabled)
+            {
+                const float sliderWidth = 200;
+                float left = W - 300;
+                float fraction = Math.Clamp((r.Number - r.Minimum) / (float)Math.Max(1, r.Maximum - r.Minimum), 0, 1);
+                ds.FillRoundedRectangle(left, cy - 2, sliderWidth, 4, 2, 2, Gfx.WithAlpha(CcText, .18f));
+                if (fraction > 0) ds.FillRoundedRectangle(left, cy - 2, sliderWidth * fraction, 4, 2, 2, PerfAccent);
+                ds.FillCircle(left + sliderWidth * fraction, cy, f ? 6 : 5, CcText);
+                float vw = PWidth(ds, r.Value, ui, 17);
+                PText(ds, r.Value, ui, 17, CcText, W - vw, cy, vw + 4);
+                targets.Add(new(i, SettingsTargetKind.Slider, left, y, sliderWidth, PerfRowH));
+            }
+            else if (r.Choices != null)
             {
                 // 几选一：平铺文字，当前项白色加下划线；后面可以跟一句状态（如「重启后生效」）
                 float x = W;
@@ -531,12 +546,15 @@ public sealed partial class WallStage
                 var widths = r.Choices.Select(c => PWidth(ds, c, ui, 17)).ToArray();
                 for (int j = r.Choices.Length - 1; j >= 0; j--)
                 {
-                    x -= widths[j];
+                    float width = targets != null ? Math.Max(44, widths[j] + 20) : widths[j];
+                    x -= width;
+                    float textX = x + (width - widths[j]) / 2;
                     bool on = j == r.Choice;
                     var col = on ? (f ? CcText : Gfx.WithAlpha(CcText, 0.92)) : Gfx.WithAlpha(CcText, 0.38);
-                    PText(ds, r.Choices[j], ui, 17, Gfx.WithAlpha(col, a), x, cy, widths[j] + 4);
-                    if (on) ds.FillRectangle(x, cy + 13, widths[j], 2, Gfx.WithAlpha(col, a));
-                    x -= 20;
+                    PText(ds, r.Choices[j], ui, 17, Gfx.WithAlpha(col, a), textX, cy, widths[j] + 4);
+                    if (on) ds.FillRectangle(textX, cy + 13, widths[j], 2, Gfx.WithAlpha(col, a));
+                    targets?.Add(new(i, SettingsTargetKind.Choice, x, y, width, PerfRowH, j));
+                    if (targets == null) x -= 20;
                 }
             }
             else
@@ -544,13 +562,15 @@ public sealed partial class WallStage
                 string v = r.Value;
                 float vw = PWidth(ds, v, ui, 17);
                 var col = Gfx.WithAlpha(CcText, (f ? 1f : 0.6f) * a);
-                if (f && r.Numeric && !r.Disabled)
+                if ((f || targets != null) && r.Numeric && !r.Disabled)
                 {
                     // 焦点上的数值：‹ 值 ›，← → 直接改
                     float right = W;
                     DrawChevron(ds, right - 6, cy, false, col);
                     PText(ds, v, TextKit.Ui(600), 17, col, right - 22 - vw, cy, vw + 4);
                     DrawChevron(ds, right - 34 - vw, cy, true, col);
+                    targets?.Add(new(i, SettingsTargetKind.Decrease, right - 56 - vw, y, 44, PerfRowH));
+                    targets?.Add(new(i, SettingsTargetKind.Increase, right - 44, y, 44, PerfRowH));
                 }
                 else PText(ds, v, ui, 17, col, W - vw, cy, vw + 4);
             }
