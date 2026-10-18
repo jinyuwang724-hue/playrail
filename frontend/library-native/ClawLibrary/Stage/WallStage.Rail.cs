@@ -124,6 +124,13 @@ public sealed partial class WallStage
                 m.Settings.Add(("缓慢漂移", _backgroundSettings.MonetDrift ? "开" : "关"));
                 m.Settings.Add(("竖向纹理", _backgroundSettings.MonetStreaks ? "开" : "关"));
             }
+            else if (_backgroundSettings.Kind == BackgroundKind.Filmstrip)
+            {
+                m.Settings.Add(("封面排列", _backgroundSettings.FilmLayout == FilmLayout.Horizontal ? "横向条带" : "竖向条带"));
+                m.Settings.Add(("滑动速度", $"{_backgroundSettings.FilmSpeed}%"));
+                m.Settings.Add(("倾斜角度", $"{_backgroundSettings.FilmAngle}°"));
+                m.Settings.Add(("背景暗化", $"{_backgroundSettings.FilmDarkness}%"));
+            }
             else m.Settings.Add((_backgroundSettings.Kind == BackgroundKind.Latent ? "显示模式" : "背景效果", _backgroundSettings.Variant));
             m.Settings.Add(("完成", "返回设置"));
         }
@@ -292,7 +299,19 @@ public sealed partial class WallStage
         if (_backgroundSettingsOpen)
         {
             bool monet = _backgroundSettings.Kind == BackgroundKind.Monet;
-            if (i == 0) _backgroundSettings = _backgroundSettings with { Kind = (BackgroundKind)(((int)_backgroundSettings.Kind + step + 3) % 3) };
+            if (i == 0) _backgroundSettings = _backgroundSettings with { Kind = (BackgroundKind)(((int)_backgroundSettings.Kind + step + 4) % 4) };
+            else if (_backgroundSettings.Kind == BackgroundKind.Filmstrip)
+            {
+                _backgroundSettings = i switch
+                {
+                    1 => _backgroundSettings with { FilmLayout = _backgroundSettings.FilmLayout == FilmLayout.Horizontal ? FilmLayout.Vertical : FilmLayout.Horizontal },
+                    2 => _backgroundSettings with { FilmSpeed = Math.Clamp(_backgroundSettings.FilmSpeed + step * 25, 25, 200) },
+                    3 => _backgroundSettings with { FilmAngle = Math.Clamp(_backgroundSettings.FilmAngle + step * 5, 0, 45) },
+                    4 => _backgroundSettings with { FilmDarkness = Math.Clamp(_backgroundSettings.FilmDarkness + step * 10, 0, 90) },
+                    _ => _backgroundSettings,
+                };
+                if (i is < 1 or > 4) { CloseBackgroundSettings(); return; }
+            }
             else if (i == 1)
             {
                 _backgroundSettings = _backgroundSettings.Kind switch
@@ -350,6 +369,7 @@ public sealed partial class WallStage
         UpdateBackdropKey(FocusKey, false);
         if (_ccBack != null)
         {
+            _ccDim.IsVisible = _backgroundSettings.Kind != BackgroundKind.Filmstrip;
             _ccBack.Configure(_backgroundSettings);
             _ccBack.Build((float)View.Width, (float)View.Height);
             CcBackRun();
@@ -637,6 +657,14 @@ public sealed partial class WallStage
     }
 
     // ---------------- 动态背景 ----------------
+
+    private string[] FilmCoverPaths() => _lib.Games
+        .Where(g => g.Art?.Has('q') == true)
+        .OrderByDescending(g => g.Installed)
+        .ThenBy(g => g.LastPlayedDays ?? int.MaxValue)
+        .Select(g => g.Art!.File('q'))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
     private void UpdateBackdropKey(SlotKey? key, bool animate)
     {

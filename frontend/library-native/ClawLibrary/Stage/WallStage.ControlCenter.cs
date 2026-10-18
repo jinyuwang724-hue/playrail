@@ -417,7 +417,9 @@ public sealed partial class WallStage
         if (MorphSlow != 1) G.C.GlobalPlaybackRate = (float)(1 / MorphSlow);   // --slow=N（测试）
         _ccBack = new Backdrop(G) { Dpi = Chrome.Dpi };
         _ccBack.Configure(_backgroundSettings);
+        _ccBack.SetFilmCovers(FilmCoverPaths(), a => _dq.TryEnqueue(() => { a(); CcBackLoop(); }));
         _ccDim = G.Sprite(G.Solid(Gfx.Rgba(0, 0, 0, 0.20)));
+        _ccDim.IsVisible = _backgroundSettings.Kind != BackgroundKind.Filmstrip;
         _ccRow = G.Container();
         _ccTitle = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _ccLabel = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
@@ -506,6 +508,7 @@ public sealed partial class WallStage
         }
         _ccBack!.Dpi = Chrome.Dpi;
         _ccBack.BlurDip = 0;   // 背景就是软件背景：控制中心里也要看得清选的是哪种（folia 首页这里模糊 24 px，会把像素 / 纸纹 / 镜头都糊成一片）
+        _ccDim.IsVisible = _backgroundSettings.Kind != BackgroundKind.Filmstrip;
         _ccBack.Build(vw, vh);
         _ccBack.SetStrip(0, vw);
         CcPaintShadows();
@@ -722,7 +725,9 @@ public sealed partial class WallStage
     private void CcBackStart()
     {
         if (_ccBack == null) return;
-        var cover = _ccBlocks[0].CoverPath;
+        var film = _backgroundSettings.Kind == BackgroundKind.Filmstrip;
+        var cover = film ? _backdrop.FilmAccentCover : _ccBlocks[0].CoverPath;
+        if (film) _ccBack.SetFilmTime(_backdrop.FilmTime);
         // 控制中心还没露出来（被墙和背景板盖着）：直接换成这款游戏的颜色，不做渐变 —— 渐变期间每帧都要在 UI 线程上重画
         // 整张着色器 + 模糊，正好压在起飞那几帧上（实测每次起飞都掉一帧）
         _ccBack.InstantColors = true;
