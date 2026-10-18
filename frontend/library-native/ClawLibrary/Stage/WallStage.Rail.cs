@@ -365,9 +365,19 @@ public sealed partial class WallStage
     {
         _backgroundSettingsOpen = on;
         _cam.InsertScalar("bpreview", on ? 1 : 0);
-        _wallBackgroundL.IsVisible = _wallBackgroundR.IsVisible = _field.IsVisible = _vignette.IsVisible = !on;
+        UpdateWallBackgroundVisibility();
         UpdateBackdropKey(FocusKey, false);
         UpdateBackdropRunning();
+    }
+
+    private bool FilmWallBehindCovers => _backdropOn && _backgroundSettings.Kind == BackgroundKind.Filmstrip;
+
+    private void UpdateWallBackgroundVisibility()
+    {
+        bool showWall = !_backgroundSettingsOpen && !FilmWallBehindCovers;
+        _wallBackgroundL.IsVisible = _wallBackgroundR.IsVisible = showWall;
+        _field.IsVisible = _vignette.IsVisible = !_backgroundSettingsOpen;
+        _cam.InsertScalar("bfilm", FilmWallBehindCovers ? 1 : 0);
     }
 
     private void ApplyBackgroundSettings()
@@ -693,12 +703,13 @@ public sealed partial class WallStage
     private void UpdateBackdropRunning()
     {
         if (_backdrop == null) return;
+        UpdateWallBackgroundVisibility();
         bool seamOpen;
         try { Sync(); seamOpen = SeamGeometry(_anchorX, _center, _openWidth, View).Width > 1 || _seamTween != null; }
         catch { seamOpen = true; }
         _backdrop.Visible = _backdropOn || _backgroundSettingsOpen;
         bool recent = NowMs - _lastInput < BackdropIdleMs;
-        bool run = _backdropOn && _windowActive && !Reduced && seamOpen && recent && !_ccOpen;   // 控制中心开着时墙冻住
+        bool run = _backdropOn && _windowActive && !Reduced && (seamOpen || FilmWallBehindCovers) && recent && !_ccOpen;   // 控制中心开着时墙冻住
         _backdrop.Run(run);
         CcBackRun();
         EnsureBackdropLoop();
@@ -824,7 +835,7 @@ public sealed partial class WallStage
     private void PublishStrip()
     {
         if (_backdrop == null || _stack.Count == 0) return;
-        if (_backgroundSettingsOpen)
+        if (_backgroundSettingsOpen || FilmWallBehindCovers)
         {
             _backdrop.SetStrip(0, View.Width);
             StartBackdropLoop();

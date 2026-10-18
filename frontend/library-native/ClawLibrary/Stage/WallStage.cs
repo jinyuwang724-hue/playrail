@@ -329,6 +329,7 @@ public sealed partial class WallStage : IDisposable
         var wallR = G.Container();
         _wallBackgroundL = wallL; _wallBackgroundR = wallR;
         _cam.InsertScalar("bpreview", 0);
+        _cam.InsertScalar("bfilm", 0);
         foreach (var v in new Visual[] { _bgBase, _glow1, _glow2 }) wallL.Children.InsertAtTop(v);
         foreach (var v in new Visual[] { _bgBaseR, _glow1R, _glow2R }) wallR.Children.InsertAtTop(v);
         var clipL = G.C.CreateInsetClip();
@@ -346,10 +347,9 @@ public sealed partial class WallStage : IDisposable
         _backdrop.SetFilmCovers(FilmCoverPaths(), a => _dq.TryEnqueue(() => { a(); EnsureBackdropLoop(); }));
         _root.Children.InsertAtBottom(_backdrop.Root);
         Expr(_backdrop.Root, "Opacity", "p.fade");
-        // 背景跟着缝走：画布按「缝在首页的位置」来画（bhome / bsw：缝第一次打开时的屏幕位置和宽度；缝越宽越往画布正中靠，
-        // 铺满全屏时正好是整张画布），视觉整体平移到缝的实际位置。墙面平移时只是合成线程挪一下，
-        // 不会露出没画过的那一块（以前背景钉在屏幕上，缝挪到哪就得现画到哪，停帧时露出旧画面，成了断层）
-        Expr(_backdrop.Root, "Offset", "p.bpreview > 0.5 ? Vector3(0, 0, 0) : Vector3(p.sx - Lerp(p.bhome, p.vw / 2, Clamp((p.sw - p.bsw) / Max(1, p.vw - p.bsw), 0, 1)), 0, 0)");
+        // 普通背景跟着缝走；胶片墙和全屏预览固定在屏幕上，作为游戏封面卡片下方的整屏背景。
+        // bhome / bsw 是缝首次打开的位置和宽度；普通背景随开口变化只在合成线程平移。
+        Expr(_backdrop.Root, "Offset", "p.bpreview > 0.5 || p.bfilm > 0.5 ? Vector3(0, 0, 0) : Vector3(p.sx - Lerp(p.bhome, p.vw / 2, Clamp((p.sw - p.bsw) / Max(1, p.vw - p.bsw), 0, 1)), 0, 0)");
         _root.Children.InsertAtTop(_field);
         _field.Children.InsertAtTop(_worlds[0]);
         _field.Children.InsertAtTop(_worlds[1]);
