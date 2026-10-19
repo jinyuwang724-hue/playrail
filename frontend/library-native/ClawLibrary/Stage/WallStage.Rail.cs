@@ -370,14 +370,14 @@ public sealed partial class WallStage
         UpdateBackdropRunning();
     }
 
-    private bool FilmWallBehindCovers => _backdropOn && _backgroundSettings.Kind == BackgroundKind.Filmstrip;
+    private bool BackdropBehindCovers => _backdropOn;
 
     private void UpdateWallBackgroundVisibility()
     {
-        bool showWall = !_backgroundSettingsOpen && !FilmWallBehindCovers;
+        bool showWall = !_backgroundSettingsOpen && !BackdropBehindCovers;
         _wallBackgroundL.IsVisible = _wallBackgroundR.IsVisible = showWall;
         _field.IsVisible = _vignette.IsVisible = !_backgroundSettingsOpen;
-        _cam.InsertScalar("bfilm", FilmWallBehindCovers ? 1 : 0);
+        _cam.InsertScalar("bfull", BackdropBehindCovers ? 1 : 0);
     }
 
     private void ApplyBackgroundSettings()
@@ -699,17 +699,14 @@ public sealed partial class WallStage
         _ = animate;
     }
 
-    /// <summary>只在缝开着、窗口在前台、开着动态背景、没降低动态效果时跑循环动画。</summary>
+    /// <summary>动态背景铺在整面游戏封面下方；窗口在前台、没降低动态效果时跑循环动画。</summary>
     private void UpdateBackdropRunning()
     {
         if (_backdrop == null) return;
         UpdateWallBackgroundVisibility();
-        bool seamOpen;
-        try { Sync(); seamOpen = SeamGeometry(_anchorX, _center, _openWidth, View).Width > 1 || _seamTween != null; }
-        catch { seamOpen = true; }
         _backdrop.Visible = _backdropOn || _backgroundSettingsOpen;
         bool recent = NowMs - _lastInput < BackdropIdleMs;
-        bool run = _backdropOn && _windowActive && !Reduced && (seamOpen || FilmWallBehindCovers) && recent && !_ccOpen;   // 控制中心开着时墙冻住
+        bool run = _backdropOn && _windowActive && !Reduced && recent && !_ccOpen;   // 整屏可见，不再依赖侧边栏开口；控制中心开着时墙冻住
         _backdrop.Run(run);
         CcBackRun();
         EnsureBackdropLoop();
@@ -835,7 +832,7 @@ public sealed partial class WallStage
     private void PublishStrip()
     {
         if (_backdrop == null || _stack.Count == 0) return;
-        if (_backgroundSettingsOpen || FilmWallBehindCovers)
+        if (_backgroundSettingsOpen || BackdropBehindCovers)
         {
             _backdrop.SetStrip(0, View.Width);
             StartBackdropLoop();

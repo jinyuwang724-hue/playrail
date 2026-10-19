@@ -318,7 +318,7 @@ public sealed partial class WallStage : IDisposable
     private void BuildChrome()
     {
         // 背景：底色 + 两团光（radial-gradient circle farthest-corner）
-        // 墙面底色分成缝左、缝右两半（各自裁到开口边上）：开口处是透的，露出最底下的动态背景
+        // 关闭动态背景时用的底色分成缝左、缝右两半。动态背景开启时两半隐藏，让所有背景样式铺到游戏封面下方。
         _bgBase = G.Sprite(G.Solid(Theme.Bg));
         _glow1 = G.Sprite(null);
         _glow2 = G.Sprite(null);
@@ -329,7 +329,7 @@ public sealed partial class WallStage : IDisposable
         var wallR = G.Container();
         _wallBackgroundL = wallL; _wallBackgroundR = wallR;
         _cam.InsertScalar("bpreview", 0);
-        _cam.InsertScalar("bfilm", 0);
+        _cam.InsertScalar("bfull", 0);
         foreach (var v in new Visual[] { _bgBase, _glow1, _glow2 }) wallL.Children.InsertAtTop(v);
         foreach (var v in new Visual[] { _bgBaseR, _glow1R, _glow2R }) wallR.Children.InsertAtTop(v);
         var clipL = G.C.CreateInsetClip();
@@ -347,9 +347,8 @@ public sealed partial class WallStage : IDisposable
         _backdrop.SetFilmCovers(FilmCoverPaths(), a => _dq.TryEnqueue(() => { a(); EnsureBackdropLoop(); }));
         _root.Children.InsertAtBottom(_backdrop.Root);
         Expr(_backdrop.Root, "Opacity", "p.fade");
-        // 普通背景跟着缝走；胶片墙和全屏预览固定在屏幕上，作为游戏封面卡片下方的整屏背景。
-        // bhome / bsw 是缝首次打开的位置和宽度；普通背景随开口变化只在合成线程平移。
-        Expr(_backdrop.Root, "Offset", "p.bpreview > 0.5 || p.bfilm > 0.5 ? Vector3(0, 0, 0) : Vector3(p.sx - Lerp(p.bhome, p.vw / 2, Clamp((p.sw - p.bsw) / Max(1, p.vw - p.bsw), 0, 1)), 0, 0)");
+        // 所有开启的背景和全屏预览都固定在视口上，覆盖游戏封面之间的空隙；不随侧边栏开口平移。
+        Expr(_backdrop.Root, "Offset", "p.bpreview > 0.5 || p.bfull > 0.5 ? Vector3(0, 0, 0) : Vector3(p.sx - Lerp(p.bhome, p.vw / 2, Clamp((p.sw - p.bsw) / Max(1, p.vw - p.bsw), 0, 1)), 0, 0)");
         _root.Children.InsertAtTop(_field);
         _field.Children.InsertAtTop(_worlds[0]);
         _field.Children.InsertAtTop(_worlds[1]);
