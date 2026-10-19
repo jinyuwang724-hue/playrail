@@ -536,6 +536,9 @@ class PowerControl:
         self.fan_lock = asyncio.Lock()
         self.fan_write_count = 0
         self.fan_last_write = None
+        self.fan_test_session = None
+        self.fan_test_watchdog = None
+        self.fan_test_result = None
         self.fan_backup_path = self.data / "fan-backup.json"
         self.ecore_path = self.data / "ecore.json"
         self.cpu_max = None  # MHz, read once from the CPU
@@ -599,8 +602,10 @@ class PowerControl:
                 raise RuntimeError("功耗后台没有响应，稍后自动重试")
             if not reply.get("ok"):
                 raise RuntimeError(reply.get("error") or "功耗操作失败")
-            if command in ("fan_read", "fan_curve", "fan_restore"):
+            if command in ("fan_read", "fan_curve", "fan_restore", "fan_test_curve", "fan_test_done"):
                 return reply.get("fan") or {}
+            if command == "fan_probe":
+                return reply.get("fanProbe") or {}
             if command in ("thermal", "osd", "stats", "osd_zoom", "osd_height", "osd_font", "rtss_app", "gpu"):
                 return reply.get(command) or {}
             if command in ("sys_read", "brightness_set", "volume_set", "mute_set", "refresh_set", "fps_limit_set",
@@ -929,6 +934,8 @@ class PowerControl:
     async def _fan_tick(self, tick):
         """Follow the selected curve with hysteresis and repair EC resets."""
         async with self.fan_lock:
+            if self.fan_test_session is not None:
+                return  # the independent watchdog owns safety; no host speed writes here
             try:
                 fan = self.settings["fan"]
                 if not fan["full"]:
@@ -956,6 +963,117 @@ class PowerControl:
     def _fan_temperature(self):
         if type(self.temperature) not in (int, float) or not 0 < self.temperature <= 125:
             raise RuntimeError("CPU 温度读取异常，已尝试恢复固件自动控制")
+
+    async def fan_test(self, action, config=None):
+        """Bounded diagnostic lease. Never changes saved user power/fan settings."""
+        async with self.fan_lock:
+            if action == "begin":
+                if self.fan_test_session is not None:
+                    raise RuntimeError("风扇测试已在进行")
+                probe = await self._call("fan_probe")
+                if "CG3EM" not in probe.get("model", ""):
+                    raise RuntimeError("当前机型未通过风扇测试校验")
+                state = await self._call("fan_read")
+                self.fan_test_session = {"before": state, "deadline": time.monotonic() + 30,
+                                         "started": time.monotonic(), "writes": 0}
+                self.fan_test_result = None
+                self.fan_test_watchdog = asyncio.create_task(self._fan_test_watch())
+                return {"active": True, "probe": probe, "fan": state, "writes": 0}
+            if action == "end":
+                if self.fan_test_session is not None:
+                    await self._fan_test_finish("completed")
+                return {"active": False, "result": self.fan_test_result}
+            session = self.fan_test_session
+            if session is None:
+                raise RuntimeError("风扇测试未开始或已自动恢复：" + str(self.fan_test_result))
+            if time.monotonic() > session["deadline"] or time.monotonic() - session["started"] > 900:
+                await self._fan_test_finish("timeout")
+                raise RuntimeError("风扇测试超时，已恢复")
+            if action == "apply":
+                config = config or {}
+                for key in ("cpu", "gpu"):
+                    values = config.get(key)
+                    if (not isinstance(values, list) or len(values) != 7
+                            or any(type(v) is not int or not 35 <= v <= 100 for v in values)
+                            or any(a > b for a, b in zip(values, values[1:]))):
+                        raise ValueError("测试曲线必须为 7 个递增的 35–100 风量值")
+                if type(config.get("custom")) is not bool or config.get("transport") not in ("set_ap", "legacy"):
+                    raise ValueError("测试控制参数无效")
+                temp = (await self._call("thermal")).get("package")
+                if type(temp) not in (int, float) or not 0 < temp < 82:
+                    await self._fan_test_finish("temperature_abort")
+                    raise RuntimeError("温度不符合风扇测试条件，已恢复")
+                self.fan_state = await self._call("fan_test_curve", **{k: config[k] for k in ("cpu", "gpu", "custom", "transport")})
+                session["writes"] += 1
+            elif action != "sample":
+                raise ValueError("未知风扇测试操作")
+            thermal = await self._call("thermal")
+            temperature = thermal.get("package")
+            if type(temperature) not in (int, float) or not 0 < temperature < 82:
+                await self._fan_test_finish("temperature_abort")
+                raise RuntimeError("风扇测试达到温度限制或温度不可用，已恢复")
+            self.fan_state = await self._call("fan_read")
+            session["deadline"] = time.monotonic() + 30
+            return {"active": True, "fan": self.fan_state, "temperature": temperature,
+                    "writes": session["writes"], "softwareWrites": self.fan_write_count}
+
+    async def _fan_test_watch(self):
+        try:
+            while self.fan_test_session is not None:
+                await asyncio.sleep(1)
+                async with self.fan_lock:
+                    session = self.fan_test_session
+                    if session is None:
+                        return
+                    if time.monotonic() > session["deadline"] or time.monotonic() - session["started"] > 900:
+                        await self._fan_test_finish("timeout")
+                        return
+                    try:
+                        temp = (await self._call("thermal")).get("package")
+                        if type(temp) not in (int, float) or not 0 < temp < 82:
+                            await self._fan_test_finish("temperature_abort")
+                            return
+                    except RuntimeError:
+                        await self._fan_test_finish("sensor_error")
+                        return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logging.exception("Fan test watchdog recovery failed")
+
+    async def _fan_test_finish(self, reason):
+        session = self.fan_test_session
+        if session is None:
+            return
+        before = session["before"]
+        watcher = self.fan_test_watchdog
+        self.fan_test_watchdog = None
+        if watcher and watcher is not asyncio.current_task():
+            watcher.cancel()
+        # Restore all seven values touched by diagnostics, including the disputed first byte.
+        restored = False
+        try:
+            await self._call("fan_test_curve", cpu=before["cpuTable"][:7], gpu=before["gpuTable"][:7],
+                             custom=bool(before["software"]), transport="set_ap")
+            await self._call("fan_test_done")
+            restored = True
+        except RuntimeError:
+            await self._fan_release_locked()
+            await self._call("fan_test_done")
+            raise
+        finally:
+            self.fan_test_session = None
+            self.fan_test_result = {"reason": reason, "writes": session["writes"], "restored": restored}
+            self.fan_written = None
+            self.fan_governor.reset()
+            self.temperature_at = 0.0  # resume against a fresh sensor reading, never a pre-test cached temperature
+        # Reapply the user's chosen software curve, also restoring a saved full-speed override.
+        try:
+            await self._apply_fan_locked()
+        except RuntimeError as error:
+            self.fan_error = str(error)
+            await self._fan_release_locked()
+            raise
 
     async def _apply_fan(self):
         async with self.fan_lock:
@@ -1000,6 +1118,8 @@ class PowerControl:
             return
         try:
             async with self.fan_lock:
+                if self.fan_test_session is not None:
+                    await self._fan_test_finish("shutdown")
                 await self._fan_release_locked()
         except RuntimeError as e:
             logging.warning("Fan fallback curve: %s", e)
@@ -1103,7 +1223,8 @@ class PowerControl:
                 "endurance": self.endurance.state, "targets": [],
                 "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS, "caps": FAN_CAPS,
                         "axis": list(FAN_TEMPS), "target": self.fan_governor.duty,
-                        "execution": "software", "writeCount": self.fan_write_count, "lastWrite": self.fan_last_write},
+                        "execution": "test" if self.fan_test_session else "software", "writeCount": self.fan_write_count,
+                        "lastWrite": self.fan_last_write, "testResult": self.fan_test_result},
                 # Read-only readings for the toolbox home; a temperature older than 15 s is not shown.
                 "live": {"battery": battery_percent(),
                          "cpuTemp": self.temperature if time.monotonic() - self.temperature_at < 15 else None,
@@ -1155,6 +1276,8 @@ class PowerControl:
 
     async def save(self, value):
         next_settings = validate(value)
+        if self.fan_test_session and next_settings["fan"] != self.settings["fan"]:
+            raise RuntimeError("风扇测试期间请先结束测试，再修改风扇设置")
         async with self.policy_lock:
             previous = self.settings
             self.settings = next_settings

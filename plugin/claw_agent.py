@@ -42,7 +42,7 @@ MAX_LINE = 8 * 1024 * 1024
 METHODS = {
     "get_state", "refresh", "save_settings", "frontend_ready", "set_steam_context", "action_result",
     "manage_compatibility",
-    "get_power_state", "save_power", "restore_power", "set_ecore",
+    "get_power_state", "save_power", "restore_power", "set_ecore", "fan_test",
     "get_rumble_state", "set_rumble_strength", "restore_rumble", "test_rumble",
     "get_gamepad_state", "set_gamepad_mode", "set_stick_deadzone", "set_stick_swap", "set_trigger_range",
     "set_quick_trigger", "set_back_key", "set_key_map", "set_desktop_key_map", "set_light", "restore_gamepad",

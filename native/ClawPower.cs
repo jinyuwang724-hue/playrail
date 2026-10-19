@@ -175,6 +175,8 @@ class Executor : IDisposable {
             else if (command == "osd_font") reply["osd_font"] = Osd.Font(Convert.ToString(request["face"]));
             else if (command == "fan_read") reply["fan"] = MsiFan.Read();
             else if (command == "fan_probe") reply["fanProbe"] = MsiFan.Probe();
+            else if (command == "fan_test_curve") reply["fan"] = MsiFan.TestApply(Ints(request, "cpu"), Ints(request, "gpu"), true.Equals(request["custom"]), Convert.ToString(request["transport"]));
+            else if (command == "fan_test_done") { MsiFan.EndTest(false); reply["fan"] = MsiFan.Read(); }
             else if (command == "fan_curve") reply["fan"] = MsiFan.Apply(Ints(request, "cpu"), Ints(request, "gpu"), true.Equals(request.ContainsKey("full") ? request["full"] : false));
             else if (command == "fan_restore") reply["fan"] = MsiFan.Restore(request.ContainsKey("cpu") ? Ints(request, "cpu") : null, request.ContainsKey("gpu") ? Ints(request, "gpu") : null);
             else if (command == "cpu_info") reply["cpu"] = CpuInfo();
@@ -406,6 +408,7 @@ class Executor : IDisposable {
     }
 
     public void Dispose() {
+        try { MsiFan.EndTest(true); } catch { } // bridge loss during a test must release fixed-speed control
         Osd.Show("");
         if (frames != null) { frames.Dispose(); frames = null; }
         if (pawn != IntPtr.Zero) { pawnio_close(pawn); pawn = IntPtr.Zero; }
@@ -843,6 +846,7 @@ static class SmallCores {
 }
 
 static class MsiFan {
+    static bool testActive;
     const string Instance = @"MSI_ACPI.InstanceName='ACPI\PNP0C14\0_0'";
 
     static byte[] Call(string method, byte[] data) {
@@ -884,7 +888,16 @@ static class MsiFan {
         }
         result["AP1"] = Array.ConvertAll(Get("Get_AP", 1), b => (int)b);
         result["scenario"] = Array.ConvertAll(Get("Get_Data", 0xD2), b => (int)b);
+        result["model"] = Model();
         return result;
+    }
+
+    static string Model() {
+        using (var search = new System.Management.ManagementObjectSearcher("SELECT Model FROM Win32_ComputerSystem"))
+        using (var rows = search.Get()) {
+            foreach (System.Management.ManagementObject row in rows) return Convert.ToString(row["Model"]);
+        }
+        return "";
     }
 
     public static Dictionary<string, object> Read() {
@@ -896,6 +909,9 @@ static class MsiFan {
             { "rpm1", Rpm(rpm[0], rpm[1]) }, { "rpm2", Rpm(rpm[2], rpm[3]) },
             { "duty1", (int)cpu[0] }, { "duty2", (int)gpu[0] },
             { "cpu", Duties(cpu) }, { "gpu", Duties(gpu) },
+            { "cpuTable", Array.ConvertAll(cpu, b => (int)b) }, { "gpuTable", Array.ConvertAll(gpu, b => (int)b) },
+            { "ecTemperature", (int)Get("Get_Temperature", 0)[0] },
+            { "apData", Array.ConvertAll(Get("Get_AP", 1), b => (int)b) },
             { "cpuTemps", Temps(cpuTemps) }, { "gpuTemps", Temps(gpuTemps) },
             { "cpuTemperatureData", Array.ConvertAll(cpuTemps, b => (int)b) },
             { "gpuTemperatureData", Array.ConvertAll(gpuTemps, b => (int)b) },
@@ -921,6 +937,65 @@ static class MsiFan {
         byte cur = Get(getter, getter == "Get_AP" ? (byte)1 : index)[0];
         byte next = on ? (byte)(cur | 0x80) : (byte)(cur & 0x7F);
         if (next != cur) Call("Set_Data", new[] { index, next });
+    }
+
+    // Diagnostic only: compare the direct Set_AP selector with the old Set_Data alias,
+    // and test the seven-duty interpretation without changing temperature registers.
+    public static Dictionary<string, object> TestApply(int[] cpu, int[] gpu, bool custom, string transport) {
+        if (Model().IndexOf("CG3EM", StringComparison.OrdinalIgnoreCase) < 0)
+            throw new InvalidOperationException("风扇固件测试仅支持已核对的 CG3EM 机型");
+        if (transport != "set_ap" && transport != "legacy") throw new ArgumentException("未知风扇控制接口");
+        foreach (var duties in new[] { cpu, gpu }) {
+            if (duties == null || duties.Length != 7) throw new ArgumentException("测试表需要 7 个风量值");
+            foreach (int duty in duties) if (duty < 0 || duty > 150) throw new ArgumentException("风量超出范围");
+        }
+        var before = Read();
+        testActive = true;
+        try {
+            WriteSeven(1, cpu); WriteSeven(2, gpu);
+            SetCustom(custom, transport);
+            SetBit(0x98, false, "Get_Data");
+            var state = Read();
+            if ((bool)state["software"] != custom || (bool)state["fullSpeed"])
+                throw new InvalidOperationException("测试控制位回读不一致");
+            return state;
+        } catch {
+            WriteSeven(1, FirstSeven((int[])before["cpuTable"]));
+            WriteSeven(2, FirstSeven((int[])before["gpuTable"]));
+            SetCustom((bool)before["software"], transport);
+            SetBit(0x98, (bool)before["fullSpeed"], "Get_Data");
+            throw;
+        }
+    }
+
+    public static void EndTest(bool release) {
+        if (release && testActive) {
+            SetCustom(false, "set_ap");
+            SetBit(0x98, false, "Get_Data");
+        }
+        testActive = false;
+    }
+
+    static int[] FirstSeven(int[] table) { var values = new int[7]; Array.Copy(table, values, 7); return values; }
+
+    static void WriteSeven(byte block, int[] values) {
+        var current = Get("Get_Fan", block);
+        var payload = new byte[32]; payload[0] = block;
+        Array.Copy(current, 0, payload, 1, Math.Min(31, current.Length));
+        for (int i = 0; i < 7; i++) payload[i + 1] = (byte)values[i];
+        Call("Set_Fan", payload);
+        var check = Get("Get_Fan", block);
+        for (int i = 0; i < 7; i++) if (check[i] != values[i])
+            throw new InvalidOperationException("测试曲线逐点回读不一致");
+    }
+
+    static void SetCustom(bool enabled, string transport) {
+        if (transport == "legacy") { SetBit(0xD4, enabled, "Get_AP"); return; }
+        var current = Get("Get_AP", 1);
+        var payload = new byte[32]; payload[0] = 1;
+        Array.Copy(current, 0, payload, 1, Math.Min(31, current.Length));
+        payload[1] = enabled ? (byte)(payload[1] | 0x80) : (byte)(payload[1] & 0x7F);
+        Call("Set_AP", payload);
     }
 
     public static Dictionary<string, object> Apply(int[] cpu, int[] gpu, bool full) {

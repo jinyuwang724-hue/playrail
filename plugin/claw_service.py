@@ -261,6 +261,11 @@ class Service:
             raise RuntimeError("工具箱后台正在退出，请稍候")
         return await self._power.save(settings)
 
+    async def fan_test(self, action, config=None):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        return await self._power.fan_test(action, config)
+
     async def set_ecore(self, enabled):
         if self._stopping:
             raise RuntimeError("工具箱后台正在退出，请稍候")
