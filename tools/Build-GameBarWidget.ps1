@@ -6,7 +6,7 @@ $packages = Join-Path $env:USERPROFILE '.nuget\packages'
 $out = Join-Path $root 'artifacts\gamebar-widget'
 $properties = @('/p:Configuration=Release','/p:Platform=x64',
     "/p:CPPWINRT_DIR=$packages\microsoft.windows.cppwinrt\2.0.250303.1",
-    "/p:GAMEBAR_DIR=$(Join-Path (Split-Path -Parent $root) '..\..\artifacts\nuget-gamebar\pkg')",
+    "/p:GAMEBAR_DIR=$(Join-Path $root 'artifacts\nuget-gamebar\pkg')",
     "/p:MUX_DIR=$packages\microsoft.ui.xaml\2.8.7",
     "/p:WEBVIEW2_DIR=$packages\microsoft.web.webview2\1.0.3351.48",
     "/p:OutDir=$out\bin\", "/p:IntDir=$out\obj\")

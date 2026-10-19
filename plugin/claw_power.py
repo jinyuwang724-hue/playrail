@@ -3,14 +3,15 @@
 The elevated ClawPower helper does the hardware writes; this module owns the
 settings. Two plug-in presets (charger / battery) switch with the power source;
 manual mode uses one value for both and the presets are not applied while it is
-on. Smart mode moves the limit by itself from the game's real frame rate (see
-SmartGovernor). The original register and power plan values are backed up before
+on. Smart mode delegates power management to Intel Endurance Gaming. The original
+register and power plan values are backed up before
 the first write and can be put back with restore().
 """
 import asyncio
 import ctypes
 from ctypes import wintypes as W
 import json
+import importlib.util
 import logging
 import os
 from pathlib import Path
@@ -22,7 +23,7 @@ import winreg
 TDP_MIN, TDP_MAX = 8, 35
 BOOST_MAX = 15
 TICK = 1.0
-TARGETS = (0, 30, 40, 45, 60, 90, 120)
+INTEL_PROFILES = ("performance", "balanced", "battery")
 # Every cap a saved setting may hold (older versions offered up to 5 GHz).
 FREQ_CHOICES = (0, 1500, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000)
 # Offered in the panel: fine steps where handheld power limits actually land, only below this
@@ -47,7 +48,7 @@ def max_turbo_mhz(cpu):
 DEFAULTS = {
     "enabled": False, "mode": "smart", "boost": 1, "quick": [15, 20, 30],
     "ac": {"tdp": 35, "freq": 2750}, "dc": {"tdp": 25, "freq": 2750}, "manual": {"tdp": 20, "freq": 0},
-    "smart": {"target": 60, "acMax": 35, "dcMax": 25, "floor": 8},
+    "smart": {"profile": "performance"},
     # The OSD also keeps games such as 鸣潮 3.7 from crashing under RTSS (see ClawPower.cs Osd).
     "osd": {"enabled": True, "level": 2, "size": "medium", "rows": 1, "smallUnits": False},
     "fan": {"mode": "firmware", "curves": None, "full": False},  # curves: FAN_PRESETS until edited
@@ -91,12 +92,10 @@ def validate(value):
     if not isinstance(value, dict) or type(value.get("enabled")) is not bool or value.get("mode") not in ("auto", "manual", "smart"):
         raise ValueError("功耗设置格式错误")
     smart = value.get("smart", DEFAULTS["smart"])
-    if not isinstance(smart, dict) or smart.get("target") not in TARGETS:
-        raise ValueError("目标帧率无效")
-    floor = _int(smart.get("floor"), TDP_MIN, 20, "智能下限")
-    smart = {"target": smart["target"], "floor": floor,
-             "acMax": _int(smart.get("acMax"), floor, TDP_MAX, "插电上限"),
-             "dcMax": _int(smart.get("dcMax"), floor, TDP_MAX, "电池上限")}
+    if not isinstance(smart, dict) or smart.get("profile", "performance") not in INTEL_PROFILES:
+        raise ValueError("Intel 智能功耗档位无效")
+    # Old target/floor/cap values are deliberately retired, including on older clients.
+    smart = {"profile": smart.get("profile", "performance")}
     osd = {**DEFAULTS["osd"], **(value.get("osd") or {})}  # 0.14.0 had per-item switches instead
     if (type(osd["enabled"]) is not bool or osd["level"] not in (1, 2, 3, 4) or osd["size"] not in ("small", "medium", "large")
             or osd["rows"] not in (1, 2) or type(osd["smallUnits"]) is not bool):
@@ -479,106 +478,9 @@ def foreground_game():
     return pid.value, name
 
 
-class SmartGovernor:
-    """Finds the lowest power limit that still holds the target frame rate.
-
-    Frame rate is the game's own rendered frames (PresentMon Application FPS), so
-    XeSS frame generation or Lossless Scaling never makes a game look faster than
-    it is. Watts are only added while the chip actually uses the whole limit
-    ("bound"); a game held back by its CPU thread, an engine cap or a static
-    visual-novel screen does not draw the limit, so it is lowered toward what it
-    really draws instead. When two extra watts stop buying frames the governor
-    remembers that ceiling for a while.
-    """
-    STEP_EVERY = 2.0
-    HOLD = 60.0
-    # Steam's own UI and the desktop. There are no game frames to judge there, and the
-    # chip spends whatever limit it is given: the Big Picture home screen drew ~10 W at a
-    # 12 W limit and 15-20 W at 25 W (same screen, CPU 2.5 -> 3.2 GHz). Following that
-    # draw upward ratchets the limit to the cap, so menus get a fixed low limit instead.
-    MENU = 12
-
-    def __init__(self, clock=time.monotonic):
-        self.clock = clock
-        self.reset(None, 35)
-
-    def reset(self, game, start):
-        self.game, self.limit = game, start
-        self.fps = self.draw = None
-        self.last_step = self.clock()
-        self.probe = None          # (limit before raising, fps before raising)
-        self.ceiling = None        # (limit, until)
-        self.reason = "等待帧率数据"
-
-    def update(self, game, app_fps, draw, target, floor, cap, start=None):
-        now = self.clock()
-        if game != self.game:
-            self.reset(game, cap if start is None else start)
-        if self.ceiling and now >= self.ceiling[1]:
-            self.ceiling = None
-        alpha = .5
-        if app_fps is not None:
-            self.fps = app_fps if self.fps is None else self.fps + alpha * (app_fps - self.fps)
-        if draw is not None:
-            self.draw = draw if self.draw is None else self.draw + alpha * (draw - self.draw)
-        if game is None:
-            self.limit = max(floor, min(cap, self.MENU))
-            self.reason = f"不在游戏中，固定 {self.limit} W"
-            return self.limit
-        self.limit = max(floor, min(cap, self.limit))
-        if now - self.last_step < self.STEP_EVERY or self.draw is None:
-            return self.limit
-        top = min(cap, self.ceiling[0]) if self.ceiling else cap
-        bound = self.draw >= self.limit - 1.5
-        fps = self.fps
-        step = 0
-        if self.probe and fps is not None:
-            before_limit, before_fps = self.probe
-            if self.limit - before_limit >= 2:
-                self.probe = None
-                if before_fps and fps < before_fps * 1.03:
-                    self.ceiling = (before_limit, now + self.HOLD)
-                    self.limit = max(floor, before_limit)
-                    self.last_step = now
-                    self.reason = f"再加功耗帧数也不涨，停在 {self.limit} W"
-                    return self.limit
-        if fps is None or fps < 3:
-            # No frames to judge (menus, desktop, a static scene): follow the real draw.
-            if not bound and self.limit > floor:
-                step = -2 if self.draw < self.limit - 5 else -1
-                self.reason = "画面负载低，按实际耗电降低"
-            elif bound and fps is None and self.limit < top:
-                step = 1
-                self.reason = "功耗用满，适当提高"
-        elif target and fps >= target * 1.07:
-            step = -2 if fps >= target * 1.3 else -1
-            self.reason = f"帧率高于目标 {target}，降低功耗"
-        elif target and fps < target * 0.95:
-            if bound and self.limit < top:
-                step = 2 if fps < target * 0.8 else 1
-                self.reason = f"帧率低于目标 {target}，提高功耗"
-            elif not bound and self.limit > floor:
-                step = -1
-                self.reason = "瓶颈不在功耗，多给也没用"
-            else:
-                self.reason = f"已到上限 {self.limit} W" if self.limit >= top else "保持"
-        elif not target:
-            if bound and self.limit < top:
-                step = 2
-                self.reason = "不限帧率：尝试更高功耗"
-            elif not bound and self.limit > floor:
-                step = -1
-                self.reason = "不限帧率：按实际耗电降低"
-        else:
-            self.reason = f"帧率达到目标 {target}"
-        if step:
-            if step < 0:
-                self.probe = None
-            elif self.probe is None:
-                self.probe = (self.limit, fps)
-            self.limit = max(floor, min(top, self.limit + step))
-            self.last_step = now
-        return self.limit
+_endurance_spec = importlib.util.spec_from_file_location("claw_toolbox_endurance", Path(__file__).with_name("claw_endurance.py"))
+_endurance_module = importlib.util.module_from_spec(_endurance_spec)
+_endurance_spec.loader.exec_module(_endurance_module)
 
 
 class PowerControl:
@@ -631,7 +533,10 @@ class PowerControl:
         self.osd_height = None
         self.osd = {}
         self.osd_text = ""
-        self.governor = SmartGovernor()
+        self.policy_lock = asyncio.Lock()
+        self.endurance = _endurance_module.IntelEndurance(self._call, self.data, self._ensure_endurance_worker)
+        self.endurance_worker = None
+        self.worker_checked = 0.0
         self.last_game = None
         self.smart = {}
 
@@ -679,6 +584,8 @@ class PowerControl:
             if command in ("display_read", "resolution_set", "vrr_set", "hdr_set", "audio_output_set", "mic_mute_set",
                            "scale_set", "auto_brightness_set", "gpu_set"):
                 return reply.get("display") or {}
+            if command in ("endurance_read", "endurance_set", "frame_pacing_set"):
+                return reply.get("endurance") or {}
             if command == "cpu_info":
                 return reply.get("cpu") or {}
             if command == "ecore_set":
@@ -717,18 +624,31 @@ class PowerControl:
     def target(self):
         s = self.settings
         if s["mode"] == "smart":
-            smart = s["smart"]
-            cap = smart["acMax"] if self.charger else smart["dcMax"]
-            limit = self.governor.limit = max(smart["floor"], min(cap, self.governor.limit))
-        else:
-            limit = (s["manual"] if s["mode"] == "manual" else s["ac" if self.charger else "dc"])["tdp"]
+            return (self.actual or {}).get("pl1"), (self.actual or {}).get("pl2")
+        limit = (s["manual"] if s["mode"] == "manual" else s["ac" if self.charger else "dc"])["tdp"]
         return limit, limit + s["boost"]
 
     def freq_target(self):
         s = self.settings
+        if s["mode"] == "smart":
+            return 0, 0
         if s["mode"] == "manual":
             return s["manual"]["freq"], s["manual"]["freq"]
         return s["ac"]["freq"], s["dc"]["freq"]
+
+    async def _ensure_endurance_worker(self):
+        if time.monotonic() - self.worker_checked < 10:
+            return
+        names = await asyncio.to_thread(process_names)
+        if "endurancegamingprocess.exe" not in names.values():
+            exe = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Intel" / "EnduranceGaming" / "EnduranceGamingProcess.exe"
+            if not exe.is_file():
+                raise RuntimeError("Intel Endurance Gaming 组件未安装")
+            self.endurance_worker = subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=subprocess.CREATE_NO_WINDOW)
+            await asyncio.sleep(.5)
+            if self.endurance_worker.poll() is not None:
+                raise RuntimeError(f"Intel 调优组件启动后退出（{self.endurance_worker.returncode}）")
+        self.worker_checked = time.monotonic()
 
     async def _backup(self, power):
         if self.backup_path.exists():
@@ -743,6 +663,18 @@ class PowerControl:
         os.replace(temp, self.backup_path)
 
     async def _apply(self, force=False):
+        if self.settings["mode"] == "smart":
+            if not self.backup_path.exists():
+                await self._backup(await self._call("read"))
+            state = await self.endurance.apply(self.settings["smart"]["profile"])
+            self.smart = {"provider": "intel", "profile": state.get("profile"),
+                          "configured": state.get("control") == "auto",
+                          "reason": "插电 · Intel 自动策略待机" if self.charger else "Intel 自动策略已开启 · 由系统按游戏负载调节"}
+            return
+        await self.endurance.release()
+        state = await self.endurance.read()
+        if state.get("available") and state.get("control") != "off":
+            await self._call("endurance_set", control="off", profile=state["profile"])
         power = self.actual if (self.actual and not force) else await self._call("read")
         await self._backup(power)
         pl1, pl2 = self.target()
@@ -763,26 +695,6 @@ class PowerControl:
         if abs(power.get("pl1", 0) - pl1) > .2 or abs(power.get("pl2", 0) - pl2) > .2:
             raise RuntimeError("功耗写入后回读不一致，可能被其他软件或固件改回")
 
-    async def _smart_tick(self):
-        s = self.settings["smart"]
-        cap = s["acMax"] if self.charger else s["dcMax"]
-        game = await asyncio.to_thread(foreground_game)
-        last = self.last_game
-        if game is None and last and (await asyncio.to_thread(process_names)).get(last[0]) == last[1]:
-            game = last     # Steam's menu over a running game: keep governing the game
-        self.last_game = game
-        frames = await self._call("frames", pid=game[0] if game else 0)
-        chains = [c for c in frames.get("swapChains") or [] if c.get("presentedFps", 0) > 0]
-        # The game's main swap chain is the one presenting the most frames.
-        chain = max(chains, key=lambda c: c.get("presentedFps", 0)) if chains else None
-        app_fps = chain.get("appFps") if chain else (0.0 if game else None)
-        limit = self.governor.update(game[1] if game else None, app_fps, frames.get("package"),
-                                     s["target"], s["floor"], cap)
-        self.smart = {"game": game[1] if game else None, "fps": chain.get("appFps") if chain else None,
-                      "presentedFps": chain.get("presentedFps") if chain else None,
-                      "gpuBusy": chain.get("gpuBusy") if chain else None, "limit": limit,
-                      "reason": self.governor.reason, "framesError": frames.get("framesError")}
-
     async def _loop(self):
         tick = 0
         while not self.closing:
@@ -791,28 +703,22 @@ class PowerControl:
                 tick += 1
                 osd_on = self.settings["osd"]["enabled"]
                 await self._fan_tick(tick)
-                if not self.settings["enabled"]:
-                    if osd_on:
-                        await self._osd_tick(tick, None)
-                    continue
-                charger = on_charger()
-                changed = charger != self.charger
-                self.charger = charger
+                self.charger = on_charger()
                 if tick % 10 == 1:
                     self.other_tool = await asyncio.to_thread(motion_assistant_running)
-                smart = self.settings["mode"] == "smart"
-                if smart:
-                    await self._smart_tick()
+                # Telemetry and fan operation do not depend on Intel policy availability.
                 if osd_on:
-                    await self._osd_tick(tick, self.smart if smart else None)
-                if not smart:
-                    if tick % 3 and not changed:
-                        continue
-                    await self._call("read")
-                await self._apply(force=changed and not smart)
-                if self.error:
-                    self.error = ""
-                if not smart or tick % 2 == 0:
+                    await self._osd_tick(tick, None)
+                async with self.policy_lock:
+                    if self.settings["enabled"]:
+                        await self._call("read")
+                        if self.settings["mode"] == "smart" or tick % 3 == 0:
+                            await self._apply()
+                    else:
+                        await self.endurance.release(restore_driver=True)
+                    if self.error:
+                        self.error = ""
+                if tick % 2 == 0:
                     await self.publish()
             except asyncio.CancelledError:
                 raise
@@ -874,12 +780,11 @@ class PowerControl:
             s["batteryMinutes"] = round(remaining / 1000 / -watts * 60)
         if remaining and full and watts > 0.3 and not s.get("chargeMinutes"):
             s["chargeMinutes"] = round(max(0, full - remaining) / 1000 / watts * 60)
-        smart_on = self.settings["enabled"] and self.settings["mode"] == "smart"
         data = {"time": time.strftime("%H:%M"), "rtssFps": rtss.get("fps"), "frameTime": rtss.get("frameTime"),
                 "fps": chain.get("appFps"), "presented": chain.get("presentedFps"),
                 "fps01": frames.get("appFps01"), "package": (self.actual or {}).get("package"),
                 "limit": (self.actual or {}).get("pl1"),
-                "target": self.settings["smart"]["target"] if smart_on else None,
+                "target": None,
                 "cpuUsage": s.get("cpuUsage"), "cpuMhz": s.get("cpuMhz"), "cpuTemp": self.temperature,
                 "gpuUsage": s.get("gpuUsage"), "gpuMhz": frames.get("gpuMhz"), "gpuTemp": frames.get("gpuTemp"),
                 "gpuPower": frames.get("gpuPower"), "ramUsed": s.get("ramUsedGB"), "gpuMem": s.get("gpuMemMB"),
@@ -1083,7 +988,8 @@ class PowerControl:
         return {"settings": self.settings, "charger": self.charger, "target": {"pl1": pl1, "pl2": pl2},
                 "actual": {k: a.get(k) for k in ("pl1", "pl2", "package", "locked", "tdpBase", "freq")} if a else None,
                 "backup": self.backup_path.exists(), "otherTool": self.other_tool, "reapplied": self.reapplied,
-                "smart": self.smart if self.settings["mode"] == "smart" else None, "targets": list(TARGETS),
+                "smart": self.smart if self.settings["mode"] == "smart" else None,
+                "endurance": self.endurance.state, "targets": [],
                 "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS, "caps": FAN_CAPS,
                         "axis": list(FAN_TEMPS), "target": self.fan_governor.duty},
                 # Read-only readings for the toolbox home; a temperature older than 15 s is not shown.
@@ -1107,7 +1013,10 @@ class PowerControl:
     async def get(self, sample=False):
         self.charger = on_charger()
         self.other_tool = await asyncio.to_thread(motion_assistant_running)
-        # Not managing power: keep no elevated helper or driver handle around at all.
+        try:
+            await self.endurance.read()
+        except Exception as e:
+            self.endurance.state = {"available": False, "error": str(e)}
         if not self.settings["enabled"]:
             return self.view()
         if self.cpu_max is None:
@@ -1127,23 +1036,36 @@ class PowerControl:
             pass  # The toolbox home then shows no temperature.
         return self.view()
 
+    def _persist_settings(self):
+        temp = self.path.with_suffix(".tmp")
+        temp.write_text(json.dumps(self.settings, ensure_ascii=False), encoding="utf-8")
+        os.replace(temp, self.path)
+
     async def save(self, value):
         next_settings = validate(value)
-        previous = self.settings
-        self.settings = next_settings
-        temp = self.path.with_suffix(".tmp")
-        temp.write_text(json.dumps(next_settings, ensure_ascii=False), encoding="utf-8")
-        os.replace(temp, self.path)
-        self.charger = on_charger()
-        if next_settings["enabled"]:
+        async with self.policy_lock:
+            previous = self.settings
+            self.settings = next_settings
+            self.charger = on_charger()
             try:
-                await self._apply(force=True)
+                if next_settings["enabled"]:
+                    await self._apply(force=True)
+                else:
+                    await self.endurance.release(restore_driver=True)
+                    self.smart = {}
+                self._persist_settings()
                 self.error = ""
             except Exception as e:
+                self.settings = previous
                 self.error = str(e)
-        else:
-            self.error = ""
-            self.smart = {}
+                try:
+                    if previous["enabled"]:
+                        await self._apply(force=True)
+                    else:
+                        await self.endurance.release(restore_driver=True)
+                except Exception:
+                    logging.exception("Power settings rollback incomplete")
+                raise
         if next_settings["fan"] != previous["fan"]:
             self.fan_governor.reset()
             try:
@@ -1158,6 +1080,11 @@ class PowerControl:
         return self.view()
 
     async def restore(self):
+        async with self.policy_lock:
+            return await self._restore_locked()
+
+    async def _restore_locked(self):
+        await self.endurance.release(restore_driver=True)
         if not self.backup_path.exists():
             raise RuntimeError("没有原始值备份：插件尚未修改过功耗")
         record = json.loads(self.backup_path.read_text(encoding="utf-8"))
@@ -1184,5 +1111,9 @@ class PowerControl:
                 await self.task
             except asyncio.CancelledError:
                 pass
+        try:
+            await self.endurance.release(restore_driver=True)
+        except Exception:
+            logging.exception("Intel Endurance Gaming release failed; recovery journal retained")
         await self._fan_fallback()
         await self._stop()

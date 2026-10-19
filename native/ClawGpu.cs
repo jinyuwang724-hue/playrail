@@ -80,6 +80,97 @@ static class IntelGpu {
     }
 
     static readonly string[] LowLatency = { "off", "on", "boost" };
+    static readonly string[] EnduranceProfiles = { "performance", "balanced", "battery" };
+
+    static uint EnduranceCall(bool set, uint control, uint profile, out uint actualControl, out uint actualProfile) {
+        IntPtr value = Marshal.AllocHGlobal(8);
+        try {
+            Marshal.WriteInt32(value, (int)control);
+            Marshal.WriteInt32(value, 4, (int)profile);
+            var f = new Feature3D { Size = 56, FeatureType = 1, ApplicationName = emptyName,
+                Set = set, ValueType = 5, CustomValueSize = 8, CustomValue = value };
+            uint r = ctlGetSet3DFeature(device, ref f);
+            actualControl = unchecked((uint)Marshal.ReadInt32(value));
+            actualProfile = unchecked((uint)Marshal.ReadInt32(value, 4));
+            return r;
+        } finally { Marshal.FreeHGlobal(value); }
+    }
+
+    public static Dictionary<string, object> EnduranceRead() {
+        var view = new Dictionary<string, object> { { "available", false } };
+        try {
+            Open();
+            var caps = new FeatureCaps { Size = (uint)Marshal.SizeOf(typeof(FeatureCaps)) };
+            uint r = ctlGetSupported3DCapabilities(device, ref caps);
+            if (r != 0 || caps.Count == 0 || caps.Count > 256) throw new InvalidOperationException("读不到 Intel 智能功耗支持列表");
+            IntPtr details = Marshal.AllocHGlobal((int)caps.Count * 72);
+            IntPtr custom = Marshal.AllocHGlobal(32);
+            try {
+                for (int i = 0; i < caps.Count * 72; i += 8) Marshal.WriteInt64(details, i, 0);
+                for (int i = 0; i < 32; i += 8) Marshal.WriteInt64(custom, i, 0);
+                caps.Details = details;
+                r = ctlGetSupported3DCapabilities(device, ref caps);
+                if (r != 0) throw new InvalidOperationException("读取 Intel 智能功耗能力失败");
+                IntPtr eg = IntPtr.Zero;
+                for (int i = 0; i < caps.Count; i++) {
+                    IntPtr item = IntPtr.Add(details, i * 72);
+                    if (Marshal.ReadInt32(item) == 1) { eg = item; break; }
+                }
+                if (eg == IntPtr.Zero || Marshal.ReadInt32(eg, 4) != 5) throw new InvalidOperationException("当前驱动不支持 Intel 智能功耗");
+                Marshal.WriteInt32(eg, 32, 32);
+                Marshal.WriteIntPtr(eg, 40, custom);
+                r = ctlGetSupported3DCapabilities(device, ref caps);
+                if (r != 0) throw new InvalidOperationException("读取 Intel 智能功耗档位失败");
+                uint controls = unchecked((uint)Marshal.ReadInt64(custom));
+                uint modes = unchecked((uint)Marshal.ReadInt64(custom, 16));
+                if ((controls & 5) != 5 || (modes & 7) == 0) throw new InvalidOperationException("当前驱动没有提供自动功耗调节");
+                uint control, profile;
+                r = EnduranceCall(false, 0, 0, out control, out profile);
+                if (r != 0 || control > 2 || profile >= EnduranceProfiles.Length)
+                    throw new InvalidOperationException(string.Format("读取 Intel 智能功耗配置失败 0x{0:X8}", r));
+                var profiles = new List<Dictionary<string, object>>();
+                string[] names = { "性能", "均衡", "续航" };
+                for (int i = 0; i < 3; i++) if ((modes & (1u << i)) != 0)
+                    profiles.Add(new Dictionary<string, object> { { "id", EnduranceProfiles[i] }, { "name", names[i] } });
+                view["available"] = true;
+                view["control"] = control == 0 ? "off" : control == 2 ? "auto" : "on";
+                view["profile"] = EnduranceProfiles[profile];
+                view["profiles"] = profiles;
+                view["perApplication"] = Marshal.ReadByte(eg, 48) != 0;
+                view["liveChange"] = (Marshal.ReadInt16(eg, 64) & 16) != 0;
+                view["conflicts"] = Marshal.ReadInt64(eg, 56);
+                uint pacing;
+                if (Call(0, false, 0, out pacing) == 0) view["framePacing"] = pacing;
+            } finally { Marshal.FreeHGlobal(details); Marshal.FreeHGlobal(custom); }
+        } catch (Exception e) { view["error"] = e.Message; }
+        return view;
+    }
+
+    public static Dictionary<string, object> EnduranceSet(string control, string profile) {
+        var before = EnduranceRead();
+        if (!true.Equals(before["available"])) throw new InvalidOperationException(Convert.ToString(before["error"]));
+        int mode = Array.IndexOf(EnduranceProfiles, profile);
+        if ((control != "auto" && control != "off") || mode < 0) throw new ArgumentException("Intel 智能功耗选项无效");
+        bool supported = false;
+        foreach (var item in (List<Dictionary<string, object>>)before["profiles"])
+            if (Convert.ToString(item["id"]) == profile) supported = true;
+        if (!supported) throw new InvalidOperationException("驱动不支持这个 Intel 智能功耗档位");
+        uint actualControl, actualProfile;
+        uint r = EnduranceCall(true, control == "auto" ? 2u : 0u, (uint)mode, out actualControl, out actualProfile);
+        if (r != 0) throw new InvalidOperationException(string.Format("Intel 智能功耗写入失败 0x{0:X8}", r));
+        var after = EnduranceRead();
+        if (!true.Equals(after["available"]) || Convert.ToString(after["control"]) != control || Convert.ToString(after["profile"]) != profile)
+            throw new InvalidOperationException("Intel 智能功耗写入后回读不一致");
+        return after;
+    }
+
+    public static void FramePacingSet(uint value) {
+        Open();
+        if (value > 3) throw new ArgumentException("帧节奏设置无效");
+        uint actual;
+        uint r = Call(0, true, value, out actual);
+        if (r != 0) throw new InvalidOperationException(string.Format("帧节奏写入失败 0x{0:X8}", r));
+    }
     /// <summary>帧同步：id → 驱动的翻转模式位。</summary>
     static readonly string[] FlipIds = { "app", "vsyncOff", "vsync", "smooth", "speed", "capped" };
     static readonly string[] FlipNames = { "应用决定", "关闭垂直同步", "垂直同步", "平滑同步", "极速帧", "限制到刷新率" };

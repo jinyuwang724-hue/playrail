@@ -18,12 +18,13 @@ const R = SP_REACT, UI = DFL, h = R.createElement;
 const GameAdder = createGameAdder(window, UI, api, R);
 const moduleSelection = createModuleSelection();
 const { Home, SubPage, TitleBar, SectionLabel, StatusText } = createToolboxUI(R, UI);
-// Side-panel title: the game the power governor sees, or the toolbox name.
+// Side-panel title: the selected Intel policy, or the toolbox name.
 function Title() {
   const [value, setValue] = R.useState(() => power.value);
   R.useEffect(() => power.subscribe(setValue), []);
   const smart = value.draft?.enabled ? value.view?.smart : null;
-  return h(TitleBar, { game: smart?.game ? { name: smart.game, detail: smart.target ? `目标 ${smart.target} 帧` : "智能调节" } : null });
+  return h(TitleBar, { game: smart?.provider === "intel" ? { name: "Intel 智能功耗",
+    detail: ({ performance: "性能", balanced: "均衡", battery: "续航" })[smart.profile] ?? "自动调节" } : null });
 }
 const magpie = createMagpieController(api);
 const MagpiePanel = createMagpiePanel(R, UI, magpie, StatusText);

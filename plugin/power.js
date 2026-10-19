@@ -47,6 +47,7 @@ export function createPowerController(api) {
 }
 
 const freqLabel = mhz => mhz ? `${+(mhz / 1000).toFixed(2)} GHz` : "不限";
+const intelProfile = id => ({ performance: "性能", balanced: "均衡", battery: "续航" })[id] ?? "性能";
 const watts = v => typeof v === "number" ? `${Math.round(v * 10) / 10} W` : "—";
 const fanModes = { firmware: "固件自动", quiet: "静音", balanced: "均衡", performance: "性能" };
 
@@ -54,7 +55,7 @@ const fanModes = { firmware: "固件自动", quiet: "静音", balanced: "均衡"
 export function powerSummaries(value) {
   const view = value?.view, draft = value?.draft;
   if (!view || !draft) return {};
-  const mode = draft.mode === "manual" ? `手动 ${draft.manual.tdp} W` : draft.mode === "smart" ? `智能${view.smart?.limit ? ` ${view.smart.limit} W` : ""}`
+  const mode = draft.mode === "manual" ? `手动 ${draft.manual.tdp} W` : draft.mode === "smart" ? `Intel · ${intelProfile(draft.smart?.profile)}`
     : `预设 ${(view.charger ? draft.ac : draft.dc).tdp} W`;
   return {
     power: draft.enabled ? { text: mode } : { text: "未接管", off: true },
@@ -72,7 +73,7 @@ export function powerTiles(value, controller, open) {
   if (!view || !draft) return [];
   const quick = draft.quick ?? [];
   const powerIndex = draft.mode === "smart" ? 0 : draft.mode === "manual" ? quick.indexOf(draft.manual.tdp) + 1 : -1;
-  const powerValue = draft.mode === "smart" ? `智能${view.smart?.limit ? ` ${view.smart.limit} W` : ""}`
+  const powerValue = draft.mode === "smart" ? `Intel · ${intelProfile(draft.smart?.profile)}`
     : draft.mode === "manual" ? `${draft.manual.tdp} W` : `预设 ${(view.charger ? draft.ac : draft.dc).tdp} W`;
   const level = draft.osd.enabled ? draft.osd.level : 0;
   const fanIndex = fanCycle.indexOf(draft.fan.mode);
@@ -130,11 +131,6 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       ? `${driver} · 上限 ${watts(actual.pl1)}${typeof actual.package === "number" ? ` · 实际 ${watts(actual.package)}` : ""}`
       : driver;
     const manual = draft.mode === "manual", smart = draft.mode === "smart";
-    const smartSlider = (key, label, field, min) => row(key, h(ui.SliderField, {
-      label, min, max: limits.tdpMax, step: 1, validValues: "steps", minimumDpadGranularity: 1,
-      notchTicksVisible: false, showValue: true, valueSuffix: " W", value: draft.smart[field],
-      onChange: v => controller.edit({ smart: { ...draft.smart, [field]: Math.round(v) } }),
-    }));
     if (section === "osd") return h(ui.PanelSection, null,
       row("osd", h(ui.ToggleField, { label: "显示性能信息",
         checked: draft.osd.enabled, onChange: enabled => controller.edit({ osd: { ...draft.osd, enabled } }, 0) })),
@@ -172,17 +168,15 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       row("enabled", h(ui.ToggleField, { label: "接管功耗控制",
         checked: draft.enabled, onChange: enabled => controller.edit({ enabled }, 0) })),
       draft.enabled && row("mode", h(ui.DropdownItem, { label: "调节方式", selectedOption: draft.mode,
-        rgOptions: [{ label: "智能", data: "smart" }, { label: "预设", data: "auto" }, { label: "手动", data: "manual" }],
+        rgOptions: [{ label: "Intel 智能", data: "smart" }, { label: "预设", data: "auto" }, { label: "手动", data: "manual" }],
         onChange: o => controller.edit({ mode: o.data }, 0) })),
       draft.enabled && (smart ? h(React.Fragment, null,
-        row("smart-target", h(ui.DropdownItem, { label: "目标帧率",
-          rgOptions: (view.targets ?? [0, 30, 40, 45, 60, 90, 120]).map(v => ({ label: v ? `${v} 帧` : "不限", data: v })),
-          selectedOption: draft.smart.target, onChange: o => controller.edit({ smart: { ...draft.smart, target: o.data } }, 0) })),
-        smartSlider("smart-ac", "插电上限", "acMax", draft.smart.floor),
-        smartSlider("smart-dc", "电池上限", "dcMax", draft.smart.floor),
-        smartSlider("smart-floor", "最低功耗", "floor", limits.tdpMin),
-        freq("smart-ac-freq", "插电 CPU 频率", "ac"),
-        freq("smart-dc-freq", "电池 CPU 频率", "dc"))
+        row("intel-profile", h(ui.DropdownItem, { label: "Intel 档位",
+          rgOptions: (view.endurance?.profiles ?? []).map(p => ({ label: p.name, data: p.id })),
+          selectedOption: draft.smart.profile, disabled: !view.endurance?.available,
+          onChange: o => controller.edit({ smart: { profile: o.data } }, 0) })),
+        row("intel-state", h("div", { className: "claw-hint" }, view.endurance?.error || view.error || live?.reason || "Intel Endurance Gaming 自动调节")),
+        row("intel-note", h("div", { className: "claw-hint" }, "电池供电时自动调节，插电时待机。调整档位后请重新启动游戏。")))
       : manual ? h(React.Fragment, null,
         slider("manual-tdp", "功耗", "manual"),
         freq("manual-freq", "CPU 频率", "manual"))
@@ -191,7 +185,7 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
         freq("ac-freq", "插电 CPU 频率", "ac"),
         slider("dc-tdp", "电池功耗", "dc"),
         freq("dc-freq", "电池 CPU 频率", "dc"))),
-      draft.enabled && row("boost", h(ui.SliderField, { label: "短时功耗加成",
+      draft.enabled && !smart && row("boost", h(ui.SliderField, { label: "短时功耗加成",
         min: 0, max: limits.boostMax, step: 1, validValues: "steps", minimumDpadGranularity: 1, showValue: true, valueSuffix: " W",
         value: draft.boost, onChange: v => controller.edit({ boost: Math.round(v) }) })),
       view.ecore && row("ecore", h(ui.ToggleField, { label: "全部核心按 E 核调度",

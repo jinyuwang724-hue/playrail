@@ -25,49 +25,6 @@ class Clock:
     def __call__(self): return self.now
 
 
-def simulate(game_fps, target, cap, seconds=120, floor=8, start=None):
-    """game_fps(limit) -> (real fps, watts drawn). Returns the governor's limit history."""
-    clock = Clock(); g = power.SmartGovernor(clock)
-    history = []
-    for _ in range(seconds):
-        limit = g.limit if history else (start or cap)
-        fps, draw = game_fps(limit)
-        history.append(g.update("game.exe", fps, draw, target, floor, cap, start))
-        clock.now += 1
-    return history, g
-
-
-def governor_checks():
-    # GPU-bound AAA: fps scales with watts, draws the whole limit.
-    aaa = lambda w: (min(100, 2.6 * w), w)
-    h, _ = simulate(aaa, 60, 35)
-    assert 22 <= h[-1] <= 25, h[-20:]
-    # A heavier game on battery cap 25 W cannot reach 60: stays at the cap.
-    h, _ = simulate(lambda w: (min(100, 2.0 * w), w), 60, 25)
-    assert h[-1] == 25, h[-10:]
-    # Frame-generated game: real fps is what counts (presented would be 4x).
-    h, _ = simulate(lambda w: (min(50, 2.0 * w), w), 60, 35)
-    assert h[-1] >= 24, h[-10:]
-    # Static visual novel: ~0.4 fps, draws ~5 W. Must fall to the floor, not rise.
-    h, _ = simulate(lambda w: (0.4, min(w, 5.0)), 60, 35)
-    assert h[-1] == 8, h[-10:]
-    # CPU-bound game stuck at 50 fps drawing 14 W: no point giving it 35 W.
-    h, _ = simulate(lambda w: (min(50, 3 * w), min(w, 14.0)), 60, 35)
-    assert h[-1] <= 16, h[-10:]
-    # Bound but saturated (memory-bound): watts above 18 add < 3 % fps.
-    sat = lambda w: ((2.5 * w) if w <= 18 else (45 + 0.1 * (w - 18)), w)
-    h, g = simulate(sat, 60, 35, start=16)
-    assert max(h[-30:]) <= 20, h[-30:]
-    # Uncapped target: climbs while fps still grows.
-    h, _ = simulate(aaa, 0, 35)
-    assert h[-1] >= 34, h[-10:]
-    # Steam's home screen (no game): the draw follows the limit, which must not ratchet up.
-    clock = Clock(); g = power.SmartGovernor(clock)
-    for _ in range(120):
-        g.update(None, None, g.limit - 0.5, 60, 8, 25); clock.now += 1
-    assert g.limit == 12, g.limit
-
-
 def main():
     base = json.loads(json.dumps(power.DEFAULTS))
     assert power.validate(base)["ac"] == {"tdp": 35, "freq": 2750}
@@ -78,10 +35,9 @@ def main():
     expect_error({**base, "boost": 16})
     expect_error({**base, "manual": {"tdp": 20, "freq": 1234}})
 
-    assert power.validate(base)["smart"] == {"target": 60, "acMax": 35, "dcMax": 25, "floor": 8}
-    expect_error({**base, "smart": {"target": 55, "acMax": 35, "dcMax": 25, "floor": 8}})
-    expect_error({**base, "smart": {"target": 60, "acMax": 36, "dcMax": 25, "floor": 8}})
-    governor_checks()
+    assert power.validate(base)["smart"] == {"profile": "performance"}
+    assert power.validate({**base, "smart": {"target": 60, "floor": 8, "acMax": 35, "dcMax": 25}})["smart"] == {"profile": "performance"}
+    expect_error({**base, "smart": {"profile": "turbo"}})
     full = {"time": "19:30", "rtssFps": 199.6, "frameTime": 5.0, "fps": 50, "presented": 200, "fps01": 41, "package": 21.5, "limit": 25, "target": 60,
             "cpuUsage": 35, "cpuMhz": 2480, "cpuTemp": 68, "gpuUsage": 90, "gpuMhz": 2100, "gpuTemp": 70, "gpuPower": 15.2,
             "ramUsed": 15.8, "gpuMem": 4198, "battery": 85, "charger": False, "batteryW": -12.4, "minutes": 105, "fanRpm": 5161, "fanDuty": 84, "cpuPower": 8.4, "ramTotal": 31.5, "graph": True}

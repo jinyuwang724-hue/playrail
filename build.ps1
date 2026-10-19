@@ -4,7 +4,7 @@ $taskRoot = $PSScriptRoot
 # The agent's private Python runtime (the device has no system Python). Built once from a local
 # Python 3.12; pass -Python or set CLAW_PYTHON to rebuild it.
 $taskRuntime = Join-Path $taskRoot 'plugin\runtime\python'
-if ($Python -or -not (Test-Path -LiteralPath (Join-Path $taskRuntime 'runtime.json'))) {
+if (-not $FrontendOnly -and ($Python -or -not (Test-Path -LiteralPath (Join-Path $taskRuntime 'runtime.json')))) {
     if (-not $Python) { throw 'Agent runtime missing: run build.ps1 -Python <path to python.exe 3.12>.' }
     & $Python (Join-Path $taskRoot 'tools\Build-AgentRuntime.py') $taskRuntime
     if ($LASTEXITCODE -ne 0) { throw 'Agent runtime build failed.' }

@@ -164,6 +164,9 @@ class Executor : IDisposable {
             else if (command == "thermal") reply["thermal"] = Thermal();
             else if (command == "osd") reply["osd"] = Osd.Show(request.ContainsKey("text") ? Convert.ToString(request["text"]) : "");
             else if (command == "gpu") reply["gpu"] = (gpu ?? (gpu = new GpuSysman())).Read();
+            else if (command == "endurance_read") reply["endurance"] = IntelGpu.EnduranceRead();
+            else if (command == "endurance_set") reply["endurance"] = IntelGpu.EnduranceSet(Convert.ToString(request["control"]), Convert.ToString(request["profile"]));
+            else if (command == "frame_pacing_set") { IntelGpu.FramePacingSet((uint)Number(request, "value")); reply["endurance"] = IntelGpu.EnduranceRead(); }
             else if (command == "rtss_app") reply["rtss_app"] = Osd.App(Convert.ToInt32(request["pid"]));
             else if (command == "stats") reply["stats"] = (stats ?? (stats = new SystemStats())).Read();
             else if (command == "osd_zoom") reply["osd_zoom"] = Osd.Zoom(Convert.ToInt32(request["zoom"]));
