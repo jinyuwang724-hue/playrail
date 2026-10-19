@@ -56,6 +56,7 @@ export function powerSummaries(value) {
   const view = value?.view, draft = value?.draft;
   if (!view || !draft) return {};
   const mode = draft.mode === "manual" ? `手动 ${draft.manual.tdp} W` : draft.mode === "smart" ? `Intel · ${intelProfile(draft.smart?.profile)}`
+    : draft.mode === "autotdp" ? `Auto · ${draft.autotdp.target} 帧`
     : `预设 ${(view.charger ? draft.ac : draft.dc).tdp} W`;
   return {
     power: draft.enabled ? { text: mode } : { text: "未接管", off: true },
@@ -72,18 +73,19 @@ export function powerTiles(value, controller, open) {
   const view = value?.view, draft = value?.draft;
   if (!view || !draft) return [];
   const quick = draft.quick ?? [];
-  const powerIndex = draft.mode === "smart" ? 0 : draft.mode === "manual" ? quick.indexOf(draft.manual.tdp) + 1 : -1;
+  const powerIndex = draft.mode === "autotdp" ? 0 : draft.mode === "smart" ? 1 : draft.mode === "manual" ? quick.indexOf(draft.manual.tdp) + 2 : -1;
   const powerValue = draft.mode === "smart" ? `Intel · ${intelProfile(draft.smart?.profile)}`
+    : draft.mode === "autotdp" ? `Auto · ${draft.autotdp.target} 帧`
     : draft.mode === "manual" ? `${draft.manual.tdp} W` : `预设 ${(view.charger ? draft.ac : draft.dc).tdp} W`;
   const level = draft.osd.enabled ? draft.osd.level : 0;
   const fanIndex = fanCycle.indexOf(draft.fan.mode);
   return [
-    { id: "power", label: "功耗", icon: "power", on: draft.enabled, steps: quick.length + 1, filled: draft.enabled ? powerIndex + 1 : 0,
+    { id: "power", label: "功耗", icon: "power", on: draft.enabled, steps: quick.length + 2, filled: draft.enabled ? powerIndex + 1 : 0,
       value: draft.enabled ? powerValue : "未接管",
       onPress: () => {
         if (!draft.enabled) return open("power");
-        const next = (powerIndex + 1) % (quick.length + 1);
-        controller.edit(next === 0 ? { mode: "smart" } : { mode: "manual", manual: { ...draft.manual, tdp: quick[next - 1] } }, 800);
+        const next = (powerIndex + 1) % (quick.length + 2);
+        controller.edit(next < 2 ? { mode: next === 0 ? "autotdp" : "smart" } : { mode: "manual", manual: { ...draft.manual, tdp: quick[next - 2] } }, 800);
       } },
     { id: "osd", label: "性能显示", icon: "osd", on: level > 0, steps: 4, filled: level, value: level ? `第 ${level} 档` : "关",
       onPress: () => {
@@ -124,13 +126,18 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       onChange: o => controller.edit({ [profile]: { ...draft[profile], freq: o.data } }, 0),
     }));
     const source = view.charger ? "插电" : "电池";
-    const live = view.smart;
+    const live = draft.mode === "autotdp" ? view.autotdp : view.smart;
     // One status line: what drives the limit now, and the limit and draw actually in effect.
-    const driver = draft.mode === "smart" && live?.game ? [live.game, live.fps != null ? `${Math.round(live.fps)} 帧` : ""].filter(Boolean).join(" ") : source;
+    const driver = live?.game ? [live.game, live.fps != null ? `${Math.round(live.fps)} 帧` : ""].filter(Boolean).join(" ") : source;
     const phase = view.error ? view.error : !draft.enabled ? `${source} · 未接管` : actual
       ? `${driver} · 上限 ${watts(actual.pl1)}${typeof actual.package === "number" ? ` · 实际 ${watts(actual.package)}` : ""}`
       : driver;
-    const manual = draft.mode === "manual", smart = draft.mode === "smart";
+    const manual = draft.mode === "manual", smart = draft.mode === "smart", auto = draft.mode === "autotdp";
+    const autoSetting = (key, label, min, max, unit) => row(`auto-${key}`, h(ui.SliderField, {
+      label, min, max, step: 1, validValues: "steps", minimumDpadGranularity: 1,
+      showValue: true, valueSuffix: unit, value: draft.autotdp[key],
+      onChange: v => controller.edit({ autotdp: { ...draft.autotdp, [key]: Math.round(v) } }),
+    }));
     if (section === "osd") return h(ui.PanelSection, null,
       row("osd", h(ui.ToggleField, { label: "显示性能信息",
         checked: draft.osd.enabled, onChange: enabled => controller.edit({ osd: { ...draft.osd, enabled } }, 0) })),
@@ -168,15 +175,22 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       row("enabled", h(ui.ToggleField, { label: "接管功耗控制",
         checked: draft.enabled, onChange: enabled => controller.edit({ enabled }, 0) })),
       draft.enabled && row("mode", h(ui.DropdownItem, { label: "调节方式", selectedOption: draft.mode,
-        rgOptions: [{ label: "Intel 智能", data: "smart" }, { label: "预设", data: "auto" }, { label: "手动", data: "manual" }],
+        rgOptions: [{ label: "Auto · 目标帧率", data: "autotdp" }, { label: "Intel 智能", data: "smart" }, { label: "按电源", data: "auto" }, { label: "手动", data: "manual" }],
         onChange: o => controller.edit({ mode: o.data }, 0) })),
       draft.enabled && (smart ? h(React.Fragment, null,
         row("intel-profile", h(ui.DropdownItem, { label: "Intel 档位",
-          rgOptions: (view.endurance?.profiles ?? []).map(p => ({ label: p.name, data: p.id })),
+          rgOptions: (view.endurance?.profiles ?? []).map(p => ({ label: intelProfile(p.id), data: p.id })),
           selectedOption: draft.smart.profile, disabled: !view.endurance?.available,
           onChange: o => controller.edit({ smart: { profile: o.data } }, 0) })),
         row("intel-state", h("div", { className: "claw-hint" }, view.endurance?.error || view.error || live?.reason || "Intel Endurance Gaming 自动调节")),
         row("intel-note", h("div", { className: "claw-hint" }, "电池供电时自动调节，插电时待机。调整档位后请重新启动游戏。")))
+      : auto ? h(React.Fragment, null,
+        autoSetting("target", "目标帧率", 20, 240, " 帧"),
+        autoSetting("floor", "功耗下限", limits.tdpMin, Math.min(draft.autotdp.acMax, draft.autotdp.dcMax), " W"),
+        autoSetting("acMax", "插电上限", draft.autotdp.floor, limits.tdpMax, " W"),
+        autoSetting("dcMax", "电池上限", draft.autotdp.floor, limits.tdpMax, " W"),
+        row("auto-state", h("div", { className: "claw-hint" }, live?.reason || "等待游戏帧率")),
+        row("auto-note", h("div", { className: "claw-hint" }, "按真实渲染帧率调节功耗；稳定后缓慢降低，采集异常时保持。CPU 不限频。")))
       : manual ? h(React.Fragment, null,
         slider("manual-tdp", "功耗", "manual"),
         freq("manual-freq", "CPU 频率", "manual"))

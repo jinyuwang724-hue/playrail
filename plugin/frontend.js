@@ -22,8 +22,9 @@ const { Home, SubPage, TitleBar, SectionLabel, StatusText } = createToolboxUI(R,
 function Title() {
   const [value, setValue] = R.useState(() => power.value);
   R.useEffect(() => power.subscribe(setValue), []);
-  const smart = value.draft?.enabled ? value.view?.smart : null;
-  return h(TitleBar, { game: smart?.provider === "intel" ? { name: "Intel 智能功耗",
+  const auto = value.draft?.enabled && value.draft?.mode === "autotdp" ? value.view?.autotdp : null;
+  const smart = value.draft?.enabled && value.draft?.mode === "smart" ? value.view?.smart : null;
+  return h(TitleBar, { game: auto ? { name: "Auto 自动功耗", detail: `目标 ${auto.target} 帧` } : smart?.provider === "intel" ? { name: "Intel 智能功耗",
     detail: ({ performance: "性能", balanced: "均衡", battery: "续航" })[smart.profile] ?? "自动调节" } : null });
 }
 const magpie = createMagpieController(api);
@@ -240,7 +241,7 @@ export function Content() {
   let body;
   if (page) body = h(SubPage, { module: page, state: states[page.id], onBack: () => open(null) }, contents[page.id]);
   else {
-    const view = powerValue.view, draft = powerValue.draft, live = view?.live ?? {}, smart = view?.smart;
+    const view = powerValue.view, draft = powerValue.draft, live = view?.live ?? {}, smart = draft?.mode === "autotdp" ? view?.autotdp : view?.smart;
     const managed = !!draft?.enabled;
     const round = (v, digits = 0) => typeof v === "number" ? Math.round(v * 10 ** digits) / 10 ** digits : null;
     const fps = round(smart?.fps ?? live.fps), target = managed ? smart?.target : null;

@@ -27,12 +27,13 @@ namespace
         { L"power", { L"功耗", L"power" } }, { L"fan", { L"风扇", L"fan" } }, { L"fps", { L"限帧", L"fps" } },
         { L"refresh", { L"刷新率", L"refresh" } }, { L"osd", { L"性能显示", L"osd" } }, { L"magpie", { L"画面缩放", L"magpie" } },
         { L"rumble", { L"震动", L"rumble" } }, { L"keyboard", { L"显示键盘", L"keyboard" } }, { L"close", { L"关闭程序", L"close" } },
-        { L"target", { L"Intel 档位", L"target" } }, { L"cpu", { L"CPU 频率", L"cpu" } }, { L"fanfull", { L"风扇全速", L"fanfull" } },
+        { L"target", { L"功耗目标", L"target" } }, { L"cpu", { L"CPU 频率", L"cpu" } }, { L"fanfull", { L"风扇全速", L"fanfull" } },
         { L"ecore", { L"E 核调度", L"ecore" } }, { L"sharpen", { L"画面锐化", L"sharpen" } }, { L"screenshot", { L"截图", L"screenshot" } } };
     const std::map<std::wstring, std::wstring> Hints{
         { L"target", L"智能模式用" }, { L"cpu", L"最高 / 限频" }, { L"fanfull", L"开 / 关" }, { L"ecore", L"重启后生效" },
         { L"sharpen", L"Magpie" }, { L"screenshot", L"保存到相册" } };
     const std::vector<int> FpsSteps{ 0, 30, 40, 45, 60, 90, 120 };
+    const std::vector<int> AutoTargets{ 30, 40, 45, 60, 72, 90, 120, 144, 165, 240 };
     const std::vector<std::pair<std::wstring, std::wstring>> IntelSteps{ { L"performance", L"性能" }, { L"balanced", L"均衡" }, { L"battery", L"续航" } };
     const std::vector<std::pair<int, std::wstring>> RumbleSteps{ { 0, L"关" }, { 35, L"弱" }, { 70, L"中" }, { 100, L"强" } };
     const std::vector<std::pair<std::wstring, std::wstring>> FanSteps{ { L"firmware", L"固件" }, { L"quiet", L"静音" }, { L"balanced", L"均衡" }, { L"performance", L"性能" } };
@@ -539,9 +540,9 @@ namespace winrt::ClawWidget::implementation
             double tdp = Num(d, L"manual.tdp");
             int at = -1;
             for (uint32_t i = 0; i < quick.Size(); i++) if (quick.GetNumberAt(i) == tdp) at = static_cast<int>(i);
-            level.count = static_cast<int>(quick.Size()) + 2;
-            level.index = !enabled ? 0 : mode == L"smart" ? 1 : (mode == L"manual" && at >= 0) ? 2 + at : 1;
-            level.value = !enabled ? hstring(L"系统控制") : mode == L"smart" ? hstring(L"Intel 智能")
+            level.count = static_cast<int>(quick.Size()) + 3;
+            level.index = !enabled ? 0 : mode == L"autotdp" ? 1 : mode == L"smart" ? 2 : (mode == L"manual" && at >= 0) ? 3 + at : 1;
+            level.value = !enabled ? hstring(L"系统控制") : mode == L"autotdp" ? hstring(L"Auto") : mode == L"smart" ? hstring(L"Intel 智能")
                 : mode == L"manual" ? Fmt(tdp, 0) + L" W" : L"预设 · " + Fmt(Num(m_data, L"power.target.pl1"), 0) + L" W";
         }
         else if (id == L"fan")
@@ -595,11 +596,22 @@ namespace winrt::ClawWidget::implementation
         }
         else if (id == L"target")
         {
-            level.count = static_cast<int>(IntelSteps.size()); level.index = 0;
-            auto profile = Str(d, L"smart.profile", L"performance");
-            for (int i = 0; i < level.count; i++) if (profile == IntelSteps[i].first) level.index = i;
-            level.value = IntelSteps[level.index].second;
-            level.disabled = !Bool(d, L"enabled") || Str(d, L"mode") != L"smart" || !Bool(m_data, L"power.endurance.available");
+            bool autoMode = Str(d, L"mode") == L"autotdp";
+            if (autoMode)
+            {
+                double target = Num(d, L"autotdp.target", 60);
+                level.count = static_cast<int>(AutoTargets.size()); level.index = Nearest(AutoTargets, target);
+                level.value = Fmt(target, 0) + L" 帧";
+                level.disabled = !Bool(d, L"enabled");
+            }
+            else
+            {
+                level.count = static_cast<int>(IntelSteps.size()); level.index = 0;
+                auto profile = Str(d, L"smart.profile", L"performance");
+                for (int i = 0; i < level.count; i++) if (profile == IntelSteps[i].first) level.index = i;
+                level.value = IntelSteps[level.index].second;
+                level.disabled = !Bool(d, L"enabled") || Str(d, L"mode") != L"smart" || !Bool(m_data, L"power.endurance.available");
+            }
         }
         else if (id == L"cpu")
         {
@@ -609,8 +621,9 @@ namespace winrt::ClawWidget::implementation
             level.count = static_cast<int>(choices.Size()); level.index = 0;
             for (uint32_t i = 0; i < choices.Size(); i++) if (choices.GetNumberAt(i) == v) level.index = static_cast<int>(i);
             level.value = v ? Ghz(v) : hstring(L"最高");
-            level.disabled = choices.Size() < 2 || Str(d, L"mode") == L"smart";
+            level.disabled = choices.Size() < 2 || Str(d, L"mode") == L"smart" || Str(d, L"mode") == L"autotdp";
             if (Str(d, L"mode") == L"smart") level.value = L"Intel 自动";
+            if (Str(d, L"mode") == L"autotdp") level.value = L"不限频";
         }
         else if (id == L"fanfull")
         {
@@ -645,13 +658,18 @@ namespace winrt::ClawWidget::implementation
         {
             auto quick = Arr(d, L"quick");
             if (next == 0) d.SetNamedValue(L"enabled", B(false));
-            else if (next == 1) { d.SetNamedValue(L"enabled", B(true)); d.SetNamedValue(L"mode", S(L"smart")); }
-            else { d.SetNamedValue(L"enabled", B(true)); d.SetNamedValue(L"mode", S(L"manual")); SetPath(d, L"manual.tdp", N(quick.GetNumberAt(next - 2))); }
+            else if (next < 3) { d.SetNamedValue(L"enabled", B(true)); d.SetNamedValue(L"mode", S(next == 1 ? L"autotdp" : L"smart")); }
+            else { d.SetNamedValue(L"enabled", B(true)); d.SetNamedValue(L"mode", S(L"manual")); SetPath(d, L"manual.tdp", N(quick.GetNumberAt(next - 3))); }
             EditPower();
         }
         else if (id == L"fan") { SetPath(d, L"fan.mode", S(FanSteps[next].first)); EditPower(); }
         else if (id == L"osd") { SetPath(d, L"osd.enabled", B(next > 0)); if (next) SetPath(d, L"osd.level", N(next)); EditPower(); }
-        else if (id == L"target") { SetPath(d, L"smart.profile", S(IntelSteps[next].first)); EditPower(); }
+        else if (id == L"target")
+        {
+            if (Str(d, L"mode") == L"autotdp") SetPath(d, L"autotdp.target", N(AutoTargets[next]));
+            else SetPath(d, L"smart.profile", S(IntelSteps[next].first));
+            EditPower();
+        }
         else if (id == L"fanfull") { SetPath(d, L"fan.full", B(!Bool(d, L"fan.full"))); EditPower(); }
         else if (id == L"cpu")
         {

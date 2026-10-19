@@ -14,3 +14,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Input layer test compile failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Input layer tests failed.' }
 node --test (Join-Path $PSScriptRoot 'tests\frontend.test.mjs') (Join-Path $PSScriptRoot 'tests\menu-router.test.mjs') (Join-Path $PSScriptRoot 'tests\steam-context.test.mjs') (Join-Path $PSScriptRoot 'tests\navigation-haptics.test.mjs') (Join-Path $PSScriptRoot 'tests\compatibility-ui.test.mjs') (Join-Path $PSScriptRoot 'tests\scaling-visibility.test.mjs') (Join-Path $PSScriptRoot 'tests\panel-lifecycle.test.mjs') (Join-Path $PSScriptRoot 'tests\magpie.test.mjs') (Join-Path $PSScriptRoot 'tests\toolbox-ui.test.mjs') (Join-Path $PSScriptRoot 'tests\rumble.test.mjs')
 if ($LASTEXITCODE -ne 0) { throw 'Frontend tests failed.' }
+node --test (Join-Path $PSScriptRoot 'tests\power.test.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Power frontend tests failed.' }

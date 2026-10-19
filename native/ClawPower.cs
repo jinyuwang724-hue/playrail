@@ -160,6 +160,7 @@ class Executor : IDisposable {
             else if (command == "set_tdp") reply["power"] = SetTdp(Number(request, "pl1"), Number(request, "pl2"));
             else if (command == "restore_tdp") reply["power"] = RestoreTdp(Convert.ToString(request["raw"]));
             else if (command == "set_freq") reply["power"] = SetFreq(request);
+            else if (command == "restore_freq") reply["power"] = SetFreq(request, true);
             else if (command == "frames") reply["frames"] = Frames(Convert.ToInt32(request["pid"]));
             else if (command == "thermal") reply["thermal"] = Thermal();
             else if (command == "osd") reply["osd"] = Osd.Show(request.ContainsKey("text") ? Convert.ToString(request["text"]) : "");
@@ -289,8 +290,8 @@ class Executor : IDisposable {
         try { return (Guid)Marshal.PtrToStructure(pointer, typeof(Guid)); } finally { LocalFree(pointer); }
     }
 
-    static Dictionary<string, object> ReadFreq() {
-        Guid scheme = ActiveScheme();
+    static Dictionary<string, object> ReadFreq(Guid? savedScheme = null) {
+        Guid scheme = savedScheme ?? ActiveScheme();
         uint ac, dc, ac1, dc1;
         PowerReadACValueIndex(IntPtr.Zero, ref scheme, ref SubProcessor, ref FreqMax, out ac);
         PowerReadDCValueIndex(IntPtr.Zero, ref scheme, ref SubProcessor, ref FreqMax, out dc);
@@ -302,9 +303,10 @@ class Executor : IDisposable {
         return result;
     }
 
-    Dictionary<string, object> SetFreq(Dictionary<string, object> request) {
-        Guid scheme = ActiveScheme();
-        if (request.ContainsKey("scheme") && request["scheme"] != null && new Guid(Convert.ToString(request["scheme"])) != scheme)
+    Dictionary<string, object> SetFreq(Dictionary<string, object> request, bool restoreSaved = false) {
+        Guid active = ActiveScheme();
+        Guid scheme = request.ContainsKey("scheme") && request["scheme"] != null ? new Guid(Convert.ToString(request["scheme"])) : active;
+        if (!restoreSaved && scheme != active)
             throw new InvalidOperationException("电源方案已变化，请重新读取");
         // 0 means no cap. Both the P-core (FreqMax) and the E-core class (FreqMax1) settings
         // are written, the same pair the Windows UI hides and 体感助手 writes.
@@ -319,9 +321,14 @@ class Executor : IDisposable {
                 : PowerWriteDCValueIndex(IntPtr.Zero, ref scheme, ref SubProcessor, ref setting, mhz);
             if (error != 0) throw new InvalidOperationException("写入频率上限失败 " + error);
         }
-        uint applied = PowerSetActiveScheme(IntPtr.Zero, ref scheme);
-        if (applied != 0) throw new InvalidOperationException("重新应用电源方案失败 " + applied);
-        return Read();
+        // Restoring a saved, inactive plan must never activate it.
+        if (ActiveScheme() == scheme) {
+            uint applied = PowerSetActiveScheme(IntPtr.Zero, ref scheme);
+            if (applied != 0) throw new InvalidOperationException("重新应用电源方案失败 " + applied);
+        }
+        var result = Read();
+        if (restoreSaved) result["restoredFreq"] = ReadFreq(scheme);
+        return result;
     }
 
     // Package temperature: TjMax (MSR 0x1A2 bits 16-23) minus the digital readout of
@@ -369,6 +376,9 @@ class Executor : IDisposable {
 
     Dictionary<string, object> Frames(int pid) {
         var result = new Dictionary<string, object>();
+        result["pid"] = pid;
+        result["sampleWindowMs"] = FrameStats.QueryWindowMs;
+        result["sampleOffsetMs"] = FrameStats.QueryOffsetMs;
         try {
             ulong units = ReadMsr(MSR_RAPL_POWER_UNIT);
             double energy = 1.0 / (1UL << (int)((units >> 8) & 0x1F));
@@ -1090,6 +1100,7 @@ class FrameStats : IDisposable {
     [StructLayout(LayoutKind.Sequential)]
     struct Element { public int metric, stat; public uint device, index; public ulong offset, size; }
     const int AVG = 1;
+    public const double QueryWindowMs = 1000, QueryOffsetMs = 1000;
     static readonly string[] Names = { "appFps", "presentedFps", "displayedFps", "gpuBusy", "cpuBusy", "frameTime" };
     // PM_METRIC_APPLICATION_FPS, PRESENTED_FPS, DISPLAYED_FPS, GPU_BUSY, CPU_BUSY, CPU_FRAME_TIME
     static readonly int[] Metrics = { 62, 12, 11, 14, 9, 8 };
@@ -1107,7 +1118,7 @@ class FrameStats : IDisposable {
         if (status != 0) throw new InvalidOperationException("无法连接 Intel PresentMon 服务 " + status);
         elements = new Element[Metrics.Length];
         for (int i = 0; i < Metrics.Length; i++) elements[i] = new Element { metric = Metrics[i], stat = AVG };
-        status = pmRegisterDynamicQuery(session, out query, elements, (ulong)elements.Length, 1000, 1000);
+        status = pmRegisterDynamicQuery(session, out query, elements, (ulong)elements.Length, QueryWindowMs, QueryOffsetMs);
         if (status != 0) { pmCloseSession(session); session = IntPtr.Zero; throw new InvalidOperationException("帧率查询注册失败 " + status); }
         stride = Stride(elements);
         // 1% low over a longer window, and GPU telemetry (adapter 1 = the Arc iGPU). Both

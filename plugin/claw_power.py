@@ -3,7 +3,8 @@
 The elevated ClawPower helper does the hardware writes; this module owns the
 settings. Two plug-in presets (charger / battery) switch with the power source;
 manual mode uses one value for both and the presets are not applied while it is
-on. Smart mode delegates power management to Intel Endurance Gaming. The original
+on. Smart mode delegates to Intel Endurance Gaming; AutoTDP uses FPS feedback.
+The original
 register and power plan values are backed up before
 the first write and can be put back with restore().
 """
@@ -49,6 +50,7 @@ DEFAULTS = {
     "enabled": False, "mode": "smart", "boost": 1, "quick": [15, 20, 30],
     "ac": {"tdp": 35, "freq": 2750}, "dc": {"tdp": 25, "freq": 2750}, "manual": {"tdp": 20, "freq": 0},
     "smart": {"profile": "performance"},
+    "autotdp": {"target": 60, "floor": 12, "acMax": 35, "dcMax": 25},
     # The OSD also keeps games such as 鸣潮 3.7 from crashing under RTSS (see ClawPower.cs Osd).
     "osd": {"enabled": True, "level": 2, "size": "medium", "rows": 1, "smallUnits": False},
     "fan": {"mode": "firmware", "curves": None, "full": False},  # curves: FAN_PRESETS until edited
@@ -89,13 +91,21 @@ def _profile(value, name):
 
 
 def validate(value):
-    if not isinstance(value, dict) or type(value.get("enabled")) is not bool or value.get("mode") not in ("auto", "manual", "smart"):
+    if not isinstance(value, dict) or type(value.get("enabled")) is not bool or value.get("mode") not in ("auto", "manual", "smart", "autotdp"):
         raise ValueError("功耗设置格式错误")
     smart = value.get("smart", DEFAULTS["smart"])
     if not isinstance(smart, dict) or smart.get("profile", "performance") not in INTEL_PROFILES:
         raise ValueError("Intel 智能功耗档位无效")
     # Old target/floor/cap values are deliberately retired, including on older clients.
     smart = {"profile": smart.get("profile", "performance")}
+    auto = value.get("autotdp", DEFAULTS["autotdp"])
+    if not isinstance(auto, dict):
+        raise ValueError("Auto 功耗设置格式错误")
+    auto = {**DEFAULTS["autotdp"], **auto}
+    auto = {"target": _int(auto["target"], 20, 240, "目标帧率"),
+            **{k: _int(auto[k], TDP_MIN, TDP_MAX, "Auto 功耗") for k in ("floor", "acMax", "dcMax")}}
+    if auto["floor"] > min(auto["acMax"], auto["dcMax"]):
+        raise ValueError("Auto 功耗下限不能高于插电或电池上限")
     osd = {**DEFAULTS["osd"], **(value.get("osd") or {})}  # 0.14.0 had per-item switches instead
     if (type(osd["enabled"]) is not bool or osd["level"] not in (1, 2, 3, 4) or osd["size"] not in ("small", "medium", "large")
             or osd["rows"] not in (1, 2) or type(osd["smallUnits"]) is not bool):
@@ -107,7 +117,8 @@ def validate(value):
     return {"enabled": value["enabled"], "mode": value["mode"], "boost": _int(value.get("boost"), 0, BOOST_MAX, "短时加成"),
             "quick": [_int(q, TDP_MIN, TDP_MAX, "快捷档位") for q in quick],
             "ac": _profile(value.get("ac"), "插电"), "dc": _profile(value.get("dc"), "电池"),
-            "manual": _profile(value.get("manual"), "手动"), "smart": smart, "osd": osd, "fan": _fan(value.get("fan"))}
+            "manual": _profile(value.get("manual"), "手动"), "smart": smart, "autotdp": auto,
+            "osd": osd, "fan": _fan(value.get("fan"))}
 
 
 def _fan(value):
@@ -454,7 +465,8 @@ def motion_assistant_running():
 # keeps the game in front), the shell, consoles, Game Bar, and this toolbox's helpers.
 NOT_GAMES = {"steam.exe", "steamwebhelper.exe", "gameoverlayui.exe", "gameoverlayui64.exe", "explorer.exe",
              "searchhost.exe", "startmenuexperiencehost.exe", "shellexperiencehost.exe", "textinputhost.exe",
-             "applicationframehost.exe", "lockapp.exe", "taskmgr.exe", "claude.exe", "msedge.exe",
+             "applicationframehost.exe", "lockapp.exe", "taskmgr.exe", "claude.exe", "chatgpt.exe", "msedge.exe",
+             "chrome.exe", "firefox.exe", "codex.exe", "msedgewebview2.exe",
              "losslessscaling.exe", "magpie.exe", "motionassistant.exe", "rtss.exe", "clash-verge.exe",
              "sunshine.exe", "pluginloader_noconsole.exe", "pluginloader.exe", "gamingmode.exe",
              "windowsterminal.exe", "openconsole.exe", "conhost.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
@@ -481,6 +493,9 @@ def foreground_game():
 _endurance_spec = importlib.util.spec_from_file_location("claw_toolbox_endurance", Path(__file__).with_name("claw_endurance.py"))
 _endurance_module = importlib.util.module_from_spec(_endurance_spec)
 _endurance_spec.loader.exec_module(_endurance_module)
+_auto_spec = importlib.util.spec_from_file_location("claw_toolbox_autotdp", Path(__file__).with_name("claw_autotdp.py"))
+_auto_module = importlib.util.module_from_spec(_auto_spec)
+_auto_spec.loader.exec_module(_auto_module)
 
 
 class PowerControl:
@@ -539,6 +554,13 @@ class PowerControl:
         self.worker_checked = 0.0
         self.last_game = None
         self.smart = {}
+        self.auto_governor = _auto_module.AutoTDPGovernor()
+        self.auto_session = _auto_module.AutoTDPSession(self._call, self.data)
+        self.auto_game = None
+        self.auto_state = {}
+        self.auto_logged = None
+        self.auto_logged_at = 0.0
+        self.frames_started = 0.0
 
     # ---- helper -------------------------------------------------------------
     async def _start(self):
@@ -557,6 +579,7 @@ class PowerControl:
     async def _call(self, command, **args):
         async with self.lock:
             await self._start()
+            started = time.monotonic()
             self.ids += 1
             request = {"id": self.ids, "command": command, **args}
             try:
@@ -599,6 +622,7 @@ class PowerControl:
                     self.package_at = time.monotonic()
                 self.last_frames = frames
                 self.frames_at = time.monotonic()
+                self.frames_started = started
                 return frames
             power = reply.get("power") or {}
             if power.get("msrError"):
@@ -625,12 +649,17 @@ class PowerControl:
         s = self.settings
         if s["mode"] == "smart":
             return (self.actual or {}).get("pl1"), (self.actual or {}).get("pl2")
+        if s["mode"] == "autotdp":
+            cfg = s["autotdp"]
+            ceiling = cfg["acMax" if self.charger else "dcMax"]
+            limit = max(cfg["floor"], min(ceiling, self.auto_governor.limit or ceiling))
+            return limit, limit + s["boost"]
         limit = (s["manual"] if s["mode"] == "manual" else s["ac" if self.charger else "dc"])["tdp"]
         return limit, limit + s["boost"]
 
     def freq_target(self):
         s = self.settings
-        if s["mode"] == "smart":
+        if s["mode"] in ("smart", "autotdp"):
             return 0, 0
         if s["mode"] == "manual":
             return s["manual"]["freq"], s["manual"]["freq"]
@@ -663,6 +692,8 @@ class PowerControl:
         os.replace(temp, self.backup_path)
 
     async def _apply(self, force=False):
+        if self.settings["mode"] != "autotdp":
+            await self._release_auto()
         if self.settings["mode"] == "smart":
             if not self.backup_path.exists():
                 await self._backup(await self._call("read"))
@@ -672,15 +703,23 @@ class PowerControl:
                           "reason": "插电 · Intel 自动策略待机" if self.charger else "Intel 自动策略已开启 · 由系统按游戏负载调节"}
             return
         await self.endurance.release()
-        state = await self.endurance.read()
-        if state.get("available") and state.get("control") != "off":
-            await self._call("endurance_set", control="off", profile=state["profile"])
+        if self.settings["mode"] == "autotdp":
+            self._configure_auto()
+            await self._backup(await self._call("read"))
+            await self.auto_session.acquire()
+        else:
+            state = await self.endurance.read()
+            if state.get("available") and state.get("control") != "off":
+                await self._call("endurance_set", control="off", profile=state["profile"])
         power = self.actual if (self.actual and not force) else await self._call("read")
         await self._backup(power)
         pl1, pl2 = self.target()
         drift = abs(power.get("pl1", 0) - pl1) > .2 or abs(power.get("pl2", 0) - pl2) > .2 \
             or power.get("pl1Enabled") is False or power.get("pl2Enabled") is False
         if force or drift:
+            if self.settings["mode"] == "autotdp" and not force and self.written and (
+                    abs(power.get("pl1", 0) - self.written[0]) > .2 or abs(power.get("pl2", 0) - self.written[1]) > .2):
+                raise RuntimeError("功耗被其他软件或固件改写，Auto 已暂停；请排除冲突后重新选择模式")
             # Count only changes made by someone else, not our own new target.
             if not force and self.written and (abs(power.get("pl1", 0) - self.written[0]) > .2
                                                or abs(power.get("pl2", 0) - self.written[1]) > .2):
@@ -694,6 +733,68 @@ class PowerControl:
         self.last_apply = time.time()
         if abs(power.get("pl1", 0) - pl1) > .2 or abs(power.get("pl2", 0) - pl2) > .2:
             raise RuntimeError("功耗写入后回读不一致，可能被其他软件或固件改回")
+        self.written = (pl1, pl2)
+        if self.settings["mode"] == "autotdp":
+            self.auto_governor.applied(pl1, time.monotonic())
+            self.auto_state = {**self.auto_governor.view(), "game": self.auto_game[1] if self.auto_game else None}
+
+    def _configure_auto(self):
+        cfg = self.settings["autotdp"]
+        key = (self.auto_game, self.charger, ((self.actual or {}).get("freq") or {}).get("scheme"))
+        self.auto_governor.configure(key, cfg["floor"], cfg["acMax" if self.charger else "dcMax"],
+                                     cfg["target"], time.monotonic())
+
+    async def _release_auto(self, restore_driver=False):
+        await self.auto_session.release(restore_driver=restore_driver)
+        self.auto_governor = _auto_module.AutoTDPGovernor()
+        self.auto_game, self.auto_state, self.auto_logged = None, {}, None
+
+    async def _auto_tick(self):
+        game = await asyncio.to_thread(foreground_game)
+        if game is None and self.auto_game:
+            names = await asyncio.to_thread(process_names)
+            if names.get(self.auto_game[0]) == self.auto_game[1]:
+                game = self.auto_game  # game stays tracked while its control center is open
+        self.auto_game = game
+        self._configure_auto()
+        await self._apply()
+        if game is None:
+            self.auto_governor.hold("等待游戏帧率 · 保持当前功耗")
+        else:
+            frames = await self._call("frames", pid=game[0])
+            chains = [] if frames.get("framesError") or frames.get("pid") != game[0] else frames.get("swapChains") or []
+            # Select by the game's own rendered FPS, never generated/presented FPS.
+            def real_fps(chain):
+                v = chain.get("appFps")
+                return v if type(v) in (int, float) and 0 < v <= 500 else 0
+            chain = max(chains, key=real_fps) if chains else {}
+            offset, window = frames.get("sampleOffsetMs"), frames.get("sampleWindowMs")
+            if real_fps(chain) and type(offset) in (int, float) and type(window) in (int, float) and 0 <= offset <= 2000 and 0 < window <= 2000:
+                end = self.frames_started - offset / 1000
+                self.auto_governor.update(real_fps(chain), end - window / 1000, end, time.monotonic())
+            else:
+                self.auto_governor.hold("帧率采集暂不可用 · 保持当前功耗")
+        if self.target() != self.written:
+            await self._apply()
+        self.auto_state = {**self.auto_governor.view(), "game": game[1] if game else None}
+        self._log_auto()
+
+    def _log_auto(self):
+        now = time.monotonic()
+        signature = (self.auto_state.get("game"), self.auto_state.get("limit"), self.auto_state.get("reason"))
+        if signature == self.auto_logged and now - self.auto_logged_at < 5:
+            return
+        self.auto_logged, self.auto_logged_at = signature, now
+        try:
+            path = self.data / "autotdp-decisions.jsonl"
+            if path.exists() and path.stat().st_size > 1024 * 1024:
+                os.replace(path, path.with_suffix(".previous.jsonl"))
+            with path.open("a", encoding="utf-8") as file:
+                file.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "charger": self.charger,
+                    **self.auto_state, "actual": {k: (self.actual or {}).get(k) for k in ("pl1", "pl2", "package")}},
+                    ensure_ascii=False) + "\n")
+        except OSError:
+            logging.exception("AutoTDP decision log failed")
 
     async def _loop(self):
         tick = 0
@@ -708,13 +809,16 @@ class PowerControl:
                     self.other_tool = await asyncio.to_thread(motion_assistant_running)
                 # Telemetry and fan operation do not depend on Intel policy availability.
                 if osd_on:
-                    await self._osd_tick(tick, None)
+                    await self._osd_tick(tick, self.auto_state if self.settings["enabled"] and self.settings["mode"] == "autotdp" else None)
                 async with self.policy_lock:
                     if self.settings["enabled"]:
                         await self._call("read")
-                        if self.settings["mode"] == "smart" or tick % 3 == 0:
+                        if self.settings["mode"] == "autotdp":
+                            await self._auto_tick()
+                        elif self.settings["mode"] == "smart" or tick % 3 == 0:
                             await self._apply()
                     else:
+                        await self._release_auto(restore_driver=True)
                         await self.endurance.release(restore_driver=True)
                     if self.error:
                         self.error = ""
@@ -784,7 +888,7 @@ class PowerControl:
                 "fps": chain.get("appFps"), "presented": chain.get("presentedFps"),
                 "fps01": frames.get("appFps01"), "package": (self.actual or {}).get("package"),
                 "limit": (self.actual or {}).get("pl1"),
-                "target": None,
+                "target": self.settings["autotdp"]["target"] if self.settings["enabled"] and self.settings["mode"] == "autotdp" else None,
                 "cpuUsage": s.get("cpuUsage"), "cpuMhz": s.get("cpuMhz"), "cpuTemp": self.temperature,
                 "gpuUsage": s.get("gpuUsage"), "gpuMhz": frames.get("gpuMhz"), "gpuTemp": frames.get("gpuTemp"),
                 "gpuPower": frames.get("gpuPower"), "ramUsed": s.get("ramUsedGB"), "gpuMem": s.get("gpuMemMB"),
@@ -989,6 +1093,7 @@ class PowerControl:
                 "actual": {k: a.get(k) for k in ("pl1", "pl2", "package", "locked", "tdpBase", "freq")} if a else None,
                 "backup": self.backup_path.exists(), "otherTool": self.other_tool, "reapplied": self.reapplied,
                 "smart": self.smart if self.settings["mode"] == "smart" else None,
+                "autotdp": self.auto_state if self.settings["mode"] == "autotdp" else None,
                 "endurance": self.endurance.state, "targets": [],
                 "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS, "caps": FAN_CAPS,
                         "axis": list(FAN_TEMPS), "target": self.fan_governor.duty},
@@ -1051,6 +1156,7 @@ class PowerControl:
                 if next_settings["enabled"]:
                     await self._apply(force=True)
                 else:
+                    await self._release_auto(restore_driver=True)
                     await self.endurance.release(restore_driver=True)
                     self.smart = {}
                 self._persist_settings()
@@ -1062,6 +1168,7 @@ class PowerControl:
                     if previous["enabled"]:
                         await self._apply(force=True)
                     else:
+                        await self._release_auto(restore_driver=True)
                         await self.endurance.release(restore_driver=True)
                 except Exception:
                     logging.exception("Power settings rollback incomplete")
@@ -1084,6 +1191,7 @@ class PowerControl:
             return await self._restore_locked()
 
     async def _restore_locked(self):
+        await self._release_auto(restore_driver=True)
         await self.endurance.release(restore_driver=True)
         if not self.backup_path.exists():
             raise RuntimeError("没有原始值备份：插件尚未修改过功耗")
@@ -1112,8 +1220,9 @@ class PowerControl:
             except asyncio.CancelledError:
                 pass
         try:
+            await self._release_auto(restore_driver=True)
             await self.endurance.release(restore_driver=True)
         except Exception:
-            logging.exception("Intel Endurance Gaming release failed; recovery journal retained")
+            logging.exception("Power policy release failed; recovery journal retained")
         await self._fan_fallback()
         await self._stop()
