@@ -67,6 +67,7 @@ public sealed partial class WallStage
         if (_cc == null) return;
         EnsurePerfVisuals();
         _perfOpen = true;
+        SettingsResetPointer();
         _perfCurveEdit = false;
         _perfFocus = -1;
         int v = ++_perfVersion;
@@ -92,6 +93,7 @@ public sealed partial class WallStage
     {
         if (!_perfOpen || _perf == null) return;
         _perfOpen = false;
+        SettingsResetPointer();
         _perfCurveEdit = false;
         _perfTimer?.Stop();
         int v = ++_perfVersion;
@@ -152,7 +154,7 @@ public sealed partial class WallStage
 
     private async Task PerfRefresh(bool sample)
     {
-        if (_perfBusy) return;
+        if (_perfBusy || (_perfOpen && _settingsGesture.Active)) return;
         _perfBusy = true;
         try
         {
@@ -175,7 +177,7 @@ public sealed partial class WallStage
         if (view == null) return;
         _perfView = view;
         // 没有没存的改动时，本地设置跟着后台走（别的前端改了也能看到）
-        if (_perfEdits == _perfSavedEdits && view["settings"] is JsonObject s) _perfS = (JsonObject)s.DeepClone();
+        if (!_settingsGesture.Active && _perfEdits == _perfSavedEdits && view["settings"] is JsonObject s) _perfS = (JsonObject)s.DeepClone();
         if (!fromSave && view["actual"]?["package"] is JsonValue pv && pv.TryGetValue(out double pkg))
         {
             _perfPower.Enqueue(pkg);
@@ -277,10 +279,13 @@ public sealed partial class WallStage
             Title = title, Choices = names, Choice = idx, Disabled = disabled,
             Step = d => { if (!disabled) set(Math.Clamp(idx + d, 0, names.Length - 1)); },
             Press = () => { if (!disabled) set((idx + 1) % names.Length); },
+            Select = i => { if (!disabled) set(i); },
         };
         PerfRow Number(string title, int value, int min, int max, Func<int, string> fmt, Action<int> set, int step = 1, bool disabled = false) => new()
         {
             Title = title, Value = fmt(value), Numeric = true, Disabled = disabled,
+            Number = value, Minimum = min, Maximum = max, Increment = step,
+            SetNumber = v => { if (!disabled) set(v); },
             Step = d => { if (!disabled) { int nv = Math.Clamp(value + d * step, min, max); if (nv != value) set(nv); } },
         };
         PerfRow List(string title, int[] values, int current, Func<int, string> fmt, Action<int> set, bool disabled = false)
@@ -345,12 +350,30 @@ public sealed partial class WallStage
         var fan = s["fan"]!;
         string fmode = Str(fan["mode"]) ?? "firmware";
         bool firmware = fmode == "firmware";
-        _perfRows.Add(Choice("风扇模式", FanModeNames, Math.Max(0, Array.IndexOf(FanModes, fmode)), i => { fan["mode"] = FanModes[i]; PerfChanged(); }));
+        _perfRows.Add(Choice("风扇模式", FanModeNames, Math.Max(0, Array.IndexOf(FanModes, fmode)), i => { fan["mode"] = FanModes[i]; _perfCurveEdit = false; PerfChanged(); }));
         _perfRows.Add(new PerfRow
         {
             Title = "编辑这档曲线", Value = firmware ? "固件控制时不能改" : _perfCurveEdit ? "编辑中 · ← → 选点  ↑ ↓ 改" : "6 个温度点 ›", Disabled = firmware,
             Press = () => { if (!firmware) { _perfCurveEdit = !_perfCurveEdit; _perfPoint = Math.Clamp(_perfPoint, 0, 5); BuildPerfRows(); PaintPerf(); } },
         });
+        if (_perfCurveEdit && !firmware)
+        {
+            int[] axis = (_perfView?["fan"]?["axis"] as JsonArray)?.Select(n => Int(n)).ToArray() is { Length: 6 } ax ? ax : new[] { 50, 60, 70, 75, 80, 90 };
+            int[] curve = PerfCurve(fmode);
+            int cap = Int(_perfView?["fan"]?["caps"]?[fmode], 100);
+            for (int i = 0; i < 6; i++)
+            {
+                int point = i;
+                _perfRows.Add(Number($"{axis[i]} °C 风量", curve[i], 0, cap, n => $"{n} %", n =>
+                {
+                    var next = PerfCurve(fmode); next[point] = n; _perfPoint = point;
+                    if (fan["curves"] is not JsonObject curves) fan["curves"] = curves = new JsonObject();
+                    curves[fmode] = new JsonArray(next.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray());
+                    PerfChanged();
+                }));
+            }
+            _perfRows.Add(new PerfRow { Title = "完成曲线编辑", Value = "›", Press = PerfFinishCurveEdit });
+        }
         _perfRows.Add(Choice("全速运转", new[] { "关", "开" }, Bool(fan["full"]) ? 1 : 0, i => { fan["full"] = i == 1; PerfChanged(); }));
         _perfRows.Add(new PerfRow
         {
@@ -384,6 +407,7 @@ public sealed partial class WallStage
 
     private void PerfMove(Direction dir)
     {
+        SettingsResumeKeyboard();
         if (_perfCurveEdit)
         {
             string mode = Str(_perfS?["fan"]?["mode"]) ?? "balanced";
@@ -411,14 +435,23 @@ public sealed partial class WallStage
 
     private void PerfActivate()
     {
-        if (_perfCurveEdit) { _perfCurveEdit = false; BuildPerfRows(); PaintPerf(); return; }
+        SettingsResumeKeyboard();
+        if (_perfCurveEdit) { PerfFinishCurveEdit(); return; }
         if (_perfFocus >= 0 && _perfFocus < _perfRows.Count) _perfRows[_perfFocus].Press?.Invoke();
     }
 
     private void PerfBack()
     {
-        if (_perfCurveEdit) { _perfCurveEdit = false; BuildPerfRows(); PaintPerf(); return; }
+        SettingsResetPointer();
+        if (_perfCurveEdit) { PerfFinishCurveEdit(); return; }
         ClosePerf();
+    }
+
+    private void PerfFinishCurveEdit()
+    {
+        _perfCurveEdit = false;
+        _perfFocus = _perfRows.FindIndex(r => r.Title == "编辑这档曲线");
+        BuildPerfRows(); PaintPerf();
     }
 
     // ---------------- 绘制 ----------------
@@ -441,11 +474,12 @@ public sealed partial class WallStage
             _perfTitle.Offset = new Vector3(40 * k, 32 * k, 0);
         }
         // 右栏：整张列表画在一张面上，放进固定高度的裁剪框里，按焦点滚动
-        CcSet(_perfRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _perfRows, _perfFocus)));
+        _settingsTargets.Clear();
+        CcSet(_perfRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _perfRows, _perfFocus, _settingsTargets)));
         _perfRight.Size = new Vector2(PerfRightW * k, h * k);
         _perfRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _perfRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
-        RowScrollTo(_perfRight, _perfRows, _perfFocus, ref _perfScroll, ref _perfScrollY, h, vh, _perfOpen);
+        RowScrollTo(_perfRight, _perfRows, _settingsManualScroll ? -1 : _perfFocus, ref _perfScroll, ref _perfScrollY, h, vh, false);
         CcSet(_perfLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintPerfLeft(ds, vh)));
         _perfLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _perfLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);

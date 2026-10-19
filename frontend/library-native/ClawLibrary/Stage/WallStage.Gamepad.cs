@@ -143,6 +143,7 @@ public sealed partial class WallStage
         if (_cc == null) return;
         EnsureGpVisuals();
         _gpOpen = true;
+        SettingsResetPointer();
         _gpEditing = false;
         _gpPicker = null;
         ++_gpVersion;
@@ -169,6 +170,7 @@ public sealed partial class WallStage
     {
         if (!_gpOpen || _gp == null) return;
         _gpOpen = false;
+        SettingsResetPointer();
         _gpEditing = false;
         _gpPicker = null;
         _gpLive?.Stop();
@@ -225,7 +227,7 @@ public sealed partial class WallStage
             if (++_gpPollTicks >= 90)
             {
                 _gpPollTicks = 0;
-                if (!_gpEditing && _gpPicker == null && _gpLayoutEdits + _gpRumbleEdits == 0) _ = GpRefresh();
+                if (!_gpEditing && !_settingsGesture.Active && _gpPicker == null && _gpLayoutEdits + _gpRumbleEdits == 0) _ = GpRefresh();
             }
             var now = _pad?.Last ?? default;
             if (now == _gpShown) return;
@@ -274,14 +276,17 @@ public sealed partial class WallStage
 
     private async Task GpRefresh()
     {
-        if (_gpBusy) return;
+        int revision = _gpInputRevision;
+        if (_gpBusy || GpRefreshObsolete(revision)) return;
         _gpBusy = true;
         try
         {
             _agent ??= new AgentClient();
             var state = await _agent.Call("get_state");
+            if (GpRefreshObsolete(revision)) return;
             if (state?["settings"] is JsonObject s) _gpSettings = (JsonObject)s.DeepClone();
             var rumble = await _agent.Call("get_rumble_state");
+            if (GpRefreshObsolete(revision)) return;
             if (_gpRumbleEdits == 0 && rumble != null)
             {
                 int st = Int(rumble["strength"], -1);
@@ -292,6 +297,7 @@ public sealed partial class WallStage
             try
             {
                 var fw = await _agent.Call("get_gamepad_state");
+                if (GpRefreshObsolete(revision)) return;
                 _gpFw = Bool(fw?["available"]) ? fw : null;
                 _gpFwError = _gpFw == null ? Str(fw?["error"]) ?? "读不到手柄固件" : null;
                 // 游戏库在前台时不让桌面模式生效（比如从 Game Bar 切过来）：先切回手柄模式，离开前台再切回去
@@ -304,8 +310,12 @@ public sealed partial class WallStage
             catch (Exception ex) { _gpFw = null; _gpFwError = ex.Message.Contains("不支持") ? "后台还没有固件读取" : ex.Message; }
             try
             {
-                _gpLayer = await _agent.Call("get_input_layer_state");
-                if (_gpLayoutEdits == 0 && (await _agent.Call("get_input_layout"))?["layout"] is JsonObject lay) _gpLayout = (JsonObject)lay.DeepClone();
+                var layer = await _agent.Call("get_input_layer_state");
+                if (GpRefreshObsolete(revision)) return;
+                _gpLayer = layer;
+                var layout = await _agent.Call("get_input_layout");
+                if (GpRefreshObsolete(revision)) return;
+                if (layout?["layout"] is JsonObject lay) _gpLayout = (JsonObject)lay.DeepClone();
             }
             catch { _gpLayer = null; _gpLayout = null; }
         }
@@ -554,6 +564,7 @@ public sealed partial class WallStage
 
     private void GpMove(Direction dir)
     {
+        SettingsResumeKeyboard();
         if (_gpPicker != null) { GpPickerMove(dir); return; }
         if (_gpInSide)
         {
@@ -575,6 +586,7 @@ public sealed partial class WallStage
         var cur = _gpItems[_gpFocus];
         if (_gpEditing)
         {
+            ++_gpInputRevision;
             if (dir is not (Direction.Left or Direction.Right)) return;
             int d = dir == Direction.Left ? -1 : 1;
             if (cur.Choices != null)
@@ -641,6 +653,7 @@ public sealed partial class WallStage
 
     private void GpActivate()
     {
+        SettingsResumeKeyboard();
         if (_gpPicker != null) { GpPickerActivate(); return; }
         if (_gpInSide) { GpEnterContent(); return; }
         if (_gpFocus < 0 || _gpFocus >= _gpItems.Count) return;
@@ -654,6 +667,7 @@ public sealed partial class WallStage
     /// <summary>B：映射选择 → 关掉它；调节中 → 退出调节；在设置上 → 回到分类；在分类上 → 回控制中心。</summary>
     private void GpBack()
     {
+        SettingsResetPointer();
         if (_gpPicker != null) { GpPickerBack(); return; }
         if (_gpEditing) { _gpEditing = false; PaintGpBody(); return; }
         if (!_gpInSide) { GpLeaveContent(); return; }
@@ -709,6 +723,7 @@ public sealed partial class WallStage
     {
         if (_gp == null) return;
         float k = _ccK, raster = k * Chrome.Dpi;
+        _gpTargets.Clear();
         CcSet(_gpBody, CcDraw(1280, 800, raster, PaintGpUi));
         _gpBody.Size = new Vector2(1280 * k, 800 * k);
         _gpBody.Offset = Vector3.Zero;
@@ -764,9 +779,13 @@ public sealed partial class WallStage
             ds.FillCircle(start, 3, accent);
         }
 
-        foreach (var it in _gpItems)
+        for (int i = 0; i < _gpItems.Count; i++)
+        {
+            var it = _gpItems[i];
             if (it.Map) PaintGpMapRow(ds, it, it == focus);
             else PaintGpItem(ds, it, it == focus);
+            GpAddItemTargets(ds, it, i);
+        }
 
         // 底部的按键提示（按键图标 + 字）
         if (focus != null && focus.Title == "模式" && focus.Side == 0) GpHints(ds, ("A", GpWantDesktop ? "切到手柄模式" : "切到桌面模式"));
@@ -801,6 +820,8 @@ public sealed partial class WallStage
             float keyW = PWidth(ds, hints[i].Key, keyFont, 12);
             PText(ds, hints[i].Key, keyFont, 12, Gfx.WithAlpha(CcText, 0.85f), x0 + (kw - keyW) / 2, y, keyW + 4);
             PText(ds, hints[i].Text, ui, 13, Gfx.WithAlpha(CcText, 0.6f), x0 + kw + 8, y, tw + 4);
+            int action = hints[i].Key switch { "B" => 0, "X" => 1, "Y" => 2, _ => -1 };
+            if (action >= 0) _gpTargets.Add(new(action, SettingsTargetKind.Action, x0 - 4, y - 22, kw + 8 + tw + 8, 44));
             x0 += kw + 8 + tw + gap;
         }
     }
@@ -840,6 +861,7 @@ public sealed partial class WallStage
                 }
                 continue;
             }
+            _gpTargets.Add(new(cat, SettingsTargetKind.Category, 32, cy - GpCatH / 2, 138, GpCatH));
             bool cur = cat++ == _gpCat;
             var col = cur ? (_gpInSide ? CcText : Gfx.WithAlpha(CcText, 0.92f)) : Gfx.WithAlpha(CcText, 0.45f);
             PText(ds, e.Title, cur ? TextKit.Ui(600) : ui, 17, col, GpSideX + 16, cy, 200);
@@ -952,7 +974,7 @@ public sealed partial class WallStage
         {
             DrawChevron(ds, vx - chev + 6, it.Y + valueDy, true, valueCol);
             DrawChevron(ds, vx + vw + chev - 6, it.Y + valueDy, false, valueCol);
-            if (it.Compact) return;
+            if (it.Compact || it.Number != null) return;
             const string hint = "← → 改  ·  A 完成";
             float hw = PWidth(ds, hint, ui, 11);
             PText(ds, hint, ui, 11, Gfx.WithAlpha(CcText, 0.45f), it.Side < 0 ? it.X - hw : it.Side > 0 ? it.X : it.X - hw / 2, it.Y + 52, hw + 4);

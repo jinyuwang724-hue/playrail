@@ -358,8 +358,7 @@ public sealed partial class WallStage
     /// <summary>点卡：点到焦点卡 = A，点到别的卡 = 把它移到中间。</summary>
     private void CcClick(double sx, double sy)
     {
-        if (_dsOpen) { DsClick(sx, sy); return; }
-        if (_perfOpen || _gpOpen) return;
+        if (_dsOpen || _perfOpen || _gpOpen) { SettingsClick(sx, sy); return; }
         if (CcChromeClick(sx, sy)) return;
         float h = _ccH * _ccK;
         float top = CcTop;

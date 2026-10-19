@@ -72,6 +72,26 @@ static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuations
     Check(errors == 1 && sent == 1 && drained == 1 && !queue.IsBusy, "failed setting recovers and allows the next edit and readback");
 }
 
+// Quickly touching both sticks and triggers must preserve every independent firmware range.
+{
+    var delay = Signal();
+    var writes = new List<string>();
+    int drained = 0;
+    var queue = new SettingsWriteQueue(ex => throw ex, () => drained++, _ => delay.Task);
+    var tasks = new[] {
+        queue.Enqueue("stick:left", 600, () => { writes.Add("left:4/100"); return Task.CompletedTask; }),
+        queue.Enqueue("stick:right", 600, () => { writes.Add("right:6/100"); return Task.CompletedTask; }),
+        queue.Enqueue("stick:left", 600, () => { writes.Add("left:8/95"); return Task.CompletedTask; }),
+        queue.Enqueue("trigger:left", 600, () => { writes.Add("lt:5/95"); return Task.CompletedTask; }),
+        queue.Enqueue("trigger:right", 600, () => { writes.Add("rt:10/90"); return Task.CompletedTask; }),
+    };
+    delay.SetResult();
+    await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(2));
+    Check(writes.SequenceEqual(new[] { "right:6/100", "left:8/95", "lt:5/95", "rt:10/90" }),
+        "rapid left/right stick and trigger changes retain every range with its latest snapshot");
+    Check(drained == 1 && !queue.IsBusy, "firmware ranges request readback only after every pending write finishes");
+}
+
 // The gesture classifier is shared by mouse, touch and pen Pointer events.
 {
     var gesture = new SettingsPointerGesture();

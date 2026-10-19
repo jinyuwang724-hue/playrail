@@ -2,6 +2,8 @@
 
 版本：游戏库 0.1.7，后台维持 0.17.17。
 
+后续 0.1.9：按用户要求移除左上返回角标、恢复标题位置，将 HDR 与屏幕缩放移入「显示」；共享输入实现扩展到性能及手柄页，见 [设置页触控](settings-touch-input.md)。以下保留 0.1.7 的验证记录。
+
 ## 支持的操作
 
 - 点按开关或选项，直接选择对应值。
@@ -19,7 +21,7 @@
 主要实现：
 
 - `Engine/SettingsPointer.cs`：手势方向、指针归属、取整与边界。
-- `Stage/WallStage.Display.Pointer.cs`：命中、点选、滑条和滚动。
+- `Stage/WallStage.Settings.Pointer.cs`：命中、点选、滑条和滚动（0.1.9 起由三页共享）。
 - `Stage/WallStage.Perf.cs`：沿用设置行样式，显示与声音页额外生成命中区域。
 
 ## 验证

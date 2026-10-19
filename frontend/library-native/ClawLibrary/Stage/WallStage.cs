@@ -1193,9 +1193,9 @@ public sealed partial class WallStage : IDisposable
         _rootEl.PointerWheelChanged += (_, e) =>
         {
             var p = e.GetCurrentPoint(_rootEl).Properties;
-            if (_ccOpen && _dsOpen)
+            if (SettingsPageOpen)
             {
-                if (!p.IsHorizontalMouseWheel) DsWheel(p.MouseWheelDelta);
+                if (!p.IsHorizontalMouseWheel) SettingsWheel(p.MouseWheelDelta);
                 e.Handled = true;
                 return;
             }
@@ -1247,14 +1247,14 @@ public sealed partial class WallStage : IDisposable
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         var pt = e.GetCurrentPoint(_rootEl);
-        if (_ccOpen && _dsOpen)
+        if (SettingsPageOpen)
         {
             e.Handled = true;
             if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;
             MarkInput();
-            if (DsPointerBegin(pt.PointerId, pt.Position.X, pt.Position.Y))
+            if (SettingsPointerBegin(pt.PointerId, pt.Position.X, pt.Position.Y))
             {
-                if (!_rootEl.CapturePointer(e.Pointer)) { DsPointerCancel(pt.PointerId); return; }
+                if (!_rootEl.CapturePointer(e.Pointer)) { SettingsPointerCancel(pt.PointerId); return; }
                 _rootEl.Focus(FocusState.Pointer);
             }
             return;
@@ -1267,10 +1267,10 @@ public sealed partial class WallStage : IDisposable
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
     {
-        if (_dsGesture.Owns(e.Pointer.PointerId))
+        if (_settingsGesture.Owns(e.Pointer.PointerId))
         {
             var point = e.GetCurrentPoint(_rootEl);
-            DsPointerMove(point.PointerId, point.Position.X, point.Position.Y);
+            SettingsPointerMove(point.PointerId, point.Position.X, point.Position.Y);
             e.Handled = true;
             return;
         }
@@ -1286,10 +1286,10 @@ public sealed partial class WallStage : IDisposable
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
     {
-        if (_dsGesture.Owns(e.Pointer.PointerId))
+        if (_settingsGesture.Owns(e.Pointer.PointerId))
         {
             var point = e.GetCurrentPoint(_rootEl);
-            DsPointerEnd(point.PointerId, point.Position.X, point.Position.Y);
+            SettingsPointerEnd(point.PointerId, point.Position.X, point.Position.Y);
             _rootEl.ReleasePointerCapture(e.Pointer);
             e.Handled = true;
             return;
@@ -1314,7 +1314,7 @@ public sealed partial class WallStage : IDisposable
 
     private void OnPointerCanceled(object sender, PointerRoutedEventArgs e)
     {
-        DsPointerCancel(e.Pointer.PointerId);
+        SettingsPointerCancel(e.Pointer.PointerId);
         if (_drag?.id == e.Pointer.PointerId) _drag = null;
     }
 

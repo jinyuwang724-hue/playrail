@@ -257,6 +257,8 @@ public sealed partial class WallStage
 
     private void GpOpenPicker(string source, bool desktop)
     {
+        SettingsResetPointer();
+        _gpPickScroll = 0;
         _gpPicker = new GpPickerState { Source = source, Desktop = desktop };
         PaintGpBody();
     }
@@ -326,6 +328,13 @@ public sealed partial class WallStage
             rows.Add(new PerfRow
             {
                 Title = "触发方式", Choices = GpActTypes, Choice = t,
+                Select = nt =>
+                {
+                    var a = (JsonObject)GpEnsureActs(src)[idx]!;
+                    a["trigger"] = GpActIds[nt];
+                    if (GpActIds[nt] == "chord" && a["chordWith"] == null) a["chordWith"] = src == "LB" ? "RB" : "LB";
+                    GpSaveLayout();
+                },
                 Step = d =>
                 {
                     int nt = Math.Clamp(t + d, 0, GpActIds.Length - 1);
@@ -405,6 +414,8 @@ public sealed partial class WallStage
             return new PerfRow
             {
                 Title = title, Value = fmt(v), Numeric = true,
+                Number = v, Minimum = min, Maximum = max, Increment = step,
+                SetNumber = nv => { GpActObj(p)[field] = nv; GpSaveLayout(); },
                 Step = d => { int nv = Math.Clamp(v + d * step, min, max); if (nv == v) return; GpActObj(p)[field] = nv; GpSaveLayout(); },
             };
         }
@@ -414,6 +425,7 @@ public sealed partial class WallStage
             return new PerfRow
             {
                 Title = title, Choices = new[] { "关", "开" }, Choice = v ? 1 : 0,
+                Select = i => { GpActObj(p)[field] = i == 1; GpSaveLayout(); },
                 Step = d => { bool nv = d > 0; if (nv == v) return; GpActObj(p)[field] = nv; GpSaveLayout(); },
                 Press = () => { GpActObj(p)[field] = !v; GpSaveLayout(); },
             };
@@ -443,6 +455,7 @@ public sealed partial class WallStage
 
     private void GpPickerMove(Direction dir)
     {
+        SettingsResumeKeyboard();
         var p = _gpPicker!;
         switch (p.Level)
         {
@@ -584,9 +597,17 @@ public sealed partial class WallStage
         _ => new(GpSysX + c.Col * GpSysPitchX, GpSysY + c.Row * GpSysPitchY, GpSysW, GpSysH),
     };
 
+    private GpPickerState? _gpPaintPicker;
+    private GpSubLevel _gpPaintLevel;
+
     private void PaintGpPicker(CanvasDrawingSession ds, Color accent)
     {
         var p = _gpPicker!;
+        if (_gpPaintPicker != p || _gpPaintLevel != p.Level)
+        {
+            _gpPaintPicker = p; _gpPaintLevel = p.Level;
+            _gpPickScroll = 0; _settingsManualScroll = false;
+        }
         var ui = TextKit.Ui(400);
         var muted = Gfx.WithAlpha(CcText, 0.5);
         string where = p.Desktop ? "（桌面模式）" : "";
@@ -600,6 +621,7 @@ public sealed partial class WallStage
                 string now = p.Desktop ? GpDesktopSummary(p.Source) : GpKeySummary(p.Source);
                 PText(ds, $"现在：{now}  ·  改了立刻生效", ui, 13, muted, GpPickX, 170, 900);
                 PaintGpRows(ds, rows, p.KeyFocus);
+                GpHints(ds, ("B", "返回"));
                 break;
             }
             case GpSubLevel.Settings:
@@ -609,6 +631,7 @@ public sealed partial class WallStage
                 PText(ds, $"{GpSourceName(p.Source)}{where} · 触发设置", TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
                 PText(ds, "照 Steam 输入", ui, 13, muted, GpPickX, 170, 900);
                 PaintGpRows(ds, rows, p.SettingsFocus);
+                GpHints(ds, ("B", "返回"));
                 break;
             }
             default:
@@ -620,9 +643,19 @@ public sealed partial class WallStage
     /// <summary>按键页 / 触发设置：和性能页同一套行列表（行号、▸ 焦点、几选一下划线），放在分类右边。</summary>
     private void PaintGpRows(CanvasDrawingSession ds, List<PerfRow> rows, int focus)
     {
+        _gpPickRows = rows;
+        _gpPickScroll = SettingsPointerGesture.Scroll(_gpPickScroll, RowsHeight(rows), 520);
+        if (!_settingsManualScroll && focus >= 0 && focus < rows.Count)
+        {
+            float top = rows.Take(focus).Sum(r => r.Section ? PerfSecH : PerfRowH);
+            if (top < _gpPickScroll) _gpPickScroll = top;
+            if (top + PerfRowH > _gpPickScroll + 520) _gpPickScroll = top + PerfRowH - 520;
+        }
+        using var clip = ds.CreateLayer(1, new Rect(GpPickX, 196, PerfRightW, 520));
         var old = ds.Transform;
-        ds.Transform = Matrix3x2.CreateTranslation(GpPickX, 196) * old;
-        PaintRowList(ds, rows, focus);
+        ds.Transform = Matrix3x2.CreateTranslation(GpPickX, 196 - _gpPickScroll) * old;
+        _settingsTargets.Clear();
+        PaintRowList(ds, rows, focus, _settingsTargets);
         ds.Transform = old;
     }
 
@@ -651,6 +684,7 @@ public sealed partial class WallStage
             bool on = i == p.Tab;
             var col = on ? CcText : Gfx.WithAlpha(CcText, 0.42f);
             PText(ds, GpChooserTabs[i], on ? tabFont : ui, 17, col, x, GpTabY, widths[i] + 4);
+            _gpTargets.Add(new(i, SettingsTargetKind.Tab, x - 12, GpTabY - 22, widths[i] + 24, 44));
             if (on) ds.FillRectangle(x, GpTabY + 15, widths[i], 2, p.InTabs ? accent : col);
             x += widths[i] + tabGap;
         }
@@ -687,6 +721,7 @@ public sealed partial class WallStage
         {
             var cell = cells[i];
             var rect = GpCellRect(p.Tab, cell);
+            _gpTargets.Add(new(i, SettingsTargetKind.Cell, rect.X, rect.Y, rect.Width, rect.Height));
             bool focused = i == focusCell;
             bool current = currentCmds.Contains(cell.Cmd) || cell.Code > 0 && currentCodes.Contains(cell.Code);
             bool chord = p.Chord.Contains(cell);

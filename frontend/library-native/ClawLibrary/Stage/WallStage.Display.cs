@@ -4,7 +4,7 @@
 // 读：工具箱后台 get_display_state（docs/display-sound-page.md 写了字段）；老后台没有它时退回 widget_state 里的 system（只有亮度、音量、静音、刷新率），
 // 其余行变暗、写「后台还没接上」。写：每项一个 set_*，本地先改（界面立刻跟着变），亮度 / 音量这种连按的 150 ms 内合成一次。
 // 手柄：↑ ↓ 选项，← → 改值，A 开关，B 回控制中心。
-// 鼠标 / 触控：点选选项，点按或横向拖动数值滑条；纵向拖动和滚轮只滚动列表，顶部箭头返回。
+// 鼠标 / 触控：点选选项，点按或横向拖动数值滑条；纵向拖动和滚轮只滚动列表。
 using System.Numerics;
 using System.Text.Json.Nodes;
 using ClawLibrary.Data;
@@ -24,7 +24,7 @@ public sealed partial class WallStage
 
     private ContainerVisual? _ds;
     private ContainerVisual _dsRightView = null!;
-    private SpriteVisual _dsTitle = null!, _dsBackButton = null!, _dsLeft = null!, _dsRight = null!;
+    private SpriteVisual _dsTitle = null!, _dsLeft = null!, _dsRight = null!;
     private bool _dsOpen, _dsBusy, _dsAgentDown;
     private int _dsFocus, _dsVersion;
     private SettingsWriteQueue? _dsWrites;
@@ -46,8 +46,7 @@ public sealed partial class WallStage
         if (_cc == null) return;
         EnsureDsVisuals();
         _dsOpen = true;
-        _dsManualScroll = false;
-        _dsGesture.Reset();
+        SettingsResetPointer();
         ++_dsVersion;
         BuildDsRows();
         _dsFocus = _dsRows.FindIndex(r => !r.Section && !r.Skip);
@@ -68,7 +67,7 @@ public sealed partial class WallStage
     {
         if (!_dsOpen || _ds == null) return;
         _dsOpen = false;
-        _dsGesture.Reset();
+        SettingsResetPointer();
         _dsTimer?.Stop();
         int v = ++_dsVersion;
         if (instant || Reduced)
@@ -89,13 +88,12 @@ public sealed partial class WallStage
         _ds = G.Container();
         _ds.IsVisible = false;
         _dsTitle = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
-        _dsBackButton = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _dsLeft = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _dsRight = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _dsRightView = G.Container(relative: false);
         _dsRightView.Clip = G.C.CreateInsetClip();
         _dsRightView.Children.InsertAtTop(_dsRight);
-        foreach (var s in new Visual[] { _dsTitle, _dsBackButton, _dsLeft, _dsRightView }) _ds.Children.InsertAtTop(s);
+        foreach (var s in new Visual[] { _dsTitle, _dsLeft, _dsRightView }) _ds.Children.InsertAtTop(s);
         _cc!.Children.InsertAtTop(_ds);
     }
 
@@ -105,7 +103,7 @@ public sealed partial class WallStage
         var t = _dq.CreateTimer();
         t.Interval = TimeSpan.FromSeconds(2);
         t.IsRepeating = true;
-        t.Tick += (_, _) => { if (_dsOpen && !_dsGesture.Active && _dsWrites?.IsBusy != true) _ = DsRefresh(); };
+        t.Tick += (_, _) => { if (_dsOpen && !_settingsGesture.Active && _dsWrites?.IsBusy != true) _ = DsRefresh(); };
         return t;
     }
 
@@ -113,7 +111,7 @@ public sealed partial class WallStage
 
     private async Task DsRefresh()
     {
-        if (_dsBusy || _dsGesture.Active || _dsWrites?.IsBusy == true) return;
+        if (_dsBusy || _settingsGesture.Active || _dsWrites?.IsBusy == true) return;
         _dsBusy = true;
         long revision = _dsWrites?.Revision ?? 0;
         try
@@ -130,7 +128,7 @@ public sealed partial class WallStage
                 view = (await _agent.Call("widget_state"))?["system"];
             }
             _dsAgentDown = false;
-            if (!_dsGesture.Active && _dsWrites?.IsBusy != true && revision == (_dsWrites?.Revision ?? 0) && view is JsonObject o)
+            if (!_settingsGesture.Active && _dsWrites?.IsBusy != true && revision == (_dsWrites?.Revision ?? 0) && view is JsonObject o)
                 _dsView = (JsonObject)o.DeepClone();
         }
         catch (Exception ex)
@@ -224,8 +222,8 @@ public sealed partial class WallStage
             };
         }
 
-        // ---- 屏幕 ----
-        _dsRows.Add(new PerfRow { Section = true, Title = "屏幕" });
+        // ---- 显示 ----
+        _dsRows.Add(new PerfRow { Section = true, Title = "显示" });
         _dsRows.Add(Number("亮度", "brightness", 0, 100, 5, b => $"{b} %", b => { v["brightness"] = b; DsSet("set_brightness", 150, JsonValue.Create(b)); }));
         int[] rates = (v["refreshRates"] as JsonArray)?.Select(n => Int(n)).Where(r => r > 0).Distinct().OrderByDescending(r => r).ToArray() ?? Array.Empty<int>();
         int hz = Int(v["refresh"]);
@@ -245,6 +243,16 @@ public sealed partial class WallStage
         }
         else _dsRows.Add(Later("分辨率", "resolution"));
         _dsRows.Add(Toggle("可变刷新率（VRR）", "vrr", "set_vrr"));
+
+        if (!unsupported.Contains("autoBrightness") && v["autoBrightness"] is JsonValue)
+            _dsRows.Add(Toggle("自动亮度", "autoBrightness", "set_auto_brightness"));
+        _dsRows.Add(Toggle("HDR", "hdr", "set_hdr"));
+        if (v["scales"] is JsonArray scales && scales.Count > 0)
+        {
+            int[] sv = scales.Select(n => Int(n)).ToArray();
+            _dsRows.Add(Pick("屏幕缩放", sv.Select(s => $"{s} %").ToArray(), Math.Max(0, Array.IndexOf(sv, Int(v["scale"], 100))), i => { v["scale"] = sv[i]; DsSet("set_display_scale", 600, JsonValue.Create(sv[i])); }));
+        }
+        else _dsRows.Add(Later("屏幕缩放", "scales"));
 
         // ---- 声音 ----
         _dsRows.Add(new PerfRow { Section = true, Title = "声音" });
@@ -309,18 +317,6 @@ public sealed partial class WallStage
                 }
         }
 
-        // ---- 更多显示 ----
-        _dsRows.Add(new PerfRow { Section = true, Title = "更多显示" });
-        if (!unsupported.Contains("autoBrightness") && v["autoBrightness"] is JsonValue)
-            _dsRows.Add(Toggle("自动亮度", "autoBrightness", "set_auto_brightness"));
-        _dsRows.Add(Toggle("HDR", "hdr", "set_hdr"));
-        if (v["scales"] is JsonArray scales && scales.Count > 0)
-        {
-            int[] sv = scales.Select(n => Int(n)).ToArray();
-            _dsRows.Add(Pick("屏幕缩放", sv.Select(s => $"{s} %").ToArray(), Math.Max(0, Array.IndexOf(sv, Int(v["scale"], 100))), i => { v["scale"] = sv[i]; DsSet("set_display_scale", 600, JsonValue.Create(sv[i])); }));
-        }
-        else _dsRows.Add(Later("屏幕缩放", "scales"));
-
         if (_dsFocus >= _dsRows.Count || (_dsFocus >= 0 && (_dsRows[_dsFocus].Skip || _dsRows[_dsFocus].Section)))
         {
             int f = Math.Min(_dsFocus, _dsRows.Count - 1);
@@ -333,7 +329,7 @@ public sealed partial class WallStage
 
     private void DsMove(Direction dir)
     {
-        DsResumeKeyboard();
+        SettingsResumeKeyboard();
         if (dir is Direction.Up or Direction.Down)
         {
             int d = dir == Direction.Up ? -1 : 1;
@@ -346,7 +342,7 @@ public sealed partial class WallStage
 
     private void DsActivate()
     {
-        DsResumeKeyboard();
+        SettingsResumeKeyboard();
         if (_dsFocus < 0 || _dsFocus >= _dsRows.Count) return;
         var r = _dsRows[_dsFocus];
         if (r.Disabled) { if (r.Value == DsLater) Toast($"这一项{DsLater}"); return; }
@@ -368,18 +364,15 @@ public sealed partial class WallStage
             float w = (float)bb.Width + 4, th = (float)bb.Height + 4;
             CcSet(_dsTitle, CcDraw(w, th, raster, ds => ds.DrawTextLayout(tl, -(float)bb.X, -(float)bb.Y, CcText)));
             _dsTitle.Size = new Vector2(w * k, th * k);
-            _dsTitle.Offset = new Vector3(80 * k, 32 * k, 0);
+            _dsTitle.Offset = new Vector3(40 * k, 32 * k, 0);
         }
-        CcSet(_dsBackButton, CcDraw(44, 44, raster, ds => DrawChevron(ds, 24, 22, true, CcText)));
-        _dsBackButton.Size = new Vector2(44 * k, 44 * k);
-        _dsBackButton.Offset = new Vector3(20 * k, 24 * k, 0);
-        _dsTargets.Clear();
-        CcSet(_dsRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _dsRows, _dsFocus, _dsTargets)));
+        _settingsTargets.Clear();
+        CcSet(_dsRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _dsRows, _dsFocus, _settingsTargets)));
         _dsRight.Size = new Vector2(PerfRightW * k, h * k);
         _dsRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _dsRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
         // 指针命中使用同一滚动位置；直接滚动避免动画中看到的位置与命中区域不一致。
-        RowScrollTo(_dsRight, _dsRows, _dsManualScroll ? -1 : _dsFocus, ref _dsScroll, ref _dsScrollY, h, vh, false);
+        RowScrollTo(_dsRight, _dsRows, _settingsManualScroll ? -1 : _dsFocus, ref _dsScroll, ref _dsScrollY, h, vh, false);
         CcSet(_dsLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintDsLeft(ds, vh)));
         _dsLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _dsLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
@@ -426,7 +419,7 @@ public sealed partial class WallStage
 
         // ---- 屏幕 ----
         int bri = Int(v?["brightness"], -1), hz = Int(v?["refresh"]);
-        Header(0, "屏幕", bri >= 0 ? $"{bri} %" : "—", accent);
+        Header(0, "显示", bri >= 0 ? $"{bri} %" : "—", accent);
         float briY = header + 14;
         Bar(briY, bri, false);
         var res = v?["resolution"] as JsonArray;
@@ -435,6 +428,7 @@ public sealed partial class WallStage
         string vrr = v?["vrr"] is JsonValue ? (Bool(v["vrr"]) ? "开" : "关") : "—";
         var screenRows = new List<(string, string)> { ("分辨率", resText), ("刷新率", hzText), ("可变刷新率", vrr) };
         if (v?["hdr"] is JsonValue) screenRows.Add(("HDR", Bool(v["hdr"]) ? "开" : "关"));
+        if (v?["scale"] is JsonValue) screenRows.Add(("屏幕缩放", $"{Int(v["scale"])} %"));
         float rowsTop = briY + 14;
         Rows(rowsTop, screenRows.ToArray());
 

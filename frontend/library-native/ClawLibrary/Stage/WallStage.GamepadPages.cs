@@ -277,25 +277,14 @@ public sealed partial class WallStage
     /// <summary>摇杆死区 / 外圈：本地先改（圈立刻跟着变），停手 600 ms 后写一次。</summary>
     private void GpStickChanged(string side)
     {
-        int v = ++_gpStickEdits;
-        After(600, () =>
-        {
-            if (v != _gpStickEdits) return;
-            var st = _gpFw?["sticks"]?[side];
-            _ = GpWrite("set_stick_deadzone", JsonValue.Create(side), JsonValue.Create(Int(st?["deadzone"])), JsonValue.Create(Int(st?["outer"], 100)));
-        });
+        var st = _gpFw?["sticks"]?[side];
+        GpRangeChanged($"stick:{side}", "set_stick_deadzone", side, Int(st?["deadzone"]), Int(st?["outer"], 100));
     }
-    private int _gpStickEdits, _gpTriggerEdits;
 
     private void GpTriggerChanged(string side)
     {
-        int v = ++_gpTriggerEdits;
-        After(600, () =>
-        {
-            if (v != _gpTriggerEdits) return;
-            var t = _gpFw?["triggers"]?[side];
-            _ = GpWrite("set_trigger_range", JsonValue.Create(side), JsonValue.Create(Int(t?["deadzone"])), JsonValue.Create(Int(t?["outer"], 100)));
-        });
+        var t = _gpFw?["triggers"]?[side];
+        GpRangeChanged($"trigger:{side}", "set_trigger_range", side, Int(t?["deadzone"]), Int(t?["outer"], 100));
     }
 
     /// <summary>每页在线稿上额外画的：摇杆页的死区 / 外圈、震动页的握把强度、扳机页的行程刻度。</summary>
