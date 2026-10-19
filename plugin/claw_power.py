@@ -53,26 +53,25 @@ DEFAULTS = {
     "autotdp": {"target": 60, "floor": 12, "acMax": 35, "dcMax": 25},
     # The OSD also keeps games such as 鸣潮 3.7 from crashing under RTSS (see ClawPower.cs Osd).
     "osd": {"enabled": True, "level": 2, "size": "medium", "rows": 1, "smallUnits": False},
-    "fan": {"mode": "firmware", "curves": None, "full": False},  # curves: FAN_PRESETS until edited
+    "fan": {"mode": "balanced", "curves": None, "full": False},  # curves: FAN_PRESETS until edited
 }
-# The toolbox drives the fan itself from the CPU package temperature: each mode is a curve of
-# (°C, duty %) points, interpolated in between. Measured on the Claw 8 EX (2026-10-12):
+# The toolbox follows temperature and writes a flat duty to both fan tables.
+# Autonomous custom EC curves were not verified on the CG3EM; see docs/fan-ec-integration.md.
+# Measured on the Claw 8 EX (2026-10-12):
 # 20-40 % all sit at the ~2800 rpm floor, 50 % ~3060, 60 % ~3680, 70 % ~4300, 80 % ~4930,
 # 100 % ~6100 rpm. The user wants 静音 and 均衡 no louder than 4700 rpm, which is 76 %;
 # 性能 may go past it.
 FAN_CAP = 76
 FAN_CAPS = {"quiet": FAN_CAP, "balanced": FAN_CAP, "performance": 100}
+# Avoid audible oscillation; high-temperature increases bypass the delay.
+FAN_RISE, FAN_FALL, FAN_HOT = 6.0, 10.0, 95
 # Six duty points (%) per mode at FAN_TEMPS °C, linear in between. 均衡 is the user's curve
 # (20 % ≤50 °C, 30 % 60 °C, 50 % 70 °C, 76 % ≥80 °C); 静音 is it 5 °C later; 性能 is more
 # aggressive and reaches full speed at 90 °C. The user can edit every mode's points.
 FAN_TEMPS = (50, 60, 70, 75, 80, 90)
 FAN_PRESETS = {"quiet": [20, 25, 40, 50, 63, 76], "balanced": [20, 30, 50, 63, 76, 76],
                "performance": [30, 45, 63, 76, 88, 100]}
-# Hysteresis: speed up only after the curve has asked for more for FAN_RISE s straight, slow
-# down only after it has asked for less for FAN_FALL s, so a short spike (loading screen,
-# shader compile) does not make the fan surge and drop again. At FAN_HOT °C it reacts at once.
-FAN_RISE, FAN_FALL, FAN_HOT = 6.0, 10.0, 95
-FAN_MODES = ("firmware",) + tuple(FAN_PRESETS)
+FAN_MODES = tuple(FAN_PRESETS)
 
 
 def _int(value, low, high, name):
@@ -123,7 +122,7 @@ def validate(value):
 
 def _fan(value):
     fan = {**DEFAULTS["fan"], **(value or {})}
-    if fan["mode"] == "custom":  # 0.16.9 had one custom curve instead of editable modes
+    if fan["mode"] in ("custom", "firmware"):  # old selections migrate to the balanced preset
         fan["mode"] = "balanced"
     if fan["curves"] is not None and not isinstance(fan["curves"], dict):
         raise ValueError("风扇设置格式错误")
@@ -533,7 +532,10 @@ class PowerControl:
         self.battery_rate = BatteryRate()
         self.fan_error = ""
         self.fan_governor = FanGovernor()
-        self.fan_written = None  # flat duty last written to the EC tables
+        self.fan_written = None  # flat duty and full-speed override last verified
+        self.fan_lock = asyncio.Lock()
+        self.fan_write_count = 0
+        self.fan_last_write = None
         self.fan_backup_path = self.data / "fan-backup.json"
         self.ecore_path = self.data / "ecore.json"
         self.cpu_max = None  # MHz, read once from the CPU
@@ -925,76 +927,80 @@ class PowerControl:
             self.osd = {**self.osd, "error": f"字号设置失败：{e}"}
 
     async def _fan_tick(self, tick):
-        """Runs the toolbox curve once a second with hysteresis, keeps it in place (the EC can
-        be reset by sleep or MSI tools) and reads fan speed for the OSD. Firmware mode with a
-        short OSD needs no helper."""
-        fan = self.settings["fan"]
-        managed = fan["mode"] != "firmware"
-        wants_rpm = self.settings["osd"]["enabled"] and self.settings["osd"]["level"] >= 3
-        if not managed and not wants_rpm:
-            return
-        try:
-            if managed and not fan["full"]:
-                self.temperature = (await self._call("thermal")).get("package")
-                self.temperature_at = time.monotonic()
-                if self.temperature is not None:
-                    duty = self.fan_governor.update(fan_points(fan), self.temperature, time.monotonic())
-                    if duty != self.fan_written:
-                        await self._apply_fan()
-            if tick % 3 == 0 or not self.fan_state:
-                state = await self._call("fan_read")
-                self.fan_state = state
-                if managed and tick % 9 == 0:
-                    duties = [100] * 6 if fan["full"] else [self.fan_written] * 6
-                    if (not state.get("software") or state.get("cpu") != duties or state.get("gpu") != duties
-                            or state.get("fullSpeed") != fan["full"]):
-                        await self._apply_fan()
-            self.fan_error = ""
-        except RuntimeError as e:
-            self.fan_error = str(e)
+        """Follow the selected curve with hysteresis and repair EC resets."""
+        async with self.fan_lock:
+            try:
+                fan = self.settings["fan"]
+                if not fan["full"]:
+                    self.temperature = (await self._call("thermal")).get("package")
+                    self.temperature_at = time.monotonic()
+                    self._fan_temperature()
+                    self.fan_governor.update(fan_points(fan), self.temperature, time.monotonic())
+                duty = 100 if fan["full"] else self.fan_governor.duty
+                if self.fan_written != (duty, fan["full"]):
+                    await self._apply_fan_locked()
+                if tick % 3 == 0 or not self.fan_state:
+                    self.fan_state = await self._call("fan_read")
+                    if (not self.fan_state.get("software") or self.fan_state.get("cpu") != [duty] * 6
+                            or self.fan_state.get("gpu") != [duty] * 6 or self.fan_state.get("fullSpeed") != fan["full"]):
+                        await self._apply_fan_locked(self.fan_state)
+                self.fan_error = ""
+            except RuntimeError as e:
+                self.fan_error = str(e)
+                # Never leave a fixed low duty in place after losing the temperature sensor.
+                try:
+                    await self._fan_release_locked()
+                except RuntimeError as release:
+                    self.fan_error += f"；恢复自动控制失败：{release}"
+
+    def _fan_temperature(self):
+        if type(self.temperature) not in (int, float) or not 0 < self.temperature <= 125:
+            raise RuntimeError("CPU 温度读取异常，已尝试恢复固件自动控制")
 
     async def _apply_fan(self):
+        async with self.fan_lock:
+            await self._apply_fan_locked()
+
+    async def _apply_fan_locked(self, state=None, full=None):
         fan = self.settings["fan"]
-        if fan["mode"] == "firmware":
-            self.fan_governor.reset()
-            self.fan_written = None
-            backup = None
-            if self.fan_backup_path.exists():
-                backup = json.loads(self.fan_backup_path.read_text(encoding="utf-8"))
-            self.fan_state = await self._call("fan_restore", **({"cpu": backup["cpu"], "gpu": backup["gpu"]} if backup else {}))
-            return
+        state = state if state is not None else await self._call("fan_read")
         if not self.fan_backup_path.exists():
-            state = await self._call("fan_read")
             if state.get("software"):
                 raise RuntimeError("风扇当前不是固件控制，未备份原曲线，请先在其他软件里恢复自动")
             temp = self.fan_backup_path.with_suffix(".tmp")
             temp.write_text(json.dumps({"cpu": state["cpu"], "gpu": state["gpu"], "cpuTemps": state.get("cpuTemps"),
                                         "savedAt": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False), encoding="utf-8")
             os.replace(temp, self.fan_backup_path)
-        if fan["full"]:
-            duties = [100] * 6
-        else:
-            if self.fan_governor.duty is None:
-                if self.temperature is None or time.monotonic() - self.temperature_at > 5:
-                    self.temperature = (await self._call("thermal")).get("package")
-                    self.temperature_at = time.monotonic()
-                self.fan_governor.update(fan_points(fan), self.temperature or 0, time.monotonic())
-            # One flat duty on all six EC points: the toolbox, not the EC, follows the temperature.
-            duties = [self.fan_governor.duty] * 6
-        self.fan_state = await self._call("fan_curve", cpu=duties, gpu=duties, full=fan["full"])
-        self.fan_written = duties[0] if not fan["full"] else None
+        full = fan["full"] if full is None else full
+        if not full and self.fan_governor.duty is None:
+            if self.temperature is None or time.monotonic() - self.temperature_at > 5:
+                self.temperature = (await self._call("thermal")).get("package")
+                self.temperature_at = time.monotonic()
+            self._fan_temperature()
+            self.fan_governor.update(fan_points(fan), self.temperature, time.monotonic())
+        duty = 100 if full else self.fan_governor.duty
+        duties = [duty] * 6
+        applied = await self._call("fan_curve", cpu=duties, gpu=duties, full=full)
+        if (applied.get("cpu") != duties or applied.get("gpu") != duties or not applied.get("software")
+                or applied.get("fullSpeed") != full):
+            raise RuntimeError("风扇写入后回读不一致")
+        self.fan_state, self.fan_written = applied, (duty, full)
+        self.fan_write_count += 1
+        self.fan_last_write = time.time()
+
+    async def _fan_release_locked(self):
+        backup = json.loads(self.fan_backup_path.read_text(encoding="utf-8")) if self.fan_backup_path.exists() else {}
+        self.fan_state = await self._call("fan_restore", **{k: backup[k] for k in ("cpu", "gpu") if k in backup})
+        self.fan_written = None
+        self.fan_governor.reset()
 
     async def _fan_fallback(self):
-        """When the toolbox stops, leave the EC its own curve built from the chosen mode (capped
-        the same way) so the fan still follows the temperature without the toolbox."""
-        fan = self.settings["fan"]
-        if fan["mode"] == "firmware" or fan["full"] or not self.process or self.process.returncode is not None:
+        """Release custom/full-speed control on normal shutdown; the EC uses factory auto."""
+        if not self.process or self.process.returncode is not None:
             return
         try:
-            axis = (self.fan_state or {}).get("cpuTemps") or [47, 50, 57, 64, 71, 78]
-            duties = [fan_duty_at(fan_points(fan), t) for t in axis]
-            duties[-1] = max(duties[-1], FAN_CAPS[fan["mode"]])
-            await self._call("fan_curve", cpu=duties, gpu=duties, full=False)
+            async with self.fan_lock:
+                await self._fan_release_locked()
         except RuntimeError as e:
             logging.warning("Fan fallback curve: %s", e)
 
@@ -1096,7 +1102,8 @@ class PowerControl:
                 "autotdp": self.auto_state if self.settings["mode"] == "autotdp" else None,
                 "endurance": self.endurance.state, "targets": [],
                 "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS, "caps": FAN_CAPS,
-                        "axis": list(FAN_TEMPS), "target": self.fan_governor.duty},
+                        "axis": list(FAN_TEMPS), "target": self.fan_governor.duty,
+                        "execution": "software", "writeCount": self.fan_write_count, "lastWrite": self.fan_last_write},
                 # Read-only readings for the toolbox home; a temperature older than 15 s is not shown.
                 "live": {"battery": battery_percent(),
                          "cpuTemp": self.temperature if time.monotonic() - self.temperature_at < 15 else None,
@@ -1182,8 +1189,6 @@ class PowerControl:
                 self.fan_error = str(e)
         if not next_settings["osd"]["enabled"]:
             await self._osd_off()
-            if not next_settings["enabled"] and next_settings["fan"]["mode"] == "firmware":
-                await self._stop()  # nothing left that needs the elevated helper
         return self.view()
 
     async def restore(self):
@@ -1207,8 +1212,6 @@ class PowerControl:
             await self._call("set_freq", scheme=freq["scheme"],
                              **{k: freq[k] for k in ("ac", "dc", "ac1", "dc1") if freq.get(k) is not None})
         self.error = ""
-        if not self.settings["osd"]["enabled"]:
-            await self._stop()
         return self.view()
 
     async def close(self):

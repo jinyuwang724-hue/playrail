@@ -57,7 +57,8 @@ def main():
     assert "\n" in power.osd_text(4, full, "large") and "\n" in power.osd_text(4, full, "small", 2)
     assert power.validate({**base, "osd": {"enabled": True, "time": True, "fps": True}})["osd"] == {"enabled": True, "level": 2, "size": "medium", "rows": 1, "smallUnits": False}
     expect_error({**base, "osd": {"enabled": True, "level": 5, "size": "medium"}})
-    assert power.validate(base)["fan"]["mode"] == "firmware"
+    assert power.validate(base)["fan"]["mode"] == "balanced"
+    assert power.validate({**base, "fan": {"mode": "firmware"}})["fan"]["mode"] == "balanced"
     expect_error({**base, "fan": {"mode": "turbo", "full": False}})
     expect_error({**base, "fan": {"mode": "quiet", "curves": {"quiet": [1, 2, 3, 4, 5, 101]}, "full": False}})
     expect_error({**base, "fan": {"mode": "quiet", "curves": {"loud": [1, 2, 3, 4, 5, 6]}, "full": False}})

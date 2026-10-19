@@ -38,8 +38,8 @@ public sealed partial class WallStage
     private const float PerfRowH = 42, PerfSecH = 38;
     /// <summary>左右两栏的显示高度固定（舞台底下留 40）；右栏内容比它高时在里面滚，焦点行带上下各 PerfScrollPad 的余量。</summary>
     private const float PerfViewH = 800 - PerfTop - 40, PerfScrollPad = 60;
-    private static readonly string[] FanModes = { "firmware", "quiet", "balanced", "performance" };
-    private static readonly string[] FanModeNames = { "固件", "静音", "均衡", "性能" };
+    private static readonly string[] FanModes = { "quiet", "balanced", "performance" };
+    private static readonly string[] FanModeNames = { "静音", "均衡", "性能" };
     private static readonly string[] PowerModes = { "autotdp", "smart", "auto", "manual" };
     private static readonly string[] PowerModeNames = { "Auto", "Intel 智能", "按电源", "手动" };
     /// <summary>强调色跟着背景的主题色走（当前游戏封面的代表色），背景还没取到色时用 folia 的橙。</summary>
@@ -357,15 +357,15 @@ public sealed partial class WallStage
 
         _perfRows.Add(new PerfRow { Section = true, Title = "风扇" });
         var fan = s["fan"]!;
-        string fmode = Str(fan["mode"]) ?? "firmware";
-        bool firmware = fmode == "firmware";
+        string fmode = Str(fan["mode"]) ?? "balanced";
         _perfRows.Add(Choice("风扇模式", FanModeNames, Math.Max(0, Array.IndexOf(FanModes, fmode)), i => { fan["mode"] = FanModes[i]; _perfCurveEdit = false; PerfChanged(); }));
+        _perfRows.Add(Info("调速方式", Str(_perfView?["fan"]?["error"]) is { Length: > 0 } fanError ? fanError : "软件自动调速"));
         _perfRows.Add(new PerfRow
         {
-            Title = "编辑这档曲线", Value = firmware ? "固件控制时不能改" : _perfCurveEdit ? "编辑中 · ← → 选点  ↑ ↓ 改" : "6 个温度点 ›", Disabled = firmware,
-            Press = () => { if (!firmware) { _perfCurveEdit = !_perfCurveEdit; _perfPoint = Math.Clamp(_perfPoint, 0, 5); BuildPerfRows(); PaintPerf(); } },
+            Title = "编辑这档曲线", Value = _perfCurveEdit ? "编辑中 · ← → 选点  ↑ ↓ 改" : "6 个温度点 ›",
+            Press = () => { _perfCurveEdit = !_perfCurveEdit; _perfPoint = Math.Clamp(_perfPoint, 0, 5); BuildPerfRows(); PaintPerf(); },
         });
-        if (_perfCurveEdit && !firmware)
+        if (_perfCurveEdit)
         {
             int[] axis = (_perfView?["fan"]?["axis"] as JsonArray)?.Select(n => Int(n)).ToArray() is { Length: 6 } ax ? ax : new[] { 50, 60, 70, 75, 80, 90 };
             int[] curve = PerfCurve(fmode);
@@ -386,10 +386,10 @@ public sealed partial class WallStage
         _perfRows.Add(Choice("全速运转", new[] { "关", "开" }, Bool(fan["full"]) ? 1 : 0, i => { fan["full"] = i == 1; PerfChanged(); }));
         _perfRows.Add(new PerfRow
         {
-            Title = "恢复这档默认曲线", Value = "›", Disabled = firmware,
+            Title = "恢复这档默认曲线", Value = "›",
             Press = () =>
             {
-                if (firmware || _perfView?["fan"]?["presets"]?[fmode] is not JsonArray preset) return;
+                if (_perfView?["fan"]?["presets"]?[fmode] is not JsonArray preset) return;
                 if (fan["curves"] is not JsonObject curves) fan["curves"] = curves = new JsonObject();
                 curves[fmode] = preset.DeepClone();
                 PerfChanged();
@@ -714,13 +714,13 @@ public sealed partial class WallStage
 
         // ---- 风扇 ----
         float fTop = header + powerH + gap + 3 * rowH + between;
-        string fmode = Str(s?["fan"]?["mode"]) ?? "firmware";
+        string fmode = Str(s?["fan"]?["mode"]) ?? "balanced";
         int fi = Math.Max(0, Array.IndexOf(FanModes, fmode));
         double? rpm = Num(v?["fan"]?["rpm1"]);
-        Header(fTop, fmode == "firmware" ? "风扇 · 固件控制" : $"风扇 · {FanModeNames[fi]}档", rpm is double rp ? $"{rp:0} RPM" : "—", CcText);
+        Header(fTop, $"风扇 · {FanModeNames[fi]}档", rpm is double rp ? $"{rp:0} RPM" : "—", CcText);
         float gTop = fTop + header, gH = fanH;
         int[] axis = (v?["fan"]?["axis"] as JsonArray)?.Select(n => Int(n)).ToArray() is { Length: 6 } ax ? ax : new[] { 50, 60, 70, 75, 80, 90 };
-        string curveMode = fmode == "firmware" ? "balanced" : fmode;
+        string curveMode = fmode;
         int[] curve = PerfCurve(curveMode);
         int cap = Int(v?["fan"]?["caps"]?[curveMode], 76);
         double rMin = 2400, rMax = FanRpm(Math.Max(cap, curve.Max())) + 500;
@@ -733,7 +733,7 @@ public sealed partial class WallStage
             ds.DrawLine(0, capY, W, capY, Gfx.WithAlpha(CcText, 0.45), 1, dash);
             PText(ds, $"上限 {FanRpm(cap):0} RPM", ui, 11, Gfx.WithAlpha(CcText, 0.55), 0, capY - 9, 200);
         }
-        float alphaCurve = fmode == "firmware" ? 0.35f : 1f;
+        float alphaCurve = 1f;
         using (var pb = new CanvasPathBuilder(ds))
         {
             pb.BeginFigure(FX(axis[0]), FY(FanRpm(curve[0])));
@@ -782,7 +782,7 @@ public sealed partial class WallStage
         {
             ("CPU 温度", temp is double t2 ? $"{t2:0} °C" : "—"),
             ("占空比", duty is double du ? $"{du:0} %" : "—"),
-            ("转速上限", fmode == "firmware" ? "固件决定" : $"{cap} % ≈ {FanRpm(cap):0} RPM"),
+            ("转速上限", $"{cap} % ≈ {FanRpm(cap):0} RPM"),
         });
     }
 }

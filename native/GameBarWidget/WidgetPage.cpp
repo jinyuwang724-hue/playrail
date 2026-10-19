@@ -36,7 +36,7 @@ namespace
     const std::vector<int> AutoTargets{ 30, 40, 45, 60, 72, 90, 120, 144, 165, 240 };
     const std::vector<std::pair<std::wstring, std::wstring>> IntelSteps{ { L"performance", L"性能" }, { L"balanced", L"均衡" }, { L"battery", L"续航" } };
     const std::vector<std::pair<int, std::wstring>> RumbleSteps{ { 0, L"关" }, { 35, L"弱" }, { 70, L"中" }, { 100, L"强" } };
-    const std::vector<std::pair<std::wstring, std::wstring>> FanSteps{ { L"firmware", L"固件" }, { L"quiet", L"静音" }, { L"balanced", L"均衡" }, { L"performance", L"性能" } };
+    const std::vector<std::pair<std::wstring, std::wstring>> FanSteps{ { L"quiet", L"静音" }, { L"balanced", L"均衡" }, { L"performance", L"性能" } };
 
     // ---- JSON helpers: dotted paths into the agent's readings ----
     IJsonValue Get(JsonObject const& root, std::wstring const& path)
@@ -548,8 +548,8 @@ namespace winrt::ClawWidget::implementation
         else if (id == L"fan")
         {
             auto mode = Str(d, L"fan.mode");
-            level.count = 4; level.index = 0;
-            for (int i = 0; i < 4; i++) if (mode == FanSteps[i].first) level.index = i;
+            level.count = static_cast<int>(FanSteps.size()); level.index = 0;
+            for (int i = 0; i < level.count; i++) if (mode == FanSteps[i].first) level.index = i;
             level.value = FanSteps[level.index].second;
         }
         else if (id == L"fps")
@@ -629,7 +629,6 @@ namespace winrt::ClawWidget::implementation
         {
             bool on = Bool(d, L"fan.full");
             level.count = 2; level.index = on; level.value = on ? L"开" : L"关";
-            level.disabled = Str(d, L"fan.mode") == L"firmware";
         }
         else if (id == L"ecore")
         {

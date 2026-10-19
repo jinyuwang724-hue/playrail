@@ -174,6 +174,7 @@ class Executor : IDisposable {
             else if (command == "osd_height") reply["osd_height"] = Osd.FontHeight(Convert.ToInt32(request["height"]));
             else if (command == "osd_font") reply["osd_font"] = Osd.Font(Convert.ToString(request["face"]));
             else if (command == "fan_read") reply["fan"] = MsiFan.Read();
+            else if (command == "fan_probe") reply["fanProbe"] = MsiFan.Probe();
             else if (command == "fan_curve") reply["fan"] = MsiFan.Apply(Ints(request, "cpu"), Ints(request, "gpu"), true.Equals(request.ContainsKey("full") ? request["full"] : false));
             else if (command == "fan_restore") reply["fan"] = MsiFan.Restore(request.ContainsKey("cpu") ? Ints(request, "cpu") : null, request.ContainsKey("gpu") ? Ints(request, "gpu") : null);
             else if (command == "cpu_info") reply["cpu"] = CpuInfo();
@@ -873,15 +874,31 @@ static class MsiFan {
 
     static int Rpm(byte a, byte b) { int d = Math.Abs(a - b); return d == 0 ? 0 : (int)Math.Round(480000.0 / d); }
 
+    public static Dictionary<string, object> Probe() {
+        var result = new Dictionary<string, object>();
+        foreach (string method in new[] { "Get_Temperature", "Get_Thermal", "Get_Fan" }) {
+            for (byte index = 0; index <= 2; index++) {
+                try { result[method + "_" + index] = Array.ConvertAll(Get(method, index), b => (int)b); }
+                catch (Exception error) { result[method + "_" + index] = error.Message; }
+            }
+        }
+        result["AP1"] = Array.ConvertAll(Get("Get_AP", 1), b => (int)b);
+        result["scenario"] = Array.ConvertAll(Get("Get_Data", 0xD2), b => (int)b);
+        return result;
+    }
+
     public static Dictionary<string, object> Read() {
         var rpm = Get("Get_Fan", 0);
         byte[] cpu = Get("Get_Fan", 1), gpu = Get("Get_Fan", 2);
+        byte[] cpuTemps = Get("Get_Temperature", 1), gpuTemps = Get("Get_Temperature", 2);
         byte ap = Get("Get_AP", 1)[0], full = Get("Get_Data", 0x98)[0];
         return new Dictionary<string, object> {
             { "rpm1", Rpm(rpm[0], rpm[1]) }, { "rpm2", Rpm(rpm[2], rpm[3]) },
             { "duty1", (int)cpu[0] }, { "duty2", (int)gpu[0] },
             { "cpu", Duties(cpu) }, { "gpu", Duties(gpu) },
-            { "cpuTemps", Temps(Get("Get_Temperature", 1)) }, { "gpuTemps", Temps(Get("Get_Temperature", 2)) },
+            { "cpuTemps", Temps(cpuTemps) }, { "gpuTemps", Temps(gpuTemps) },
+            { "cpuTemperatureData", Array.ConvertAll(cpuTemps, b => (int)b) },
+            { "gpuTemperatureData", Array.ConvertAll(gpuTemps, b => (int)b) },
             { "software", (ap & 0x80) != 0 }, { "fullSpeed", (full & 0x80) != 0 },
             { "scenario", (int)Get("Get_Data", 0xD2)[0] },
         };
@@ -907,11 +924,31 @@ static class MsiFan {
     }
 
     public static Dictionary<string, object> Apply(int[] cpu, int[] gpu, bool full) {
-        WriteTable(1, cpu);
-        WriteTable(2, gpu);
-        SetBit(0xD4, true, "Get_AP");   // software curve in control
-        SetBit(0x98, full, "Get_Data");
-        return Read();
+        foreach (var duties in new[] { cpu, gpu }) {
+            if (duties == null || duties.Length != 6) throw new ArgumentException("风扇曲线需要 6 个点");
+            foreach (int duty in duties) if (duty < 0 || duty > 150) throw new ArgumentException("风扇风量超出范围");
+        }
+        var before = Read();
+        try {
+            WriteTable(1, cpu);
+            WriteTable(2, gpu);
+            SetBit(0xD4, true, "Get_AP"); // enable custom table control
+            SetBit(0x98, full, "Get_Data");
+            var state = Read();
+            if (!(bool)state["software"] || (bool)state["fullSpeed"] != full)
+                throw new InvalidOperationException("EC 风扇模式回读不一致");
+            return state;
+        } catch (Exception error) {
+            try {
+                WriteTable(1, (int[])before["cpu"]);
+                WriteTable(2, (int[])before["gpu"]);
+                SetBit(0xD4, (bool)before["software"], "Get_AP");
+                SetBit(0x98, (bool)before["fullSpeed"], "Get_Data");
+            } catch (Exception rollback) {
+                throw new InvalidOperationException("风扇写入失败：" + error.Message + "；恢复失败：" + rollback.Message);
+            }
+            throw;
+        }
     }
 
     public static Dictionary<string, object> Restore(int[] cpu, int[] gpu) {

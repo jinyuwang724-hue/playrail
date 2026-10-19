@@ -49,7 +49,7 @@ export function createPowerController(api) {
 const freqLabel = mhz => mhz ? `${+(mhz / 1000).toFixed(2)} GHz` : "不限";
 const intelProfile = id => ({ performance: "性能", balanced: "均衡", battery: "续航" })[id] ?? "性能";
 const watts = v => typeof v === "number" ? `${Math.round(v * 10) / 10} W` : "—";
-const fanModes = { firmware: "固件自动", quiet: "静音", balanced: "均衡", performance: "性能" };
+const fanModes = { quiet: "静音", balanced: "均衡", performance: "性能" };
 
 // One-line summaries for the collapsed module headings (power, osd, fan).
 export function powerSummaries(value) {
@@ -61,14 +61,14 @@ export function powerSummaries(value) {
   return {
     power: draft.enabled ? { text: mode } : { text: "未接管", off: true },
     osd: draft.osd?.enabled ? { text: `第 ${draft.osd.level} 档` } : { text: "关", off: true },
-    fan: { text: `${fanModes[draft.fan?.mode] ?? "—"}${draft.fan?.full && draft.fan.mode !== "firmware" ? " · 全速" : ""}`, off: draft.fan?.mode === "firmware" },
+    fan: { text: `${fanModes[draft.fan?.mode] ?? "—"}${draft.fan?.full ? " · 全速" : ""}` },
   };
 }
 
 // Home quick tiles. Each press steps to the next level; edits wait 800 ms, so a
 // run of presses writes only the level it stops on. Power is not taken over from
 // a tile: while it is off, its tile opens the power page instead.
-const fanCycle = ["firmware", "quiet", "balanced", "performance"];
+const fanCycle = ["quiet", "balanced", "performance"];
 export function powerTiles(value, controller, open) {
   const view = value?.view, draft = value?.draft;
   if (!view || !draft) return [];
@@ -92,8 +92,8 @@ export function powerTiles(value, controller, open) {
         const next = (level + 1) % 5;
         controller.edit({ osd: { ...draft.osd, enabled: next > 0, level: next || draft.osd.level } }, 800);
       } },
-    { id: "fan", label: "风扇", icon: "fan", on: draft.fan.mode !== "firmware", steps: 3, filled: Math.max(0, fanIndex),
-      value: `${fanModes[draft.fan.mode] ?? "—"}${draft.fan.full && draft.fan.mode !== "firmware" ? " · 全速" : ""}`,
+    { id: "fan", label: "风扇", icon: "fan", on: true, steps: 3, filled: Math.max(0, fanIndex) + 1,
+      value: `${fanModes[draft.fan.mode] ?? "—"}${draft.fan.full ? " · 全速" : ""}`,
       onPress: () => controller.edit({ fan: { ...draft.fan, mode: fanCycle[(fanIndex + 1) % fanCycle.length] } }, 800) },
   ];
 }
@@ -149,14 +149,14 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       state.message && row("message", h("div", { className: "claw-hint" }, state.message)));
     const fanMode = draft.fan.mode;
     const fanDefault = view.fan?.presets?.[fanMode];
-    const fanCurve = fanMode !== "firmware" ? draft.fan.curves?.[fanMode] ?? fanDefault : null;
+    const fanCurve = draft.fan.curves?.[fanMode] ?? fanDefault;
     const editCurve = curve => controller.edit({ fan: { ...draft.fan, curves: { ...view.fan?.presets, ...draft.fan.curves, [fanMode]: curve } } });
     if (section === "fan") return h(ui.PanelSection, null,
       row("fan-state", h("div", { className: "claw-hint" }, view.fan?.error ? view.fan.error
-        : view.fan?.rpm1 ? `${view.fan.rpm1} 转 · 占空比 ${view.fan.duty1}%${typeof view.live?.cpuTemp === "number" ? ` · CPU ${view.live.cpuTemp} °C` : ""} · ${view.fan.software ? "工具箱曲线" : "固件控制"}${view.fan.fullSpeed ? " · 全速" : ""}`
-        : draft.fan.mode === "firmware" ? "固件自动控制" : "正在读取风扇状态…")),
+        : view.fan?.rpm1 ? `${view.fan.rpm1} 转 · 占空比 ${view.fan.duty1}%${typeof view.live?.cpuTemp === "number" ? ` · CPU ${view.live.cpuTemp} °C` : ""} · 软件自动调速${view.fan.fullSpeed ? " · 全速" : ""}`
+        : "正在读取风扇状态…")),
       row("fan-mode", h(ui.DropdownItem, { label: "风扇模式", selectedOption: draft.fan.mode,
-        rgOptions: [{ label: "固件自动", data: "firmware" }, { label: "静音", data: "quiet" }, { label: "均衡", data: "balanced" },
+        rgOptions: [{ label: "静音", data: "quiet" }, { label: "均衡", data: "balanced" },
           { label: "性能", data: "performance" }],
         onChange: o => controller.edit({ fan: { ...draft.fan, mode: o.data } }, 0) })),
       fanCurve && h(React.Fragment, null, ...fanCurve.map((duty, i) => row(`fan-${i}`, h(ui.SliderField, {
@@ -166,7 +166,7 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       })))),
       fanCurve && fanDefault && fanCurve.some((d, i) => d !== fanDefault[i]) && row("fan-reset", h(ui.ButtonItem, { layout: "below",
         onClick: () => editCurve([...fanDefault]) }, "恢复默认曲线")),
-      draft.fan.mode !== "firmware" && row("fan-full", h(ui.ToggleField, { label: "风扇全速",
+      row("fan-full", h(ui.ToggleField, { label: "风扇全速",
         checked: draft.fan.full, onChange: full => controller.edit({ fan: { ...draft.fan, full } }, 0) })),
       state.message && row("message", h("div", { className: "claw-hint" }, state.message)));
     return h(ui.PanelSection, null,
