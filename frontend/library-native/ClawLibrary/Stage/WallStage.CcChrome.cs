@@ -560,6 +560,7 @@ public sealed partial class WallStage
         if (_perfOpen) { PerfBack(); return true; }
         if (_gpOpen) { GpBack(); return true; }
         if (_dsOpen) { DsBack(); return true; }
+        if (_syOpen) { SyBack(); return true; }
         if (_ccZone == CcZone.Power) { CcPowerClose(); return true; }
         if (_ccZone == CcZone.Dock) { _ccZone = CcZone.Row; CcChromeFocus(); return true; }
         return false;

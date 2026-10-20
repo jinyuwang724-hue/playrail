@@ -200,6 +200,11 @@ class Executor : IDisposable {
             else if (command == "keyboard") reply["sys"] = SystemControls.ToggleKeyboard();
             else if (command == "mapped_input") reply["sys"] = MappedInput.Run(request["mapping"] as Dictionary<string,object>);
             else if (command == "screenshot") reply["sys"] = SystemControls.Screenshot();
+            else if (command == "system_read") reply["system"] = SystemPage.Read();
+            else if (command == "power_button_set") reply["system"] = SystemPage.SetButton(Convert.ToString(request["action"]));
+            else if (command == "hibernate_after_set") reply["system"] = SystemPage.SetHibernateAfter(Convert.ToInt32(Number(request, "seconds")));
+            else if (command == "display_off_set") reply["system"] = SystemPage.SetDisplayOff(Convert.ToInt32(Number(request, "seconds")));
+            else if (command == "wake_set") reply["system"] = SystemPage.SetWake(true.Equals(request["lock"]), Strings(request, "restore"));
             else if (command == "ecore_set") reply["ecore"] = SmallCores.Set(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
             else throw new ArgumentException("未知命令");
             reply["ok"] = true;
@@ -208,6 +213,14 @@ class Executor : IDisposable {
         }
         reply["id"] = id;
         return reply;
+    }
+
+    static List<string> Strings(Dictionary<string, object> request, string key) {
+        object value;
+        var result = new List<string>();
+        if (request.TryGetValue(key, out value) && value is System.Collections.ArrayList)
+            foreach (object item in (System.Collections.ArrayList)value) result.Add(Convert.ToString(item));
+        return result;
     }
 
     static int[] Ints(Dictionary<string, object> request, string key) {

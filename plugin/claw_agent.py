@@ -58,6 +58,9 @@ METHODS = {
     # ClawLibrary 显示与声音
     "get_display_state", "set_resolution", "set_vrr", "set_hdr", "set_audio_output", "set_mic_mute",
     "set_display_scale", "set_auto_brightness", "set_gpu_option",
+    # ClawLibrary 系统
+    "get_system_state", "set_power_button", "set_hibernate_after", "set_display_off", "set_wake_lock",
+    "set_autostart", "check_updates", "backup_settings", "restore_settings", "reset_settings", "export_logs",
 }
 
 
@@ -307,6 +310,9 @@ class Agent:
             await connection.send(reply)
         except (ConnectionError, OSError, RuntimeError):
             pass
+        if getattr(self.service, "restart_requested", False):
+            logging.info("Restarting so restored settings load")
+            self.stopped.set()
 
     async def close(self):
         if self.closed:

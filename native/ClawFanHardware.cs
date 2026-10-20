@@ -105,6 +105,9 @@ static class MsiFan {
             if (check[i] != payload[2 + i]) throw new InvalidOperationException("风扇曲线写入后回读不一致");
     }
 
+    /// <summary>One EC byte through MSI's WMI reader, read-only (the 系统 page's charge-limit reading).</summary>
+    internal static int EcRead(byte index) { return Get("Get_Data", index)[0]; }
+
     static void SetBit(byte index, bool on, string getter) {
         byte cur = Get(getter, getter == "Get_AP" ? (byte)1 : index)[0];
         byte next = on ? (byte)(cur | 0x80) : (byte)(cur & 0x7F);

@@ -35,6 +35,9 @@ _frames_spec.loader.exec_module(_frames_module)
 _power_spec = importlib.util.spec_from_file_location("claw_toolbox_power", PLUGIN_ROOT / "claw_power.py")
 _power_module = importlib.util.module_from_spec(_power_spec)
 _power_spec.loader.exec_module(_power_module)
+_system_spec = importlib.util.spec_from_file_location("claw_toolbox_system", PLUGIN_ROOT / "claw_system.py")
+_system_module = importlib.util.module_from_spec(_system_spec)
+_system_spec.loader.exec_module(_system_module)
 _rumble_spec = importlib.util.spec_from_file_location("claw_toolbox_rumble", PLUGIN_ROOT / "claw_rumble.py")
 _rumble_module = importlib.util.module_from_spec(_rumble_spec)
 _rumble_spec.loader.exec_module(_rumble_module)
@@ -113,6 +116,9 @@ class Service:
         self._magpie = _magpie_module.Magpie(PLUGIN_ROOT, self._data, self._emit_magpie)
         self._overlay_frames = _frames_module.OverlayFrames()
         self._power = _power_module.PowerControl(PLUGIN_ROOT, self._data, self._emit_power)
+        self._system = _system_module.SystemControl(
+            self._power._call, self._data, PLUGIN_ROOT,
+            lambda: (_power_module.battery_percent(), _power_module.on_charger()))
         self._rumble = _rumble_module.RumbleControl(self._data, log=logging.info)
         self._gamepad = _gamepad_fw_module.GamepadControl(
             self._data, _gamepad_fw_module.GamepadFirmware(rumble=_rumble_module), log=logging.info)
@@ -463,6 +469,54 @@ class Service:
         else:
             raise ValueError("没有这个显卡选项")
         return await self._power.display("gpu_set", name=name, value=value)
+
+    # ---- 系统 (ClawLibrary control centre) ------------------------------------------------
+    @property
+    def restart_requested(self):
+        return self._system.restart_requested
+
+    async def get_system_state(self):
+        return await self._system.view(self._gamepad.read)
+
+    async def _system_write(self, call, *args):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        await call(*args)
+        return await self._system.view()
+
+    async def set_power_button(self, action):
+        return await self._system_write(self._system.set_power_button, action)
+
+    async def set_hibernate_after(self, seconds):
+        return await self._system_write(self._system.set_hibernate_after, seconds)
+
+    async def set_display_off(self, seconds):
+        return await self._system_write(self._system.set_display_off, seconds)
+
+    async def set_wake_lock(self, locked):
+        return await self._system_write(self._system.set_wake_lock, locked)
+
+    async def set_autostart(self, enabled):
+        return await self._system_write(self._system.set_autostart, enabled)
+
+    async def check_updates(self):
+        return self._system.check_updates()
+
+    async def backup_settings(self):
+        return await asyncio.to_thread(self._system.backup)
+
+    async def restore_settings(self, name):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        return await asyncio.to_thread(self._system.restore, name)
+
+    async def reset_settings(self):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        return await asyncio.to_thread(self._system.reset)
+
+    async def export_logs(self):
+        return await asyncio.to_thread(self._system.export_logs)
 
     async def set_fps_limit(self, fps):
         game = (self._power.sys_cache or {}).get("game") or {}
