@@ -148,13 +148,16 @@ public sealed class Library
     /// 首页三个页签：全部、Steam、本地（非 Steam）。合集只用 Steam 库里用户自己建的分类（收藏夹、自建分类），
     /// 只在 Steam 页签里出现；不自己编分类。Steam 里「已隐藏」的游戏不上墙。空的分类不显示。
     /// </summary>
+    /// <summary>设置页「游戏库」：显示 Steam 里隐藏的游戏、两种来源各自开关（下次载入游戏库时生效）。</summary>
+    public static bool ShowHidden, IncludeSteam = true, IncludeShortcuts = true;
+
     public static Library Build(List<LibraryItem> games, List<SteamCollection> steamCollections)
     {
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         foreach (var g in games)
             g.LastPlayedDays = g.LastPlayed is long l ? (int)Math.Max(0, (now - l) / Day) : null;
-        var hidden = steamCollections.FirstOrDefault(c => c.Id == "hidden")?.Added.ToHashSet() ?? new HashSet<string>();
-        var shown = games.Where(g => !hidden.Contains(g.Id)).ToList();
+        var hidden = ShowHidden ? new HashSet<string>() : steamCollections.FirstOrDefault(c => c.Id == "hidden")?.Added.ToHashSet() ?? new HashSet<string>();
+        var shown = games.Where(g => !hidden.Contains(g.Id) && (g.Platform == "steam" ? IncludeSteam : IncludeShortcuts)).ToList();
         var lib = new Library { Games = shown };
 
         var recent = shown.Where(g => g.LastPlayed != null).OrderByDescending(g => g.LastPlayed).ToList();

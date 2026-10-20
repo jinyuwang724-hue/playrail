@@ -208,8 +208,9 @@ class Executor : IDisposable {
             else if (command == "update_start") reply["update"] = UpdateJob.Start(request);
             else if (command == "update_status") reply["update"] = UpdateJob.Status();
             else if (command == "pnp_drivers") reply["drivers"] = UpdateJob.Drivers();
-            else if (command == "msi_center_read") reply["system"] = SystemPage.MsiCenter();
-            else if (command == "msi_center_set") reply["system"] = SystemPage.SetMsiCenter(true.Equals(request["disabled"]));
+            else if (command == "vendor_apps") reply["apps"] = SystemPage.VendorApps();
+            else if (command == "vendor_app_set") reply["apps"] = SystemPage.SetVendorApp(Convert.ToString(request["app"]), true.Equals(request["disabled"]));
+            else if (command == "startup_approve") reply["system"] = SystemPage.SetStartupApproved(Convert.ToString(request["key"]), Convert.ToString(request["name"]), true.Equals(request["enabled"]));
             else if (command == "wake_set") reply["system"] = SystemPage.SetWake(true.Equals(request["lock"]), Strings(request, "restore"));
             else if (command == "ecore_set") reply["ecore"] = SmallCores.Set(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
             else throw new ArgumentException("未知命令");

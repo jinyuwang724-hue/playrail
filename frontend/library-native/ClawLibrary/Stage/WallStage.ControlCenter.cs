@@ -238,6 +238,7 @@ public sealed partial class WallStage
         CloseGamepad(instant: true);
         CloseDisplay(instant: true);
         CloseSystem(instant: true);
+        CloseSettingsPage(instant: true);
         _ccOpen = false;
         int v = ++_ccVersion;
         _ccTimer?.Stop();
@@ -259,6 +260,7 @@ public sealed partial class WallStage
         CloseGamepad(instant: true);
         CloseDisplay(instant: true);
         CloseSystem(instant: true);
+        CloseSettingsPage(instant: true);
         _cc.IsVisible = false;
         _cc.StopAnimation("Opacity");
         _cc.Opacity = 1;
@@ -283,6 +285,7 @@ public sealed partial class WallStage
         if (_gpOpen) { GpMove(dir); return; }
         if (_dsOpen) { DsMove(dir); return; }
         if (_syOpen) { SyMove(dir); return; }
+        if (_stOpen) { StMove(dir); return; }
         if (CcChromeMove(dir)) return;
         if (dir is not (Direction.Left or Direction.Right)) return;
         // 不再限制「200 ms 一步」：滚动是弹簧，连按就直接换终点接着滚（可打断）
@@ -305,6 +308,7 @@ public sealed partial class WallStage
         if (_gpOpen) { GpActivate(); return; }
         if (_dsOpen) { DsActivate(); return; }
         if (_syOpen) { SyActivate(); return; }
+        if (_stOpen) { StActivate(); return; }
         if (CcChromeActivate()) return;
         var b = _ccBlocks[_ccFocus];
         switch (_ccFocus)
@@ -324,9 +328,8 @@ public sealed partial class WallStage
             case 4:   // 系统：同样的 3:7 两栏
                 OpenSystem();
                 break;
-            case 5:   // 软件设置：竖条里的设置列表
-                CloseControlCenter();
-                OpenRailSettings();
+            case 5:   // 设置：独立的整页（左分类目录 + 右选项）
+                OpenSettingsPage();
                 break;
             default:
                 Toast($"「{b.Name}」页面还没有做");
@@ -340,6 +343,7 @@ public sealed partial class WallStage
         MarkInput();
         if (MorphIntercept()) return;
         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
+        if (_ccOpen && _stOpen) { StResetFocused(); return; }
         if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
         else Toast("游戏设置（原型里还没有）");
@@ -367,7 +371,8 @@ public sealed partial class WallStage
     /// <summary>点卡：点到焦点卡 = A，点到别的卡 = 把它移到中间。</summary>
     private void CcClick(double sx, double sy)
     {
-        if (_dsOpen || _syOpen || _perfOpen || _gpOpen) { SettingsClick(sx, sy); return; }
+        if (_stOpen && StCategoryClick(sx, sy)) return;
+        if (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen) { SettingsClick(sx, sy); return; }
         if (CcChromeClick(sx, sy)) return;
         float h = _ccH * _ccK;
         float top = CcTop;

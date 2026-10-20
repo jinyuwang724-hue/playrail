@@ -31,6 +31,9 @@ public sealed partial class WallStage
         public Action? Press;
         public Action<int>? Select, SetNumber;
         public int Number, Minimum, Maximum, Increment = 1;
+        /// <summary>设置页：和默认不同（前面画一个小点），Y 用 Reset 恢复默认。</summary>
+        public bool Changed;
+        public Action? Reset;
     }
 
     // 设计 px（× _ccK），1280×800 舞台：左栏 348、右栏 812、中间 40
@@ -43,7 +46,7 @@ public sealed partial class WallStage
     private static readonly string[] PowerModes = { "autotdp", "auto", "manual" };
     private static readonly string[] PowerModeNames = { "Auto", "按电源", "手动" };
     /// <summary>强调色跟着背景的主题色走（当前游戏封面的代表色），背景还没取到色时用 folia 的橙。</summary>
-    private Color PerfAccent => _ccBack?.Accent ?? Gfx.Rgba(0xfd, 0x8a, 0x5a);
+    private Color PerfAccent => FixedAccent ?? _ccBack?.Accent ?? Gfx.Rgba(0xfd, 0x8a, 0x5a);
 
     private AgentClient? _agent;
     private ContainerVisual? _perf;
@@ -546,6 +549,7 @@ public sealed partial class WallStage
                 ds.FillGeometry(g, Gfx.WithAlpha(CcText, a));
             }
             else PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(CcText, 0.32f * a), 0, cy, 40);
+            if (r.Changed) ds.FillCircle(27, cy, 3, PerfAccent);
             PText(ds, r.Title, ui, 17, Gfx.WithAlpha(CcText, (f ? 1f : 0.88f) * a), 36, cy, 400);
             if (targets != null && r.SetNumber != null && !r.Disabled)
             {

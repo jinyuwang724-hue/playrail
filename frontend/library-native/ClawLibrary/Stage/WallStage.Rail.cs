@@ -264,12 +264,10 @@ public sealed partial class WallStage
                 OpenSearch();
                 break;
             case RailKind.Settings:
+                // ⚙：打开设置页（独立的整页，在控制中心里）
                 _backgroundSettingsOpen = false;
-                _railModel.SettingsOpen = !_railModel.SettingsOpen;
-                if (_railModel.SettingsOpen) _ = RailMsiCenterRefresh();
-                RepaintRail();
-                _railFocus = _railModel.SettingsOpen ? _rail.DefaultFocus(_railModel) : _rail.Items.FindIndex(i => i.Kind == RailKind.Settings);
-                RepaintRail();
+                if (!_ccOpen) OpenControlCenter();
+                OpenSettingsPage();
                 break;
             case RailKind.Setting:
                 ToggleSetting(it.Index);
@@ -338,7 +336,7 @@ public sealed partial class WallStage
             case 0: ToggleTitleStyle(); break;
             case 1: SetBackgroundPreview(true); _railFocus = 0; break;
             case 2: SetCcCardStyle(!_ccCards); break;
-            case 3: _backdropOn = !_backdropOn; UpdateBackdropRunning(); Toast(_backdropOn ? "动态背景：开" : "动态背景：关"); break;
+            case 3: _backdropOn = !_backdropOn; UpdateBackdropRunning(); _prefs = _prefs with { Backdrop = _backdropOn }; _prefs.Save(); Toast(_backdropOn ? "动态背景：开" : "动态背景：关"); break;
             case 4: ToggleReducedMotion(); UpdateBackdropRunning(); break;
             case 5: ToggleHud(); break;
             case 6: _ = RailMsiCenterToggle(); break;

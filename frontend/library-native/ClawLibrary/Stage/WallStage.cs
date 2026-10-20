@@ -144,7 +144,9 @@ public sealed partial class WallStage : IDisposable
         var t0 = NowMs;
         if (Program.Args.Contains("--style=b")) Style = TitleStyle.B;
         Measure();
+        ApplyUiPrefsBeforeLoad();
         LoadLibrary();
+        ApplyTabPrefs();
         if (Program.Args.FirstOrDefault(a => a.StartsWith("--export-web=")) is { } exp)
         {
             WebExport.Write(_lib, exp["--export-web=".Length..]);
@@ -152,7 +154,9 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         InitRail();
+        if (!Program.Args.Contains("--no-backdrop")) _backdropOn = _prefs.Backdrop;
         BuildChrome();
+        if (_prefs.Boot == BootTarget.ControlCenter) After(900, () => { if (!_ccOpen) OpenControlCenter(); });
         long tChrome = NowMs;
         Log.Info($"library: {_lib.Games.Count} games, {_lib.Collections.Count} collections, view {View.Width}x{View.Height} scale {View.Scale} dpi {Chrome.Dpi} ({NowMs - t0}ms)");
 
@@ -738,6 +742,7 @@ public sealed partial class WallStage : IDisposable
     public void Move(Direction dir)
     {
         MarkInput();
+        SoundFx.Play(Sfx.Move);
         if (MorphIntercept()) return;
         if (_ccOpen) { CcMove(dir); return; }
         if (RailMove(dir)) return;
@@ -755,6 +760,7 @@ public sealed partial class WallStage : IDisposable
     public void Activate()
     {
         MarkInput();
+        SoundFx.Play(Sfx.Confirm);
         if (MorphIntercept()) return;
         if (_ccOpen) { CcActivate(); return; }
         if (RailActivate()) return;
@@ -780,11 +786,13 @@ public sealed partial class WallStage : IDisposable
             ulong gameId = ((ulong)appid << 32) | 0x02000000UL;
             SystemInfo.Open($"steam://rungameid/{gameId}");
             Toast($"正在启动「{item.Title}」");
+            AfterGameLaunch();
         }
         else if (item.Installed)
         {
             SystemInfo.Open($"steam://rungameid/{appid}");
             Toast($"正在启动「{item.Title}」");
+            AfterGameLaunch();
         }
         else
         {
@@ -798,6 +806,7 @@ public sealed partial class WallStage : IDisposable
     public void Back()
     {
         MarkInput();
+        SoundFx.Play(Sfx.Back);
         if (MorphIntercept()) return;
         if (_ccOpen) { if (!CcChromeBack()) CloseControlCenter(); return; }
         if (RailBack()) return;
@@ -1110,6 +1119,7 @@ public sealed partial class WallStage : IDisposable
     public void ToggleReducedMotion()
     {
         _reducedLocal = !_reducedLocal;
+        _prefs = _prefs with { Reduced = _reducedLocal }; _prefs.Save();
         Toast(_reducedLocal ? "已降低动态效果" : "已恢复完整动效");
     }
 

@@ -303,45 +303,6 @@ public sealed partial class WallStage
         };
         _syRows.Add(Act("Windows 更新", "wu", updText, () => { SystemInfo.Open("ms-settings:windowsupdate"); Toast("正在打开 Windows 更新"); }));
         SyUpdateRows(v);
-        if (v == null) { _syRows.Add(Later("备份设置", _syOldAgent ? DsLater : "—")); }
-        else
-        {
-            var backups = (v["backups"] as JsonArray)?.OfType<JsonObject>().ToArray() ?? Array.Empty<JsonObject>();
-            _syRows.Add(Act("备份设置", "backup", backups.Length > 0 ? $"上次 {Str(backups[0]["time"])}" : "还没有备份",
-                () => _ = SyRun("backup_settings", r => "已备份到 文档\\ClawToolbox 备份")));
-            if (backups.Length > 0)
-            {
-                _syBackupPick = Math.Clamp(_syBackupPick, 0, backups.Length - 1);
-                var pick = backups[_syBackupPick];
-                string name = Str(pick["name"]) ?? "";
-                _syRows.Add(new PerfRow
-                {
-                    Title = "还原设置", Numeric = true,
-                    Value = _syArmed == "restore" ? "再按一次确认" : Str(pick["time"]) ?? name,
-                    Step = d => { int ni = Math.Clamp(_syBackupPick + d, 0, backups.Length - 1); if (ni != _syBackupPick) { _syBackupPick = ni; _syArmed = null; BuildSyRows(); PaintSy(); } },
-                    Press = () => { if (SyConfirm("restore")) { Toast("正在还原，工具箱后台会重启一下"); _ = SyRun("restore_settings", _ => "已还原，后台正在重启", JsonValue.Create(name)); } },
-                });
-            }
-            else _syRows.Add(Later("还原设置", "还没有备份"));
-        }
-
-        // ---- 启动 ----
-        _syRows.Add(new PerfRow { Section = true, Title = "启动" });
-        if (v?["autostart"] is JsonValue)
-        {
-            bool on = Bool(v["autostart"]);
-            void Set(bool to) { v["autostart"] = to; SySet("set_autostart", JsonValue.Create(to)); }
-            _syRows.Add(new PerfRow
-            {
-                Title = "开机自动运行后台", Choices = new[] { "关", "开" }, Choice = on ? 1 : 0,
-                Step = d => { if ((d > 0) != on) Set(d > 0); },
-                Press = () => Set(!on),
-                Select = i => Set(i == 1),
-            });
-        }
-        else _syRows.Add(Later("开机自动运行后台", v == null ? (_syOldAgent ? DsLater : "—") : "没有找到登录任务"));
-        _syRows.Add(Act("全屏体验主页", "home", SyHomeName(Str(v?["homeApp"])), () => { SystemInfo.Open("ms-settings:gaming-fullscreen"); Toast("正在打开全屏体验设置"); }));
-
         if (_syFocus >= _syRows.Count || (_syFocus >= 0 && (_syRows[_syFocus].Skip || _syRows[_syFocus].Section)))
         {
             int f = Math.Min(_syFocus, _syRows.Count - 1);

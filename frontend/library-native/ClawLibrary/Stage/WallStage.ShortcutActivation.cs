@@ -16,6 +16,7 @@ public sealed partial class WallStage
             CloseGamepad(instant: true);
             CloseDisplay(instant: true);
             CloseSystem(instant: true);
+            CloseSettingsPage(instant: true);
             if (!_ccOpen) OpenControlCenter();
         }
         else if (route == "library" && _ccOpen) CloseControlCenter();

@@ -11,24 +11,25 @@ public sealed partial class WallStage
     private float _settingsScrollAtPress, _gpPickScroll;
     private List<PerfRow> _gpPickRows = new();
 
-    private bool SettingsPageOpen => _ccOpen && (_dsOpen || _syOpen || _perfOpen || _gpOpen);
-    private bool SettingsHasList => _dsOpen || _syOpen || _perfOpen || _gpPicker?.Level is GpSubLevel.Key or GpSubLevel.Settings;
-    private List<PerfRow> SettingsRows => _dsOpen ? _dsRows : _syOpen ? _syRows : _perfOpen ? _perfRows : _gpPickRows;
+    private bool SettingsPageOpen => _ccOpen && (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen);
+    private bool SettingsHasList => _dsOpen || _syOpen || _stOpen || _perfOpen || _gpPicker?.Level is GpSubLevel.Key or GpSubLevel.Settings;
+    private List<PerfRow> SettingsRows => _dsOpen ? _dsRows : _syOpen ? _syRows : _stOpen ? _stRows : _perfOpen ? _perfRows : _gpPickRows;
     private float SettingsListX => _gpOpen ? GpPickX : PerfRightX;
     private float SettingsListY => _gpOpen ? 196 : PerfTop;
     private float SettingsListH => _gpOpen ? 520 : PerfViewH;
     private float SettingsScroll
     {
-        get => _dsOpen ? _dsScroll : _syOpen ? _syScroll : _perfOpen ? _perfScroll : _gpPickScroll;
-        set { if (_dsOpen) _dsScroll = value; else if (_syOpen) _syScroll = value; else if (_perfOpen) _perfScroll = value; else _gpPickScroll = value; }
+        get => _dsOpen ? _dsScroll : _syOpen ? _syScroll : _stOpen ? _stScroll : _perfOpen ? _perfScroll : _gpPickScroll;
+        set { if (_dsOpen) _dsScroll = value; else if (_syOpen) _syScroll = value; else if (_stOpen) _stScroll = value; else if (_perfOpen) _perfScroll = value; else _gpPickScroll = value; }
     }
     private int SettingsFocus
     {
-        get => _dsOpen ? _dsFocus : _syOpen ? _syFocus : _perfOpen ? _perfFocus : _gpPicker?.Level == GpSubLevel.Key ? _gpPicker.KeyFocus : _gpPicker?.SettingsFocus ?? -1;
+        get => _dsOpen ? _dsFocus : _syOpen ? _syFocus : _stOpen ? _stFocus : _perfOpen ? _perfFocus : _gpPicker?.Level == GpSubLevel.Key ? _gpPicker.KeyFocus : _gpPicker?.SettingsFocus ?? -1;
         set
         {
             if (_dsOpen) _dsFocus = value;
             else if (_syOpen) _syFocus = value;
+            else if (_stOpen) { _stFocus = value; _stZone = 1; }
             else if (_perfOpen) _perfFocus = value;
             else if (_gpPicker is { } p) { if (p.Level == GpSubLevel.Key) p.KeyFocus = value; else p.SettingsFocus = value; }
         }
@@ -45,6 +46,7 @@ public sealed partial class WallStage
     {
         if (_dsOpen) PaintDs();
         else if (_syOpen) PaintSy();
+        else if (_stOpen) PaintSt();
         else if (_perfOpen) PaintPerf();
         else if (_gpOpen) PaintGpBody();
     }

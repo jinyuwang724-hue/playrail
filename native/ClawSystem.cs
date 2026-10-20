@@ -203,13 +203,24 @@ static class SystemPage {
         return Read();
     }
 
-    // ---------------- MSI Center M ----------------
-    // The toolbox replaces MSI Center M. "Disabled" = its Foundation service set to Disabled and stopped,
-    // its two scheduled tasks disabled, and every MSI Center M process closed. Nothing is uninstalled;
-    // enabling sets the service back to automatic and the tasks back on (MSI's defaults).
+    // ---------------- vendor software the toolbox replaces ----------------
+    // MSI Center M, ClawTweaks and Intel's Driver & Support Assistant. "Disabled" = their services set to
+    // Disabled and stopped, their scheduled tasks disabled, and their processes closed. Nothing is
+    // uninstalled; enabling puts services back to automatic and tasks back on (the vendors' defaults).
 
-    const string MsiService = "MSI Foundation Service";
-    static readonly string[] MsiTasks = { @"\MSI_Center_M_Server", @"\MSI_Center_M_Updater" };
+    sealed class Vendor {
+        public string Id, Name; public string[] Services, Tasks, Paths;
+    }
+    static readonly Vendor[] Vendors = {
+        new Vendor { Id = "msi", Name = "MSI Center M", Services = new[] { "MSI Foundation Service" },
+            Tasks = new[] { @"\MSI_Center_M_Server", @"\MSI_Center_M_Updater" },
+            Paths = new[] { @"\WindowsApps\9426MICRO-STARINTERNATION.", @"\MSI\MSI Center M\" } },
+        new Vendor { Id = "clawtweaks", Name = "ClawTweaks", Services = new string[0],
+            Tasks = new[] { @"\ClawTweaks\ClawTweaksHelper" },
+            Paths = new[] { @"\WindowsApps\MSIClaw.ClawTweaks", @"\ClawTweaksCenter\" } },
+        new Vendor { Id = "intel-dsa", Name = "Intel 驱动与支持助手", Services = new[] { "DSAService", "DSAUpdateService" },
+            Tasks = new string[0], Paths = new[] { @"\Intel\Driver and Support Assistant\" } },
+    };
 
     static string Run(string exe, string args) {
         var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, exe), args) {
@@ -223,42 +234,80 @@ static class SystemPage {
         }
     }
 
-    static bool MsiProcess(Process p) {
+    static bool Owns(Vendor v, Process p) {
         try {
             string path = p.MainModule.FileName;
-            return path.IndexOf(@"\WindowsApps\9426MICRO-STARINTERNATION.", StringComparison.OrdinalIgnoreCase) >= 0
-                || path.IndexOf(@"\MSI\MSI Center M\", StringComparison.OrdinalIgnoreCase) >= 0;
-        } catch (Exception) { return false; }
+            foreach (string part in v.Paths) if (path.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        } catch (Exception) { }
+        return false;
     }
 
-    public static Dictionary<string, object> MsiCenter() {
-        var r = new Dictionary<string, object>();
-        string sc = Run("sc.exe", "qc \"" + MsiService + "\"");
-        r["installed"] = sc.IndexOf("BINARY_PATH_NAME", StringComparison.OrdinalIgnoreCase) >= 0;
-        r["serviceDisabled"] = sc.IndexOf("DISABLED", StringComparison.OrdinalIgnoreCase) >= 0;
-        var tasks = new List<object>();
-        foreach (string t in MsiTasks) {
-            string q = Run("schtasks.exe", "/query /tn \"" + t + "\" /xml");
-            if (q.Length > 0) tasks.Add(new Dictionary<string, object> { { "name", t }, { "enabled", q.IndexOf("<Enabled>false</Enabled>", StringComparison.OrdinalIgnoreCase) < 0 } });
+    static Dictionary<string, object> VendorState(Vendor v) {
+        var r = new Dictionary<string, object> { { "id", v.Id }, { "name", v.Name } };
+        bool installed = false, allOff = true;
+        var services = new List<object>();
+        foreach (string s in v.Services) {
+            string sc = Run("sc.exe", "qc \"" + s + "\"");
+            if (sc.IndexOf("BINARY_PATH_NAME", StringComparison.OrdinalIgnoreCase) < 0) continue;
+            installed = true;
+            bool disabled = sc.IndexOf("DISABLED", StringComparison.OrdinalIgnoreCase) >= 0;
+            allOff &= disabled;
+            services.Add(new Dictionary<string, object> { { "name", s }, { "disabled", disabled } });
         }
-        r["tasks"] = tasks;
+        var tasks = new List<object>();
+        foreach (string t in v.Tasks) {
+            string q = Run("schtasks.exe", "/query /tn \"" + t + "\" /xml");
+            if (q.IndexOf("<Task", StringComparison.OrdinalIgnoreCase) < 0) continue;
+            installed = true;
+            bool enabled = q.IndexOf("<Enabled>false</Enabled>", StringComparison.OrdinalIgnoreCase) < 0;
+            allOff &= !enabled;
+            tasks.Add(new Dictionary<string, object> { { "name", t }, { "enabled", enabled } });
+        }
         int running = 0;
-        foreach (var p in Process.GetProcesses()) { if (MsiProcess(p)) running++; p.Dispose(); }
+        foreach (var p in Process.GetProcesses()) { if (Owns(v, p)) running++; p.Dispose(); }
+        r["installed"] = installed || running > 0;
+        r["services"] = services;
+        r["tasks"] = tasks;
         r["running"] = running;
+        r["disabled"] = installed && allOff && running == 0;
         return r;
     }
 
-    public static Dictionary<string, object> SetMsiCenter(bool disabled) {
-        Run("sc.exe", "config \"" + MsiService + "\" start= " + (disabled ? "disabled" : "auto"));
-        if (disabled) Run("sc.exe", "stop \"" + MsiService + "\"");
-        foreach (string t in MsiTasks) Run("schtasks.exe", "/change /tn \"" + t + "\" " + (disabled ? "/disable" : "/enable"));
+    public static List<object> VendorApps() {
+        var list = new List<object>();
+        foreach (var v in Vendors) list.Add(VendorState(v));
+        return list;
+    }
+
+    public static List<object> SetVendorApp(string id, bool disabled) {
+        Vendor v = null;
+        foreach (var x in Vendors) if (x.Id == id) v = x;
+        if (v == null) throw new ArgumentException("不认识的软件");
+        foreach (string s in v.Services) {
+            Run("sc.exe", "config \"" + s + "\" start= " + (disabled ? "disabled" : "auto"));
+            if (disabled) Run("sc.exe", "stop \"" + s + "\"");
+        }
+        foreach (string t in v.Tasks) Run("schtasks.exe", "/change /tn \"" + t + "\" " + (disabled ? "/disable" : "/enable"));
         if (disabled)
             foreach (var p in Process.GetProcesses()) {
-                if (MsiProcess(p)) { try { p.Kill(); p.WaitForExit(5000); } catch (Exception) { } }
+                if (Owns(v, p)) { try { p.Kill(); p.WaitForExit(5000); } catch (Exception) { } }
                 p.Dispose();
             }
-        else Run("sc.exe", "start \"" + MsiService + "\"");
-        return MsiCenter();
+        else foreach (string s in v.Services) Run("sc.exe", "start \"" + s + "\"");
+        return VendorApps();
+    }
+
+    // ---------------- start-up programs (machine-wide entries) ----------------
+    // Task Manager's on/off switch for Run entries: a 12-byte value under Explorer\StartupApproved,
+    // first byte 2 = on, 3 = off (bytes 4–11: when it was turned off). The machine-wide keys need admin.
+    public static Dictionary<string, object> SetStartupApproved(string key, string name, bool enabled) {
+        if (key != "Run" && key != "Run32" && key != "StartupFolder") throw new ArgumentException("不认识的自启位置");
+        var data = new byte[12];
+        data[0] = (byte)(enabled ? 2 : 3);
+        if (!enabled) BitConverter.GetBytes(DateTime.UtcNow.ToFileTimeUtc()).CopyTo(data, 4);
+        using (var k = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\" + key))
+            k.SetValue(name, data, Microsoft.Win32.RegistryValueKind.Binary);
+        return new Dictionary<string, object> { { "name", name }, { "enabled", enabled } };
     }
 
     // ---------------- wake ----------------

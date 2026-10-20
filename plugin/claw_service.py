@@ -35,6 +35,9 @@ _frames_spec.loader.exec_module(_frames_module)
 _power_spec = importlib.util.spec_from_file_location("claw_toolbox_power", PLUGIN_ROOT / "claw_power.py")
 _power_module = importlib.util.module_from_spec(_power_spec)
 _power_spec.loader.exec_module(_power_module)
+_settings_page_spec = importlib.util.spec_from_file_location("claw_toolbox_settings", PLUGIN_ROOT / "claw_settings.py")
+_settings_page_module = importlib.util.module_from_spec(_settings_page_spec)
+_settings_page_spec.loader.exec_module(_settings_page_module)
 _system_spec = importlib.util.spec_from_file_location("claw_toolbox_system", PLUGIN_ROOT / "claw_system.py")
 _system_module = importlib.util.module_from_spec(_system_spec)
 _system_spec.loader.exec_module(_system_module)
@@ -119,6 +122,7 @@ class Service:
         self._system = _system_module.SystemControl(
             self._power._call, self._data, PLUGIN_ROOT,
             lambda: (_power_module.battery_percent(), _power_module.on_charger()))
+        self._settings_page = _settings_page_module.SettingsControl(self._power._call)
         self._rumble = _rumble_module.RumbleControl(self._data, log=logging.info)
         self._gamepad = _gamepad_fw_module.GamepadControl(
             self._data, _gamepad_fw_module.GamepadFirmware(rumble=_rumble_module), log=logging.info)
@@ -493,14 +497,34 @@ class Service:
     async def set_display_off(self, seconds):
         return await self._system_write(self._system.set_display_off, seconds)
 
-    async def get_msi_center(self):
-        return await self._power._call("msi_center_read")
+    # ---- 设置 page (ClawLibrary) --------------------------------------------------------
+    async def get_settings_state(self):
+        if self._system.lookup_task is None:  # widget version (and the Windows Update count) for 关于
+            self._system.lookup_task = asyncio.create_task(self._system._lookups())
+        return {**await self._settings_page.view(), "autostart": self._system.autostart if self._system.autostart is not None
+                else await asyncio.to_thread(self._system._autostart), "haptics": self._settings.get("hapticsEnabled", True),
+                "compatibility": self._compatibility.view(), "backups": self._system._backups(), "widget": self._system.widget_version, "version": json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))["version"]}
 
-    async def set_msi_center(self, disabled):
-        if type(disabled) is not bool:
+    async def set_home_app(self, aumid):
+        return await asyncio.to_thread(_settings_page_module.set_home_app, aumid)
+
+    async def set_startup_item(self, item, enabled):
+        return await _settings_page_module.set_startup(self._power._call, item, enabled)
+
+    async def set_vendor_app(self, app, disabled):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        logging.info("Vendor app %s %s from the library settings", app, "disabled" if disabled else "enabled")
+        return await self._settings_page.set_vendor(app, disabled)
+
+    async def set_haptics_enabled(self, enabled):
+        if type(enabled) is not bool:
             raise ValueError("开关格式错误")
-        logging.info("MSI Center M %s from the library settings", "disabled" if disabled else "enabled")
-        return await self._power._call("msi_center_set", disabled=disabled)
+        return await self.save_settings({**self._settings, "hapticsEnabled": enabled})
+
+    async def restart_agent(self):
+        await asyncio.to_thread(self._system.restart)
+        return {"restarting": True}
 
     async def check_driver_updates(self):
         return self._system.vendor.check()
