@@ -3,7 +3,7 @@
 // 全部是全局设置，没有「当前游戏」。
 // 读：工具箱后台 get_system_state；老后台没有它时右栏写「后台还没接上」，电源操作照样能用（前端自己做）。
 // 写：每项一个 set_*，本地先改（界面立刻跟着变），写完读回真实值。
-// 重启、关机、还原、恢复默认这种收不回来的：第一下只把这一行变成「再按一次确认」，3 秒内再按才做。
+// 还原这种收不回来的：第一下只把这一行变成「再按一次确认」，3 秒内再按才做。
 // 手柄：↑ ↓ 选项，← → 改值，A 执行 / 开关，B 回控制中心。
 using System.Numerics;
 using System.Runtime.InteropServices;
@@ -33,7 +33,7 @@ public sealed partial class WallStage
     private JsonObject? _syView;
     private readonly List<PerfRow> _syRows = new();
     private DispatcherQueueTimer? _syTimer;
-    /// <summary>等第二下确认的那一行（重启、关机、还原、恢复默认），和第一下的时间。</summary>
+    /// <summary>等第二下确认的那一行（还原、BIOS、全部更新），和第一下的时间。</summary>
     private string? _syArmed;
     private long _syArmedAt;
 
@@ -175,7 +175,7 @@ public sealed partial class WallStage
         PaintSy();
     }
 
-    /// <summary>一次性的动作（备份、导出日志、还原……）：等后台做完，按结果给提示。</summary>
+    /// <summary>一次性的动作（备份、还原、检查更新……）：等后台做完，按结果给提示。</summary>
     private async Task SyRun(string method, Func<JsonNode?, string> done, params JsonNode?[] args)
     {
         try
@@ -323,13 +323,6 @@ public sealed partial class WallStage
                 });
             }
             else _syRows.Add(Later("还原设置", "还没有备份"));
-            _syRows.Add(Act("恢复默认", "reset", "工具箱设置全部回到默认", () =>
-            {
-                if (!SyConfirm("reset")) return;
-                Toast("正在恢复默认，工具箱后台会重启一下");
-                _ = SyRun("reset_settings", r => $"已恢复默认（原来的设置备份在 {Str(r?["backup"])}）");
-            }));
-            _syRows.Add(Act("导出日志", "logs", "存到桌面", () => _ = SyRun("export_logs", r => $"已存到桌面：{Str(r?["name"])}")));
         }
 
         // ---- 启动 ----

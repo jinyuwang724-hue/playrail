@@ -113,6 +113,8 @@ public sealed partial class WallStage
             ("动态背景", _backdropOn ? "开" : "关"),
             ("降低动态效果", _reducedLocal ? "开" : "关"),
             ("性能读数", _hudOn ? "开" : "关"),
+            ("导出日志", "存到桌面"),
+            ("恢复默认", _resetArmed && NowMs - _resetArmedAt <= 3000 ? "再按一次确认" : "工具箱设置回到默认"),
             ("完成", "返回竖条"),
         };
         m.SettingsTitle = _backgroundSettingsOpen ? "背景" : "设置";
@@ -337,13 +339,35 @@ public sealed partial class WallStage
             case 3: _backdropOn = !_backdropOn; UpdateBackdropRunning(); Toast(_backdropOn ? "动态背景：开" : "动态背景：关"); break;
             case 4: ToggleReducedMotion(); UpdateBackdropRunning(); break;
             case 5: ToggleHud(); break;
-            case 6:
+            case 6: _ = RailAgentRun("export_logs", r => $"日志已存到桌面：{(string?)r?["name"]}"); break;
+            case 7:
+                // 收不回来：第一下只把这一行变成「再按一次确认」，3 秒内再按才做（先自动备份，后台会重启一下）
+                if (!_resetArmed || NowMs - _resetArmedAt > 3000) { _resetArmed = true; _resetArmedAt = NowMs; After(3100, RepaintRail); break; }
+                _resetArmed = false;
+                Toast("正在恢复默认，工具箱后台会重启一下");
+                _ = RailAgentRun("reset_settings", r => $"已恢复默认（原来的设置备份在 {(string?)r?["backup"]}）");
+                break;
+            case 8:
                 _railModel.SettingsOpen = false;
                 RepaintRail();
                 _railFocus = _rail.Items.FindIndex(it => it.Kind == RailKind.Settings);
                 break;
         }
         RepaintRail();
+    }
+
+    private bool _resetArmed;
+    private long _resetArmedAt;
+
+    /// <summary>设置里交给工具箱后台的动作（导出日志、恢复默认）：等后台做完，按结果给提示。</summary>
+    private async Task RailAgentRun(string method, Func<System.Text.Json.Nodes.JsonNode?, string> done)
+    {
+        try
+        {
+            _agent ??= new ClawLibrary.Data.AgentClient();
+            Toast(done(await _agent.Call(method)));
+        }
+        catch (Exception ex) { Toast(ex.Message.Contains("不支持的后台调用") ? "工具箱后台版本太旧" : $"没有做成：{ex.Message}"); }
     }
 
     private void CloseBackgroundSettings()
