@@ -610,7 +610,7 @@ class PowerControl:
             if command in ("display_read", "resolution_set", "vrr_set", "hdr_set", "audio_output_set", "mic_mute_set",
                            "scale_set", "auto_brightness_set", "gpu_set"):
                 return reply.get("display") or {}
-            if command in ("system_read", "power_button_set", "hibernate_after_set", "display_off_set", "wake_set"):
+            if command in ("system_read", "power_button_set", "hibernate_after_set", "display_off_set", "wake_set", "charge_limit_set"):
                 return reply.get("system") or {}
             if command in ("endurance_read", "endurance_set", "frame_pacing_set"):
                 return reply.get("endurance") or {}

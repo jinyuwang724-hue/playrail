@@ -21,6 +21,11 @@ BACKUPS = Path(os.environ.get("USERPROFILE", ".")) / "Documents" / "ClawToolbox 
 # are never touched: they are what puts the machine back the way it was.
 CONFIG = ("settings.json", "power.json", "magpie.json", "magpie-games.json", "rumble.json", "scaling.json",
           "input-layer/settings.json", "input-layer/layouts")
+CHARGE_STEPS = (0, 60, 80, 90)
+# What MSI Center M's Live Update and Intel's Driver & Support Assistant found at their last scan.
+# Both run their own checks in the background; this page only reads the results they leave behind.
+MSI_UPDATES = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "MSI" / "NoteBook" / "Live Update" / "NewUpdates.json"
+INTEL_SESSION = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "Intel" / "DSA" / "Data" / "session.xml"
 HIBERNATE_STEPS = (0, 1800, 3600, 10800)
 DISPLAY_STEPS = (180, 300, 600, 1800)
 UPDATE_CACHE = 6 * 3600
@@ -48,11 +53,58 @@ def _config_files(data):
             yield path
 
 
+def _local(tag):
+    return tag.rsplit("}", 1)[-1]
+
+
+def msi_updates(path=MSI_UPDATES):
+    """Live Update's last result: drivers, BIOS and firmware MSI has newer than what is installed.
+    Store apps (DisplayVersion "UWP") and software that was never installed are left out."""
+    try:
+        items = json.loads(path.read_text(encoding="utf-8-sig"))
+        checked = time.strftime("%Y-%m-%d", time.localtime(path.stat().st_mtime))
+    except (OSError, ValueError):
+        return None
+    found = [{"name": i.get("Name") or "", "current": i.get("InstalledVersion") or "", "latest": i.get("DisplayVersion") or ""}
+             for i in items if isinstance(i, dict) and i.get("ServerHasNewerVersion") and i.get("ExistsInLocalMachine")
+             and i.get("DisplayVersion") not in (None, "", "UWP") and i.get("InstalledVersion") not in (None, "", "Not installed")]
+    return {"checked": checked, "items": found}
+
+
+def intel_updates(path=INTEL_SESSION):
+    """Intel Driver & Support Assistant's last scan: each device it marks NeedsUpdate, with the
+    package it would install (UpdateId → the software entry's Name and Version)."""
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    software, devices, checked = {}, [], None
+    for el in root.iter():
+        tag = _local(el.tag)
+        if tag == "BackgroundUpdateLastCheck" and el.text:
+            checked = el.text[:10]
+        kids = {_local(c.tag): c for c in el}
+        if "Id" in kids and "Version" in kids and "Name" in kids and (kids["Id"].text or "").isdigit():
+            software[kids["Id"].text] = {"name": kids["Name"].text or "", "latest": (kids["Version"].text or "").replace(" WHQL Certified", "")}
+        if (kids.get("UpdateStatus") is not None and kids["UpdateStatus"].text == "NeedsUpdate"
+                and kids.get("Name") is not None):
+            devices.append((kids["Name"].text or "", (kids["UpdateId"].text if kids.get("UpdateId") is not None else "") or ""))
+    items = []
+    for name, update in devices:
+        sw = software.get(update, {})
+        items.append({"name": name.replace("®", "").replace("™", ""), "package": sw.get("name", "").replace("®", "").replace("™", "").replace("*", ""),
+                      "latest": sw.get("latest", "")})
+    return {"checked": checked, "items": items}
+
+
 class SystemControl:
     def __init__(self, call, data, root, battery):
         """call: the helper's command call. battery(): (percent, on charger) from the power module."""
         self.call, self.data, self.root, self.battery = call, Path(data), Path(root), battery
         self.wake_path = self.data / "wake-restore.json"
+        self.charge_path = self.data / "charge-limit-backup.json"
+        self.vendor, self.vendor_stamp = {}, {}
         self.updates = {"state": "idle"}  # idle / checking / done / error
         self.updates_at = 0.0
         self.widget_version = None
@@ -81,6 +133,9 @@ class SystemControl:
                     live["minutes"] = round(remaining / 1000 / -rate * 60)
                 elif rate > 0.3 and full:
                     live["chargeMinutes"] = round(max(0, full - remaining) / 1000 / rate * 60)
+        cap = ((system.get("chargeLimit") or {}).get("percent") or 100) / 100
+        if charger and remaining and full and (live["watts"] or 0) > 0.3:  # charging stops at the limit, not at full
+            live["chargeMinutes"] = round(max(0, full * cap - remaining) / 1000 / live["watts"] * 60)
         battery = {**(system.get("battery") or {}), **live}
         wake_restore = self._wake_restore()
         if gamepad_firmware and not self.firmware:
@@ -90,6 +145,7 @@ class SystemControl:
                 pass
         if self.lookup_task is None or (self.lookup_task.done() and time.monotonic() - self.updates_at > UPDATE_CACHE):
             self.lookup_task = asyncio.create_task(self._lookups())
+        await asyncio.to_thread(self._vendor_refresh)
         version = json.loads((self.root / "plugin.json").read_text(encoding="utf-8"))["version"]
         return {
             "battery": battery, "batteryError": system.get("batteryError"),
@@ -100,10 +156,22 @@ class SystemControl:
             "device": system.get("device") or {},
             "versions": {"backend": version, "widget": self.widget_version, "padFirmware": self.firmware},
             "updates": self.updates,
+            "msiUpdates": self.vendor.get("msi"), "intelUpdates": self.vendor.get("intel"),
             "autostart": await asyncio.to_thread(self._autostart),
             "homeApp": self._home_app(),
             "backups": self._backups(),
         }
+
+    def _vendor_refresh(self):
+        """Re-read MSI's and Intel's scan results only when their files changed."""
+        for key, path, read in (("msi", MSI_UPDATES, msi_updates), ("intel", INTEL_SESSION, intel_updates)):
+            try:
+                stamp = path.stat().st_mtime
+            except OSError:
+                self.vendor[key], self.vendor_stamp[key] = None, None
+                continue
+            if self.vendor_stamp.get(key) != stamp:
+                self.vendor[key], self.vendor_stamp[key] = read(path), stamp
 
     def _rate(self, remaining, charger):
         now = time.monotonic()
@@ -189,6 +257,23 @@ class SystemControl:
         if seconds not in DISPLAY_STEPS:
             raise ValueError("不支持的关屏时间")
         await self.call("display_off_set", seconds=seconds)
+
+    async def set_charge_limit(self, percent):
+        """0 = off. The byte from before our first change is kept, and "off" writes exactly that back."""
+        if percent not in CHARGE_STEPS:
+            raise ValueError("不支持的充电上限")
+        try:
+            original = json.loads(self.charge_path.read_text(encoding="utf-8"))["raw"]
+        except (OSError, ValueError, KeyError):
+            original = None
+        if percent == 0 and original is None:
+            original = 0x80  # the factory byte on this Claw: no limit
+        result = await self.call("charge_limit_set", percent=percent, off=original if original is not None else 0x80)
+        if original is None and result.get("chargeLimitBefore") is not None:
+            before = result["chargeLimitBefore"]
+            # Never remember an active limit as "off".
+            if not (before & 0x80 and (before & 0x7F) >= 20):
+                self.charge_path.write_text(json.dumps({"raw": before}), encoding="utf-8")
 
     async def set_wake_lock(self, locked):
         if type(locked) is not bool:

@@ -35,7 +35,10 @@ public sealed partial class WallStage
     private string? _syArmed;
     private long _syArmedAt;
 
-    private static readonly string[] SyButtons = { "sleep", "hibernate", "shutdown" };
+    private static readonly int[] SyCharge = { 0, 60, 80, 90 };
+    private static readonly string[] SyChargeNames = { "关", "60 %", "80 %", "90 %" };
+    private const string SyMsiCenter = "9426MICRO-STARINTERNATION.64797CC12EF8E_kzh8wxbdkxb8p!App", SyIntelDsa = "Intel.Dsa.Tray";
+    private static readonly string[] SyButtons ={ "sleep", "hibernate", "shutdown" };
     private static readonly string[] SyButtonNames = { "睡眠", "休眠", "关机" };
     private static readonly int[] SyHibernate = { 0, 1800, 3600, 10800 };
     private static readonly string[] SyHibernateNames = { "不休眠", "30 分钟", "1 小时", "3 小时" };
@@ -216,10 +219,18 @@ public sealed partial class WallStage
         }
         else
         {
-            // 充电上限：MSI 固件里的一个字节，先只读（写入还没在这台机器上验证过）
-            var limit = v["chargeLimit"] as JsonObject;
-            string limitText = limit == null ? "读不到" : limit["percent"] is JsonValue ? $"{Int(limit["percent"])} %" : "关";
-            _syRows.Add(new PerfRow { Title = "充电上限", Value = $"{limitText} · 只读", Disabled = true });
+            // 充电上限：MSI 固件 0xD7 那一个字节（和 ClawTweaks、MSI Center M 写的是同一个）
+            if (v["chargeLimit"] is JsonObject limit)
+            {
+                int cur = limit["percent"] is JsonValue ? Int(limit["percent"]) : 0;
+                int li = Array.IndexOf(SyCharge, cur);
+                _syRows.Add(Pick("充电上限", SyChargeNames, li < 0 ? 0 : li, i =>
+                {
+                    if (SyCharge[i] == 0) limit.Remove("percent"); else limit["percent"] = SyCharge[i];
+                    SySet("set_charge_limit", JsonValue.Create(SyCharge[i]));
+                }, li < 0 ? $"现在是 {cur} %" : ""));
+            }
+            else _syRows.Add(Later("充电上限", Str(v["chargeLimitError"]) is string ce ? $"读不到：{ce}" : "读不到"));
 
             var power = v["power"] as JsonObject;
             if (power == null) _syRows.Add(Later("按电源键", Str(v["powerError"]) ?? "读不到电源设置"));
@@ -266,13 +277,6 @@ public sealed partial class WallStage
             else _syRows.Add(Later("只允许电源键唤醒", Str(v["wakeError"]) ?? "读不到唤醒设备"));
         }
 
-        // ---- 电源操作（前端自己做，不经后台） ----
-        _syRows.Add(new PerfRow { Section = true, Title = "电源操作" });
-        _syRows.Add(Act("睡眠", "sleep", "", () => SyPower("sleep")));
-        _syRows.Add(Act("重启", "restart", "", () => { if (SyConfirm("restart")) SyPower("restart"); }));
-        _syRows.Add(Act("关机", "shutdown", "", () => { if (SyConfirm("shutdown")) SyPower("shutdown"); }));
-        _syRows.Add(Act("回到桌面", "desktop", "退出全屏体验", SyDesktop));
-
         // ---- 更新与维护 ----
         _syRows.Add(new PerfRow { Section = true, Title = "更新与维护" });
         var upd = v?["updates"] as JsonObject;
@@ -284,6 +288,10 @@ public sealed partial class WallStage
             _ => v == null ? "—" : "还没检查",
         };
         _syRows.Add(Act("Windows 更新", "wu", updText, () => { SystemInfo.Open("ms-settings:windowsupdate"); Toast("正在打开 Windows 更新"); }));
+        // 微星：BIOS、手柄固件、驱动（MSI Center M 的 Live Update 上次检查的结果）；Intel：驱动助手上次扫描的结果。
+        // 这里只看结果，A 打开它们自己的程序去更新（BIOS、驱动这种更新不替它们装）。
+        _syRows.Add(Act("微星更新", "msi", SyVendorText(v?["msiUpdates"], "MSI Center M"), () => { SystemInfo.Open("explorer.exe", $"shell:AppsFolder\\{SyMsiCenter}"); Toast("正在打开 MSI Center M"); }));
+        _syRows.Add(Act("Intel 更新", "intel", SyVendorText(v?["intelUpdates"], "Intel 驱动助手"), () => { SystemInfo.Open("explorer.exe", $"shell:AppsFolder\\{SyIntelDsa}"); Toast("正在打开 Intel 驱动与支持助手"); }));
         if (v == null) { _syRows.Add(Later("备份设置", _syOldAgent ? DsLater : "—")); }
         else
         {
@@ -338,6 +346,19 @@ public sealed partial class WallStage
         }
     }
 
+    /// <summary>「4 个可更新 · Intel Arc B390 GPU 32.0.101.9150」/「已是最新 · 10-05 检查」/「没有 MSI Center M 的检查结果」。</summary>
+    private static string SyVendorText(JsonNode? n, string tool)
+    {
+        if (n is not JsonObject o) return $"没有{tool}的检查结果";
+        var items = (o["items"] as JsonArray)?.OfType<JsonObject>().ToArray() ?? Array.Empty<JsonObject>();
+        string date = Str(o["checked"]) is string c && c.Length >= 10 ? c[5..10] : "";
+        if (items.Length == 0) return date.Length > 0 ? $"已是最新 · {date} 检查" : "已是最新";
+        var first = items[0];
+        string what = Str(first["name"]) is string p && p.Length > 0 ? p : Str(first["package"]) ?? "";
+        string latest = Str(first["latest"]) ?? "";
+        return $"{items.Length} 个可更新 · {what} {latest}".TrimEnd();
+    }
+
     private static string SyHomeName(string? aumid)
     {
         if (string.IsNullOrEmpty(aumid)) return "—";
@@ -346,39 +367,6 @@ public sealed partial class WallStage
         string family = aumid.Split('!')[0].Split('_')[0];
         int dot = family.LastIndexOf('.');
         return dot >= 0 ? family[(dot + 1)..] : family;
-    }
-
-    private void SyPower(string id)
-    {
-        Toast(id switch { "sleep" => "正在睡眠…", "restart" => "正在重启…", _ => "正在关机…" });
-        Log.Info($"system page power: {id}");
-        if (Program.Args.Contains("--power-dry")) return;
-        nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
-        After(400, () =>
-        {
-            switch (id)
-            {
-                case "sleep": SystemInfo.Sleep(hwnd); break;
-                case "restart": SystemInfo.Restart(); break;
-                case "shutdown": SystemInfo.Shutdown(); break;
-            }
-        });
-    }
-
-    [DllImport("user32.dll")] private static extern void keybd_event(byte key, byte scan, uint flags, nuint extra);
-
-    /// <summary>回到桌面：全屏体验自己的切换键 Win + F11（微软文档写的退出方式）。</summary>
-    private void SyDesktop()
-    {
-        Toast("正在回到桌面…");
-        Log.Info("system page: desktop (Win+F11)");
-        if (Program.Args.Contains("--power-dry")) return;
-        After(300, () =>
-        {
-            const byte Win = 0x5B, F11 = 0x7A; const uint Up = 2;
-            keybd_event(Win, 0, 0, 0); keybd_event(F11, 0, 0, 0);
-            keybd_event(F11, 0, Up, 0); keybd_event(Win, 0, Up, 0);
-        });
     }
 
     // ---------------- 输入 ----------------
@@ -484,8 +472,14 @@ public sealed partial class WallStage
             : bat.OnAc ? (watts is > 0.3 ? $"充电中 · {watts:0.0} W" : bat.Percent >= 99 ? "已充满" : "已接通电源")
             : watts is < -0.3 ? $"放电 · {-watts:0.0} W" : "使用电池";
         rows.Add(("状态", state));
+        // 插着电：预计充电时间（到充电上限或充满）；用电池：预计使用时间。固件不报功率，后台要攒十几秒的电量变化才算得出来。
         int minutes = Int(b?[bat.OnAc ? "chargeMinutes" : "minutes"]);
-        if (minutes > 0) rows.Add((bat.OnAc ? "充满还要" : "剩余时间", minutes >= 60 ? $"{minutes / 60} 小时 {minutes % 60:00} 分" : $"{minutes} 分钟"));
+        int cap = v?["chargeLimit"]?["percent"] is JsonValue lim ? Int(lim) : 100;
+        string eta = minutes > 0 ? (minutes >= 60 ? $"{minutes / 60} 小时 {minutes % 60:00} 分" : $"{minutes} 分钟")
+            : !bat.HasBattery ? "—"
+            : bat.OnAc && bat.Percent >= cap - 1 && !(watts is > 0.3) ? (cap < 100 ? $"已到上限 {cap} %" : "已充满")
+            : v == null ? "—" : "正在估算…";
+        rows.Add((bat.OnAc ? "预计充电时间" : "预计使用时间", eta));
         int design = Int(b?["design"]), full = Int(b?["full"]);
         if (design > 0 && full > 0)
         {

@@ -16,10 +16,14 @@ spec.loader.exec_module(system)
 
 class FakeHelper:
     def __init__(self):
-        self.calls, self.armed = [], ["Intel(R) Wi-Fi 7", "HID 键盘设备"]
+        self.calls, self.armed, self.charge = [], ["Intel(R) Wi-Fi 7", "HID 键盘设备"], 0x80
 
     async def __call__(self, command, **args):
         self.calls.append((command, args))
+        if command == "charge_limit_set":
+            before = self.charge
+            self.charge = args["off"] if args["percent"] == 0 else 0x80 | args["percent"]
+            return {"chargeLimitBefore": before}
         if command == "wake_set":
             if args["lock"]:
                 changed, self.armed = self.armed, []
@@ -86,6 +90,32 @@ class SystemPageTest(unittest.TestCase):
         asyncio.run(self.control.set_wake_lock(False))
         self.assertEqual(sorted(self.helper.armed), sorted(["Intel(R) Wi-Fi 7", "HID 键盘设备"]))
         self.assertFalse(self.control.wake_path.exists())
+
+    def test_charge_limit_off_restores_factory_byte(self):
+        asyncio.run(self.control.set_charge_limit(80))
+        self.assertEqual(self.helper.charge, 0xD0)
+        asyncio.run(self.control.set_charge_limit(60))   # a second change keeps the first original
+        asyncio.run(self.control.set_charge_limit(0))
+        self.assertEqual(self.helper.charge, 0x80)
+        with self.assertRaises(ValueError):
+            asyncio.run(self.control.set_charge_limit(50))
+
+    def test_vendor_parsers(self):
+        msi = Path(self.tmp.name) / "NewUpdates.json"
+        msi.write_text(json.dumps([
+            {"Name": "BIOS", "DisplayVersion": "E1T91IMS.10E", "InstalledVersion": "E1T91IMS.10D", "ServerHasNewerVersion": True, "ExistsInLocalMachine": True},
+            {"Name": "DTS Audio Processing", "DisplayVersion": "UWP", "InstalledVersion": "1.0.0.0", "ServerHasNewerVersion": True, "ExistsInLocalMachine": True},
+            {"Name": "MSI App Player", "DisplayVersion": "10.4", "InstalledVersion": "Not installed", "ServerHasNewerVersion": True, "ExistsInLocalMachine": False}]), encoding="utf-8")
+        self.assertEqual([i["name"] for i in system.msi_updates(msi)["items"]], ["BIOS"])
+        intel = Path(self.tmp.name) / "session.xml"
+        intel.write_text('<S xmlns:a="x"><a:BackgroundUpdateLastCheck>2026-10-20T14:09:12Z</a:BackgroundUpdateLastCheck>'
+                         '<a:D><a:Name>Intel® Arc™ B390 GPU</a:Name><a:UpdateId>930514</a:UpdateId><a:UpdateStatus>NeedsUpdate</a:UpdateStatus></a:D>'
+                         '<a:D><a:Name>Intel NPU</a:Name><a:UpdateId>0</a:UpdateId><a:UpdateStatus>NotApplicable</a:UpdateStatus></a:D>'
+                         '<a:W><a:Name>Intel® Arc™ Graphics - Windows*</a:Name><a:Id>930514</a:Id><a:Version>32.0.101.9150 WHQL Certified</a:Version></a:W></S>',
+                         encoding="utf-8")
+        found = system.intel_updates(intel)
+        self.assertEqual(found["checked"], "2026-10-20")
+        self.assertEqual(found["items"], [{"name": "Intel Arc B390 GPU", "package": "Intel Arc Graphics - Windows", "latest": "32.0.101.9150"}])
 
     def test_setters_reject_odd_values(self):
         for call in (lambda: self.control.set_power_button("display"), lambda: self.control.set_hibernate_after(7),

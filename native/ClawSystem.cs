@@ -116,21 +116,29 @@ static class SystemPage {
     }
 
     /// <summary>
-    /// MSI keeps the charge limit in one EC byte: bit 7 = on, the low bits = the percentage
-    /// (0xD7 on recent models, 0xEF on older ones). Which one this Claw uses is not confirmed,
-    /// so both raw bytes go back and the page only shows a value that reads as a sane limit.
+    /// The charge limit is one EC byte at 0xD7, read and written through MSI's WMI interface:
+    /// bit 7 = limit on, the low 7 bits = the percentage (20–100). This is what ClawTweaks'
+    /// MsiClawBatteryManager does (read from its helper's IL, 2026-10-20). The factory byte on this
+    /// Claw is 0x80: "on" with 0 %, which the firmware treats as no limit, so only 20–100 counts.
     /// </summary>
+    const byte ChargeLimitEc = 0xD7;
+
     static Dictionary<string, object> ChargeLimit() {
-        var r = new Dictionary<string, object>();
-        foreach (byte address in new byte[] { 0xD7, 0xEF }) {
-            int value = MsiFan.EcRead(address);
-            r[address.ToString("x2")] = value;
-            int percent = value & 0x7F;
-            if (!r.ContainsKey("percent") && (value & 0x80) != 0 && percent >= 50 && percent <= 100) {
-                r["address"] = address.ToString("x2");
-                r["percent"] = percent;
-            }
-        }
+        int value = MsiFan.EcRead(ChargeLimitEc);
+        var r = new Dictionary<string, object> { { "raw", value } };
+        int percent = value & 0x7F;
+        if ((value & 0x80) != 0 && percent >= 20 && percent <= 100) r["percent"] = percent;
+        return r;
+    }
+
+    /// <summary>percent 20–100 turns the limit on; 0 writes back <paramref name="off"/> (the byte from before the first change).</summary>
+    public static Dictionary<string, object> SetChargeLimit(int percent, int off) {
+        if (percent != 0 && (percent < 20 || percent > 100)) throw new ArgumentException("充电上限超出范围");
+        if (off < 0 || off > 255 || (percent == 0 && (off & 0x80) != 0 && (off & 0x7F) >= 20)) throw new ArgumentException("关闭充电上限要写的值不对");
+        int before = MsiFan.EcRead(ChargeLimitEc);
+        MsiFan.EcWrite(ChargeLimitEc, percent == 0 ? (byte)off : (byte)(0x80 | percent));
+        var r = Read();
+        r["chargeLimitBefore"] = before;
         return r;
     }
 

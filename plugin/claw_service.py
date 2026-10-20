@@ -493,6 +493,9 @@ class Service:
     async def set_display_off(self, seconds):
         return await self._system_write(self._system.set_display_off, seconds)
 
+    async def set_charge_limit(self, percent):
+        return await self._system_write(self._system.set_charge_limit, percent)
+
     async def set_wake_lock(self, locked):
         return await self._system_write(self._system.set_wake_lock, locked)
 

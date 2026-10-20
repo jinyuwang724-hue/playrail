@@ -204,6 +204,7 @@ class Executor : IDisposable {
             else if (command == "power_button_set") reply["system"] = SystemPage.SetButton(Convert.ToString(request["action"]));
             else if (command == "hibernate_after_set") reply["system"] = SystemPage.SetHibernateAfter(Convert.ToInt32(Number(request, "seconds")));
             else if (command == "display_off_set") reply["system"] = SystemPage.SetDisplayOff(Convert.ToInt32(Number(request, "seconds")));
+            else if (command == "charge_limit_set") reply["system"] = SystemPage.SetChargeLimit(Convert.ToInt32(Number(request, "percent")), Convert.ToInt32(Number(request, "off")));
             else if (command == "wake_set") reply["system"] = SystemPage.SetWake(true.Equals(request["lock"]), Strings(request, "restore"));
             else if (command == "ecore_set") reply["ecore"] = SmallCores.Set(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
             else throw new ArgumentException("未知命令");

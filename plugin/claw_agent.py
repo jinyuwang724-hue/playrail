@@ -59,7 +59,7 @@ METHODS = {
     "get_display_state", "set_resolution", "set_vrr", "set_hdr", "set_audio_output", "set_mic_mute",
     "set_display_scale", "set_auto_brightness", "set_gpu_option",
     # ClawLibrary 系统
-    "get_system_state", "set_power_button", "set_hibernate_after", "set_display_off", "set_wake_lock",
+    "get_system_state", "set_charge_limit", "set_power_button", "set_hibernate_after", "set_display_off", "set_wake_lock",
     "set_autostart", "check_updates", "backup_settings", "restore_settings", "reset_settings", "export_logs",
 }
 

@@ -108,6 +108,14 @@ static class MsiFan {
     /// <summary>One EC byte through MSI's WMI reader, read-only (the 系统 page's charge-limit reading).</summary>
     internal static int EcRead(byte index) { return Get("Get_Data", index)[0]; }
 
+    /// <summary>One EC byte through MSI's WMI writer, read back afterwards (the charge limit at 0xD7, as ClawTweaks writes it).</summary>
+    internal static int EcWrite(byte index, byte value) {
+        Call("Set_Data", new[] { index, value });
+        int check = EcRead(index);
+        if (check != value) throw new InvalidOperationException(string.Format("固件回读不一致：写 {0:X2}，读到 {1:X2}", value, check));
+        return check;
+    }
+
     static void SetBit(byte index, bool on, string getter) {
         byte cur = Get(getter, getter == "Get_AP" ? (byte)1 : index)[0];
         byte next = on ? (byte)(cur | 0x80) : (byte)(cur & 0x7F);
