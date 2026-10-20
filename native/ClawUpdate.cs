@@ -158,3 +158,64 @@ static class UpdateJob {
         return list;
     }
 }
+
+// Windows Update through its own COM interface (Microsoft.Update.Session), run in the elevated helper:
+// search the pending software updates, keep the ones the user picked (by UpdateID), download and install
+// them. One job at a time, polled by the agent like UpdateJob. Never reboots by itself.
+static class WindowsUpdateJob {
+    static readonly object Gate = new object();
+    static Dictionary<string, object> state = new Dictionary<string, object> { { "state", "idle" } };
+
+    public static Dictionary<string, object> Status() { lock (Gate) return new Dictionary<string, object>(state); }
+    static void Set(string key, object value) { lock (Gate) state[key] = value; }
+
+    public static Dictionary<string, object> Start(List<string> ids) {
+        if (ids == null || ids.Count == 0 || ids.Count > 100) throw new ArgumentException("要安装的 Windows 更新格式错误");
+        foreach (string id in ids) { Guid g; if (!Guid.TryParse(id, out g)) throw new ArgumentException("Windows 更新编号不对"); }
+        lock (Gate) {
+            string s = Convert.ToString(state["state"]);
+            if (s == "searching" || s == "downloading" || s == "installing") throw new InvalidOperationException("Windows 更新已经在安装");
+            state = new Dictionary<string, object> { { "state", "searching" }, { "ids", ids } };
+        }
+        var t = new Thread(() => Run(ids)) { IsBackground = true };
+        t.SetApartmentState(ApartmentState.STA);
+        t.Start();
+        return Status();
+    }
+
+    static void Run(List<string> ids) {
+        try {
+            dynamic session = Activator.CreateInstance(Type.GetTypeFromProgID("Microsoft.Update.Session"));
+            session.ClientApplicationID = "Claw Toolbox";
+            dynamic searcher = session.CreateUpdateSearcher();
+            dynamic found = searcher.Search("IsInstalled=0 and IsHidden=0 and Type='Software'");
+            dynamic picked = Activator.CreateInstance(Type.GetTypeFromProgID("Microsoft.Update.UpdateColl"));
+            var wanted = new HashSet<string>(ids, StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < found.Updates.Count; i++) {
+                dynamic u = found.Updates.Item(i);
+                if (!wanted.Contains((string)u.Identity.UpdateID)) continue;
+                if (!(bool)u.EulaAccepted) u.AcceptEula();
+                picked.Add(u);
+            }
+            if (picked.Count == 0) throw new InvalidOperationException("这些更新已经不在待装列表里了，请重新检查");
+            Set("total", (int)picked.Count);
+            Set("state", "downloading");
+            dynamic downloader = session.CreateUpdateDownloader();
+            downloader.Updates = picked;
+            downloader.Download();
+            Set("state", "installing");
+            dynamic installer = session.CreateUpdateInstaller();
+            installer.Updates = picked;
+            dynamic result = installer.Install();
+            int code = (int)result.ResultCode;   // 2 succeeded, 3 succeeded with errors, 4 failed, 5 aborted
+            lock (Gate) {
+                state["resultCode"] = code;
+                state["reboot"] = (bool)result.RebootRequired;
+                state["state"] = code == 2 || code == 3 ? "done" : "failed";
+                if (code != 2 && code != 3) state["error"] = "Windows 更新返回 " + code;
+            }
+        } catch (Exception e) {
+            lock (Gate) { state["state"] = "failed"; state["error"] = e.Message; }
+        }
+    }
+}

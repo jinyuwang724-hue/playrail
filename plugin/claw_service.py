@@ -526,6 +526,11 @@ class Service:
         await asyncio.to_thread(self._system.restart)
         return {"restarting": True}
 
+    async def install_windows_updates(self, ids):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        return await self._system.install_windows(ids)
+
     async def check_driver_updates(self):
         return self._system.vendor.check()
 

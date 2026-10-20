@@ -208,6 +208,8 @@ class Executor : IDisposable {
             else if (command == "update_start") reply["update"] = UpdateJob.Start(request);
             else if (command == "update_status") reply["update"] = UpdateJob.Status();
             else if (command == "pnp_drivers") reply["drivers"] = UpdateJob.Drivers();
+            else if (command == "wu_start") reply["update"] = WindowsUpdateJob.Start(Strings(request, "ids"));
+            else if (command == "wu_status") reply["update"] = WindowsUpdateJob.Status();
             else if (command == "vendor_apps") reply["apps"] = SystemPage.VendorApps();
             else if (command == "vendor_app_set") reply["apps"] = SystemPage.SetVendorApp(Convert.ToString(request["app"]), true.Equals(request["disabled"]));
             else if (command == "startup_approve") reply["system"] = SystemPage.SetStartupApproved(Convert.ToString(request["key"]), Convert.ToString(request["name"]), true.Equals(request["enabled"]));

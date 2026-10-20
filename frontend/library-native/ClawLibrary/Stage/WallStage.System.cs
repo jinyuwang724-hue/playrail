@@ -124,7 +124,10 @@ public sealed partial class WallStage
         return t;
     }
 
-    private bool SyUpdating => _syView?["vendorUpdates"] is JsonObject u && (Str(u["state"]) == "checking" || Str(u["active"]) != null);
+    private bool SyUpdating =>
+        (_syView?["vendorUpdates"] is JsonObject u && (Str(u["state"]) == "checking" || Str(u["active"]) != null))
+        || Str(_syView?["updates"]?["state"]) == "checking"
+        || Str(_syView?["updates"]?["job"]?["state"]) is "searching" or "downloading" or "installing";
 
     // ---------------- 和 agent 打交道 ----------------
 
@@ -381,16 +384,57 @@ public sealed partial class WallStage
                 _ = SyRun("install_updates", _ => $"开始更新 {batch.Length} 项", ids);
             }));
 
-        // ---- Windows 更新 ----
+        // ---- Windows 更新：每一项单独装，另有「安装全部 Windows 更新」；不进上面的「全部更新」 ----
         _syRows.Add(new PerfRow { Section = true, Title = "Windows 更新" });
-        string wuText = Str(w?["state"]) switch
+        var wuItems = (w?["items"] as JsonArray)?.OfType<JsonObject>().ToArray() ?? Array.Empty<JsonObject>();
+        var job = w?["job"] as JsonObject;
+        string jobState = Str(job?["state"]) ?? "";
+        bool wuBusy = jobState is "searching" or "downloading" or "installing";
+        var jobIds = (job?["ids"] as JsonArray)?.Select(n => Str(n) ?? "").ToHashSet() ?? new HashSet<string>();
+        if (jobState == "done" && Bool(job?["reboot"]))
+            _syRows.Add(new PerfRow { Title = "Windows 更新已安装", Value = "重启后生效", Disabled = true });
+        else if (jobState == "failed")
+            _syRows.Add(new PerfRow { Title = "Windows 更新没装成", Value = Str(job?["error"]) ?? "", Disabled = true });
+        if (wuItems.Length == 0)
         {
-            "done" => Int(w!["count"]) is int n && n > 0 ? $"{n} 个待安装" : "已是最新",
-            "checking" => "正在检查…",
-            "error" => "检查失败",
-            _ => v == null ? "—" : "还没检查",
-        };
-        _syRows.Add(SyAct("Windows 更新", "wu", wuText, () => { SystemInfo.Open("ms-settings:windowsupdate"); Toast("正在打开 Windows 更新"); }));
+            string wuText = Str(w?["state"]) switch
+            {
+                "checking" => "正在检查…",
+                "error" => "检查失败",
+                "done" => "已是最新",
+                _ => v == null ? "—" : "还没检查",
+            };
+            _syRows.Add(new PerfRow { Title = "Windows", Value = wuText, Disabled = true });
+        }
+        else
+        {
+            if (wuItems.Length >= 2)
+                _syRows.Add(SyAct($"安装全部 Windows 更新（{wuItems.Length} 项）", "wu-all", wuBusy ? "正在安装…" : "", () =>
+                {
+                    if (wuBusy || !SyConfirm("wu-all")) return;
+                    var ids = new JsonArray(wuItems.Select(i => (JsonNode?)JsonValue.Create(Str(i["id"]))).ToArray());
+                    _ = SyRun("install_windows_updates", _ => $"开始安装 {wuItems.Length} 个 Windows 更新", ids);
+                }));
+            foreach (var it in wuItems)
+            {
+                string id = Str(it["id"]) ?? "", key = "wu:" + id;
+                string kb = Str(it["kb"]) is string k && k.Length > 0 ? "KB" + k.Split(',')[0] : "";
+                long size = (long)(Num(it["size"]) ?? 0);
+                string value = wuBusy && jobIds.Contains(id)
+                    ? jobState switch { "searching" => "准备中…", "downloading" => "下载中…", _ => "安装中…" }
+                    : _syArmed == key ? "再按一次确认" : string.Join(" · ", new[] { kb, size > 0 ? $"{Math.Max(1, size >> 20)} MB" : "" }.Where(x => x.Length > 0));
+                _syRows.Add(new PerfRow
+                {
+                    Title = Str(it["title"]) ?? id, Value = value,
+                    Press = () =>
+                    {
+                        if (wuBusy) { Toast("Windows 更新正在安装，等它装完"); return; }
+                        if (!SyConfirm(key)) return;
+                        _ = SyRun("install_windows_updates", _ => "开始安装这个 Windows 更新", new JsonArray(JsonValue.Create(id)));
+                    },
+                });
+            }
+        }
 
         // ---- 微星 / Intel ----
         foreach (var (vendorId, vendorName) in new[] { ("msi", "微星"), ("intel", "Intel") })

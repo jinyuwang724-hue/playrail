@@ -612,7 +612,7 @@ class PowerControl:
                 return reply.get("display") or {}
             if command in ("system_read", "power_button_set", "hibernate_after_set", "display_off_set", "wake_set", "charge_limit_set", "startup_approve"):
                 return reply.get("system") or {}
-            if command in ("update_start", "update_status"):
+            if command in ("update_start", "update_status", "wu_start", "wu_status"):
                 return reply.get("update") or {}
             if command in ("vendor_apps", "vendor_app_set"):
                 return reply.get("apps") or []

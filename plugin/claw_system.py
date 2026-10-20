@@ -54,6 +54,14 @@ def _config_files(data):
             yield path
 
 
+def _short_title(title):
+    """「2026-10 Cumulative Update for Windows 11 Version 25H2 for x64-based Systems (KB5066835)」→ 去掉 KB 号和平台尾巴。"""
+    import re
+    title = re.sub(r"\s*\(KB\d+\)", "", title)
+    title = re.sub(r"\s+for x64-based Systems|\s+适用于基于 x64 的系统", "", title)
+    return title.strip()[:60]
+
+
 class SystemControl:
     def __init__(self, call, data, root, battery):
         """call: the helper's command call. battery(): (percent, on charger) from the power module."""
@@ -67,6 +75,7 @@ class SystemControl:
         self.updates_at = 0.0
         self.widget_version = None
         self.lookup_task = None
+        self.wu_job, self.wu_task = None, None
         self.firmware = None
         self.restart_requested = False
         self.samples = []  # (time, remaining mWh) for the charge / discharge rate when the firmware gives none
@@ -114,7 +123,7 @@ class SystemControl:
             "wakeRestore": wake_restore, "wakeError": system.get("wakeError"),
             "device": system.get("device") or {},
             "versions": {"backend": version, "widget": self.widget_version, "padFirmware": self.firmware},
-            "updates": self.updates,
+            "updates": {**self.updates, "job": self.wu_job},
             "vendorUpdates": self.vendor.view(),
             "autostart": self.autostart,
             "homeApp": self._home_app(),
@@ -150,13 +159,42 @@ class SystemControl:
         except Exception:
             self.widget_version = None
         try:
-            count = await asyncio.to_thread(_powershell,
-                "$s=(New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher();"
-                "$s.Online=$true;($s.Search(\"IsInstalled=0 and IsHidden=0 and Type='Software'\")).Updates.Count")
-            self.updates = {"state": "done", "count": int(count), "checked": time.strftime("%H:%M")}
+            raw = await asyncio.to_thread(_powershell,
+                "$q=(New-Object -ComObject Microsoft.Update.Session).CreateUpdateSearcher();$q.Online=$true;"
+                "$r=$q.Search(\"IsInstalled=0 and IsHidden=0 and Type='Software'\");"
+                "@($r.Updates|%{[pscustomobject]@{id=$_.Identity.UpdateID;title=$_.Title;kb=($_.KBArticleIDs -join ',');"
+                "size=[int64]$_.MaxDownloadSize;reboot=[int]$_.InstallationBehavior.RebootBehavior}})|ConvertTo-Json -Compress")
+            found = json.loads(raw) if raw else []
+            found = [found] if isinstance(found, dict) else found
+            items = [{"id": u["id"], "title": _short_title(u.get("title") or ""), "kb": u.get("kb") or "",
+                      "size": u.get("size") or 0, "reboot": bool(u.get("reboot"))} for u in found if u.get("id")]
+            self.updates = {"state": "done", "count": len(items), "items": items, "checked": time.strftime("%H:%M")}
         except Exception as e:
             self.updates = {"state": "error", "error": str(e)[:120] or "检查失败"}
         self.updates_at = time.monotonic()
+
+    async def install_windows(self, ids):
+        """装选中的 Windows 更新（提权 helper 走 Windows 更新自己的接口），装完重新检查。"""
+        if type(ids) is not list or not ids or not all(type(i) is str for i in ids):
+            raise ValueError("要安装的 Windows 更新格式错误")
+        known = {u["id"] for u in self.updates.get("items") or []}
+        if any(i not in known for i in ids):
+            raise ValueError("这一项已经不在待装列表里，请重新检查")
+        self.wu_job = await self.call("wu_start", ids=ids)
+        if self.wu_task is None or self.wu_task.done():
+            self.wu_task = asyncio.create_task(self._watch_windows())
+        return self.updates
+
+    async def _watch_windows(self):
+        while True:
+            await asyncio.sleep(2)
+            try:
+                self.wu_job = await self.call("wu_status")
+            except RuntimeError:
+                continue
+            if self.wu_job.get("state") in ("done", "failed", "idle"):
+                break
+        await self._lookups()
 
     def check_updates(self):
         if self.lookup_task is None or self.lookup_task.done():
