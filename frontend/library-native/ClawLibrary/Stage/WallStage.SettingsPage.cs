@@ -362,17 +362,27 @@ public sealed partial class WallStage
         _stRows.Add(new PerfRow { Section = true, Title = "开机" });
         if (v?["home"] is JsonObject home && home["choices"] is JsonArray choices)
         {
-            var ids = choices.Select(c => Str(c?["id"]) ?? "").ToArray();
-            var names = choices.Select(c => Str(c?["name"]) ?? "").ToArray();
-            int cur = Array.IndexOf(ids, Str(home["current"]) ?? "");
-            _stRows.Add(StPick("全屏体验主页", names, cur < 0 ? 0 : cur, i =>
+            // 关 / Claw 游戏库 / Steam 大屏幕 / Xbox（/ 现在装着的其他主页应用，比如 AnyFSE）
+            const string own = "ClawToolbox.Library_ba3r68zr466za!App";
+            var ids = new List<string> { "off", own, "steam" };
+            var names = new List<string> { "关", "Claw 游戏库", "Steam 大屏幕" };
+            foreach (var c in choices.OfType<JsonObject>())
+                if (Str(c["id"]) is string id && id != own) { ids.Add(id); names.Add(Str(c["name"]) ?? id); }
+            string current = Str(home["current"]) ?? "";
+            string sel = home["startup"] is JsonValue sv && !Bool(sv) ? "off" : current == own ? (_prefs.FseSteam ? "steam" : own) : current;
+            int idx = Math.Max(0, ids.IndexOf(sel));
+            _stRows.Add(StPick("全屏体验", names.ToArray(), idx, i =>
             {
-                home["current"] = ids[i];
+                string pick = ids[i];
+                string aumid = pick == "steam" ? own : pick;
+                SaveUi(_prefs with { FseSteam = pick == "steam" });
+                home["startup"] = pick != "off";
+                if (pick != "off") home["current"] = aumid;
                 Repaint();
-                _ = StRun("set_home_app", _ => $"全屏体验主页：{names[i]}（下次进全屏体验时生效）", JsonValue.Create(ids[i]));
+                _ = StRun("set_home_app", _ => pick == "off" ? "开机不再进入全屏体验" : $"全屏体验主页：{names[i]}", JsonValue.Create(aumid));
             }));
         }
-        else _stRows.Add(StInfo("全屏体验主页", later));
+        else _stRows.Add(StInfo("全屏体验", later));
         _stRows.Add(StPick("打开后落在", new[] { "游戏库", "控制中心" }, (int)_prefs.Boot, i => { SaveUi(_prefs with { Boot = (BootTarget)i }); Repaint(); }, 0));
         if (v?["autostart"] is JsonValue)
         {

@@ -56,6 +56,7 @@ public sealed partial class App : Application, Microsoft.UI.Xaml.Markup.IXamlMet
             _ = Task.Run(Stage.TextKit.Warm);
             _window = new MainWindow(ActivationRoute(Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs().Data));
             _window.Activate();
+            ToolboxWindow.SteamHomeRedirect(ActivationRoute(Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs().Data), WinRT.Interop.WindowNative.GetWindowHandle(_window));
             var dq = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
             Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += (_, activation) =>
             {
@@ -146,6 +147,7 @@ public sealed partial class MainWindow : Window
     public void ActivateRoute(string route)
     {
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (ToolboxWindow.SteamHomeRedirect(route, hwnd)) return;
         if (route.StartsWith("minimize-", StringComparison.Ordinal) &&
             ToolboxActivation.ShouldMinimize(route, ToolboxWindow.XboxFseActive(), ToolboxWindow.SteamBigPictureOpen()))
         {

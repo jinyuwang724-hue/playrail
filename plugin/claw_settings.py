@@ -38,27 +38,36 @@ def _friendly(name):
     return FRIENDLY.get(name, name.removesuffix(".lnk"))
 
 
-def home_app():
-    current = None
+def _read_gaming(name):
     for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
         try:
             with winreg.OpenKey(hive, GAMING) as key:
-                current = winreg.QueryValueEx(key, "GamingHomeApp")[0]
-                break
+                return winreg.QueryValueEx(key, name)[0]
         except OSError:
             continue
+    return None
+
+
+def home_app():
+    """全屏体验：开机是否进入（StartupToGamingHome）和主页应用（GamingHomeApp）。"""
+    current = _read_gaming("GamingHomeApp")
+    startup = _read_gaming("StartupToGamingHome")
     choices = [{"id": OWN_HOME, "name": "Claw 游戏库"}, {"id": XBOX_HOME, "name": "Xbox"}]
     if current and current not in (OWN_HOME, XBOX_HOME):
         family = current.split("!")[0].split("_")[0]
         choices.append({"id": current, "name": family.rsplit(".", 1)[-1]})
-    return {"current": current, "choices": choices}
+    return {"current": current, "startup": startup != 0, "choices": choices}
 
 
 def set_home_app(aumid):
-    if aumid not in [c["id"] for c in home_app()["choices"]]:
+    """aumid = "off"：开机不进全屏体验（主页设置不动）；其余：开机进全屏体验，主页用它。
+    Steam 大屏幕模式也是把主页设成 Claw 游戏库，由游戏库被当主页打开时转去 Steam 大屏幕（替代 AnyFSE）。"""
+    if aumid != "off" and aumid not in [c["id"] for c in home_app()["choices"]]:
         raise ValueError("不认识的主页应用")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, GAMING) as key:
-        winreg.SetValueEx(key, "GamingHomeApp", 0, winreg.REG_SZ, aumid)
+        winreg.SetValueEx(key, "StartupToGamingHome", 0, winreg.REG_DWORD, 0 if aumid == "off" else 1)
+        if aumid != "off":
+            winreg.SetValueEx(key, "GamingHomeApp", 0, winreg.REG_SZ, aumid)
     return home_app()
 
 
