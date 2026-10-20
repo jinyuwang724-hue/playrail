@@ -1155,7 +1155,7 @@ public sealed partial class WallStage
     private ScalarKeyFrameAnimation Keys(double ms, params (float at, float value, Bezier? ease)[] keys)
     {
         var a = G.C.CreateScalarKeyFrameAnimation();
-        foreach (var (at, value, ease) in keys) a.InsertKeyFrame(at, value, ease is { } e ? G.Ease(e) : G.Linear);
+        foreach (var (at, value, ease) in keys) a.InsertKeyFrame(Math.Clamp(at, 0f, 1f), value, ease is { } e ? G.Ease(e) : G.Linear);
         a.Duration = Gfx.Ms(ms);
         return a;
     }
@@ -1274,6 +1274,7 @@ public sealed partial class WallStage
         else
             card.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)((HandMs + FlyMs * 0.3) / total), 0, null), ((float)((HandMs + FlyMs * 0.9) / total), 1, EaseCss), (1, 1, null)));
         if (hold) cardCover.Opacity = 0;
+        else if (iconCard) cardCover.Opacity = 1;   // 图标卡没有封面层可交接（落定时刻 = 动画终点，再加一帧会超出关键帧范围）
         else cardCover.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)(land / total), 0, null), ((float)(land / total) + 0.0005f, 1, null), (1, 1, null)));
         if (!hold)
         {
