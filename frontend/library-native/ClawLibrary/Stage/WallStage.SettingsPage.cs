@@ -724,8 +724,8 @@ public sealed partial class WallStage
     /// <summary>点左栏的分类。</summary>
     private bool StCategoryClick(double sx, double sy)
     {
-        double x = sx / _ccK - PerfLeftX, y = sy / _ccK - PerfTop;
-        if (x < 0 || x > PerfLeftW || y < 0) return false;
+        double x = sx / _ccK - PerfLeftX + StGutter, y = sy / _ccK - PerfTop;
+        if (x < 0 || x > PerfLeftW + StGutter || y < PerfSecH) return false;
         int i = (int)Math.Floor((y - PerfSecH) / StCatH);
         if (i < 0 || i >= StCats.Length) return false;
         MarkInput();
@@ -758,8 +758,9 @@ public sealed partial class WallStage
         _stRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _stRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
         RowScrollTo(_stRight, _stRows, _settingsManualScroll || _stZone == 0 ? -1 : _stFocus, ref _stScroll, ref _stScrollY, h, vh, false);
-        CcSet(_stLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintStNav(ds, vh)));
-        _stLeft.Size = new Vector2(PerfLeftW * k, vh * k);
-        _stLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
+        // 左栏往左多出 StGutter：焦点三角画在页边距里，分类名的左边和标题「设置」对齐
+        CcSet(_stLeft, CcDraw(PerfLeftW + StGutter, vh, raster, ds => PaintStNav(ds, vh)));
+        _stLeft.Size = new Vector2((PerfLeftW + StGutter) * k, vh * k);
+        _stLeft.Offset = new Vector3((PerfLeftX - StGutter) * k, PerfTop * k, 0);
     }
 }
