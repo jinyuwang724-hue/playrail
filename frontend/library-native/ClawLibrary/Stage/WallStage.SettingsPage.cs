@@ -18,8 +18,10 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private static readonly string[] StCats = { "通用", "游戏库", "外观", "声音与反馈", "游戏中", "开机自启", "第三方软件", "维护", "关于" };
+    private static readonly string[] StCats = { "通用", "游戏库", "外观", "声音与反馈", "Steam 插件", "开机自启", "禁用第三方软件", "维护", "关于" };
     private const float StCatH = PerfRowH;
+    /// <summary>首页：游戏库打开后先到哪（控制中心，或它下面的六个页面之一）。顺序和 BootTarget 一致。</summary>
+    private static readonly string[] BootNames = { "游戏库", "控制中心", "性能", "手柄", "显示与声音", "系统", "设置" };
 
     private UiPrefs _prefs = new();
     private ContainerVisual? _st;
@@ -277,7 +279,7 @@ public sealed partial class WallStage
             case 1: BuildStLibrary(); break;
             case 2: BuildStLook(); break;
             case 3: BuildStSound(v, later); break;
-            case 4: BuildStInGame(v, later); break;
+            case 4: BuildStSteam(v, later); break;
             case 5: BuildStStartup(v, later); break;
             case 6: BuildStVendors(v, later); break;
             case 7: BuildStMaintenance(v, later); break;
@@ -292,6 +294,20 @@ public sealed partial class WallStage
     }
 
     private void Repaint() { BuildStRows(); PaintSt(); }
+
+    private long _navHapticAt;
+
+    /// <summary>游戏库里的导航震动（和 Steam 大屏幕同一套样式，后台出震动）；连按时 40 ms 内只震一次。</summary>
+    private void NavHaptic(string pattern)
+    {
+        if (!_prefs.NavHaptics || NowMs - _navHapticAt < 40) return;
+        _navHapticAt = NowMs;
+        _ = Task.Run(async () =>
+        {
+            try { _agent ??= new AgentClient(); await _agent.Call("library_haptic", JsonValue.Create(pattern)); }
+            catch { }
+        });
+    }
 
     // ---------------- 选游戏文件夹（手柄能用的文件夹浏览） ----------------
 
@@ -383,7 +399,7 @@ public sealed partial class WallStage
             }));
         }
         else _stRows.Add(StInfo("全屏体验", later));
-        _stRows.Add(StPick("打开后落在", new[] { "游戏库", "控制中心" }, (int)_prefs.Boot, i => { SaveUi(_prefs with { Boot = (BootTarget)i }); Repaint(); }, 0));
+        _stRows.Add(StPick("首页", BootNames, (int)_prefs.Boot, i => { SaveUi(_prefs with { Boot = (BootTarget)i }); Repaint(); }, 0));
         if (v?["autostart"] is JsonValue)
         {
             bool on = Bool(v["autostart"]);
@@ -540,38 +556,57 @@ public sealed partial class WallStage
         vol.Disabled = !_prefs.Sounds;
         _stRows.Add(vol);
         _stRows.Add(new PerfRow { Section = true, Title = "震动" });
+        _stRows.Add(StToggle("导航震动", _prefs.NavHaptics, on => { SaveUi(_prefs with { NavHaptics = on }); if (on) NavHaptic("confirm"); Repaint(); }, true));
+    }
+
+    /// <summary>Steam 插件（Decky 里的工具箱）管的事：大屏幕里快设键、Claw 键接管成左右侧栏，Steam 以管理员身份启动，大屏幕导航震动。</summary>
+    private void BuildStSteam(JsonObject? v, string later)
+    {
+        _stRows.Add(new PerfRow { Section = true, Title = "大屏幕按键" });
+        if (v?["steamKeys"] is JsonObject keys)
+        {
+            bool on = Bool(keys["enabled"]);
+            string qam = Str(keys["qamAction"]) ?? "MainMenu", msi = Str(keys["msiAction"]) ?? "QuickAccess";
+            void Save(bool en, string q, string m)
+            {
+                keys["enabled"] = en; keys["qamAction"] = q; keys["msiAction"] = m;
+                Repaint();
+                _ = StRun("set_steam_keys", null, JsonValue.Create(en), JsonValue.Create(q), JsonValue.Create(m));
+            }
+            string[] sides = { "MainMenu", "QuickAccess" }, sideNames = { "左侧栏", "右侧栏" };
+            _stRows.Add(StToggle("接管快设键和 Claw 键", on, to => Save(to, qam, msi), true));
+            var q = StPick("快设键", sideNames, Math.Max(0, Array.IndexOf(sides, qam)), i => Save(on, sides[i], msi), 0);
+            var m = StPick("Claw 键", sideNames, Math.Max(0, Array.IndexOf(sides, msi)), i => Save(on, qam, sides[i]), 1);
+            q.Disabled = m.Disabled = !on;
+            _stRows.Add(q);
+            _stRows.Add(m);
+        }
+        else _stRows.Add(StInfo("接管快设键和 Claw 键", later));
+
+        _stRows.Add(new PerfRow { Section = true, Title = "Steam" });
+        if (v?["compatibility"] is JsonObject c && c["enabled"] is JsonObject en)
+        {
+            bool busy = Bool(c["busy"]);
+            bool on = Bool(en["steam"]);
+            string status = Str((c["items"] as JsonObject)?["steam"]) ?? "";
+            string note = busy ? "处理中" : status.StartsWith("需要处理") ? "没生效" : status.Contains("游戏结束后") || status.Contains("关掉游戏后") ? "游戏结束后生效" : "";
+            var row = StToggle("以管理员身份启动", on, to =>
+            {
+                en["steam"] = to;
+                Repaint();
+                _ = StRun("manage_compatibility", r => Str(r?["items"]?["steam"]) ?? "已更新", JsonValue.Create("set"), JsonValue.Create("steam"), JsonValue.Create(to));
+            }, false, note);
+            row.Disabled = busy;
+            _stRows.Add(row);
+            if (status.StartsWith("需要处理")) _stRows.Add(StInfo("没生效的原因", status.Replace("需要处理：", "")));
+        }
+        else _stRows.Add(StInfo("以管理员身份启动", later));
         if (v?["haptics"] is JsonValue)
         {
             bool on = Bool(v["haptics"]);
-            _stRows.Add(StToggle("导航震动", on, to => { v["haptics"] = to; Repaint(); _ = StRun("set_haptics_enabled", null, JsonValue.Create(to)); }, true));
+            _stRows.Add(StToggle("大屏幕导航震动", on, to => { v["haptics"] = to; Repaint(); _ = StRun("set_haptics_enabled", null, JsonValue.Create(to)); }, true));
         }
-        else _stRows.Add(StInfo("导航震动", later));
-    }
-
-    private void BuildStInGame(JsonObject? v, string later)
-    {
-        _stRows.Add(new PerfRow { Section = true, Title = "兼容修复" });
-        if (v?["compatibility"] is JsonObject c && c["enabled"] is JsonObject en)
-        {
-            var items = c["items"] as JsonObject;
-            bool busy = Bool(c["busy"]);
-            foreach (var (id, title) in new[] { ("steam", "Steam 以管理员身份启动"), ("gamebar", "Xbox 键打开 Game Bar 首页") })
-            {
-                bool on = Bool(en[id]);
-                var row = StToggle(title, on, to =>
-                {
-                    en[id] = to;
-                    Repaint();
-                    _ = StRun("manage_compatibility", r => Str(r?["items"]?[id]) ?? "已更新", JsonValue.Create("set"), JsonValue.Create(id), JsonValue.Create(to));
-                }, false, busy ? "处理中" : (Str(items?[id]) ?? "").StartsWith("需要处理") ? "需要处理" : "");
-                row.Disabled = busy;
-                _stRows.Add(row);
-            }
-            if (Str(c["error"]) is string err && err.Length > 0) _stRows.Add(StInfo("兼容修复出错", err));
-        }
-        else _stRows.Add(StInfo("兼容修复", later));
-        _stRows.Add(new PerfRow { Section = true, Title = "调试" });
-        _stRows.Add(StToggle("性能读数（帧时间）", _hudOn, on => { if (on != _hudOn) ToggleHud(); Repaint(); }, false));
+        else _stRows.Add(StInfo("大屏幕导航震动", later));
     }
 
     private void BuildStStartup(JsonObject? v, string later)
@@ -619,6 +654,7 @@ public sealed partial class WallStage
     private void BuildStMaintenance(JsonObject? v, string later)
     {
         _stRows.Add(new PerfRow { Section = true, Title = "诊断" });
+        _stRows.Add(StToggle("性能读数（帧时间）", _hudOn, on => { if (on != _hudOn) ToggleHud(); Repaint(); }, false));
         _stRows.Add(StAction("导出日志", "logs", "", () => _ = StRun("export_logs", r => $"日志已存到桌面：{Str(r?["name"])}")));
         string version = Str(v?["version"]) ?? "—";
         _stRows.Add(StAction("重启工具箱后台", "restart", _stAgentDown ? "未连接" : "", () =>

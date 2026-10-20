@@ -156,7 +156,19 @@ public sealed partial class WallStage : IDisposable
         InitRail();
         if (!Program.Args.Contains("--no-backdrop")) _backdropOn = _prefs.Backdrop;
         BuildChrome();
-        if (_prefs.Boot == BootTarget.ControlCenter) After(900, () => { if (!_ccOpen) OpenControlCenter(); });
+        // 首页：控制中心，或者它下面的某一页
+        if (_prefs.Boot != BootTarget.Library) After(900, () =>
+        {
+            if (!_ccOpen) OpenControlCenter();
+            switch (_prefs.Boot)
+            {
+                case BootTarget.Perf: OpenPerf(); break;
+                case BootTarget.Gamepad: OpenGamepad(); break;
+                case BootTarget.Display: OpenDisplay(); break;
+                case BootTarget.System: OpenSystem(); break;
+                case BootTarget.Settings: OpenSettingsPage(); break;
+            }
+        });
         long tChrome = NowMs;
         Log.Info($"library: {_lib.Games.Count} games, {_lib.Collections.Count} collections, view {View.Width}x{View.Height} scale {View.Scale} dpi {Chrome.Dpi} ({NowMs - t0}ms)");
 
@@ -749,6 +761,7 @@ public sealed partial class WallStage : IDisposable
     {
         MarkInput();
         SoundFx.Play(Sfx.Move);
+        NavHaptic(dir switch { Direction.Up => "moveUp", Direction.Down => "moveDown", Direction.Left => "moveLeft", _ => "moveRight" });
         if (MorphIntercept()) return;
         if (_ccOpen) { CcMove(dir); return; }
         if (RailMove(dir)) return;
@@ -767,6 +780,7 @@ public sealed partial class WallStage : IDisposable
     {
         MarkInput();
         SoundFx.Play(Sfx.Confirm);
+        NavHaptic("confirm");
         if (MorphIntercept()) return;
         if (_ccOpen) { CcActivate(); return; }
         if (RailActivate()) return;
@@ -826,6 +840,7 @@ public sealed partial class WallStage : IDisposable
     {
         MarkInput();
         SoundFx.Play(Sfx.Back);
+        NavHaptic("back");
         if (MorphIntercept()) return;
         if (_ccOpen) { if (!CcChromeBack()) CloseControlCenter(); return; }
         if (RailBack()) return;

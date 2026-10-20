@@ -40,11 +40,14 @@ namespace ClawCompatibility {
    }
    return result;
   }
+  static bool SteamTask() {
+   using(var p=Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory,"schtasks.exe"),"/query /tn \"\\ClawToolbox\\SteamAdmin\""){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true})){p.StandardOutput.ReadToEnd();p.WaitForExit(15000);return p.ExitCode==0;}
+  }
   static object Inspect() {
    var steam=SteamPaths.Executable();var processes=new List<object>();
    foreach(var process in Process.GetProcessesByName("steam"))try{processes.Add(new{pid=process.Id,elevation=Elevation(process.Id)});}finally{process.Dispose();}
    bool? home=null;string homeError=null;try{home=GameBarHomePreference.Read();}catch(Exception ex){homeError=ex.Message;}
-   return new{steamPath=steam,steamProcesses=processes,home=home,homeError=homeError,shortcuts=Links(steam)};
+   return new{steamPath=steam,steamProcesses=processes,home=home,homeError=homeError,shortcuts=Links(steam),steamTask=SteamTask()};
   }
   static object Execute(Dictionary<string,object> request) {
    string operation=request["op"] as string;
@@ -65,6 +68,20 @@ namespace ClawCompatibility {
      data[0x15]=(byte)((bool)item.Value?data[0x15]|0x20:data[0x15]&~0x20);File.WriteAllBytes(file,data);
     }
     return Links(steam);
+   }
+   if(operation=="steamtask") {
+    // Steam started elevated at sign-in: a highest-privilege logon task runs the toolbox's SteamAdminLauncher
+    // (a Run entry cannot start an administrator program at sign-in). Replaces the old Playhub startup entry.
+    object value;if(!request.TryGetValue("value",out value)||!(value is bool))throw new ArgumentException("开关格式错误");
+    if(!new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent()).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
+     throw new UnauthorizedAccessException("需要管理员权限");
+    string launcher=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"SteamAdminLauncher.exe");
+    if((bool)value&&!File.Exists(launcher))throw new FileNotFoundException("找不到 Steam 管理员启动器",launcher);
+    string args=(bool)value
+     ?"/create /f /tn \"\\ClawToolbox\\SteamAdmin\" /sc onlogon /rl highest /tr \"\\\""+launcher+"\\\"\""
+     :"/delete /f /tn \"\\ClawToolbox\\SteamAdmin\"";
+    using(var p=Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory,"schtasks.exe"),args){UseShellExecute=false,CreateNoWindow=true})){p.WaitForExit(15000);}
+    return new{task=SteamTask()};
    }
    throw new ArgumentException("不支持的兼容性操作");
   }

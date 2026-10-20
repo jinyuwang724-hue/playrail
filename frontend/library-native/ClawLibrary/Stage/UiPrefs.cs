@@ -3,7 +3,7 @@
 // 写法和 background.ini 一样：key=value，一行一项，NativeAOT 下不用反射。
 namespace ClawLibrary.Stage;
 
-public enum BootTarget { Library, ControlCenter }
+public enum BootTarget { Library, ControlCenter, Perf, Gamepad, Display, System, Settings }
 public enum AfterLaunch { Keep, Hide }
 
 public sealed record UiPrefs
@@ -28,6 +28,8 @@ public sealed record UiPrefs
     public string[] Folders { get; init; } = Array.Empty<string>();
     /// <summary>全屏体验主页选了「Steam 大屏幕」：游戏库被当主页打开时转去 Steam 大屏幕（替代 AnyFSE）。</summary>
     public bool FseSteam { get; init; }
+    /// <summary>游戏库里的导航震动（和 Steam 大屏幕同款）。</summary>
+    public bool NavHaptics { get; init; } = true;
 
     public static readonly (string Name, uint Rgb)[] Accents =
     {
@@ -65,6 +67,7 @@ public sealed record UiPrefs
                     "sounds" when bool.TryParse(v, out var b) => p with { Sounds = b },
                     "soundVolume" when int.TryParse(v, out var i) => p with { SoundVolume = Math.Clamp(i, 0, 100) },
                     "fseSteam" when bool.TryParse(v, out var b) => p with { FseSteam = b },
+                    "navHaptics" when bool.TryParse(v, out var b) => p with { NavHaptics = b },
                     "folders" => p with { Folders = v.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) },
                     _ => p,
                 };
@@ -84,7 +87,7 @@ public sealed record UiPrefs
                 $"styleB={StyleB}", $"backdrop={Backdrop}", $"reduced={Reduced}", $"boot={Boot}", $"startTab={StartTab}",
                 $"tabOrder={string.Join(',', TabOrder)}", $"tabsHidden={string.Join(',', TabsHidden)}", $"showHidden={ShowHiddenGames}",
                 $"sourceSteam={SourceSteam}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}",
-                $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}",
+                $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}",
             });
             File.Move(FilePath + ".tmp", FilePath, true);
         }

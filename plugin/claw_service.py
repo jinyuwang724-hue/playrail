@@ -96,6 +96,16 @@ def validate_settings(value):
             "steamBindings": _buttons_module.validate_maps(value.get("steamBindings", {}), _input_module.validate_command)}
 
 
+def _steam_game_running():
+    """A Steam game is running (Steam's own RunningAppID), so Steam must not be restarted now."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+            return int(winreg.QueryValueEx(key, "RunningAppID")[0]) != 0
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 class Service:
     def __init__(self, data, emit):
         """data: settings folder. emit(event, value): coroutine that pushes to every front end."""
@@ -145,6 +155,8 @@ class Service:
         self._toolbox_last_press = None
         self._compatibility = _compatibility_module.Compatibility(PLUGIN_ROOT, self._data, self._maintenance)
         self._compatibility_task = None
+        self._compatibility.game_running = _steam_game_running
+        self._library_haptic_id = 0
         self._compatibility_mode = None
 
     async def start(self):
@@ -502,7 +514,7 @@ class Service:
         if self._system.lookup_task is None:  # widget version (and the Windows Update count) for 关于
             self._system.lookup_task = asyncio.create_task(self._system._lookups())
         return {**await self._settings_page.view(), "autostart": self._system.autostart if self._system.autostart is not None
-                else await asyncio.to_thread(self._system._autostart), "haptics": self._settings.get("hapticsEnabled", True),
+                else await asyncio.to_thread(self._system._autostart), "haptics": self._settings.get("hapticsEnabled", True), "steamKeys": {k: self._settings.get(k) for k in ("enabled", "qamAction", "msiAction")},
                 "compatibility": self._compatibility.view(), "backups": self._system._backups(), "widget": self._system.widget_version, "version": json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))["version"]}
 
     async def set_home_app(self, aumid):
@@ -530,6 +542,33 @@ class Service:
         if self._stopping:
             raise RuntimeError("工具箱后台正在退出，请稍候")
         return await self._system.install_windows(ids)
+
+    async def set_steam_keys(self, enabled, qam, msi):
+        """Steam 大屏幕里快设键（qamAction）和 Claw 键（msiAction）接管成左右侧栏：MainMenu = 左侧主菜单，QuickAccess = 右侧快捷栏。
+        改了哪个键，就去掉它在 steamBindings 里的自定义覆盖（和 Decky 插件面板的做法一样）。"""
+        if type(enabled) is not bool or qam not in ALLOWED_ACTIONS or msi not in ALLOWED_ACTIONS:
+            raise ValueError("按键设置格式错误")
+        bindings = dict(self._settings.get("steamBindings") or {})
+        if qam != self._settings.get("qamAction"):
+            bindings.pop("QS", None)
+        if msi != self._settings.get("msiAction"):
+            bindings.pop("Claw", None)
+        return await self.save_settings({**self._settings, "enabled": enabled, "qamAction": qam, "msiAction": msi, "steamBindings": bindings})
+
+    async def library_haptic(self, pattern):
+        """游戏库里的导航震动：和 Steam 大屏幕同一套震动样式，只是不要求 Steam 在前台（游戏在跑时照样不震）。"""
+        if pattern not in HAPTIC_PATTERNS:
+            raise ValueError("不认识的震动样式")
+        if self._stopping:
+            return {"handled": True, "path": "stopping"}
+        duration, side, scale = HAPTIC_PATTERNS[pattern]
+        self._library_haptic_id += 1
+        vendor, product = _haptic_module._HARDWARE
+        haptics = self._haptics
+        gate = lambda: haptics._output is None or haptics._output.can_recover()
+        request = {"requestId": 900_000_000 + self._library_haptic_id, "vendorId": vendor, "productId": product,
+                   "durationMs": duration, "side": 2 if side is None else side, "magnitude": 0.75 * scale}
+        return await asyncio.to_thread(self._haptics.request, request, gate=gate)
 
     async def check_driver_updates(self):
         return self._system.vendor.check()

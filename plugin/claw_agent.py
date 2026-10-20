@@ -60,7 +60,7 @@ METHODS = {
     "set_display_scale", "set_auto_brightness", "set_gpu_option",
     # ClawLibrary 系统
     "get_system_state", "get_settings_state", "set_home_app", "set_startup_item", "set_vendor_app",
-    "set_haptics_enabled", "restart_agent", "check_driver_updates", "install_updates", "install_windows_updates", "set_charge_limit", "set_power_button", "set_hibernate_after", "set_display_off", "set_wake_lock",
+    "set_haptics_enabled", "restart_agent", "check_driver_updates", "install_updates", "set_steam_keys", "library_haptic", "install_windows_updates", "set_charge_limit", "set_power_button", "set_hibernate_after", "set_display_off", "set_wake_lock",
     "set_autostart", "check_updates", "backup_settings", "restore_settings", "reset_settings", "export_logs",
 }
 

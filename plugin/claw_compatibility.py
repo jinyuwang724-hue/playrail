@@ -104,6 +104,8 @@ class Compatibility:
         self.settings = package / 'LocalState/settings.json'
         self.utility = Utility(root, self.data)
         self.lock = asyncio.Lock()
+        self.game_running = None  # set by the service: True while a game is in front
+        self.restart_allowed = False
         self.preserved = set()
         self.state = {'enabled': {'steam': False, 'gamebar': False}, 'records': {}, 'appidFiles': [],
                       'items': {}, 'phase': '等待检查', 'busy': False}
@@ -176,25 +178,19 @@ class Compatibility:
 
     async def steam(self, inspection, enabled):
         steam = inspection['steamPath']
-        desired = {'name': 'Steam Administrator Launcher', 'path': str(self.root / 'bin/SteamAdminLauncher.exe'),
-                   'workingDirectory': str(self.root / 'bin'), 'arguments': '', 'processName': 'steam',
-                   'startMinimized': True, 'delayAfterStartMs': 1500, 'enabled': True}
-        # Read/write only this entry; never restore the whole Playhub configuration.
-        cfg = json.loads(self.config.read_text(encoding='utf-8-sig'))
-        apps = cfg['gaming'].get('customStartupApps', [])
-        current = [entry for entry in apps if entry.get('name') == desired['name']]
-        async def startup(value):
-            latest = json.loads(self.config.read_text(encoding='utf-8-sig'))
-            entries = latest['gaming'].get('customStartupApps', [])
-            if [entry for entry in entries if entry.get('name') == desired['name']] != current:
-                raise RuntimeError('Playhub 启动配置刚刚改变，请重新检查')
-            latest['gaming']['customStartupApps'] = value + [entry for entry in entries if entry.get('name') != desired['name']]
-            atomic(self.config, latest)
-        await self.owned('steam.launcher', current, [desired], startup, enabled)
-        if enabled and current == [desired] and apps and apps[0] != desired:
-            # An existing launcher still must win the race against Playhub's Steam launch.
-            self.record('steam.launcher', current, [desired])
-            await startup([desired])
+        # Steam starts elevated at sign-in through the toolbox's own logon task (Playhub, which used to
+        # launch it, was removed 2026-10-18). An old Playhub entry is only cleaned up if its config still exists.
+        async def set_task(value):
+            await self.utility('steamtask', value=bool(value))
+        await self.owned('steam.task', bool(inspection.get('steamTask')), True, set_task, enabled)
+        if self.config.exists():
+            desired = {'name': 'Steam Administrator Launcher', 'path': str(self.root / 'bin/SteamAdminLauncher.exe')}
+            cfg = json.loads(self.config.read_text(encoding='utf-8-sig'))
+            apps = cfg.get('gaming', {}).get('customStartupApps', [])
+            if not enabled and any(entry.get('name') == desired['name'] for entry in apps):
+                cfg['gaming']['customStartupApps'] = [entry for entry in apps if entry.get('name') != desired['name']]
+                atomic(self.config, cfg)
+        self.state['records'].pop('steam.launcher', None)
         run = self.registry(self.RUN, 'Steam')
         expected = run is None or bool(re.match(r'^"?' + re.escape(steam) + r'"?\s+-silent\s*$', run, re.I))
         async def set_run(value):
@@ -229,9 +225,32 @@ class Compatibility:
                 file.unlink()
             elif not enabled and current_bytes is None:
                 atomic(file, bad)
+        # Takes effect now: restart Steam the right way round unless a game is running.
         processes = inspection['steamProcesses']
-        normal = any(p['elevation'] != 'Elevated' for p in processes)
-        self.state['items']['steam'] = ('已启用；当前 Steam 需退出后重新从管理员入口打开' if normal else '已启用，Steam 启动入口正常') if enabled else ('已关闭；你后来更改的设置已保留' if any(k.startswith('steam.') for k in self.preserved) else '已关闭，原设置已恢复')
+        wrong = any((p['elevation'] != 'Elevated') if enabled else (p['elevation'] == 'Elevated') for p in processes)
+        note = ''
+        if processes and wrong and not self.restart_allowed:
+            note = '；重启 Steam 后生效'
+        elif processes and wrong:
+            if self.game_running and self.game_running():
+                note = '；Steam 会在游戏结束后重启生效' if enabled else '；关掉游戏后重启 Steam 生效'
+            else:
+                await self.restart_steam(inspection['steamPath'], enabled)
+                note = '，Steam 已重启'
+        self.state['items']['steam'] = ('已开启' + note) if enabled else (('已关闭' + note) if not any(k.startswith('steam.') for k in self.preserved) else '已关闭；你后来更改的设置已保留')
+
+    async def restart_steam(self, steam, elevated):
+        """Shut Steam down and start it again elevated (through the launcher) or as a normal user."""
+        await asyncio.to_thread(subprocess.run, [steam, '-shutdown'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW, timeout=20)
+        for _ in range(60):
+            out = await asyncio.to_thread(subprocess.run, ['tasklist', '/fi', 'imagename eq steam.exe', '/nh'], capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            if b'steam.exe' not in out.stdout.lower():
+                break
+            await asyncio.sleep(0.5)
+        if elevated:
+            os.startfile(str(self.root / 'bin/SteamAdminLauncher.exe'))  # the manifest asks for elevation
+        else:
+            subprocess.Popen([steam, '-gamepadui'], cwd=os.path.dirname(steam), creationflags=subprocess.DETACHED_PROCESS)
 
     async def gamebar(self, inspection, enabled):
         value = self.helper.read_bytes()
@@ -288,6 +307,8 @@ class Compatibility:
             self.preserved.clear()
             if self.state.get('error'):
                 raise RuntimeError(self.state['error'])
+            # Steam is restarted only for the user's own switch, never on a background reconcile.
+            self.restart_allowed = action == 'set' and feature == 'steam'
             if action == 'set':
                 self.state['enabled'][feature] = enabled
             elif action == 'restore':
