@@ -41,14 +41,15 @@ public sealed partial class WallStage
         ds.FillRectangle(CcPad - 1, CcPad - 1, img + 2, img + 2, Gfx.WithAlpha(Colors.Black, 0.10f));
         if (b.CoverPath == null) CcPaintFilm(ds, b, CcPad, CcPad, img, img, rnd);
 
-        // 下沿的标注：衬线字、深墨色
-        float y = CcPad + img + CcPad + CcTextTop - 2;
+        // 下沿的标注：衬线字、深墨色；整块在相片下面那条相纸里上下居中，左边和相片对齐
+        float stripTop = CcPad + img, blockH = CcTitleLh + 2 + 4 + CcSecondLh;
+        float y = stripTop + (H - stripTop - blockH) / 2;
         using var title = TextKit.Layout(ds, b.Name, TextKit.TitleCjk, 18, textW, CanvasHorizontalAlignment.Left, 0, CcTitleLh + 2);
-        ds.DrawTextLayout(title, CcPad + 2, y, InkColor);
-        y += CcTitleLh + 6;
+        ds.DrawTextLayout(title, CcPad, y, InkColor);
+        y += CcTitleLh + 2 + 4;
         string line = string.IsNullOrEmpty(b.Summary) ? b.Second : b.Summary;
         using var second = TextKit.Layout(ds, line, TextKit.UiB(400), 12, textW, CanvasHorizontalAlignment.Left, 0, CcSecondLh, maxLines: 1);
-        ds.DrawTextLayout(second, CcPad + 2, y, Gfx.WithAlpha(InkColor, 0.55f));
+        ds.DrawTextLayout(second, CcPad, y, Gfx.WithAlpha(InkColor, 0.55f));
     }
 
     private void CcPaintFilm(CanvasDrawingSession ds, CcBlock b, float x, float y, float w, float h, Random rnd)

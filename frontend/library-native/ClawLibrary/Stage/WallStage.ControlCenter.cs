@@ -630,8 +630,11 @@ public sealed partial class WallStage
         using var name = TextKit.Layout(G.Device, chrome?.name ?? b.Name, TextKit.Ui(700), 24, maxW, CanvasHorizontalAlignment.Center, 0, 32);
         string line = chrome?.line ?? (string.IsNullOrEmpty(b.Summary) ? b.Second : $"{b.Second} • {b.Summary}");
         using var mono = TextKit.Layout(G.Device, line, new FontSpec(CcMonoFont, 400), 12, maxW, CanvasHorizontalAlignment.Center, 0, 16);
+        // 拍立得：块名已经写在相纸上，下面不再重复；焦点在左下图标 / 电源 / 头像上时照常写它们的名字
+        bool hide = !_ccCards && chrome == null;
         CcSet(_ccLabel, CcDraw(maxW, CcLabelH, raster, ds =>
         {
+            if (hide) return;
             ds.DrawTextLayout(name, 0, 0, CcText);
             ds.DrawTextLayout(mono, 0, 32 + 4, Gfx.WithAlpha(CcText, 0.5));
         }));
@@ -1071,7 +1074,7 @@ public sealed partial class WallStage
         shadow.Offset = new Vector3(-m, -m + dy, 0);
         var geo = RoundRect(a.W, a.H, ra);
         var shape = G.C.CreateSpriteShape(geo);
-        shape.FillBrush = G.Solid(Theme.Bg);
+        shape.FillBrush = G.Solid(_ccCards ? Theme.Bg : PaperColor);   // 拍立得的外框飞的时候也是相纸色，落定时不会先黑一下
         shape.StrokeBrush = G.Solid(Gfx.WithAlpha(CcText, 0.10));
         shape.StrokeThickness = 1;
         var sv = G.C.CreateShapeVisual();
