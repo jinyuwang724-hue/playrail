@@ -753,28 +753,13 @@ public sealed partial class WallStage
             _stTitle.Offset = new Vector3(40 * k, 32 * k, 0);
         }
         _settingsTargets.Clear();
-        CcSet(_stRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _stRows, _stZone == 1 ? _stFocus : -1, _settingsTargets, numbers: false)));
+        CcSet(_stRight, CcDraw(PerfRightW, h, raster, ds => StPaintRows(ds, _stRows, _stZone == 1 ? _stFocus : -1, _settingsTargets)));
         _stRight.Size = new Vector2(PerfRightW * k, h * k);
         _stRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _stRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
         RowScrollTo(_stRight, _stRows, _settingsManualScroll || _stZone == 0 ? -1 : _stFocus, ref _stScroll, ref _stScrollY, h, vh, false);
-        CcSet(_stLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintStLeft(ds, vh)));
+        CcSet(_stLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintStNav(ds, vh)));
         _stLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _stLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
-    }
-
-    /// <summary>左栏目录：只有分类名。当前分类白色加粗、前面一条强调色短线；焦点在目录时整行有一层浅底。</summary>
-    private void PaintStLeft(CanvasDrawingSession ds, float h)
-    {
-        var accent = PerfAccent;
-        for (int i = 0; i < StCats.Length; i++)
-        {
-            float top = i * StCatH;
-            bool cur = i == _stCat, focus = cur && _stZone == 0;
-            if (focus) ds.FillRoundedRectangle(0, top + 4, PerfLeftW - 60, StCatH - 8, 8, 8, Gfx.WithAlpha(CcText, 0.12f));
-            if (cur) ds.FillRoundedRectangle(0, top + 17, 3, StCatH - 34, 1.5f, 1.5f, accent);
-            PText(ds, StCats[i], TextKit.Ui((ushort)(cur ? 600 : 400)), 19, Gfx.WithAlpha(CcText, cur ? 1f : 0.5f), 18, top + StCatH / 2, PerfLeftW - 24);
-        }
-        if (_stAgentDown) PText(ds, "连不上工具箱后台", TextKit.Ui(400), 13, Gfx.WithAlpha(CcText, 0.5), 0, h - 12, PerfLeftW);
     }
 }
