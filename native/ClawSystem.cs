@@ -203,6 +203,64 @@ static class SystemPage {
         return Read();
     }
 
+    // ---------------- MSI Center M ----------------
+    // The toolbox replaces MSI Center M. "Disabled" = its Foundation service set to Disabled and stopped,
+    // its two scheduled tasks disabled, and every MSI Center M process closed. Nothing is uninstalled;
+    // enabling sets the service back to automatic and the tasks back on (MSI's defaults).
+
+    const string MsiService = "MSI Foundation Service";
+    static readonly string[] MsiTasks = { @"\MSI_Center_M_Server", @"\MSI_Center_M_Updater" };
+
+    static string Run(string exe, string args) {
+        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, exe), args) {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = Encoding.GetEncoding(GetOEMCP()),
+        };
+        using (var p = Process.Start(start)) {
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(15000);
+            return output;
+        }
+    }
+
+    static bool MsiProcess(Process p) {
+        try {
+            string path = p.MainModule.FileName;
+            return path.IndexOf(@"\WindowsApps\9426MICRO-STARINTERNATION.", StringComparison.OrdinalIgnoreCase) >= 0
+                || path.IndexOf(@"\MSI\MSI Center M\", StringComparison.OrdinalIgnoreCase) >= 0;
+        } catch (Exception) { return false; }
+    }
+
+    public static Dictionary<string, object> MsiCenter() {
+        var r = new Dictionary<string, object>();
+        string sc = Run("sc.exe", "qc \"" + MsiService + "\"");
+        r["installed"] = sc.IndexOf("BINARY_PATH_NAME", StringComparison.OrdinalIgnoreCase) >= 0;
+        r["serviceDisabled"] = sc.IndexOf("DISABLED", StringComparison.OrdinalIgnoreCase) >= 0;
+        var tasks = new List<object>();
+        foreach (string t in MsiTasks) {
+            string q = Run("schtasks.exe", "/query /tn \"" + t + "\" /xml");
+            if (q.Length > 0) tasks.Add(new Dictionary<string, object> { { "name", t }, { "enabled", q.IndexOf("<Enabled>false</Enabled>", StringComparison.OrdinalIgnoreCase) < 0 } });
+        }
+        r["tasks"] = tasks;
+        int running = 0;
+        foreach (var p in Process.GetProcesses()) { if (MsiProcess(p)) running++; p.Dispose(); }
+        r["running"] = running;
+        return r;
+    }
+
+    public static Dictionary<string, object> SetMsiCenter(bool disabled) {
+        Run("sc.exe", "config \"" + MsiService + "\" start= " + (disabled ? "disabled" : "auto"));
+        if (disabled) Run("sc.exe", "stop \"" + MsiService + "\"");
+        foreach (string t in MsiTasks) Run("schtasks.exe", "/change /tn \"" + t + "\" " + (disabled ? "/disable" : "/enable"));
+        if (disabled)
+            foreach (var p in Process.GetProcesses()) {
+                if (MsiProcess(p)) { try { p.Kill(); p.WaitForExit(5000); } catch (Exception) { } }
+                p.Dispose();
+            }
+        else Run("sc.exe", "start \"" + MsiService + "\"");
+        return MsiCenter();
+    }
+
     // ---------------- wake ----------------
 
     /// <summary>

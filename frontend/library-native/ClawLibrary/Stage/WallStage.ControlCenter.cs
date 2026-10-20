@@ -358,6 +358,7 @@ public sealed partial class WallStage
         if (_searchOpen) CloseSearch();
         if (!SeamUsable()) { Toast("竖条不在屏幕上：先把墙面移回来"); return; }
         _railModel.SettingsOpen = true;
+        _ = RailMsiCenterRefresh();
         EnterRail(View.Height / 2);
         _railFocus = _rail.DefaultFocus(_railModel);
         RepaintRail();

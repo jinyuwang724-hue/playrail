@@ -493,6 +493,15 @@ class Service:
     async def set_display_off(self, seconds):
         return await self._system_write(self._system.set_display_off, seconds)
 
+    async def get_msi_center(self):
+        return await self._power._call("msi_center_read")
+
+    async def set_msi_center(self, disabled):
+        if type(disabled) is not bool:
+            raise ValueError("开关格式错误")
+        logging.info("MSI Center M %s from the library settings", "disabled" if disabled else "enabled")
+        return await self._power._call("msi_center_set", disabled=disabled)
+
     async def check_driver_updates(self):
         return self._system.vendor.check()
 

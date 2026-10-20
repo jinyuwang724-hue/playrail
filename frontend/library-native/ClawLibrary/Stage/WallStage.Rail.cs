@@ -113,6 +113,7 @@ public sealed partial class WallStage
             ("动态背景", _backdropOn ? "开" : "关"),
             ("降低动态效果", _reducedLocal ? "开" : "关"),
             ("性能读数", _hudOn ? "开" : "关"),
+            ("MSI Center M", _msiCenterText),
             ("导出日志", "存到桌面"),
             ("恢复默认", _resetArmed && NowMs - _resetArmedAt <= 3000 ? "再按一次确认" : "工具箱设置回到默认"),
             ("完成", "返回竖条"),
@@ -265,6 +266,7 @@ public sealed partial class WallStage
             case RailKind.Settings:
                 _backgroundSettingsOpen = false;
                 _railModel.SettingsOpen = !_railModel.SettingsOpen;
+                if (_railModel.SettingsOpen) _ = RailMsiCenterRefresh();
                 RepaintRail();
                 _railFocus = _railModel.SettingsOpen ? _rail.DefaultFocus(_railModel) : _rail.Items.FindIndex(i => i.Kind == RailKind.Settings);
                 RepaintRail();
@@ -339,20 +341,64 @@ public sealed partial class WallStage
             case 3: _backdropOn = !_backdropOn; UpdateBackdropRunning(); Toast(_backdropOn ? "动态背景：开" : "动态背景：关"); break;
             case 4: ToggleReducedMotion(); UpdateBackdropRunning(); break;
             case 5: ToggleHud(); break;
-            case 6: _ = RailAgentRun("export_logs", r => $"日志已存到桌面：{(string?)r?["name"]}"); break;
-            case 7:
+            case 6: _ = RailMsiCenterToggle(); break;
+            case 7: _ = RailAgentRun("export_logs", r => $"日志已存到桌面：{(string?)r?["name"]}"); break;
+            case 8:
                 // 收不回来：第一下只把这一行变成「再按一次确认」，3 秒内再按才做（先自动备份，后台会重启一下）
                 if (!_resetArmed || NowMs - _resetArmedAt > 3000) { _resetArmed = true; _resetArmedAt = NowMs; After(3100, RepaintRail); break; }
                 _resetArmed = false;
                 Toast("正在恢复默认，工具箱后台会重启一下");
                 _ = RailAgentRun("reset_settings", r => $"已恢复默认（原来的设置备份在 {(string?)r?["backup"]}）");
                 break;
-            case 8:
+            case 9:
                 _railModel.SettingsOpen = false;
                 RepaintRail();
                 _railFocus = _rail.Items.FindIndex(it => it.Kind == RailKind.Settings);
                 break;
         }
+        RepaintRail();
+    }
+
+    private string _msiCenterText = "—";
+    private bool _msiCenterOff;
+
+    /// <summary>
+    /// MSI Center M：工具箱已经替代了它。禁用 = 它的 Foundation 服务设为禁用并停掉、两个计划任务禁用、进程全部关掉；
+    /// 不卸载，再按一下恢复（服务自动、计划任务打开）。打开设置时读一次状态。
+    /// </summary>
+    private async Task RailMsiCenterRefresh()
+    {
+        try
+        {
+            _agent ??= new ClawLibrary.Data.AgentClient();
+            RailMsiCenterShow(await _agent.Call("get_msi_center"));
+        }
+        catch (Exception ex) { _msiCenterText = ex.Message.Contains("不支持的后台调用") ? "后台版本太旧" : "读不到"; }
+        RepaintRail();
+    }
+
+    private void RailMsiCenterShow(System.Text.Json.Nodes.JsonNode? r)
+    {
+        if (r is not System.Text.Json.Nodes.JsonObject o || o["installed"]?.GetValue<bool>() != true) { _msiCenterText = "没有安装"; _msiCenterOff = true; return; }
+        bool service = o["serviceDisabled"]?.GetValue<bool>() == true;
+        bool tasks = (o["tasks"] as System.Text.Json.Nodes.JsonArray)?.All(t => t?["enabled"]?.GetValue<bool>() != true) ?? true;
+        int running = (int?)o["running"]?.GetValue<double>() ?? 0;
+        _msiCenterOff = service && tasks && running == 0;
+        _msiCenterText = _msiCenterOff ? "已禁用" : running > 0 ? "正在运行 · 按 A 禁用" : "没禁用 · 按 A 禁用";
+    }
+
+    private async Task RailMsiCenterToggle()
+    {
+        bool disable = !_msiCenterOff;
+        _msiCenterText = disable ? "正在禁用…" : "正在恢复…";
+        RepaintRail();
+        try
+        {
+            _agent ??= new ClawLibrary.Data.AgentClient();
+            RailMsiCenterShow(await _agent.Call("set_msi_center", System.Text.Json.Nodes.JsonValue.Create(disable)));
+            Toast(disable ? "MSI Center M 已禁用（没有卸载，可以再按一下恢复）" : "MSI Center M 已恢复自启");
+        }
+        catch (Exception ex) { Toast($"没有改成：{ex.Message}"); await RailMsiCenterRefresh(); }
         RepaintRail();
     }
 
