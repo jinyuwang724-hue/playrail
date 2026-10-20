@@ -36,6 +36,7 @@ public sealed partial class WallStage
         public GpSubLevel Level = GpSubLevel.Key;
         public int KeyFocus = 1, SettingsFocus = 1, Tab, Cell, Act;
         public bool InTabs;
+        public bool SteamMapping;
         public readonly List<GpCell> Chord = new();
     }
 
@@ -116,12 +117,15 @@ public sealed partial class WallStage
         new("0", 0x8B, "key:Num0", 4, 5.25f, 2), new(".", 0x89, "key:NumDecimal", 6, 5.25f),
     };
 
-    /// <summary>系统页：三列三行，等宽。</summary>
+    /// <summary>系统页：三列四行，与专用键共用。</summary>
     private static readonly GpCell[] GpSystemCells =
     {
-        new("音量 +", 0x99, "sys:volumeUp", 0, 0), new("音量 −", 0x9A, "sys:volumeDown", 0, 1), new("静音", 0x9B, "sys:mute", 0, 2),
-        new("截图", 0, "sys:screenshot", 1, 0), new("显示键盘", 0, "sys:keyboard", 1, 1), new("强制关闭游戏", 0, "", 1, 2),
-        new("打开控制中心", 0, "", 2, 0), new("Steam 快速菜单", 0, "", 2, 1), new("切换超分", 0, "", 2, 2),
+        new("Xbox Game Bar", 0, "sys:gamebar", 0, 0), new("Claw 游戏库", 0, "sys:library", 0, 1),
+        new("Claw 控制中心", 0, "sys:controlCenter", 0, 2), new("显示键盘", 0, "sys:keyboard", 0, 3),
+        new("Steam 左侧主菜单", 0, "sys:steamMainMenu", 1, 0), new("Steam 右侧快速访问", 0, "sys:steamQuickAccess", 1, 1),
+        new("截图", 0, "sys:screenshot", 1, 2), new("切换超分", 0, "sys:magpieToggle", 1, 3),
+        new("音量 +", 0x99, "sys:volumeUp", 2, 0), new("音量 −", 0x9A, "sys:volumeDown", 2, 1),
+        new("静音", 0x9B, "sys:mute", 2, 2), new("Steam 游戏库", 0, "sys:steamLibrary", 2, 3),
     };
 
     private static GpCell[] GpChooserCells(int tab) => tab switch { 0 => GpPadCells, 1 => GpMouseCells, 2 => GpKeyboardCells, 3 => GpNumpadCells, _ => GpSystemCells };
@@ -259,7 +263,7 @@ public sealed partial class WallStage
     {
         SettingsResetPointer();
         _gpPickScroll = 0;
-        _gpPicker = new GpPickerState { Source = source, Desktop = desktop };
+        _gpPicker = new GpPickerState { Source = source, Desktop = desktop, Tab = GpIsSpecial(source) ? 4 : 0 };
         PaintGpBody();
     }
 
@@ -307,6 +311,7 @@ public sealed partial class WallStage
     {
         string src = p.Source;
         var rows = new List<PerfRow>();
+        if (GpIsSpecial(src)) return GpSpecialRows(p);
         if (p.Desktop)
         {
             // 桌面模式：固件一层，只有「按下发什么」
@@ -518,6 +523,7 @@ public sealed partial class WallStage
         }
         if (p.InTabs) { p.InTabs = false; PaintGpBody(); return; }
         var cell = GpChooserCells(p.Tab)[p.Cell];
+        if (GpIsSpecial(p.Source) && cell.Cmd.StartsWith("pad:")) { Toast("专用功能键使用系统动作或键盘鼠标指令"); return; }
         if (cell.Cmd.Length == 0 && cell.Code == 0) { Toast($"「{cell.Label}」之后做"); return; }
         if (p.Tab == 2 && GpIsModifier(cell))
         {
@@ -535,6 +541,12 @@ public sealed partial class WallStage
     /// </summary>
     private void GpChooseCommand(GpPickerState p, GpCell cell)
     {
+        if (GpIsSpecial(p.Source))
+        {
+            if (cell.Cmd.StartsWith("pad:") || cell.Cmd.Length == 0) { Toast("专用功能键使用系统动作或键盘鼠标指令"); return; }
+            GpSetSpecial(p, GpCommandFromCell(cell, p.Chord));
+            p.Chord.Clear(); p.Level = GpSubLevel.Key; PaintGpBody(); return;
+        }
         var chord = p.Chord.ToList();
         p.Chord.Clear();
         p.Level = GpSubLevel.Key;
@@ -610,7 +622,7 @@ public sealed partial class WallStage
         }
         var ui = TextKit.Ui(400);
         var muted = Gfx.WithAlpha(CcText, 0.5);
-        string where = p.Desktop ? "（桌面模式）" : "";
+        string where = GpIsSpecial(p.Source) ? (p.SteamMapping ? "（Steam 大屏接管）" : "（常规场景）") : p.Desktop ? "（桌面模式）" : "";
         switch (p.Level)
         {
             case GpSubLevel.Key:
@@ -618,7 +630,7 @@ public sealed partial class WallStage
                 var rows = GpKeyRows(p);
                 p.KeyFocus = Math.Clamp(p.KeyFocus, 0, rows.Count - 1);
                 PText(ds, GpSourceName(p.Source) + where, TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
-                string now = p.Desktop ? GpDesktopSummary(p.Source) : GpKeySummary(p.Source);
+                string now = GpIsSpecial(p.Source) ? GpSpecialSummary(p.Source, p.SteamMapping) : p.Desktop ? GpDesktopSummary(p.Source) : GpKeySummary(p.Source);
                 PText(ds, $"现在：{now}  ·  改了立刻生效", ui, 13, muted, GpPickX, 170, 900);
                 PaintGpRows(ds, rows, p.KeyFocus);
                 GpHints(ds, ("B", "返回"));
@@ -669,6 +681,7 @@ public sealed partial class WallStage
         var muted = Gfx.WithAlpha(CcText, 0.5);
         var acts = GpActs(p.Source);
         var act = acts != null && acts.Count > 0 ? acts[Math.Clamp(p.Act, 0, acts.Count - 1)] : null;
+        if (GpIsSpecial(p.Source)) act = new JsonObject { ["command"] = GpSpecialCommand(p.Source, p.SteamMapping).DeepClone() };
 
         // 页签：居中一排
         var tabFont = TextKit.Ui(600);
@@ -725,7 +738,7 @@ public sealed partial class WallStage
             bool focused = i == focusCell;
             bool current = currentCmds.Contains(cell.Cmd) || cell.Code > 0 && currentCodes.Contains(cell.Code);
             bool chord = p.Chord.Contains(cell);
-            bool later = cell.Cmd.Length == 0 && cell.Code == 0;
+            bool later = cell.Cmd.Length == 0 && cell.Code == 0 || GpIsSpecial(p.Source) && cell.Cmd.StartsWith("pad:");
             if (focused) ds.FillRoundedRectangle(rect, radius, radius, Gfx.WithAlpha(accent, 0.45f));
             else if (chord) ds.FillRoundedRectangle(rect, radius, radius, Gfx.WithAlpha(accent, 0.22f));
             ds.DrawRoundedRectangle(rect, radius, radius, current || chord ? Gfx.WithAlpha(accent, 0.95f) : Gfx.WithAlpha(CcText, focused ? 0.6f : later ? 0.08f : 0.16f), current ? 1.6f : 1f);
@@ -746,7 +759,7 @@ public sealed partial class WallStage
         // 底部：键盘组合的状态 / 这一页的说明（一行小字），再下面按键提示
         string? note = p.Tab == 2
             ? (p.Chord.Count > 0 ? $"组合：{string.Join(" + ", p.Chord.Select(c => c.Label))} + …  再按一个普通键完成" : "Ctrl / Shift / Alt / Win 按一下是叠加，可以组合；再按一个普通键完成")
-            : p.Tab == 4 ? "强制关闭游戏、打开控制中心、Steam 快速菜单、切换超分之后做" : null;
+            : GpIsSpecial(p.Source) ? "专用功能键支持系统动作、键盘组合和鼠标指令" : p.Tab == 4 ? "系统动作与专用按键共用，选择后立即生效" : null;
         if (note != null)
         {
             float nw = PWidth(ds, note, ui, 13);

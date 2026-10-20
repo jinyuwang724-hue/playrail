@@ -16,7 +16,15 @@ namespace ClawRouter {
     public static class Policy {
         public static string SteamMode(bool known, bool active, double ageMs) { return !known || ageMs < 0 || ageMs > 15000 ? "Unknown" : active ? "BigPicture" : "SteamClosed"; }
         public static bool CanRoute(bool enabled, bool ready, string mode, bool released) { return enabled && ready && mode == "BigPicture" && released; }
+        public static bool GeneralContext(string mode, bool suspended, bool configured, bool steamWasActive=false) { return configured && !suspended && mode != "BigPicture" && !(mode=="Unknown" && steamWasActive); }
         public static string Action(object value) { string s = value as string; return s == "MainMenu" || s == "QuickAccess" || s == "MagpieToggle" || s == "None" ? s : "None"; }
+    }
+    public sealed class GameBarPermission {
+        string context;
+        public bool Requested { get; private set; }
+        public void EnterContext(string next) { if(context!=next) {context=next;Requested=false;} }
+        public void Allow() { Requested=true; }
+        public void Clear() { Requested=false; }
     }
     public sealed class Router : IDisposable {
         readonly object gate = new object(), outputGate = new object(), logGate = new object();
@@ -34,6 +42,10 @@ namespace ClawRouter {
         System.Threading.Timer steamWatchdog;
         string mode = "Unknown", phase = "观察中", error = null;
         string msiAction = "QuickAccess", qamAction = "MainMenu";
+        Dictionary<string,object> generalMappings = new Dictionary<string,object>(), steamBindings = new Dictionary<string,object>();
+        bool generalFailed;
+        bool steamWindowOpen;
+        readonly GameBarPermission gamebarPermission = new GameBarPermission();
         int menuFailures;
         bool enabled, ready, released, restoreHelper, disposed, configured;
         bool steamKnown, steamActive;
@@ -79,7 +91,7 @@ namespace ClawRouter {
                     buttons.EventArrived += OnButton; buttons.Start();
                 } catch(Exception ex) { if(buttons != null) buttons.Dispose(); buttons = null; error = "按键通知不可用：" + ex.Message; }
                 if(!diagnostic) {
-                    try {shortcutFilter=new FirmwareShortcutFilter();}
+                    try {shortcutFilter=new FirmwareShortcutFilter();shortcutFilter.GameBarSuppressed+=OnSuppressedGamebar;}
                     catch(Exception ex){Log("shortcut-filter-unavailable",ex.Message);}
                     try {gameBarGuard=new GameBarGuard(Log);}
                     catch(Exception ex){Log("gamebar-guard-unavailable",ex.Message);}
@@ -91,10 +103,14 @@ namespace ClawRouter {
                     files.Error += delegate { Schedule(); }; files.EnableRaisingEvents=true;
                 }
                 ReadPort();
+                steamWindowOpen=Native.BigPictureOpen();
                 steamWatchdog = new System.Threading.Timer(delegate { lock(gate) {
                     if(disposed)return;
+                    bool oldWindow=steamWindowOpen;
+                    if(!steamKnown || !ready)steamWindowOpen=Native.BigPictureOpen();
+                    if(oldWindow && !steamWindowOpen && !ready)steamActive=false;
                     string current=ReadMode();
-                    if(current!=mode) { mode=current;Reconcile();Status(); }
+                    if(current!=mode || oldWindow!=steamWindowOpen) { mode=current;Reconcile();Status(); }
                 } },null,1000,1000);
                 SystemEvents.PowerModeChanged += OnPower;
             }
@@ -121,15 +137,59 @@ namespace ClawRouter {
             } catch { /* Playhub is optional for ownership; keep the last menu fallback port. */ }
         }
         void Refresh() { lock(gate) { if(disposed)return; ReadPort();mode=ReadMode();Reconcile();Status(); } }
+        bool GeneralWanted() { return !diagnostic && !generalFailed && !(mode=="Unknown" && steamWindowOpen) && Policy.GeneralContext(mode,suspended,generalMappings.Count!=0,steamActive); }
+        bool CanFilter() { return Policy.CanRoute(enabled,ready,mode,released) || GeneralWanted() && released; }
+        bool AllowsConfiguredGamebar() {
+            foreach(var raw in steamBindings.Values) {
+                var command=raw as Dictionary<string,object>;
+                if(Equals(Get(command,"type"),"system") && (Equals(Get(command,"action"),"gamebar") || Equals(Get(command,"action"),"screenshot")))return true;
+            }
+            return false;
+        }
+        void EmitMapping(string source, object command, string scope) {
+            var value=command as Dictionary<string,object>;
+            if(value==null || Equals(Get(value,"type"),"none"))return;
+            routed++; Emit(new Dictionary<string,object>{{"type","mapped_action"},{"source",source},{"command",value},{"scope",scope}});
+        }
+        void OnSuppressedGamebar() {
+            long at=Stopwatch.GetTimestamp();
+            Task.Run(async delegate {
+                await Task.Delay(160);
+                bool vendor=false;
+                lock(lastButtons) foreach(var timestamp in lastButtons.Values)
+                    if(Math.Abs((at-timestamp)*1000.0/Stopwatch.Frequency)<=350)vendor=true;
+                lock(gate) {
+                    // Retain the old strict Steam suppression. In general mode,
+                    // replay a keyboard Win+G only when no vendor event accompanied it.
+                    if(!disposed && maintenance==null && !vendor && GeneralWanted() && released)
+                        EmitMapping("Keyboard",new Dictionary<string,object>{{"type","system"},{"action","gamebar"}},"general");
+                }
+            });
+        }
         void Reconcile() {
+            // An intentional Game Bar action in the desktop scene must not disable protection in Steam.
+            gamebarPermission.EnterContext(mode);
             if(maintenance!=null) { if(shortcutFilter!=null)shortcutFilter.SetEnabled(false); if(gameBarGuard!=null)gameBarGuard.SetEnabled(false); phase="插件正在维护兼容性修复"; return; }
             // Disable before restoring the helper, which may take several seconds.
-            if(shortcutFilter!=null && !Policy.CanRoute(enabled,ready,mode,released))shortcutFilter.SetEnabled(false);
+            if(shortcutFilter!=null && !CanFilter())shortcutFilter.SetEnabled(false);
             try {ReconcileOwner();}
-            finally {if(shortcutFilter!=null)shortcutFilter.SetEnabled(Policy.CanRoute(enabled,ready,mode,released));}
+            finally {
+                if(shortcutFilter!=null)shortcutFilter.SetEnabled(CanFilter());
+                if(gameBarGuard!=null)gameBarGuard.SetEnabled(Policy.CanRoute(enabled,ready,mode,released) && !AllowsConfiguredGamebar() && !gamebarPermission.Requested);
+            }
         }
         void ReconcileOwner() {
             if(diagnostic) { phase="只读诊断"; return; }
+            if(GeneralWanted()) {
+                if(buttons==null || shortcutFilter==null) { phase="常规按键映射不可用";return; }
+                try {
+                    if(!released)StopTweaks();
+                    released=true; phase="常规按键映射 · Steam 接管设置保持独立"; error=null;
+                } catch(Exception ex) {
+                    generalFailed=true; released=false; error=ex.Message; Restore(); phase="常规映射接管失败，原功能已尝试恢复";
+                }
+                return;
+            }
             if(!enabled || !ready || mode != "BigPicture") {
                 ClearPending();
                 released=false; Restore(); phase=restoreHelper ? "需要恢复 ClawTweaks" : !enabled ? "自动接管已关闭：原映射" : !ready ? "Steam 按键连接未就绪：原映射" : mode=="SteamClosed" ? "Steam 大屏幕已关闭：原映射" : "Steam 状态未知，已停止接管"; return;
@@ -139,10 +199,11 @@ namespace ClawRouter {
                 try {
                     if(shortcutFilter==null)throw new InvalidOperationException("Game Bar 快捷键过滤不可用，未执行接管");
                     if(gameBarGuard==null)throw new InvalidOperationException("Game Bar 接管保护不可用，未执行接管");
-                    StopTweaks(); gameBarGuard.SetEnabled(true); released=true; phase="Steam 大屏幕：插件接管"; error=null;
+                    StopTweaks(); gameBarGuard.SetEnabled(!AllowsConfiguredGamebar()); released=true; phase="Steam 大屏幕：插件接管"; error=null;
                 }
                 catch(Exception ex) { released=false; enabled=false; error=ex.Message; Log("handoff-failed",ex.ToString()); phase="接管失败，已恢复"; Restore(); }
             }
+            if(released)phase="Steam 大屏幕：插件接管";
         }
         void ClearPending() { foreach(var timer in pending.Values)timer.Dispose();pending.Clear();pendingInputs.Clear(); }
         void StopTweaks() {
@@ -210,12 +271,34 @@ namespace ClawRouter {
             Task.Run((Action)delegate { lock(gate) {
                 if(disposed)return; observed++;
                 Emit(new Dictionary<string,object>{{"type","button"},{"button",code==41?"MSI":"QuickSettings"},{"rawCode",raw},{"source","MSI_Event"}});
-                if(diagnostic || maintenance!=null || !enabled || !ready)return;
+                if(diagnostic || maintenance!=null)return;
                 if((Stopwatch.GetTimestamp()-now)*1000.0/Stopwatch.Frequency>700) { Log("button-expired","过渡期间的旧按压已丢弃");return; }
+                if(ReadMode()=="Unknown" && steamActive) {
+                    var steam=Process.GetProcessesByName("steam");
+                    if(steam.Length==0)steamActive=false;
+                    foreach(var process in steam)process.Dispose();
+                }
                 mode=ReadMode(); Reconcile();
+                string source=code==41?"Claw":"QS";
+                if(GeneralWanted() && released) {
+                    if(Helpers().Length>0) {generalFailed=true;released=false;Restore();error="原按键后台已重新启动，常规映射已暂停";Status();return;}
+                    EmitMapping(source,Get(generalMappings,source),"general");return;
+                }
                 if(!Policy.CanRoute(enabled,ready,mode,released)) {Status();return;}
                 if(Helpers().Length>0) {released=false;enabled=false;if(shortcutFilter!=null)shortcutFilter.SetEnabled(false);Restore();error="ClawTweaks 已重新启动";Status();return;}
-                string action=code==41?msiAction:qamAction; if(action=="None")return;
+                string action=code==41?msiAction:qamAction;
+                var binding=Get(steamBindings,source) as Dictionary<string,object>;
+                if(binding!=null) {
+                    string menu=Equals(Get(binding,"type"),"system")?Get(binding,"action") as string:null;
+                    if(menu=="steamMainMenu")action="MainMenu";
+                    else if(menu=="steamQuickAccess")action="QuickAccess";
+                    else {EmitMapping(source,binding,"steam");return;}
+                }
+                if(action=="None")return;
+                if(action=="MainMenu" || action=="QuickAccess") {
+                    gamebarPermission.Clear();
+                    if(gameBarGuard!=null)gameBarGuard.SetEnabled(!AllowsConfiguredGamebar());
+                }
                 string id=Guid.NewGuid().ToString("N");
                 pendingInputs[id]=new KeyValuePair<long,int>(now,code);
                 pending[id]=new System.Threading.Timer(delegate { Task.Run((Action)delegate { lock(gate) { if(disposed || !pending.ContainsKey(id))return; ClearPending();enabled=false;released=false;if(shortcutFilter!=null)shortcutFilter.SetEnabled(false);error="Steam 菜单未确认响应，已恢复 ClawTweaks";Restore();Status(); } }); },null,5000,Timeout.Infinite);
@@ -246,7 +329,15 @@ namespace ClawRouter {
                     enabled=!diagnostic && Equals(Get(c,"enabled"),true); ready=Equals(Get(c,"ready"),true);
                     if(!ready || Equals(Get(c,"resetSteamContext"),true))steamKnown=false;
                     msiAction=Policy.Action(Get(c,"msiAction"));qamAction=Policy.Action(Get(c,"qamAction"));
+                    generalMappings=Get(c,"buttonMappings") as Dictionary<string,object> ?? new Dictionary<string,object>();
+                    steamBindings=Get(c,"steamBindings") as Dictionary<string,object> ?? new Dictionary<string,object>();
+                    generalFailed=false;
                     mode=ReadMode();Reconcile();Status();
+                } else if(kind=="allow_gamebar") {
+                    gamebarPermission.EnterContext(mode);
+                    gamebarPermission.Allow();
+                    if(gameBarGuard!=null)gameBarGuard.SetEnabled(false);
+                    Emit(new Dictionary<string,object>{{"type","mapping_permission"},{"id",Get(c,"id")}});
                 } else if(kind=="steam_context") {
                     if(!(Get(c,"active") is bool))throw new InvalidDataException("Steam 状态格式错误");
                     steamKnown=ready;steamActive=Equals(Get(c,"active"),true);steamReport=Stopwatch.GetTimestamp();
@@ -296,6 +387,28 @@ namespace ClawRouter {
         } }
     }
     public static class Native {
+        delegate bool EnumWindow(IntPtr window,IntPtr data);
+        [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindow callback,IntPtr data);
+        [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window,StringBuilder text,int length);
+        [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window,out uint pid);
+        // A fail-closed cold-start fallback only. The existing Steam frontend report
+        // remains authoritative whenever it is connected, including minimisation.
+        public static bool BigPictureOpen() {
+            bool found=false;
+            EnumWindows(delegate(IntPtr window,IntPtr unused) {
+                if(!IsWindowVisible(window))return true;
+                var title=new StringBuilder(256);GetWindowText(window,title,title.Capacity);
+                string value=title.ToString();
+                if(value!="Steam 大屏幕模式" && value!="Steam Big Picture Mode" && value!="Steam Big Picture")return true;
+                uint pid;GetWindowThreadProcessId(window,out pid);
+                try {using(var process=Process.GetProcessById((int)pid)) {
+                    if(process.ProcessName!="steamwebhelper" && process.ProcessName!="steam")return true;
+                    found=true;return false;
+                }}catch{return true;}
+            },IntPtr.Zero);
+            return found;
+        }
         [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr OpenProcess(uint access,bool inherit,int pid);
         [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
         [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr handle,out uint code);

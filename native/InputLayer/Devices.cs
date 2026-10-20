@@ -281,6 +281,7 @@ namespace ClawInput {
 
     // Keyboard and mouse output (SendInput). Injected events carry Tag so our own hook ignores them.
     public static class Output {
+        public static Action<string> SystemAction;
         public static readonly IntPtr Tag = new IntPtr(0x434C4157); // "CLAW"
         [StructLayout(LayoutKind.Sequential)] struct MouseInput { public int Dx, Dy; public uint Data, Flags, Time; public IntPtr Extra; }
         [StructLayout(LayoutKind.Sequential)] struct KeyInput { public ushort Vk, Scan; public uint Flags, Time; public IntPtr Extra; }
@@ -343,6 +344,7 @@ namespace ClawInput {
         interface ITipInvocation { void Toggle(IntPtr hwnd); }
 
         static void RunAction(string action) {
+            if(action!="keyboard") { var handler=SystemAction;if(handler!=null)handler(action);return; }
             if (action == "keyboard") {
                 var t = new Thread(delegate () {
                     try { ((ITipInvocation)new UIHostNoLaunch()).Toggle(GetDesktopWindow()); }

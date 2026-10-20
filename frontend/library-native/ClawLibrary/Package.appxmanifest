@@ -6,7 +6,7 @@
   IgnorableNamespaces="uap rescap">
 
   <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。暂不注册为 Xbox 全屏主页。 -->
-  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.15.0" />
+  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.22.0" />
 
   <Properties>
     <DisplayName>Claw 游戏库</DisplayName>
@@ -33,6 +33,11 @@
         <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
         <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#09090b" />
       </uap:VisualElements>
+      <Extensions>
+        <uap:Extension Category="windows.protocol">
+          <uap:Protocol Name="claw-library"><uap:DisplayName>Claw 游戏库</uap:DisplayName></uap:Protocol>
+        </uap:Extension>
+      </Extensions>
     </Application>
   </Applications>
 

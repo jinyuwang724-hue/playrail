@@ -25,7 +25,7 @@ _subscription_module = _load("claw_toolbox_subscriptions", "claw_subscriptions.p
 
 # Same list as claw_agent.METHODS: the calls the Steam front end makes.
 FORWARDED = (
-    "get_state", "refresh", "save_settings", "frontend_ready", "set_steam_context", "action_result",
+    "get_state", "refresh", "save_settings", "frontend_ready", "set_steam_context", "action_result", "test_button_mapping",
     "manage_compatibility",
     "get_power_state", "save_power", "restore_power", "set_ecore",
     "get_rumble_state", "set_rumble_strength", "restore_rumble", "test_rumble",

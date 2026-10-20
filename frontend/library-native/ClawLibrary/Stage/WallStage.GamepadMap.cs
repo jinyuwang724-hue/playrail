@@ -101,6 +101,7 @@ public sealed partial class WallStage
     private List<GpTok> GpMapTokens(string src, bool desktop, GpItem it)
     {
         var toks = new List<GpTok>();
+        if (GpIsSpecial(src)) { if (_gpSettings?["buttonMappings"]?[src] == null) toks.Add(new(GpTokKind.Text, "原功能")); else GpCommandTokens(GpSpecialCommand(src, false), toks); return toks; }
         if (it.Choices != null) { toks.Add(new(GpTokKind.Text, it.Value)); return toks; }
         if (desktop)
         {

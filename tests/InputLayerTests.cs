@@ -3,6 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Threading;
 using System.Web.Script.Serialization;
 using ClawInput;
 
@@ -215,11 +217,33 @@ class InputLayerTests {
         Check(string.Join("|", MultiSz.Decode("a\0b\0\0")) == "a|b", "multi-string decoding");
     }
 
+    static void MaintenanceDoesNotQueue() {
+        string dir = Path.Combine(Path.GetTempPath(), "claw-input-timer-test-" + Guid.NewGuid().ToString("N"));
+        using (var stream = new MemoryStream())
+        using (var writer = new StreamWriter(stream))
+        using (var host = new Host(dir, writer)) {
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            object gate = typeof(Host).GetField("gate", flags).GetValue(host);
+            var maintain = typeof(Host).GetMethod("Maintain", flags);
+            Exception error = null;
+            var worker = new Thread(delegate() { try { maintain.Invoke(host, null); } catch (Exception ex) { error = ex; } });
+            bool skipped;
+            lock (gate) {
+                worker.Start();
+                skipped = worker.Join(1000);
+            }
+            worker.Join(2000);
+            Check(skipped && error == null, "maintenance skips a busy driver instead of accumulating blocked timer threads");
+        }
+        Directory.Delete(dir, true);
+    }
+
     static int Main() {
         Triggers();
         Mixing();
         Parsing();
         Journal();
+        MaintenanceDoesNotQueue();
         Console.WriteLine(failures == 0 ? "input layer checks passed" : failures + " input layer check(s) failed");
         return failures == 0 ? 0 : 1;
     }

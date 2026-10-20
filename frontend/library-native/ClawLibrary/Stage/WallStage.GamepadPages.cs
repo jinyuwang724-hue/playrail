@@ -202,29 +202,11 @@ public sealed partial class WallStage
             }
             case "QS" or "Claw":
             {
-                var s = _gpSettings;
-                string field = src == "QS" ? "qamAction" : "msiAction";
-                bool on = s != null && Bool(s["enabled"]);
-                int idx = on ? 1 + Math.Max(0, Array.IndexOf(GpActions, Str(s![field]) ?? "None")) : 0;
-                // 第一项是不接管时 MSI 原来的功能
-                it.Choices = GpSpecialChoices.Select((c, i) => i == 0 ? (src == "QS" ? "MSI 快速设置" : "MSI Center M") : c).ToArray();
-                it.Choice = idx;
-                it.Value = s == null ? "—" : it.Choices[idx];
-                it.Stock = idx == 0;
-                it.Disabled = s == null;
+                it.Value = _gpSettings == null ? "—" : GpSpecialSummary(src, false);
+                it.Stock = _gpSettings?["buttonMappings"]?[src] == null;
+                it.Disabled = _gpSettings == null;
                 it.Why = _gpError ?? "正在读取…";
-                it.SetChoice = i =>
-                {
-                    if (s == null) return;
-                    if (i == 0)
-                    {
-                        // 接管是两个键一起的：一个放回原功能，另一个也放回
-                        s["enabled"] = false;
-                        Toast("快速设置键和 Claw 键一起放回 MSI 原来的功能");
-                    }
-                    else { s["enabled"] = true; s[field] = GpActions[i - 1]; }
-                    _ = GpSaveSettings();
-                };
+                it.Press = () => GpOpenPicker(src, false);
                 break;
             }
             default:

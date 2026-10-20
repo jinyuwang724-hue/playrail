@@ -225,6 +225,7 @@ namespace ClawInput {
 
         public Host(string dataDir, StreamWriter writer) {
             this.dataDir = dataDir; this.writer = writer; journalPath = Program.JournalPath(dataDir);
+            Output.SystemAction=action=>Emit(new Dictionary<string,object>{{"type","system_action"},{"action",action}});
             Directory.CreateDirectory(dataDir);
         }
 
@@ -525,6 +526,9 @@ namespace ClawInput {
         }
 
         void Maintain() {
+            // A slow driver request or a command must not queue another blocked timer callback
+            // every second. Only one maintenance pass may use the driver and its journal.
+            if (!Monitor.TryEnter(gate)) return;
             try {
                 long now = Stopwatch.GetTimestamp();
                 double seconds = Ms(now - rateAt) / 1000.0;
@@ -536,8 +540,8 @@ namespace ClawInput {
                     if (ticks / 1000 % 5 == 0) apps = Apps();
                     int fixes = Hiding.Ensure(hh, journalPath, journal, devices, apps);
                     if (fixes > 0) { reapplied += fixes; error = "HidHide 被别的程序改过，已重新隐藏（" + reapplied + " 次）"; }
-                    if (virtualIndex < 0 && pad != null) virtualIndex = pad.Index();
-                    // The bus does not always answer the user-index call: the new 045E:028E slot is ours.
+                    // This bus can leave the user-index IOCTL pending even after cancellation.
+                    // Discover our slot from XInput instead of blocking every subsequent command.
                     var now045e = VirtualSlots();
                     if (virtualIndex < 0) foreach (var slot in now045e) if (!virtualBefore.Contains(slot)) virtualIndex = int.Parse(slot);
                     otherVirtual = Math.Max(0, now045e.Count - (virtualIndex >= 0 ? 1 : 0));
@@ -547,6 +551,7 @@ namespace ClawInput {
                 }
                 Emit(new Dictionary<string, object> { { "type", "status" }, { "status", Status() } });
             } catch (Exception ex) { error = ex.Message; }
+            finally { Monitor.Exit(gate); }
         }
 
         Dictionary<string, object> Status() {

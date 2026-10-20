@@ -40,7 +40,7 @@ MAX_LINE = 8 * 1024 * 1024
 
 # Everything a front end may call. Anything else (private methods, close) is refused.
 METHODS = {
-    "get_state", "refresh", "save_settings", "frontend_ready", "set_steam_context", "action_result",
+    "get_state", "refresh", "save_settings", "frontend_ready", "set_steam_context", "action_result", "test_button_mapping",
     "manage_compatibility",
     "get_power_state", "save_power", "restore_power", "set_ecore", "fan_test",
     "get_rumble_state", "set_rumble_strength", "restore_rumble", "test_rumble",

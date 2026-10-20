@@ -54,6 +54,7 @@ const actions = [
   { label: "右侧快捷面板", data: "QuickAccess" },
   { label: "超分铺满开关", data: "MagpieToggle" },
   { label: "不执行动作", data: "None" },
+  { label: "自定义映射（游戏库内编辑）", data: "Mapped" },
 ];
 const proxyModes = [{ label: "规则", data: "rule" }, { label: "全局", data: "global" }, { label: "直连", data: "direct" }];
 let state = { settings: { enabled: false, msiAction: "QuickAccess", qamAction: "MainMenu", hapticsEnabled: true },
@@ -167,6 +168,12 @@ export function Content() {
   const groupOptions = R.useMemo(() => (clash.groups ?? []).filter(group => group.name !== "GLOBAL").map(group => ({ label: group.name, data: group.name })), [clash.groups]);
   const nodeOptions = R.useMemo(() => (proxyGroup?.nodes ?? []).map(node => ({ label: node, data: node })), [proxyGroup?.nodes]);
   const save = async patch => {
+    if ("msiAction" in patch || "qamAction" in patch) {
+      const bindings = { ...state.settings.steamBindings };
+      if ("msiAction" in patch) delete bindings.Claw;
+      if ("qamAction" in patch) delete bindings.QS;
+      patch = { ...patch, steamBindings: bindings };
+    }
     if (busy || Object.entries(patch).every(([key, next]) => next === state.settings[key])) return;
     setBusy(true); setMessage("");
     try { update(await api.call("save_settings", { ...state.settings, ...patch })); void window.__clawToolboxHaptics?.sync?.(true); }
@@ -192,8 +199,9 @@ export function Content() {
       h(StatusText, null, value.status.phase),
       h(UI.PanelSectionRow, { key: "mapping-enabled" }, h(UI.ToggleField, { label: "自动接管", description: "大屏幕打开时接管并屏蔽 Game Bar 快捷键，退出后恢复。最小化或运行游戏时仍生效。", checked: value.settings.enabled, disabled: busy, onChange: enabled => save({ enabled }) })),
       h(SectionLabel, null, "快捷键动作"),
-      h(UI.PanelSectionRow, { key: "mapping-msi" }, h(UI.DropdownItem, { label: "MSI 键", rgOptions: actions, selectedOption: value.settings.msiAction, disabled: busy, onChange: option => save({ msiAction: option.data }) })),
-      h(UI.PanelSectionRow, { key: "mapping-xbox" }, h(UI.DropdownItem, { label: "Xbox 键", rgOptions: actions, selectedOption: value.settings.qamAction, disabled: busy, onChange: option => save({ qamAction: option.data }) })),
+      h(UI.PanelSectionRow, { key: "mapping-msi" }, h(UI.DropdownItem, { label: "Claw 键（Steam 接管）", rgOptions: actions, selectedOption: value.settings.steamBindings?.Claw ? "Mapped" : value.settings.msiAction, disabled: busy, onChange: option => option.data !== "Mapped" && save({ msiAction: option.data }) })),
+      h(UI.PanelSectionRow, { key: "mapping-xbox" }, h(UI.DropdownItem, { label: "快速设置键（Steam 接管）", rgOptions: actions, selectedOption: value.settings.steamBindings?.QS ? "Mapped" : value.settings.qamAction, disabled: busy, onChange: option => option.data !== "Mapped" && save({ qamAction: option.data }) })),
+      field("完整映射", "游戏库 → 控制中心 → 手柄 → 按键映射；常规场景与 Steam 接管可分别设置"),
       (value.status.error || message) && field("提示", value.status.error || message)),
     haptics: h(UI.PanelSection, { key: "haptics" },
       h(RumbleRows, { key: "rumble" }),

@@ -78,7 +78,8 @@ namespace ClawInput {
                 case "wheel": c.Kind = CommandKind.Wheel; c.Value = (int)Number(d, "value", 1, 1, 4); break;
                 case "action":
                     c.Kind = CommandKind.Action; c.Action = Get(d, "action") as string;
-                    if (c.Action != "keyboard") throw new ArgumentException("不认识的系统动作 " + c.Action);
+                    if (Array.IndexOf(new[] { "keyboard", "gamebar", "library", "controlCenter", "steamMainMenu", "steamQuickAccess", "steamLibrary", "magpieToggle" },c.Action)<0)
+                        throw new ArgumentException("不认识的系统动作 " + c.Action);
                     break;
                 case "keys": {
                     c.Kind = CommandKind.Keys;

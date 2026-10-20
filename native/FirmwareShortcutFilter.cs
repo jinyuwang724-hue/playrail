@@ -19,6 +19,7 @@ namespace ClawRouter {
         bool blockedG;
         public ShortcutDecision Key(KeyboardStroke key, bool enabled) {
             var result = new ShortcutDecision();
+            if(key.Extra==0x434C4157)return result; // our intentional mapped shortcut, not the firmware copy
             if(key.Key==0x5b || key.Key==0x5c) {
                 int bit=key.Key==0x5b ? 1 : 2;
                 if(key.Up) windows &= ~bit; else windows |= bit;
@@ -54,6 +55,7 @@ namespace ClawRouter {
         volatile bool enabled;
         public long Suppressed {get;private set;}
         public long ReplayFailures {get{return 0;}}
+        public event Action GameBarSuppressed;
         public FirmwareShortcutFilter() {
             callback=OnKey;
             CreateHandle(new CreateParams {Parent=new IntPtr(-3)});
@@ -65,7 +67,7 @@ namespace ClawRouter {
             if(code<0)return CallNextHookEx(hook,code,message,data);
             var key=(HookKey)Marshal.PtrToStructure(data,typeof(HookKey));
             var decision=state.Key(new KeyboardStroke {Key=key.key,Scan=key.scan,Flags=key.flags,Time=key.time,Extra=key.extra.ToUInt64()},enabled);
-            if(decision.GameBar)Suppressed++;
+            if(decision.GameBar){Suppressed++;var handler=GameBarSuppressed;if(handler!=null)handler();}
             return decision.Swallow ? new IntPtr(1) : CallNextHookEx(hook,code,message,data);
         }
         protected override void WndProc(ref Message message) {

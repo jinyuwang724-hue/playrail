@@ -47,6 +47,9 @@ class Hardware:
             assert args["scheme"] == self.power["freq"]["scheme"]
             self.power["freq"].update(args)
             return copy.deepcopy(self.power)
+        if command == "restore_freq":
+            self.power["freq"].update(args)
+            return {**copy.deepcopy(self.power), "restoredFreq": copy.deepcopy(self.power["freq"])}
         raise AssertionError(f"Unexpected hardware command: {command}")
 
     async def worker(self):
@@ -181,13 +184,16 @@ class EnduranceTests(unittest.IsolatedAsyncioTestCase):
             return value
         control._call = call
         control.endurance.call = call
+        control.auto_session.call = call
         control.endurance.ensure_worker = self.hw.worker
         return control
 
-    async def test_save_intel_and_return_to_manual_are_complete_handoffs(self):
+    async def test_retired_intel_selection_uses_auto_and_returns_to_manual(self):
         control = await self.controller()
         original = copy.deepcopy(control.settings)
         await control.save({**original, "mode": "smart"})
+        self.assertEqual(control.settings["mode"], "autotdp")
+        self.assertFalse(any(c == "endurance_set" and a["control"] == "auto" for c, a in self.hw.calls))
         self.hw.calls.clear()
         for _ in range(5):
             await control._apply()
@@ -198,14 +204,13 @@ class EnduranceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.hw.power["pl1"], 26)
         self.assertEqual(self.hw.power["freq"]["dc"], 3000)
 
-    async def test_failed_save_does_not_persist_an_unusable_intel_mode(self):
+    async def test_retired_intel_profile_cannot_reactivate_intel(self):
         control = await self.controller()
         original = copy.deepcopy(control.settings)
         self.hw.fail_profile = "performance"
-        with self.assertRaises(RuntimeError):
-            await control.save({**original, "mode": "smart"})
-        self.assertEqual(control.settings, original)
-        self.assertEqual(json.loads(control.path.read_text()), original)
+        await control.save({**original, "mode": "smart"})
+        self.assertEqual(control.settings["mode"], "autotdp")
+        self.assertNotIn("smart", json.loads(control.path.read_text()))
         self.assertEqual(self.hw.driver["control"], "off")
 
 

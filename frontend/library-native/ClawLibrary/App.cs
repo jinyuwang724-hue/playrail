@@ -54,10 +54,25 @@ public sealed partial class App : Application, Microsoft.UI.Xaml.Markup.IXamlMet
             if (StartupNote != null) Log.Info(StartupNote);
             Log.Info($"start pid={Environment.ProcessId} packaged={Packaged} args=[{string.Join(' ', Program.Args)}] since-process-start={SinceProcessStartMs():F0}ms");
             _ = Task.Run(Stage.TextKit.Warm);
-            _window = new MainWindow();
+            _window = new MainWindow(ActivationRoute(Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs().Data));
             _window.Activate();
             var dq = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
-            try { Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += (_, _) => dq.TryEnqueue(() => { Log.Info("re-activated"); _window?.Activate(); }); } catch { }
+            Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += (_, activation) =>
+            {
+                // Copy the WinRT activation payload on the callback thread; only a managed route crosses into the UI queue.
+                string route;
+                try { route = ActivationRoute(activation.Data); }
+                catch (Exception ex) { Log.Error("read activation", ex); route = "activate"; }
+                if (!dq.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        Log.Info($"re-activated: {route}");
+                        (_window as MainWindow)?.ActivateRoute(route);
+                    }
+                    catch (Exception ex) { Log.Error("route activation", ex); }
+                })) Log.Warn("activation queue unavailable");
+            };
         }
         catch (Exception ex)
         {
@@ -72,6 +87,13 @@ public sealed partial class App : Application, Microsoft.UI.Xaml.Markup.IXamlMet
         catch { return -1; }
     }
 
+    private static string ActivationRoute(object data)
+    {
+        if (data is Windows.ApplicationModel.Activation.IProtocolActivatedEventArgs protocol && protocol.Uri.Scheme == "claw-library")
+            return ToolboxActivation.IsRoute(protocol.Uri.Host) ? protocol.Uri.Host : "activate";
+        return "activate";
+    }
+
     private static bool DetectPackaged()
     {
         try { return Windows.ApplicationModel.Package.Current?.Id != null; }
@@ -83,9 +105,11 @@ public sealed partial class MainWindow : Window
 {
     private readonly RootElement _root;
     private WallStage? _stage;
+    private string _pendingRoute;
 
-    public MainWindow()
+    public MainWindow(string route = "activate")
     {
+        _pendingRoute = route;
         Title = "Claw 游戏库";
         _root = new RootElement { Background = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 9, 9, 11)) };
         Content = _root;
@@ -112,10 +136,29 @@ public sealed partial class MainWindow : Window
             {
                 _stage = new WallStage(_root, this);
                 _stage.Start();
+                _stage.ActivateShortcut(ToolboxActivation.Target(_pendingRoute));
             }
             catch (Exception ex) { Log.Error("stage start", ex); }
         };
         Closed += (_, _) => { _stage?.Dispose(); Log.Info("closed"); };
+    }
+
+    public void ActivateRoute(string route)
+    {
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        if (route.StartsWith("minimize-", StringComparison.Ordinal) &&
+            ToolboxActivation.ShouldMinimize(route, ToolboxWindow.XboxFseActive(), ToolboxWindow.SteamBigPictureOpen()))
+        {
+            ToolboxWindow.Minimize(hwnd);
+            Log.Info($"Claw shortcut minimize: iconic={ToolboxWindow.IsIconic(hwnd)}");
+            return;
+        }
+        _pendingRoute = ToolboxActivation.Target(route);
+        ToolboxWindow.Restore(hwnd);
+        Activate();
+        if (!ToolboxActivation.PreservePage(route)) _stage?.ActivateShortcut(_pendingRoute);
+        _root.Focus(FocusState.Programmatic);
+        Log.Info($"shortcut window shown: {route}, iconic={ToolboxWindow.IsIconic(hwnd)}");
     }
 }
 

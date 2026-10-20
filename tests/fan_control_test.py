@@ -16,6 +16,7 @@ class FanTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.control = power.PowerControl(ROOT / "plugin", self.temp.name, lambda _: None)
+        self.control.fan_service.marker = Path(self.temp.name) / "not-installed.json"
         self.control.settings = power.validate(copy.deepcopy(power.DEFAULTS))
         self.factory = [60, 64, 68, 74, 80, 84]
         self.state = {"cpu": self.factory[:], "gpu": self.factory[:],

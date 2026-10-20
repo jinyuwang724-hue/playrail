@@ -3,7 +3,7 @@
 The elevated ClawPower helper does the hardware writes; this module owns the
 settings. Two plug-in presets (charger / battery) switch with the power source;
 manual mode uses one value for both and the presets are not applied while it is
-on. Smart mode delegates to Intel Endurance Gaming; AutoTDP uses FPS feedback.
+on. AutoTDP uses FPS feedback. Legacy Intel sessions are only kept for cleanup.
 The original
 register and power plan values are backed up before
 the first write and can be put back with restore().
@@ -24,7 +24,6 @@ import winreg
 TDP_MIN, TDP_MAX = 8, 35
 BOOST_MAX = 15
 TICK = 1.0
-INTEL_PROFILES = ("performance", "balanced", "battery")
 # Every cap a saved setting may hold (older versions offered up to 5 GHz).
 FREQ_CHOICES = (0, 1500, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000)
 # Offered in the panel: fine steps where handheld power limits actually land, only below this
@@ -47,13 +46,12 @@ def max_turbo_mhz(cpu):
     top = max(ratios, default=0)
     return top * 100 if 10 <= top <= 80 else None
 DEFAULTS = {
-    "enabled": False, "mode": "smart", "boost": 1, "quick": [15, 20, 30],
+    "enabled": False, "mode": "autotdp", "boost": 1, "quick": [15, 20, 30],
     "ac": {"tdp": 35, "freq": 2750}, "dc": {"tdp": 25, "freq": 2750}, "manual": {"tdp": 20, "freq": 0},
-    "smart": {"profile": "performance"},
     "autotdp": {"target": 60, "floor": 12, "acMax": 35, "dcMax": 25},
     # The OSD also keeps games such as 鸣潮 3.7 from crashing under RTSS (see ClawPower.cs Osd).
     "osd": {"enabled": True, "level": 2, "size": "medium", "rows": 1, "smallUnits": False},
-    "fan": {"mode": "balanced", "curves": None, "full": False},  # curves: FAN_PRESETS until edited
+    "fan": {"mode": "balanced", "curves": None, "full": False, "control": "custom"},
 }
 # The toolbox follows temperature and writes a flat duty to both fan tables.
 # Autonomous custom EC curves were not verified on the CG3EM; see docs/fan-ec-integration.md.
@@ -64,7 +62,7 @@ DEFAULTS = {
 FAN_CAP = 76
 FAN_CAPS = {"quiet": FAN_CAP, "balanced": FAN_CAP, "performance": 100}
 # Avoid audible oscillation; high-temperature increases bypass the delay.
-FAN_RISE, FAN_FALL, FAN_HOT = 6.0, 10.0, 95
+FAN_RISE, FAN_FALL, FAN_HOT = 6.0, 10.0, 75
 # Six duty points (%) per mode at FAN_TEMPS °C, linear in between. 均衡 is the user's curve
 # (20 % ≤50 °C, 30 % 60 °C, 50 % 70 °C, 76 % ≥80 °C); 静音 is it 5 °C later; 性能 is more
 # aggressive and reaches full speed at 90 °C. The user can edit every mode's points.
@@ -92,11 +90,8 @@ def _profile(value, name):
 def validate(value):
     if not isinstance(value, dict) or type(value.get("enabled")) is not bool or value.get("mode") not in ("auto", "manual", "smart", "autotdp"):
         raise ValueError("功耗设置格式错误")
-    smart = value.get("smart", DEFAULTS["smart"])
-    if not isinstance(smart, dict) or smart.get("profile", "performance") not in INTEL_PROFILES:
-        raise ValueError("Intel 智能功耗档位无效")
-    # Old target/floor/cap values are deliberately retired, including on older clients.
-    smart = {"profile": smart.get("profile", "performance")}
+    # Old clients/saved Intel selections migrate to AutoTDP; they can no longer enable Intel policy.
+    mode = "autotdp" if value["mode"] == "smart" else value["mode"]
     auto = value.get("autotdp", DEFAULTS["autotdp"])
     if not isinstance(auto, dict):
         raise ValueError("Auto 功耗设置格式错误")
@@ -113,10 +108,10 @@ def validate(value):
     quick = value.get("quick", DEFAULTS["quick"])
     if not isinstance(quick, list) or len(quick) != 3:
         raise ValueError("快捷档位格式错误")
-    return {"enabled": value["enabled"], "mode": value["mode"], "boost": _int(value.get("boost"), 0, BOOST_MAX, "短时加成"),
+    return {"enabled": value["enabled"], "mode": mode, "boost": _int(value.get("boost"), 0, BOOST_MAX, "短时加成"),
             "quick": [_int(q, TDP_MIN, TDP_MAX, "快捷档位") for q in quick],
             "ac": _profile(value.get("ac"), "插电"), "dc": _profile(value.get("dc"), "电池"),
-            "manual": _profile(value.get("manual"), "手动"), "smart": smart, "autotdp": auto,
+            "manual": _profile(value.get("manual"), "手动"), "autotdp": auto,
             "osd": osd, "fan": _fan(value.get("fan"))}
 
 
@@ -127,12 +122,12 @@ def _fan(value):
     if fan["curves"] is not None and not isinstance(fan["curves"], dict):
         raise ValueError("风扇设置格式错误")
     curves = {**FAN_PRESETS, **(fan["curves"] or {})}
-    if (fan["mode"] not in FAN_MODES or type(fan["full"]) is not bool or set(curves) != set(FAN_PRESETS)
+    if (fan["mode"] not in FAN_MODES or fan["control"] not in ("custom", "auto") or type(fan["full"]) is not bool or set(curves) != set(FAN_PRESETS)
             or any(not isinstance(c, list) or len(c) != 6 or any(type(d) is not int or not 0 <= d <= 100 for d in c)
                    for c in curves.values())):
         raise ValueError("风扇设置格式错误")
-    return {"mode": fan["mode"], "curves": {m: [min(d, FAN_CAPS[m]) for d in curves[m]] for m in FAN_PRESETS},
-            "full": fan["full"]}
+    return {"mode": fan["mode"], "curves": {m: [max(1, min(d, FAN_CAPS[m])) for d in curves[m]] for m in FAN_PRESETS},
+            "full": fan["full"], "control": fan["control"]}
 
 
 def fan_points(fan):
@@ -495,6 +490,9 @@ _endurance_spec.loader.exec_module(_endurance_module)
 _auto_spec = importlib.util.spec_from_file_location("claw_toolbox_autotdp", Path(__file__).with_name("claw_autotdp.py"))
 _auto_module = importlib.util.module_from_spec(_auto_spec)
 _auto_spec.loader.exec_module(_auto_module)
+_fan_service_spec = importlib.util.spec_from_file_location("claw_toolbox_fan_service", Path(__file__).with_name("claw_fan_service.py"))
+_fan_service_module = importlib.util.module_from_spec(_fan_service_spec)
+_fan_service_spec.loader.exec_module(_fan_service_module)
 
 
 class PowerControl:
@@ -540,6 +538,7 @@ class PowerControl:
         self.fan_test_watchdog = None
         self.fan_test_result = None
         self.fan_backup_path = self.data / "fan-backup.json"
+        self.fan_service = _fan_service_module.FanServiceClient()
         self.ecore_path = self.data / "ecore.json"
         self.cpu_max = None  # MHz, read once from the CPU
         self.sys_cache = None  # widget readings (brightness, volume, refresh, frame limit, game)
@@ -554,11 +553,8 @@ class PowerControl:
         self.osd = {}
         self.osd_text = ""
         self.policy_lock = asyncio.Lock()
-        self.endurance = _endurance_module.IntelEndurance(self._call, self.data, self._ensure_endurance_worker)
-        self.endurance_worker = None
-        self.worker_checked = 0.0
+        self.endurance = _endurance_module.IntelEndurance(self._call, self.data, None)  # recovery only
         self.last_game = None
-        self.smart = {}
         self.auto_governor = _auto_module.AutoTDPGovernor()
         self.auto_session = _auto_module.AutoTDPSession(self._call, self.data)
         self.auto_game = None
@@ -609,7 +605,7 @@ class PowerControl:
             if command in ("thermal", "osd", "stats", "osd_zoom", "osd_height", "osd_font", "rtss_app", "gpu"):
                 return reply.get(command) or {}
             if command in ("sys_read", "brightness_set", "volume_set", "mute_set", "refresh_set", "fps_limit_set",
-                           "kill", "power_action", "keyboard", "screenshot"):
+                           "kill", "power_action", "keyboard", "screenshot", "mapped_input"):
                 return reply.get("sys") or {}
             if command in ("display_read", "resolution_set", "vrr_set", "hdr_set", "audio_output_set", "mic_mute_set",
                            "scale_set", "auto_brightness_set", "gpu_set"):
@@ -654,8 +650,6 @@ class PowerControl:
     # ---- policy -------------------------------------------------------------
     def target(self):
         s = self.settings
-        if s["mode"] == "smart":
-            return (self.actual or {}).get("pl1"), (self.actual or {}).get("pl2")
         if s["mode"] == "autotdp":
             cfg = s["autotdp"]
             ceiling = cfg["acMax" if self.charger else "dcMax"]
@@ -666,25 +660,11 @@ class PowerControl:
 
     def freq_target(self):
         s = self.settings
-        if s["mode"] in ("smart", "autotdp"):
+        if s["mode"] == "autotdp":
             return 0, 0
         if s["mode"] == "manual":
             return s["manual"]["freq"], s["manual"]["freq"]
         return s["ac"]["freq"], s["dc"]["freq"]
-
-    async def _ensure_endurance_worker(self):
-        if time.monotonic() - self.worker_checked < 10:
-            return
-        names = await asyncio.to_thread(process_names)
-        if "endurancegamingprocess.exe" not in names.values():
-            exe = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Intel" / "EnduranceGaming" / "EnduranceGamingProcess.exe"
-            if not exe.is_file():
-                raise RuntimeError("Intel Endurance Gaming 组件未安装")
-            self.endurance_worker = subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=subprocess.CREATE_NO_WINDOW)
-            await asyncio.sleep(.5)
-            if self.endurance_worker.poll() is not None:
-                raise RuntimeError(f"Intel 调优组件启动后退出（{self.endurance_worker.returncode}）")
-        self.worker_checked = time.monotonic()
 
     async def _backup(self, power):
         if self.backup_path.exists():
@@ -701,14 +681,6 @@ class PowerControl:
     async def _apply(self, force=False):
         if self.settings["mode"] != "autotdp":
             await self._release_auto()
-        if self.settings["mode"] == "smart":
-            if not self.backup_path.exists():
-                await self._backup(await self._call("read"))
-            state = await self.endurance.apply(self.settings["smart"]["profile"])
-            self.smart = {"provider": "intel", "profile": state.get("profile"),
-                          "configured": state.get("control") == "auto",
-                          "reason": "插电 · Intel 自动策略待机" if self.charger else "Intel 自动策略已开启 · 由系统按游戏负载调节"}
-            return
         await self.endurance.release()
         if self.settings["mode"] == "autotdp":
             self._configure_auto()
@@ -822,7 +794,7 @@ class PowerControl:
                         await self._call("read")
                         if self.settings["mode"] == "autotdp":
                             await self._auto_tick()
-                        elif self.settings["mode"] == "smart" or tick % 3 == 0:
+                        elif tick % 3 == 0:
                             await self._apply()
                     else:
                         await self._release_auto(restore_driver=True)
@@ -934,10 +906,20 @@ class PowerControl:
     async def _fan_tick(self, tick):
         """Follow the selected curve with hysteresis and repair EC resets."""
         async with self.fan_lock:
+            if self.fan_service.installed:
+                try:
+                    self._accept_fan_service(await self.fan_service.get())
+                except RuntimeError as error:
+                    self.fan_error = str(error)
+                return
             if self.fan_test_session is not None:
                 return  # the independent watchdog owns safety; no host speed writes here
             try:
                 fan = self.settings["fan"]
+                if fan["control"] == "auto":
+                    if tick % 3 == 0 or not self.fan_state:
+                        await self._fan_release_locked()
+                    return
                 if not fan["full"]:
                     self.temperature = (await self._call("thermal")).get("package")
                     self.temperature_at = time.monotonic()
@@ -960,12 +942,22 @@ class PowerControl:
                 except RuntimeError as release:
                     self.fan_error += f"；恢复自动控制失败：{release}"
 
+    def _accept_fan_service(self, status):
+        self.settings["fan"] = _fan(status["settings"])
+        self.fan_state = {k: v for k, v in status.items() if k != "settings"}
+        self.fan_error = status.get("error", "")
+        if type(status.get("temperature")) in (int, float):
+            self.temperature = status["temperature"]
+            self.temperature_at = time.monotonic()
+
     def _fan_temperature(self):
         if type(self.temperature) not in (int, float) or not 0 < self.temperature <= 125:
             raise RuntimeError("CPU 温度读取异常，已尝试恢复固件自动控制")
 
     async def fan_test(self, action, config=None):
         """Bounded diagnostic lease. Never changes saved user power/fan settings."""
+        if self.fan_service.installed:
+            raise RuntimeError("风扇由独立服务管理，旧的直接写入测试已停用")
         async with self.fan_lock:
             if action == "begin":
                 if self.fan_test_session is not None:
@@ -1080,7 +1072,13 @@ class PowerControl:
             await self._apply_fan_locked()
 
     async def _apply_fan_locked(self, state=None, full=None):
+        if self.fan_service.installed:
+            self._accept_fan_service(await self.fan_service.update(self.settings["fan"]))
+            return
         fan = self.settings["fan"]
+        if fan["control"] == "auto":
+            await self._fan_release_locked()
+            return
         state = state if state is not None else await self._call("fan_read")
         if not self.fan_backup_path.exists():
             if state.get("software"):
@@ -1114,6 +1112,8 @@ class PowerControl:
 
     async def _fan_fallback(self):
         """Release custom/full-speed control on normal shutdown; the EC uses factory auto."""
+        if self.fan_service.installed:
+            return  # UI/agent exit must not stop the independent controller.
         if not self.process or self.process.returncode is not None:
             return
         try:
@@ -1218,13 +1218,15 @@ class PowerControl:
         return {"settings": self.settings, "charger": self.charger, "target": {"pl1": pl1, "pl2": pl2},
                 "actual": {k: a.get(k) for k in ("pl1", "pl2", "package", "locked", "tdpBase", "freq")} if a else None,
                 "backup": self.backup_path.exists(), "otherTool": self.other_tool, "reapplied": self.reapplied,
-                "smart": self.smart if self.settings["mode"] == "smart" else None,
                 "autotdp": self.auto_state if self.settings["mode"] == "autotdp" else None,
-                "endurance": self.endurance.state, "targets": [],
+                "targets": [],
                 "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS, "caps": FAN_CAPS,
-                        "axis": list(FAN_TEMPS), "target": self.fan_governor.duty,
-                        "execution": "test" if self.fan_test_session else "software", "writeCount": self.fan_write_count,
-                        "lastWrite": self.fan_last_write, "testResult": self.fan_test_result},
+                        "axis": list(FAN_TEMPS),
+                        "target": self.fan_state.get("target") if self.fan_service.installed else self.fan_governor.duty,
+                        "execution": "service" if self.fan_service.installed else ("test" if self.fan_test_session else "software"),
+                        "writeCount": self.fan_state.get("writeCount", 0) if self.fan_service.installed else self.fan_write_count,
+                        "lastWrite": self.fan_state.get("lastWrite") if self.fan_service.installed else self.fan_last_write,
+                        "testResult": self.fan_test_result},
                 # Read-only readings for the toolbox home; a temperature older than 15 s is not shown.
                 "live": {"battery": battery_percent(),
                          "cpuTemp": self.temperature if time.monotonic() - self.temperature_at < 15 else None,
@@ -1244,12 +1246,14 @@ class PowerControl:
 
     # ---- api ----------------------------------------------------------------
     async def get(self, sample=False):
+        if self.fan_service.installed:
+            async with self.fan_lock:
+                try:
+                    self._accept_fan_service(await self.fan_service.get())
+                except RuntimeError as error:
+                    self.fan_error = str(error)
         self.charger = on_charger()
         self.other_tool = await asyncio.to_thread(motion_assistant_running)
-        try:
-            await self.endurance.read()
-        except Exception as e:
-            self.endurance.state = {"available": False, "error": str(e)}
         if not self.settings["enabled"]:
             return self.view()
         if self.cpu_max is None:
@@ -1279,37 +1283,48 @@ class PowerControl:
         if self.fan_test_session and next_settings["fan"] != self.settings["fan"]:
             raise RuntimeError("风扇测试期间请先结束测试，再修改风扇设置")
         async with self.policy_lock:
-            previous = self.settings
-            self.settings = next_settings
-            self.charger = on_charger()
-            try:
-                if next_settings["enabled"]:
-                    await self._apply(force=True)
-                else:
-                    await self._release_auto(restore_driver=True)
-                    await self.endurance.release(restore_driver=True)
-                    self.smart = {}
-                self._persist_settings()
-                self.error = ""
-            except Exception as e:
-                self.settings = previous
-                self.error = str(e)
+            async with self.fan_lock:
+                previous = json.loads(json.dumps(self.settings))
+                # Older frontends only cycle mode/full. Those explicit actions resume
+                # custom control after the user has selected factory Auto.
+                if next_settings["fan"]["mode"] != previous["fan"]["mode"] or (next_settings["fan"]["full"] and not previous["fan"]["full"]):
+                    next_settings["fan"]["control"] = "custom"
+                fan_changed = next_settings["fan"] != previous["fan"]
+                service_applied = False
+                self.settings = next_settings
+                self.charger = on_charger()
                 try:
-                    if previous["enabled"]:
+                    if next_settings["enabled"]:
                         await self._apply(force=True)
                     else:
                         await self._release_auto(restore_driver=True)
                         await self.endurance.release(restore_driver=True)
-                except Exception:
-                    logging.exception("Power settings rollback incomplete")
-                raise
-        if next_settings["fan"] != previous["fan"]:
-            self.fan_governor.reset()
-            try:
-                await self._apply_fan()
-                self.fan_error = ""
-            except RuntimeError as e:
-                self.fan_error = str(e)
+                    if fan_changed:
+                        self.fan_governor.reset()
+                        await self._apply_fan_locked()
+                        service_applied = self.fan_service.installed
+                        self.fan_error = ""
+                    self._persist_settings()
+                    self.error = ""
+                except Exception as error:
+                    self.settings = previous
+                    self.error = str(error)
+                    if fan_changed:
+                        self.fan_error = str(error)
+                    try:
+                        if service_applied:
+                            self._accept_fan_service(await self.fan_service.update(previous["fan"]))
+                        elif fan_changed and not self.fan_service.installed:
+                            self.fan_governor.reset()
+                            await self._apply_fan_locked()
+                        if previous["enabled"]:
+                            await self._apply(force=True)
+                        else:
+                            await self._release_auto(restore_driver=True)
+                            await self.endurance.release(restore_driver=True)
+                    except Exception:
+                        logging.exception("Power/fan settings rollback incomplete")
+                    raise
         if not next_settings["osd"]["enabled"]:
             await self._osd_off()
         return self.view()

@@ -31,6 +31,9 @@ class FirmwareShortcutTests {
         Check(!s.Key(K(71,100),true).Swallow,"lost G release cannot consume later typing");
         s=new FirmwareShortcutState();s.Key(K(91),true);s.Disabled();
         Check(!s.Key(K(71),true).Swallow,"context reset cannot leave a stale Windows modifier");
+        s=new FirmwareShortcutState();s.Key(K(91),true);
+        var mapped=K(71);mapped.Extra=0x434C4157;
+        Check(!s.Key(mapped,true).Swallow,"an explicitly mapped Win+G bypasses the firmware filter");
         return 0;
     }
 }

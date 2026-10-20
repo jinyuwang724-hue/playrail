@@ -28,7 +28,7 @@ function Get-Relative([string]$Root, [string]$Folder) {
 $agentApp = Join-Path $AgentHome 'app'
 $agentFiles = @(('bin\ClawRouter-'+$taskVersion+'.exe'),('bin\ClawTouchBridge-'+$taskVersion+'.exe'),'bin\SteamAdminLauncher.exe','bin\CompatibilityUtility.exe',('bin\ClawPower-'+$taskVersion+'.exe'),'bin\pawnio\IntelMSR.bin','resources\clawtweaks-home.patch.gz','claw_agent.py','claw_service.py','claw_compatibility.py','claw_navigation_haptics.py','claw_magpie.py','claw_overlay_frames.py','claw_power.py','claw_rumble.py','claw_gamepad_fw.py','claw_input_layer.py',('bin\ClawInput-'+$taskVersion+'.exe'),'plugin.json')
 $agentFiles += Get-Relative $taskSource 'bin\magpie'
-$agentFiles += 'claw_endurance.py','claw_autotdp.py'
+$agentFiles += 'claw_endurance.py','claw_autotdp.py','claw_fan_service.py','claw_button_mappings.py'
 Copy-Changed $taskSource $agentApp $agentFiles $null
 
 $runtimeSource = Join-Path $taskSource 'runtime\python'
@@ -60,3 +60,4 @@ $deckyFiles = @('bin\ClashBridge.exe','dist\index.js','main.py','claw_agent_clie
 Copy-Changed $taskSource $taskTarget $deckyFiles 'plugin-backup'
 Write-Output $taskTarget
 Write-Output $agentApp
+& (Join-Path $PSScriptRoot 'tools\Install-FanService.ps1') -AgentHome $AgentHome

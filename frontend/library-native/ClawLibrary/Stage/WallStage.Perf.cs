@@ -40,8 +40,8 @@ public sealed partial class WallStage
     private const float PerfViewH = 800 - PerfTop - 40, PerfScrollPad = 60;
     private static readonly string[] FanModes = { "quiet", "balanced", "performance" };
     private static readonly string[] FanModeNames = { "静音", "均衡", "性能" };
-    private static readonly string[] PowerModes = { "autotdp", "smart", "auto", "manual" };
-    private static readonly string[] PowerModeNames = { "Auto", "Intel 智能", "按电源", "手动" };
+    private static readonly string[] PowerModes = { "autotdp", "auto", "manual" };
+    private static readonly string[] PowerModeNames = { "Auto", "按电源", "手动" };
     /// <summary>强调色跟着背景的主题色走（当前游戏封面的代表色），背景还没取到色时用 folia 的橙。</summary>
     private Color PerfAccent => _ccBack?.Accent ?? Gfx.Rgba(0xfd, 0x8a, 0x5a);
 
@@ -239,16 +239,14 @@ public sealed partial class WallStage
         if (s == null) return "—";
         if (!Bool(s["enabled"])) return "未接管";
         bool charger = PerfCharger;
-        return (Str(s["mode"]) ?? "smart") switch
+        return (Str(s["mode"]) ?? "autotdp") switch
         {
             "autotdp" => $"Auto · {Int(s["autotdp"]?["target"], 60)} 帧",
-            "smart" => $"Intel · {IntelProfileName(Str(s["smart"]?["profile"]))}",
             "auto" => $"按电源 · {Int(s[charger ? "ac" : "dc"]?["tdp"], 25)} W",
             _ => $"手动 · {Int(s["manual"]?["tdp"], 20)} W",
         };
     }
 
-    private static string IntelProfileName(string? id) => id switch { "balanced" => "均衡", "battery" => "续航", _ => "性能" };
 
     private static string Ghz(int mhz) => mhz <= 0 ? "不限" : $"{mhz / 1000.0:0.##} GHz";
 
@@ -275,8 +273,7 @@ public sealed partial class WallStage
             return;
         }
         bool on = Bool(s["enabled"]);
-        string mode = Str(s["mode"]) ?? "smart";
-        var smart = s["smart"]!;
+        string mode = Str(s["mode"]) ?? "autotdp";
         PerfRow Choice(string title, string[] names, int idx, Action<int> set, bool disabled = false) => new()
         {
             Title = title, Choices = names, Choice = idx, Disabled = disabled,
@@ -305,22 +302,8 @@ public sealed partial class WallStage
         _perfRows.Add(Choice("功耗接管", new[] { "关", "开" }, on ? 1 : 0, i => { s["enabled"] = i == 1; PerfChanged(); }));
         _perfRows.Add(Choice("模式", PowerModeNames, Math.Max(0, Array.IndexOf(PowerModes, mode)), i => { s["mode"] = PowerModes[i]; PerfChanged(); }, !on));
         PerfRow Info(string title, string value) => new() { Title = title, Value = value, Skip = true };
-        bool smartMode = mode == "smart", autoMode = mode == "autotdp";
-        if (smartMode)
-        {
-            string[] profiles = (_perfView?["endurance"]?["profiles"] as JsonArray)?.Select(n => Str(n?["id"]) ?? "performance").ToArray()
-                is { Length: > 0 } ids ? ids : new[] { "performance", "balanced", "battery" };
-            string selected = Str(smart["profile"]) ?? "performance";
-            _perfRows.Add(Choice("Intel 档位", profiles.Select(id => IntelProfileName(id)).ToArray(), Math.Max(0, Array.IndexOf(profiles, selected)),
-                i => { smart["profile"] = profiles[i]; PerfChanged(); }, !on || !Bool(_perfView?["endurance"]?["available"])));
-            string status = Str(_perfView?["error"]) is { Length: > 0 } error ? error
-                : !Bool(_perfView?["endurance"]?["available"]) ? Str(_perfView?["endurance"]?["error"]) ?? "正在检查支持情况"
-                : !on ? "尚未开启" : Str(_perfView?["endurance"]?["control"]) == "auto" ? "Intel 自动策略已开启" : "正在交接控制";
-            _perfRows.Add(Info("调节状态", status));
-            _perfRows.Add(Info("适用电源", "电池供电 · 插电时待机"));
-            if (!Bool(_perfView?["endurance"]?["liveChange"])) _perfRows.Add(Info("设置生效", "调整后重新启动游戏"));
-        }
-        else if (autoMode)
+        bool autoMode = mode == "autotdp";
+        if (autoMode)
         {
             if (s["autotdp"] is not JsonObject auto) s["autotdp"] = auto = new JsonObject { ["target"] = 60, ["floor"] = 12, ["acMax"] = 35, ["dcMax"] = 25 };
             _perfRows.Add(Number("目标帧率", Int(auto["target"], 60), 20, 240, n => $"{n} 帧", n => { auto["target"] = n; PerfChanged(); }, disabled: !on));
@@ -345,7 +328,7 @@ public sealed partial class WallStage
         int[] freqs = (_perfView?["limits"]?["freq"] as JsonArray)?.Select(n => Int(n)).ToArray() is { Length: > 0 } fq ? fq : new[] { 0, 1500, 2000, 2500, 2750, 3000, 3500, 4000 };
         bool manual = mode == "manual";
         int freq = manual ? Int(s["manual"]!["freq"]) : Int(s[PerfCharger ? "ac" : "dc"]!["freq"]);
-        _perfRows.Add(smartMode || autoMode ? Info("CPU 频率", smartMode ? "由 Intel 自动调节" : "不限频 · 按负载运行") : List("固定 CPU 频率", freqs, freq, Ghz, f =>
+        _perfRows.Add(autoMode ? Info("CPU 频率", "不限频 · 按负载运行") : List("固定 CPU 频率", freqs, freq, Ghz, f =>
         {
             if (manual) s["manual"]!["freq"] = f; else { s["ac"]!["freq"] = f; s["dc"]!["freq"] = f; }
             PerfChanged();
@@ -358,8 +341,8 @@ public sealed partial class WallStage
         _perfRows.Add(new PerfRow { Section = true, Title = "风扇" });
         var fan = s["fan"]!;
         string fmode = Str(fan["mode"]) ?? "balanced";
-        _perfRows.Add(Choice("风扇模式", FanModeNames, Math.Max(0, Array.IndexOf(FanModes, fmode)), i => { fan["mode"] = FanModes[i]; _perfCurveEdit = false; PerfChanged(); }));
-        _perfRows.Add(Info("调速方式", Str(_perfView?["fan"]?["error"]) is { Length: > 0 } fanError ? fanError : "软件自动调速"));
+        _perfRows.Add(Choice("风扇模式", FanModeNames, Math.Max(0, Array.IndexOf(FanModes, fmode)), i => { fan["control"] = "custom"; fan["mode"] = FanModes[i]; _perfCurveEdit = false; PerfChanged(); }));
+        _perfRows.Add(Info("调速方式", Str(_perfView?["fan"]?["error"]) is { Length: > 0 } fanError ? fanError : Str(fan["control"]) == "auto" ? "原厂自动控制" : Bool(_perfView?["fan"]?["thermalBoost"]) ? "EC 高温保护 · 冷却后恢复曲线" : Str(_perfView?["fan"]?["execution"]) == "service" ? "开机风扇服务 · 退出界面仍生效" : "软件自动调速"));
         _perfRows.Add(new PerfRow
         {
             Title = "编辑这档曲线", Value = _perfCurveEdit ? "编辑中 · ← → 选点  ↑ ↓ 改" : "6 个温度点 ›",
@@ -373,7 +356,7 @@ public sealed partial class WallStage
             for (int i = 0; i < 6; i++)
             {
                 int point = i;
-                _perfRows.Add(Number($"{axis[i]} °C 风量", curve[i], 0, cap, n => $"{n} %", n =>
+                _perfRows.Add(Number($"{axis[i]} °C 风量", curve[i], 1, cap, n => $"{n} %", n =>
                 {
                     var next = PerfCurve(fmode); next[point] = n; _perfPoint = point;
                     if (fan["curves"] is not JsonObject curves) fan["curves"] = curves = new JsonObject();
@@ -383,7 +366,8 @@ public sealed partial class WallStage
             }
             _perfRows.Add(new PerfRow { Title = "完成曲线编辑", Value = "›", Press = PerfFinishCurveEdit });
         }
-        _perfRows.Add(Choice("全速运转", new[] { "关", "开" }, Bool(fan["full"]) ? 1 : 0, i => { fan["full"] = i == 1; PerfChanged(); }));
+        _perfRows.Add(Choice("全速运转", new[] { "关", "开" }, Bool(fan["full"]) ? 1 : 0, i => { fan["control"] = "custom"; fan["full"] = i == 1; PerfChanged(); }));
+        _perfRows.Add(new PerfRow { Title = "恢复原厂自动控制", Value = "›", Press = () => { fan["control"] = "auto"; fan["full"] = false; PerfChanged(); } });
         _perfRows.Add(new PerfRow
         {
             Title = "恢复这档默认曲线", Value = "›",
@@ -423,7 +407,7 @@ public sealed partial class WallStage
             if (dir is Direction.Left or Direction.Right) { _perfPoint = Math.Clamp(_perfPoint + (dir == Direction.Left ? -1 : 1), 0, 5); PaintPerf(); return; }
             var c = PerfCurve(mode);
             int cap = Int(_perfView?["fan"]?["caps"]?[mode], 100);
-            int nv = Math.Clamp(c[_perfPoint] + (dir == Direction.Up ? 1 : -1), 0, cap);
+            int nv = Math.Clamp(c[_perfPoint] + (dir == Direction.Up ? 1 : -1), 1, cap);
             if (nv == c[_perfPoint]) return;
             c[_perfPoint] = nv;
             var fan = _perfS!["fan"]!;
@@ -664,9 +648,8 @@ public sealed partial class WallStage
         Header(0, "功耗 · 最近 60 秒", pkg is double p ? $"{p:0.0} W" : "—", accent);
         float cTop = header, cH = powerH;
         var hist = _perfPower.ToArray();
-        // Intel mode reports the platform's current PL1, never the old governor's limits.
-        bool smartMode = Str(s?["mode"]) == "smart", autoMode = Str(s?["mode"]) == "autotdp";
-        int capW = smartMode ? Int(v?["actual"]?["pl1"], 0) : Int(v?["target"]?["pl1"], 0);
+        bool autoMode = Str(s?["mode"]) == "autotdp";
+        int capW = Int(v?["target"]?["pl1"], 0);
         int floorW = autoMode ? Int(s?["autotdp"]?["floor"], 12) : 0;
         double yMax = Math.Max(Math.Max(capW, hist.Length > 0 ? hist.Max() : 0), 10) * 1.12;
         float Y(double w) => cTop + 10 + (float)((1 - Math.Clamp(w / yMax, 0, 1)) * (cH - 20));
@@ -709,7 +692,7 @@ public sealed partial class WallStage
         int boost = Int(s?["boost"], 0);
         Rows(cTop + cH + gap, new[]
         {
-            ("功耗预设", preset), (smartMode || autoMode ? "调节方式" : "短时加成", smartMode ? "Intel 自动" : autoMode ? "目标帧率反馈" : s == null ? "—" : boost == 0 ? "关" : $"+{boost} W"), ("CPU 频率", _cpuFreq?.Mhz is double mhz ? $"{mhz / 1000:0.00} GHz" : "—"),
+            ("功耗预设", preset), (autoMode ? "调节方式" : "短时加成", autoMode ? "目标帧率反馈" : s == null ? "—" : boost == 0 ? "关" : $"+{boost} W"), ("CPU 频率", _cpuFreq?.Mhz is double mhz ? $"{mhz / 1000:0.00} GHz" : "—"),
         });
 
         // ---- 风扇 ----
@@ -782,7 +765,7 @@ public sealed partial class WallStage
         {
             ("CPU 温度", temp is double t2 ? $"{t2:0} °C" : "—"),
             ("占空比", duty is double du ? $"{du:0} %" : "—"),
-            ("转速上限", $"{cap} % ≈ {FanRpm(cap):0} RPM"),
+            ("曲线预期", $"{cap} % ≈ {FanRpm(cap):0} RPM"),
         });
     }
 }

@@ -10,13 +10,13 @@ function state(mode = "autotdp") {
     autotdp: { target: 60, fps: 59, reason: "帧率达标 · 观察稳定性" }, endurance: { available: true }, actual: { pl1: 24 } } };
 }
 
-test("Auto and Intel remain separately named and reachable from the quick tile", () => {
+test("power quick tile cycles Auto and manual presets without Intel", () => {
   let patch;
   const controller = { edit(value) { patch = value; } };
   assert.equal(powerSummaries(state()).power.text, "Auto · 60 帧");
-  assert.equal(powerSummaries(state("smart")).power.text, "Intel · 均衡");
   powerTiles(state(), controller, () => {})[0].onPress();
-  assert.equal(patch.mode, "smart");
+  assert.equal(patch.mode, "manual");
+  assert.equal(patch.manual.tdp, 15);
   const last = state("manual"); last.draft.manual.tdp = 30;
   powerTiles(last, controller, () => {})[0].onPress();
   assert.equal(patch.mode, "autotdp");
@@ -37,7 +37,7 @@ test("Auto controls preserve the target and enforce floor/ceiling ranges", () =>
   }
   walk(Panel({}));
   const byLabel = label => nodes.find(n => n.props?.label === label);
-  assert.ok(byLabel("调节方式").props.rgOptions.some(o => o.data === "autotdp"));
+  assert.deepEqual(byLabel("调节方式").props.rgOptions.map(o => o.data), ["autotdp", "auto", "manual"]);
   assert.equal(byLabel("功耗下限").props.max, 25);
   assert.equal(byLabel("插电上限").props.min, 12);
   assert.equal(byLabel("电池上限").props.min, 12);

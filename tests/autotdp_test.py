@@ -184,12 +184,13 @@ class PolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.hw.power(), self.original_power)
         self.assertFalse(self.control.auto_session.path.exists())
 
-    async def test_switch_auto_intel_manual_keeps_one_owner_and_manual_values(self):
+    async def test_retired_intel_selection_migrates_to_auto_without_enabling_driver(self):
         await self.enter()
         await self.control.save({**self.control.settings, "mode": "smart"})
-        self.assertFalse(self.control.auto_session.path.exists())
-        self.assertTrue(self.control.endurance.path.exists())
-        self.assertEqual(self.hw.driver["control"], "auto")
+        self.assertTrue(self.control.auto_session.path.exists())
+        self.assertFalse(self.control.endurance.path.exists())
+        self.assertEqual(self.control.settings["mode"], "autotdp")
+        self.assertEqual(self.hw.driver["control"], "off")
         await self.control.save({**self.control.settings, "mode": "autotdp"})
         self.assertFalse(self.control.endurance.path.exists())
         self.assertEqual(self.hw.driver["control"], "off")

@@ -35,9 +35,10 @@ def main():
     expect_error({**base, "boost": 16})
     expect_error({**base, "manual": {"tdp": 20, "freq": 1234}})
 
-    assert power.validate(base)["smart"] == {"profile": "performance"}
-    assert power.validate({**base, "smart": {"target": 60, "floor": 8, "acMax": 35, "dcMax": 25}})["smart"] == {"profile": "performance"}
-    expect_error({**base, "smart": {"profile": "turbo"}})
+    assert "smart" not in power.validate(base)
+    migrated = power.validate({**base, "mode": "smart", "smart": {"profile": "balanced"}})
+    assert migrated["mode"] == "autotdp" and "smart" not in migrated
+    assert migrated["manual"] == base["manual"] and migrated["autotdp"] == base["autotdp"]
     full = {"time": "19:30", "rtssFps": 199.6, "frameTime": 5.0, "fps": 50, "presented": 200, "fps01": 41, "package": 21.5, "limit": 25, "target": 60,
             "cpuUsage": 35, "cpuMhz": 2480, "cpuTemp": 68, "gpuUsage": 90, "gpuMhz": 2100, "gpuTemp": 70, "gpuPower": 15.2,
             "ramUsed": 15.8, "gpuMem": 4198, "battery": 85, "charger": False, "batteryW": -12.4, "minutes": 105, "fanRpm": 5161, "fanDuty": 84, "cpuPower": 8.4, "ramTotal": 31.5, "graph": True}
@@ -63,7 +64,7 @@ def main():
     expect_error({**base, "fan": {"mode": "quiet", "curves": {"quiet": [1, 2, 3, 4, 5, 101]}, "full": False}})
     expect_error({**base, "fan": {"mode": "quiet", "curves": {"loud": [1, 2, 3, 4, 5, 6]}, "full": False}})
     old = power.validate({**base, "fan": {"mode": "custom", "custom": [60, 64, 68, 74, 80, 84], "full": False}})["fan"]
-    assert old == {"mode": "balanced", "curves": power.FAN_PRESETS, "full": False}, "0.16.9 custom becomes 均衡"
+    assert old == {"mode": "balanced", "curves": power.FAN_PRESETS, "full": False, "control": "custom"}, "0.16.9 custom becomes 均衡"
     edited = power.validate({**base, "fan": {"mode": "quiet", "curves": {"quiet": [20, 30, 50, 70, 90, 100]}, "full": False}})["fan"]
     assert edited["curves"]["quiet"] == [20, 30, 50, 70, 76, 76] and edited["curves"]["balanced"] == power.FAN_PRESETS["balanced"]
     assert power.fan_points(edited)[0] == [50, 20]
@@ -72,14 +73,14 @@ def main():
     curve = power.fan_points({"mode": "balanced", "curves": power.FAN_PRESETS})
     assert power.fan_duty_at(curve, 30) == 20 and power.fan_duty_at(curve, 65) == 40 and power.fan_duty_at(curve, 80) == power.FAN_CAP
     fan = power.FanGovernor(); assert fan.update(curve, 50, 0) == 20
-    for t in range(1, 4): assert fan.update(curve, 80, t) == 20, "a 3 s spike does not speed the fan up"
+    for t in range(1, 4): assert fan.update(curve, 70, t) == 20, "a short cool-temperature spike does not speed the fan up"
     for t in range(4, 20): assert fan.update(curve, 50, t) == 20
     for t in range(20, 25): assert fan.update(curve, 70, t) == 20
     assert fan.update(curve, 70, 25) == 50, "6 s above speeds it up"
     for t in range(26, 30): assert fan.update(curve, 50, t) == 50, "a short dip does not slow it down"
     for t in range(30, 36): fan.update(curve, 50, t)
     assert fan.duty == 20, "10 s below slows it down"
-    assert fan.update(curve, 96, 36) == power.FAN_CAP, "very hot reacts at once"
+    assert fan.update(curve, 80, 36) == power.FAN_CAP, "approaching EC boost temperature reacts at once"
     assert "5161" in power.osd_text(3, full) and "5161" not in power.osd_text(2, full)
     assert "VRAM" not in power.osd_text(4, full) and "1h45min" in visible(power.osd_text(2, full))
     charging = {**full, "charger": True, "batteryW": 18.0, "chargeMinutes": 40, "minutes": None}

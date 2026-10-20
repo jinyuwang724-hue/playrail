@@ -47,7 +47,6 @@ export function createPowerController(api) {
 }
 
 const freqLabel = mhz => mhz ? `${+(mhz / 1000).toFixed(2)} GHz` : "不限";
-const intelProfile = id => ({ performance: "性能", balanced: "均衡", battery: "续航" })[id] ?? "性能";
 const watts = v => typeof v === "number" ? `${Math.round(v * 10) / 10} W` : "—";
 const fanModes = { quiet: "静音", balanced: "均衡", performance: "性能" };
 
@@ -55,7 +54,7 @@ const fanModes = { quiet: "静音", balanced: "均衡", performance: "性能" };
 export function powerSummaries(value) {
   const view = value?.view, draft = value?.draft;
   if (!view || !draft) return {};
-  const mode = draft.mode === "manual" ? `手动 ${draft.manual.tdp} W` : draft.mode === "smart" ? `Intel · ${intelProfile(draft.smart?.profile)}`
+  const mode = draft.mode === "manual" ? `手动 ${draft.manual.tdp} W`
     : draft.mode === "autotdp" ? `Auto · ${draft.autotdp.target} 帧`
     : `预设 ${(view.charger ? draft.ac : draft.dc).tdp} W`;
   return {
@@ -73,19 +72,18 @@ export function powerTiles(value, controller, open) {
   const view = value?.view, draft = value?.draft;
   if (!view || !draft) return [];
   const quick = draft.quick ?? [];
-  const powerIndex = draft.mode === "autotdp" ? 0 : draft.mode === "smart" ? 1 : draft.mode === "manual" ? quick.indexOf(draft.manual.tdp) + 2 : -1;
-  const powerValue = draft.mode === "smart" ? `Intel · ${intelProfile(draft.smart?.profile)}`
-    : draft.mode === "autotdp" ? `Auto · ${draft.autotdp.target} 帧`
+  const powerIndex = draft.mode === "autotdp" ? 0 : draft.mode === "manual" ? quick.indexOf(draft.manual.tdp) + 1 : -1;
+  const powerValue = draft.mode === "autotdp" ? `Auto · ${draft.autotdp.target} 帧`
     : draft.mode === "manual" ? `${draft.manual.tdp} W` : `预设 ${(view.charger ? draft.ac : draft.dc).tdp} W`;
   const level = draft.osd.enabled ? draft.osd.level : 0;
   const fanIndex = fanCycle.indexOf(draft.fan.mode);
   return [
-    { id: "power", label: "功耗", icon: "power", on: draft.enabled, steps: quick.length + 2, filled: draft.enabled ? powerIndex + 1 : 0,
+    { id: "power", label: "功耗", icon: "power", on: draft.enabled, steps: quick.length + 1, filled: draft.enabled ? powerIndex + 1 : 0,
       value: draft.enabled ? powerValue : "未接管",
       onPress: () => {
         if (!draft.enabled) return open("power");
-        const next = (powerIndex + 1) % (quick.length + 2);
-        controller.edit(next < 2 ? { mode: next === 0 ? "autotdp" : "smart" } : { mode: "manual", manual: { ...draft.manual, tdp: quick[next - 2] } }, 800);
+        const next = (powerIndex + 1) % (quick.length + 1);
+        controller.edit(next === 0 ? { mode: "autotdp" } : { mode: "manual", manual: { ...draft.manual, tdp: quick[next - 1] } }, 800);
       } },
     { id: "osd", label: "性能显示", icon: "osd", on: level > 0, steps: 4, filled: level, value: level ? `第 ${level} 档` : "关",
       onPress: () => {
@@ -94,7 +92,7 @@ export function powerTiles(value, controller, open) {
       } },
     { id: "fan", label: "风扇", icon: "fan", on: true, steps: 3, filled: Math.max(0, fanIndex) + 1,
       value: `${fanModes[draft.fan.mode] ?? "—"}${draft.fan.full ? " · 全速" : ""}`,
-      onPress: () => controller.edit({ fan: { ...draft.fan, mode: fanCycle[(fanIndex + 1) % fanCycle.length] } }, 800) },
+      onPress: () => controller.edit({ fan: { ...draft.fan, control: "custom", mode: fanCycle[(fanIndex + 1) % fanCycle.length] } }, 0) },
   ];
 }
 
@@ -126,13 +124,13 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       onChange: o => controller.edit({ [profile]: { ...draft[profile], freq: o.data } }, 0),
     }));
     const source = view.charger ? "插电" : "电池";
-    const live = draft.mode === "autotdp" ? view.autotdp : view.smart;
+    const live = draft.mode === "autotdp" ? view.autotdp : null;
     // One status line: what drives the limit now, and the limit and draw actually in effect.
     const driver = live?.game ? [live.game, live.fps != null ? `${Math.round(live.fps)} 帧` : ""].filter(Boolean).join(" ") : source;
     const phase = view.error ? view.error : !draft.enabled ? `${source} · 未接管` : actual
       ? `${driver} · 上限 ${watts(actual.pl1)}${typeof actual.package === "number" ? ` · 实际 ${watts(actual.package)}` : ""}`
       : driver;
-    const manual = draft.mode === "manual", smart = draft.mode === "smart", auto = draft.mode === "autotdp";
+    const manual = draft.mode === "manual", auto = draft.mode === "autotdp";
     const autoSetting = (key, label, min, max, unit) => row(`auto-${key}`, h(ui.SliderField, {
       label, min, max, step: 1, validValues: "steps", minimumDpadGranularity: 1,
       showValue: true, valueSuffix: unit, value: draft.autotdp[key],
@@ -153,21 +151,23 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
     const editCurve = curve => controller.edit({ fan: { ...draft.fan, curves: { ...view.fan?.presets, ...draft.fan.curves, [fanMode]: curve } } });
     if (section === "fan") return h(ui.PanelSection, null,
       row("fan-state", h("div", { className: "claw-hint" }, view.fan?.error ? view.fan.error
-        : view.fan?.rpm1 ? `${view.fan.rpm1} 转 · 占空比 ${view.fan.duty1}%${typeof view.live?.cpuTemp === "number" ? ` · CPU ${view.live.cpuTemp} °C` : ""} · 软件自动调速${view.fan.fullSpeed ? " · 全速" : ""}`
+        : view.fan?.rpm1 ? `${view.fan.rpm1} 转 · 占空比 ${view.fan.duty1}%${typeof view.live?.cpuTemp === "number" ? ` · CPU ${view.live.cpuTemp} °C` : ""} · ${draft.fan.control === "auto" ? "原厂自动控制" : view.fan.execution === "service" ? "开机风扇服务" : "软件自动调速"}${view.fan.fullSpeed ? " · 全速" : ""}`
         : "正在读取风扇状态…")),
       row("fan-mode", h(ui.DropdownItem, { label: "风扇模式", selectedOption: draft.fan.mode,
         rgOptions: [{ label: "静音", data: "quiet" }, { label: "均衡", data: "balanced" },
           { label: "性能", data: "performance" }],
-        onChange: o => controller.edit({ fan: { ...draft.fan, mode: o.data } }, 0) })),
+        onChange: o => controller.edit({ fan: { ...draft.fan, control: "custom", mode: o.data } }, 0) })),
       fanCurve && h(React.Fragment, null, ...fanCurve.map((duty, i) => row(`fan-${i}`, h(ui.SliderField, {
-        label: `${view.fan?.axis?.[i] ?? [50, 60, 70, 75, 80, 90][i]} °C`, min: 0, max: view.fan?.caps?.[fanMode] ?? 76, step: 1, validValues: "steps",
+        label: `${view.fan?.axis?.[i] ?? [50, 60, 70, 75, 80, 90][i]} °C`, min: 1, max: view.fan?.caps?.[fanMode] ?? 76, step: 1, validValues: "steps",
         minimumDpadGranularity: 1, showValue: true, valueSuffix: "%", value: duty,
         onChange: v => editCurve(fanCurve.map((d, j) => j === i ? Math.round(v) : d)),
       })))),
       fanCurve && fanDefault && fanCurve.some((d, i) => d !== fanDefault[i]) && row("fan-reset", h(ui.ButtonItem, { layout: "below",
         onClick: () => editCurve([...fanDefault]) }, "恢复默认曲线")),
       row("fan-full", h(ui.ToggleField, { label: "风扇全速",
-        checked: draft.fan.full, onChange: full => controller.edit({ fan: { ...draft.fan, full } }, 0) })),
+        checked: draft.fan.full, onChange: full => controller.edit({ fan: { ...draft.fan, control: "custom", full } }, 0) })),
+      row("fan-auto", h(ui.ButtonItem, { layout: "below",
+        onClick: () => controller.edit({ fan: { ...draft.fan, control: "auto", full: false } }, 0) }, "恢复原厂自动控制")),
       state.message && row("message", h("div", { className: "claw-hint" }, state.message)));
     return h(ui.PanelSection, null,
       h(StatusText, null, phase),
@@ -175,16 +175,9 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       row("enabled", h(ui.ToggleField, { label: "接管功耗控制",
         checked: draft.enabled, onChange: enabled => controller.edit({ enabled }, 0) })),
       draft.enabled && row("mode", h(ui.DropdownItem, { label: "调节方式", selectedOption: draft.mode,
-        rgOptions: [{ label: "Auto · 目标帧率", data: "autotdp" }, { label: "Intel 智能", data: "smart" }, { label: "按电源", data: "auto" }, { label: "手动", data: "manual" }],
+        rgOptions: [{ label: "Auto · 目标帧率", data: "autotdp" }, { label: "按电源", data: "auto" }, { label: "手动", data: "manual" }],
         onChange: o => controller.edit({ mode: o.data }, 0) })),
-      draft.enabled && (smart ? h(React.Fragment, null,
-        row("intel-profile", h(ui.DropdownItem, { label: "Intel 档位",
-          rgOptions: (view.endurance?.profiles ?? []).map(p => ({ label: intelProfile(p.id), data: p.id })),
-          selectedOption: draft.smart.profile, disabled: !view.endurance?.available,
-          onChange: o => controller.edit({ smart: { profile: o.data } }, 0) })),
-        row("intel-state", h("div", { className: "claw-hint" }, view.endurance?.error || view.error || live?.reason || "Intel Endurance Gaming 自动调节")),
-        row("intel-note", h("div", { className: "claw-hint" }, "电池供电时自动调节，插电时待机。调整档位后请重新启动游戏。")))
-      : auto ? h(React.Fragment, null,
+      draft.enabled && (auto ? h(React.Fragment, null,
         autoSetting("target", "目标帧率", 20, 240, " 帧"),
         autoSetting("floor", "功耗下限", limits.tdpMin, Math.min(draft.autotdp.acMax, draft.autotdp.dcMax), " W"),
         autoSetting("acMax", "插电上限", draft.autotdp.floor, limits.tdpMax, " W"),
@@ -199,7 +192,7 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
         freq("ac-freq", "插电 CPU 频率", "ac"),
         slider("dc-tdp", "电池功耗", "dc"),
         freq("dc-freq", "电池 CPU 频率", "dc"))),
-      draft.enabled && !smart && row("boost", h(ui.SliderField, { label: "短时功耗加成",
+      draft.enabled && row("boost", h(ui.SliderField, { label: "短时功耗加成",
         min: 0, max: limits.boostMax, step: 1, validValues: "steps", minimumDpadGranularity: 1, showValue: true, valueSuffix: " W",
         value: draft.boost, onChange: v => controller.edit({ boost: Math.round(v) }) })),
       view.ecore && row("ecore", h(ui.ToggleField, { label: "全部核心按 E 核调度",

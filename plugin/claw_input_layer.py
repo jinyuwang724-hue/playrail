@@ -55,7 +55,9 @@ KEYS.update({"Num%d" % d: (0x60 + d, False) for d in range(10)})
 KEY_ALIASES = {"Ctrl": "LCtrl", "Shift": "LShift", "Alt": "LAlt", "Win": "LWin", "Escape": "Esc", "Return": "Enter"}
 # System commands. Screenshot = Game Bar's own shortcut (saved to Videos\Captures).
 SYSTEM = {"screenshot": ["LWin", "LAlt", "PrintScreen"], "keyboard": None,
-          "volumeUp": ["VolumeUp"], "volumeDown": ["VolumeDown"], "mute": ["VolumeMute"]}
+          "volumeUp": ["VolumeUp"], "volumeDown": ["VolumeDown"], "mute": ["VolumeMute"],
+          "gamebar": None, "library": None, "controlCenter": None, "steamMainMenu": None,
+          "steamQuickAccess": None, "steamLibrary": None, "magpieToggle": None}
 STICK_MODES = ("stick", "none")
 SECOND_BATCH = {"mouse": "摇杆当鼠标", "scroll": "摇杆当滚轮", "dpad": "摇杆当十字键", "flick": "快速转向摇杆",
                 "radial": "径向菜单", "mouseRegion": "鼠标区域", "touchMenu": "触摸菜单", "hotbar": "热键栏菜单"}
@@ -571,6 +573,9 @@ class InputLayer:
                 try:
                     message = json.loads(line.decode("utf-8-sig"))
                 except ValueError:
+                    continue
+                if message.get("type") == "system_action":
+                    await self._emit("input_system_action", message)
                     continue
                 if "id" in message and message["id"] in self._waiting:
                     future = self._waiting.pop(message["id"])

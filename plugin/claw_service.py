@@ -16,6 +16,7 @@ import subprocess
 import sys
 import importlib.util
 import time
+import uuid
 
 PLUGIN_ROOT = Path(__file__).resolve().parent
 ALLOWED_ACTIONS = {"MainMenu", "QuickAccess", "MagpieToggle", "None"}
@@ -43,6 +44,9 @@ _gamepad_fw_spec.loader.exec_module(_gamepad_fw_module)
 _input_spec = importlib.util.spec_from_file_location("claw_toolbox_input_layer", PLUGIN_ROOT / "claw_input_layer.py")
 _input_module = importlib.util.module_from_spec(_input_spec)
 _input_spec.loader.exec_module(_input_module)
+_buttons_spec = importlib.util.spec_from_file_location("claw_toolbox_button_mappings", PLUGIN_ROOT / "claw_button_mappings.py")
+_buttons_module = importlib.util.module_from_spec(_buttons_spec)
+_buttons_spec.loader.exec_module(_buttons_module)
 
 # ControllerHapticsService.PlayPattern in Playhub 2.1.0 executes the first step.
 HAPTIC_PATTERNS = {
@@ -81,7 +85,9 @@ def validate_settings(value):
     if type(value.get("hapticsEnabled", True)) is not bool:
         raise ValueError("反馈开关格式错误")
     return {**{key: value[key] for key in ("enabled", "msiAction", "qamAction")},
-            "hapticsEnabled": value.get("hapticsEnabled", True)}
+            "hapticsEnabled": value.get("hapticsEnabled", True),
+            "buttonMappings": _buttons_module.validate_maps(value.get("buttonMappings", {}), _input_module.validate_command, general=True),
+            "steamBindings": _buttons_module.validate_maps(value.get("steamBindings", {}), _input_module.validate_command)}
 
 
 class Service:
@@ -111,7 +117,7 @@ class Service:
         self._gamepad = _gamepad_fw_module.GamepadControl(
             self._data, _gamepad_fw_module.GamepadFirmware(rumble=_rumble_module), log=logging.info)
         # The agent's own Python keeps seeing the real pad (navigation haptics match it by vendor / product id).
-        self._input = _input_module.InputLayer(PLUGIN_ROOT, self._data, self._emit, gamepad=self._gamepad,
+        self._input = _input_module.InputLayer(PLUGIN_ROOT, self._data, self._input_emit, gamepad=self._gamepad,
                                                not_games=_power_module.NOT_GAMES, python=sys.executable,
                                                log=logging.info)
         self._input_task = None
@@ -121,6 +127,12 @@ class Service:
         self._task = None
         self._recent = []
         self._maintenance_waiters = {}
+        self._mapping_tasks = set()
+        self._mapping_menu_waiters = {}
+        self._permission_waiters = {}
+        self._mapping_lock = asyncio.Lock()
+        self._last_mapping = None
+        self._toolbox_last_press = None
         self._compatibility = _compatibility_module.Compatibility(PLUGIN_ROOT, self._data, self._maintenance)
         self._compatibility_task = None
         self._compatibility_mode = None
@@ -149,6 +161,7 @@ class Service:
         self._rumble.start()
         self._gamepad.start()
         self._input_task = asyncio.create_task(self._start_input())
+        await self._configure()  # general mappings also work before any Steam frontend connects
 
     def _schedule_compatibility(self):
         if self._stopping or (self._compatibility_task and not self._compatibility_task.done()):
@@ -181,6 +194,108 @@ class Service:
     async def _configure(self, reset_steam_context=False):
         await self._send({"command": "configure", "ready": self._ready, "resetSteamContext": reset_steam_context, **self._settings})
 
+    async def _input_emit(self, kind, value):
+        if kind == "input_system_action":
+            self._schedule_mapping({"scope": "input", "command": {"type": "system", "action": value.get("action")}})
+        else:
+            await self._emit(kind, value)
+
+    def _schedule_mapping(self, event):
+        if self._stopping or len(self._mapping_tasks) >= 4:
+            return
+        if (event.get("source") == "Claw" and event.get("scope") == "general"
+                and (event.get("command") or {}).get("action") in ("library", "controlCenter")):
+            now = time.monotonic()
+            if self._toolbox_last_press is not None and now - self._toolbox_last_press < .35:
+                return
+            self._toolbox_last_press = now
+        task = asyncio.create_task(self._execute_mapping(event))
+        self._mapping_tasks.add(task)
+        task.add_done_callback(self._mapping_tasks.discard)
+
+    async def _allow_gamebar(self):
+        ident = uuid.uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        self._permission_waiters[ident] = future
+        try:
+            await self._send({"command": "allow_gamebar", "id": ident})
+            await asyncio.wait_for(future, 2)
+        finally:
+            self._permission_waiters.pop(ident, None)
+
+    async def _execute_system_mapping(self, action, event=None):
+        if action in ("library", "controlCenter"):
+            mode = "BigPicture" if self._status.get("bigPictureOpen") else self._status.get("mode")
+            eligible = event and event.get("source") == "Claw" and event.get("scope") == "general" and mode != "BigPicture"
+            context = await asyncio.to_thread(_buttons_module.toolbox_context) if eligible else {}
+            route = _buttons_module.toolbox_route(action, event or {}, mode, context)
+            await asyncio.to_thread(os.startfile, "claw-library://" + route)
+            return route
+        elif action in ("steamMainMenu", "steamQuickAccess"):
+            if not self._ready or self._status.get("mode") != "BigPicture":
+                await asyncio.to_thread(os.startfile, "steam://open/gamepadui")
+                deadline = time.monotonic() + 10
+                while not self._stopping and time.monotonic() < deadline:
+                    if self._ready and self._status.get("mode") == "BigPicture":
+                        break
+                    await asyncio.sleep(.1)
+            if not self._ready:
+                raise RuntimeError("Steam 按键前端尚未连接，请启动 Steam 和 Decky")
+            ident = uuid.uuid4().hex
+            future = asyncio.get_running_loop().create_future()
+            self._mapping_menu_waiters[ident] = future
+            try:
+                await self._emit("router_event", {"type": "action", "id": ident,
+                    "action": "MainMenu" if action == "steamMainMenu" else "QuickAccess",
+                    "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+                result = await asyncio.wait_for(future, 6)
+                if not result["ok"]:
+                    raise RuntimeError(result.get("reason") or "Steam 菜单没有响应")
+            finally:
+                self._mapping_menu_waiters.pop(ident, None)
+        elif action == "steamLibrary":
+            await asyncio.to_thread(os.startfile, "steam://open/games")
+        elif action == "magpieToggle":
+            await self._magpie.toggle()
+        elif action == "keyboard":
+            await self._power.system_set("keyboard")
+        else:
+            if action in ("gamebar", "screenshot"):
+                await self._allow_gamebar()
+            command = {"type": "keyboard", "keys": ["LWin", "G"]} if action == "gamebar" else {"type": "system", "action": action}
+            await self._power._call("mapped_input", mapping=_input_module.compile_command(command))
+
+    async def _execute_mapping(self, event):
+        async with self._mapping_lock:
+            result = {"source": event.get("source"), "scope": event.get("scope"), "ok": False}
+            try:
+                command = _input_module.validate_command(event.get("command"))
+                if command["type"] == "system":
+                    route = await self._execute_system_mapping(command["action"], event)
+                    if route is not None:
+                        result["windowRoute"] = route
+                elif command["type"] != "none":
+                    if command["type"] == "gamepad":
+                        raise ValueError("专用按键目前支持系统动作和键盘鼠标指令")
+                    if command["type"] == "keyboard" and "G" in command["keys"] and any(k in command["keys"] for k in ("LWin", "RWin")):
+                        await self._allow_gamebar()
+                    await self._power._call("mapped_input", mapping=_input_module.compile_command(command))
+                result["ok"] = True
+            except Exception as error:
+                result["error"] = str(error)
+                logging.warning("Special button mapping: %s", error)
+            self._last_mapping = result
+            await self._emit("button_mapping_result", result)
+            return result
+
+    async def test_button_mapping(self, source, steam=False):
+        if type(steam) is not bool or source not in _buttons_module.SOURCES:
+            raise ValueError("专用按键测试参数无效")
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出")
+        return await self._execute_mapping({"source": source, "scope": "steam" if steam else "general",
+            "command": _buttons_module.selected(self._settings, source, steam)})
+
     async def _read_output(self):
         try:
             while True:
@@ -192,6 +307,11 @@ class Service:
                 except (ValueError, UnicodeError):
                     continue
                 kind = event.get("type")
+                if kind == "mapping_permission":
+                    waiter = self._permission_waiters.get(event.get("id"))
+                    if waiter is not None and not waiter.done():
+                        waiter.set_result(True)
+                    continue
                 if kind == "maintenance":
                     waiter = getattr(self, "_maintenance_waiters", {}).get(event.get("id"))
                     if waiter is not None and not waiter.done():
@@ -211,6 +331,9 @@ class Service:
                         self._schedule_compatibility()
                 elif kind == "button":
                     self._recent = (self._recent + [event])[-8:]
+                elif kind == "mapped_action":
+                    self._schedule_mapping(event)
+                    continue
                 await self._emit("router_event", event)
             if not self._stopping:
                 self._status = {"mode": "Unknown", "phase": "按键后台已退出", "enabled": False,
@@ -240,7 +363,7 @@ class Service:
 
     async def get_state(self):
         return {"settings": self._settings, "status": self._status, "recent": self._recent,
-                "haptics": self._haptic_state(), "compatibility": self._compatibility.view()}
+                "haptics": self._haptic_state(), "compatibility": self._compatibility.view(), "buttonMappingResult": self._last_mapping}
 
     async def manage_compatibility(self, action, feature=None, enabled=None):
         if self._stopping:
@@ -696,6 +819,11 @@ class Service:
         if (not isinstance(result, dict) or type(result.get("ok")) is not bool
                 or not isinstance(result.get("id"), str) or len(result["id"]) != 32):
             raise ValueError("结果格式错误")
+        waiter = self._mapping_menu_waiters.get(result["id"])
+        if waiter is not None:
+            if not waiter.done():
+                waiter.set_result(result)
+            return {"handled": True}
         path = result.get("path")
         reason = result.get("reason")
         raw_timings = result.get("timings")
@@ -708,6 +836,11 @@ class Service:
 
     async def close(self):
         self._stopping = True
+        tasks = list(self._mapping_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         self._overlay_frames.close()
         await self._power.close()
         await self._rumble.close()
