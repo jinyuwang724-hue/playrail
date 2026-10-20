@@ -19,7 +19,7 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     private static readonly string[] StCats = { "通用", "游戏库", "外观", "声音与反馈", "游戏中", "开机自启", "第三方软件", "维护", "关于" };
-    private const float StCatH = 52;
+    private const float StCatH = PerfRowH;
 
     private UiPrefs _prefs = new();
     private ContainerVisual? _st;
@@ -726,7 +726,7 @@ public sealed partial class WallStage
     {
         double x = sx / _ccK - PerfLeftX, y = sy / _ccK - PerfTop;
         if (x < 0 || x > PerfLeftW || y < 0) return false;
-        int i = (int)(y / StCatH);
+        int i = (int)Math.Floor((y - PerfSecH) / StCatH);
         if (i < 0 || i >= StCats.Length) return false;
         MarkInput();
         _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null;
@@ -753,7 +753,7 @@ public sealed partial class WallStage
             _stTitle.Offset = new Vector3(40 * k, 32 * k, 0);
         }
         _settingsTargets.Clear();
-        CcSet(_stRight, CcDraw(PerfRightW, h, raster, ds => StPaintRows(ds, _stRows, _stZone == 1 ? _stFocus : -1, _settingsTargets)));
+        CcSet(_stRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _stRows, _stZone == 1 ? _stFocus : -1, _settingsTargets)));
         _stRight.Size = new Vector2(PerfRightW * k, h * k);
         _stRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _stRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
