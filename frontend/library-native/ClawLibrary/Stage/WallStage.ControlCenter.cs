@@ -55,6 +55,10 @@ public sealed partial class WallStage
     // 进场时间线（folia CollectionMorphOverlay）：探针两拍（70 ms 间隔）锁定落点 ≈ 140 ms → +140 ms 交叉淡化（0.28 s）→ +240 ms 淡出（0.18 s）
     private const double CrossfadeMs = 280, FadeMs = 180, SettleMs = 280, FadeAtMs = 520, HeroRevealDelayMs = 120, WallFadeMs = 300;
 
+    /// <summary>当前选中游戏的封面（控制中心背景取色用，和游戏库卡显不显示封面无关）。</summary>
+    private string? _ccGameCover;
+    private static readonly Color LibraryFallback = Gfx.Rgba(0xea, 0xb3, 0x08);
+
     private sealed class CcBlock
     {
         public required string Name;
@@ -452,7 +456,7 @@ public sealed partial class WallStage
 
         var defs = new (string Name, string Icon, Color Accent)[]
         {
-            ("游戏库", "", Gfx.Rgba(0xea, 0xb3, 0x08)), ("性能", "", Gfx.Rgba(0xf9, 0x73, 0x16)), ("手柄", "", Gfx.Rgba(0x3b, 0x82, 0xf6)),
+            ("游戏库", "", Gfx.Rgba(0xea, 0xb3, 0x08)), ("性能", "", Gfx.Rgba(0xf9, 0x73, 0x16)), ("手柄", "", Gfx.Rgba(0x3b, 0x82, 0xf6)),
             ("显示与声音", "", Gfx.Rgba(0xa8, 0x55, 0xf7)), ("系统", "", Gfx.Rgba(0x10, 0xb9, 0x81)), ("软件设置", "", Gfx.Rgba(0x94, 0xa3, 0xb8)),
         };
         for (int i = 0; i < defs.Length; i++)
@@ -638,7 +642,7 @@ public sealed partial class WallStage
     /// <summary>卡面（folia polaroid）：底 #09090b 95 %、1 px 描边 5 %、方图区 + 文字块。内容没变就不重画。</summary>
     private void CcPaintCard(CcBlock b, bool force = false)
     {
-        string key = $"{b.Rounded}|{b.Second}|{b.Summary}|{b.CoverPath}|{_ccK}|{Chrome.Dpi}";
+        string key = $"{b.Rounded}|{b.Second}|{b.Summary}|{b.CoverPath}|{b.Accent}|{_ccK}|{Chrome.Dpi}";
         if (!force && key == b.Drawn) return;
         b.Drawn = key;
         float img = CcCardW - 2 * CcPad, textW = img;
@@ -646,29 +650,7 @@ public sealed partial class WallStage
         var surface = CcDraw(cw, ch, CcRaster, ds =>
         {
             if (b.Rounded) { CcPaintRounded(ds, b); return; }
-            ds.FillRoundedRectangle(0, 0, CcCardW, _ccH, CcRadius, CcRadius, Gfx.WithAlpha(Theme.Bg, 0.95));
-            ds.DrawRoundedRectangle(0.5f, 0.5f, CcCardW - 1, _ccH - 1, CcRadius - 0.5f, CcRadius - 0.5f, Gfx.WithAlpha(CcText, 0.05), 1);
-            // 方图区：zinc-800 20 % + 一圈很淡的内阴影
-            ds.FillRoundedRectangle(CcPad, CcPad, img, img, CcImgRadius, CcImgRadius, Gfx.Rgba(0x27, 0x27, 0x2a, 0.20));
-            using (var inner = CanvasGeometry.CreateRoundedRectangle(ds, CcPad, CcPad, img, img, CcImgRadius, CcImgRadius))
-            using (ds.CreateLayer(1, inner))
-            using (var outside = CanvasGeometry.CreateRectangle(ds, CcPad - 40, CcPad - 40, img + 80, img + 80).CombineWith(inner, Matrix3x2.Identity, CanvasGeometryCombine.Exclude))
-            using (var cl = new CanvasCommandList(ds))
-            {
-                using (var c = cl.CreateDrawingSession()) c.FillGeometry(outside, Colors.Black);
-                using var sh = new ShadowEffect { Source = cl, BlurAmount = 3, ShadowColor = Gfx.Rgba(0, 0, 0, 0.5) };
-                using var moved = new Transform2DEffect { Source = sh, TransformMatrix = Matrix3x2.CreateTranslation(0, 1) };
-                ds.DrawImage(moved);
-            }
-            if (b.CoverPath == null) CcPaintFilm(ds, b, CcPad, CcPad, img, img, CcImgRadius);
-            // 拍立得下面只有两行：块名，和一行实时摘要（没有就写这块管什么）
-            float y = CcPad + img + CcPad + CcTextTop;
-            using var title = TextKit.Layout(ds, b.Name, TextKit.Ui(700), 15, textW, CanvasHorizontalAlignment.Left, 0, CcTitleLh);
-            ds.DrawTextLayout(title, CcPad, y, CcText);
-            y += CcTitleLh + 4;
-            string line = string.IsNullOrEmpty(b.Summary) ? b.Second : b.Summary;
-            using var second = TextKit.Layout(ds, line, TextKit.Ui(400), 12, textW, CanvasHorizontalAlignment.Left, 0, CcSecondLh, maxLines: 1);
-            ds.DrawTextLayout(second, CcPad, y, Gfx.WithAlpha(CcText, 0.55));
+            CcPaintPolaroid(ds, b, img, textW);
         });
         CcSet(b.Face, surface);
         CcSetCover(b);
@@ -696,31 +678,38 @@ public sealed partial class WallStage
     /// 功能块没有封面时的画面（卡片样式整张、拍立得的方图区共用）：板块颜色的斜向渐变，右上一团柔光，
     /// 左下一层压暗，图标居中偏上；拍立得在左下角再写一个大读数（功耗、刷新率、电量……）。
     /// </summary>
+    /// <summary>
+    /// 卡片样式的画面：两色斜向渐变（每块一对，比拍立得鲜亮），底部压暗一层，右上一团很淡的白光，白色大图标居中。
+    /// 游戏库用当前游戏的主题色：亮一档到暗一档。
+    /// </summary>
     private void CcPaintArt(CanvasDrawingSession ds, CcBlock b, float x, float y, float W, float H, float r, float iconSize, bool reading)
     {
         using var clip = CanvasGeometry.CreateRoundedRectangle(ds, x, y, W, H, r, r);
         using var layer = ds.CreateLayer(1, clip);
-        var accent = b.Accent.A == 0 ? Gfx.Rgba(0x52, 0x52, 0x5b) : b.Accent;
-        using (var grad = new CanvasLinearGradientBrush(ds, Gfx.Mix(Theme.Bg, 0.38, accent), Gfx.Mix(Theme.Bg, 0.88, accent))
-               { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x + W * 0.6f, y + H) })
+        var (c1, c2) = CcCardColors(b);
+        using (var grad = new CanvasLinearGradientBrush(ds, c1, c2) { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x + W, y + H) })
             ds.FillRectangle(x, y, W, H, grad);
-        using (var glow = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(Gfx.Mix(accent, 0.55, Colors.White), 0.38), Gfx.WithAlpha(accent, 0))
-               { Center = new Vector2(x + W * 0.82f, y + H * 0.10f), RadiusX = W * 0.75f, RadiusY = W * 0.75f })
-            ds.FillRectangle(x, y, W, H, glow);
-        using (var shade = new CanvasLinearGradientBrush(ds, Gfx.WithAlpha(Colors.Black, 0), Gfx.WithAlpha(Colors.Black, 0.35f))
-               { StartPoint = new Vector2(x, y + H * 0.45f), EndPoint = new Vector2(x, y + H) })
+        using (var shade = new CanvasLinearGradientBrush(ds, Gfx.WithAlpha(Colors.Black, 0), Gfx.WithAlpha(Colors.Black, 0.30f))
+               { StartPoint = new Vector2(x, y + H * 0.35f), EndPoint = new Vector2(x, y + H) })
             ds.FillRectangle(x, y, W, H, shade);
-        bool showReading = reading && b.HasReading && !string.IsNullOrEmpty(b.Reading);
+        using (var glow = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(Colors.White, 0.22f), Gfx.WithAlpha(Colors.White, 0))
+               { Center = new Vector2(x + W * 0.85f, y + H * 0.1f), RadiusX = W * 0.6f, RadiusY = W * 0.6f })
+            ds.FillRectangle(x, y, W, H, glow);
         using var icon = TextKit.Layout(ds, b.Icon, new FontSpec(CcIconFont, 400), iconSize, 300, CanvasHorizontalAlignment.Left);
         var ib = icon.DrawBounds;
-        float icy = y + H * (showReading ? 0.40f : 0.5f);
-        ds.DrawTextLayout(icon, x + W / 2 - (float)(ib.X + ib.Width / 2), icy - (float)(ib.Y + ib.Height / 2), Gfx.WithAlpha(CcText, 0.92));
-        if (showReading)
-        {
-            using var t = TextKit.Layout(ds, b.Reading, TextKit.Ui(700), 30, W - 32, CanvasHorizontalAlignment.Left);
-            ds.DrawTextLayout(t, x + 16, y + H - 16 - (float)(t.LayoutBounds.Y + t.LayoutBounds.Height), CcText);
-        }
+        ds.DrawTextLayout(icon, x + W / 2 - (float)(ib.X + ib.Width / 2), y + H / 2 - (float)(ib.Y + ib.Height / 2), Gfx.WithAlpha(Colors.White, 0.95f));
     }
+
+    /// <summary>卡片调色板：每块一对颜色（左上 → 右下）。</summary>
+    private (Color, Color) CcCardColors(CcBlock b) => _ccBlocks.IndexOf(b) switch
+    {
+        0 => (Gfx.Mix(b.Accent, 0.25, Colors.White), Gfx.Mix(b.Accent, 0.45, Colors.Black)),
+        1 => (Gfx.Rgba(0xff, 0x9a, 0x4d), Gfx.Rgba(0xe0, 0x3e, 0x5c)),   // 性能：橙 → 玫红
+        2 => (Gfx.Rgba(0x4f, 0x8c, 0xff), Gfx.Rgba(0x1f, 0xb6, 0xc9)),   // 手柄：蓝 → 青
+        3 => (Gfx.Rgba(0x9b, 0x6b, 0xff), Gfx.Rgba(0xd9, 0x46, 0xa8)),   // 显示与声音：紫 → 品红
+        4 => (Gfx.Rgba(0x22, 0xc5, 0x8b), Gfx.Rgba(0x5f, 0x9e, 0x2f)),   // 系统：翠绿 → 草绿
+        _ => (Gfx.Rgba(0x7c, 0x86, 0x99), Gfx.Rgba(0x3f, 0x46, 0x55)),   // 设置：石板灰
+    };
 
     private int CoverPx => (int)Math.Ceiling((_ccCards ? _ccSq : CcCardW - 2 * CcPad) * CcRaster);
 
@@ -759,7 +748,7 @@ public sealed partial class WallStage
     {
         if (_ccBack == null) return;
         var film = _backgroundSettings.Kind == BackgroundKind.Filmstrip;
-        var cover = film ? _backdrop.FilmAccentCover : _ccBlocks[0].CoverPath;
+        var cover = film ? _backdrop.FilmAccentCover : _ccGameCover;
         if (film) _ccBack.SetFilmTime(_backdrop.FilmTime);
         // 控制中心还没露出来（被墙和背景板盖着）：直接换成这款游戏的颜色，不做渐变 —— 渐变期间每帧都要在 UI 线程上重画
         // 整张着色器 + 模糊，正好压在起飞那几帧上（实测每次起飞都掉一帧）
@@ -1266,7 +1255,7 @@ public sealed partial class WallStage
         var frame = FlyFrame(heroArt, homeFrame, 0, HomeFrameRadius, HandMs, 1, 0.985f);
         frame.StartAnimation("Opacity", Keys(HandMs + FlyMs, (0, 1, null), ((float)((HandMs + FlyMs * 0.72) / (HandMs + FlyMs)), 1, EaseOutCss), (1, 0, EaseOutCss)));
         var img = RigidFly(FlyerSurface(b0, hero.tile), heroArt, homeCover, 0, HomeCoverRadius, HandMs, Program.Args.Contains("--no-overlay") ? null : (hero.tile, heroVis));
-        double land = HandMs + FlyMs, total = land + HandoffMs;
+        double land = HandMs + FlyMs, total = land + (b0.CoverPath == null ? 420 : HandoffMs);
         img.Over?.StartAnimation("Opacity", Keys(HandMs + 120, (0, 1, null), ((float)(HandMs / (HandMs + 120)), 1, null), (1, 0, EaseCss)));
         // 真墙卡（hero 和幽灵的原卡）在飞的那份已经画出来之后（HandMs）才藏
         hero.tile.MorphHideAt(HandMs);
@@ -1278,7 +1267,9 @@ public sealed partial class WallStage
         card.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)((HandMs + FlyMs * 0.3) / total), 0, null), ((float)((HandMs + FlyMs * 0.9) / total), 1, EaseCss), (1, 1, null)));
         if (hold) cardCover.Opacity = 0;
         else cardCover.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)(land / total), 0, null), ((float)(land / total) + 0.0005f, 1, null), (1, 1, null)));
-        if (!hold) img.Box.StartAnimation("Opacity", Delayed(Keys(HandoffMs, (0, 1, null), (1, 0, null)), land));
+        // 游戏库卡用图标时，飞来的封面落定后慢慢淡掉，露出下面的图标卡（不会一下子从封面跳成图标）
+        double fade = b0.CoverPath == null ? 420 : HandoffMs;
+        if (!hold) img.Box.StartAnimation("Opacity", Delayed(Keys(fade, (0, 1, null), (1, 0, EaseOutCss)), land));
 
         int v0 = _ccVersion;
         BeginMorph(Math.Max(longest, total) + 30 + (hold ? 2500 : 0), () =>
@@ -1530,8 +1521,10 @@ public sealed partial class WallStage
         if (cover == null && recent?.Art is { } art)
             foreach (var k in new[] { 'q', 'p', 'v', 'x', 's' })
                 if (art.Has(k)) { cover = art.File(k); break; }
-        // 方案 3（2026-10-21）：游戏库和其他块一样，不放游戏封面，用板块色 + 图标
-        cover = null;
+        // 控制中心的背景总是跟当前游戏封面走；游戏库卡显不显示封面看外观里的开关（关掉时用图标，底色是这款游戏的主题色）
+        _ccGameCover = cover;
+        lib.Accent = recent != null ? Gfx.Hex(recent.Art?.C ?? recent.SeedColor, LibraryFallback) : LibraryFallback;
+        if (!_prefs.LibraryCover) cover = null;
         if (cover != lib.CoverPath) { CcReleaseCover(lib); lib.CoverPath = cover; }
 
         // 性能：还没有接入功耗读数，不编数字

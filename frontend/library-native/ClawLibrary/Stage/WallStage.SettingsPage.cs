@@ -536,6 +536,14 @@ public sealed partial class WallStage
 
         _stRows.Add(new PerfRow { Section = true, Title = "界面" });
         _stRows.Add(StPick("控制中心卡片", new[] { "拍立得", "卡片" }, _ccCards ? 1 : 0, i => { SetCcCardStyle(i == 1); Repaint(); }, 0));
+        _stRows.Add(StToggle("游戏库显示封面", _prefs.LibraryCover, on =>
+        {
+            SaveUi(_prefs with { LibraryCover = on });
+            CcReadData();
+            foreach (var blk in _ccBlocks) CcPaintCard(blk);
+            CcSetCover(_ccBlocks[0]);
+            Repaint();
+        }, false));
         var accentNames = new[] { "跟随封面" }.Concat(UiPrefs.Accents.Select(a => a.Name)).ToArray();
         _stRows.Add(StPick("强调色", accentNames, _prefs.Accent + 1, i => { SaveUi(_prefs with { Accent = i - 1 }); Repaint(); CcRepaintPages(); }, 0));
         _stRows.Add(StToggle("降低动态效果", _reducedLocal, on => { _reducedLocal = on; SaveUi(_prefs with { Reduced = on }); Repaint(); }, false));
