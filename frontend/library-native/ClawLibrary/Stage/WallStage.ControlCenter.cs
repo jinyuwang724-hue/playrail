@@ -452,7 +452,7 @@ public sealed partial class WallStage
 
         var defs = new (string Name, string Icon, Color Accent)[]
         {
-            ("游戏库", "", default), ("性能", "", Gfx.Rgba(0xf9, 0x73, 0x16)), ("手柄", "", Gfx.Rgba(0x3b, 0x82, 0xf6)),
+            ("游戏库", "", Gfx.Rgba(0xea, 0xb3, 0x08)), ("性能", "", Gfx.Rgba(0xf9, 0x73, 0x16)), ("手柄", "", Gfx.Rgba(0x3b, 0x82, 0xf6)),
             ("显示与声音", "", Gfx.Rgba(0xa8, 0x55, 0xf7)), ("系统", "", Gfx.Rgba(0x10, 0xb9, 0x81)), ("软件设置", "", Gfx.Rgba(0x94, 0xa3, 0xb8)),
         };
         for (int i = 0; i < defs.Length; i++)
@@ -638,7 +638,7 @@ public sealed partial class WallStage
     /// <summary>卡面（folia polaroid）：底 #09090b 95 %、1 px 描边 5 %、方图区 + 文字块。内容没变就不重画。</summary>
     private void CcPaintCard(CcBlock b, bool force = false)
     {
-        string key = $"{b.Rounded}|{b.Second}|{b.Summary}|{b.CoverPath}|{(b.Rounded || b.CoverPath != null ? "" : CcPhotoPath(b))}|{_ccK}|{Chrome.Dpi}";
+        string key = $"{b.Rounded}|{b.Second}|{b.Summary}|{b.CoverPath}|{_ccK}|{Chrome.Dpi}";
         if (!force && key == b.Drawn) return;
         b.Drawn = key;
         float img = CcCardW - 2 * CcPad, textW = img;
@@ -660,7 +660,7 @@ public sealed partial class WallStage
                 using var moved = new Transform2DEffect { Source = sh, TransformMatrix = Matrix3x2.CreateTranslation(0, 1) };
                 ds.DrawImage(moved);
             }
-            if (b.CoverPath == null) CcPaintPhoto(ds, b, CcPad, CcPad, img, img, CcImgRadius);
+            if (b.CoverPath == null) CcPaintFilm(ds, b, CcPad, CcPad, img, img, CcImgRadius);
             // 拍立得下面只有两行：块名，和一行实时摘要（没有就写这块管什么）
             float y = CcPad + img + CcPad + CcTextTop;
             using var title = TextKit.Layout(ds, b.Name, TextKit.Ui(700), 15, textW, CanvasHorizontalAlignment.Left, 0, CcTitleLh);
@@ -1530,6 +1530,8 @@ public sealed partial class WallStage
         if (cover == null && recent?.Art is { } art)
             foreach (var k in new[] { 'q', 'p', 'v', 'x', 's' })
                 if (art.Has(k)) { cover = art.File(k); break; }
+        // 方案 3（2026-10-21）：游戏库和其他块一样，不放游戏封面，用板块色 + 图标
+        cover = null;
         if (cover != lib.CoverPath) { CcReleaseCover(lib); lib.CoverPath = cover; }
 
         // 性能：还没有接入功耗读数，不编数字
