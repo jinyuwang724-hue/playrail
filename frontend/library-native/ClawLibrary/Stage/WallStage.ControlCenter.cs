@@ -1258,7 +1258,9 @@ public sealed partial class WallStage
         var frame = FlyFrame(heroArt, homeFrame, 0, HomeFrameRadius, HandMs, 1, 0.985f);
         frame.StartAnimation("Opacity", Keys(HandMs + FlyMs, (0, 1, null), ((float)((HandMs + FlyMs * 0.72) / (HandMs + FlyMs)), 1, EaseOutCss), (1, 0, EaseOutCss)));
         var img = RigidFly(FlyerSurface(b0, hero.tile), heroArt, homeCover, 0, HomeCoverRadius, HandMs, Program.Args.Contains("--no-overlay") ? null : (hero.tile, heroVis));
-        double land = HandMs + FlyMs, total = land + (b0.CoverPath == null ? 420 : HandoffMs);
+        // 游戏库卡用图标时：封面一起飞，游戏库卡就开始淡进来，飞的封面同时淡掉 —— 交叉淡化和飞行同时进行，落定时正好换完
+        bool iconCard = b0.CoverPath == null;
+        double land = HandMs + FlyMs, total = land + (iconCard ? 0 : HandoffMs);
         img.Over?.StartAnimation("Opacity", Keys(HandMs + 120, (0, 1, null), ((float)(HandMs / (HandMs + 120)), 1, null), (1, 0, EaseCss)));
         // 真墙卡（hero 和幽灵的原卡）在飞的那份已经画出来之后（HandMs）才藏
         hero.tile.MorphHideAt(HandMs);
@@ -1267,12 +1269,17 @@ public sealed partial class WallStage
         var card = b0.Gate;
         var cardCover = b0.Cover;
         bool hold = Program.Args.Contains("--morph-hold");
-        card.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)((HandMs + FlyMs * 0.3) / total), 0, null), ((float)((HandMs + FlyMs * 0.9) / total), 1, EaseCss), (1, 1, null)));
+        if (iconCard)
+            card.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)(HandMs / total), 0, null), ((float)((HandMs + FlyMs * 0.8) / total), 1, EaseCss), (1, 1, null)));
+        else
+            card.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)((HandMs + FlyMs * 0.3) / total), 0, null), ((float)((HandMs + FlyMs * 0.9) / total), 1, EaseCss), (1, 1, null)));
         if (hold) cardCover.Opacity = 0;
         else cardCover.StartAnimation("Opacity", Keys(total, (0, 0, null), ((float)(land / total), 0, null), ((float)(land / total) + 0.0005f, 1, null), (1, 1, null)));
-        // 游戏库卡用图标时，飞来的封面落定后慢慢淡掉，露出下面的图标卡（不会一下子从封面跳成图标）
-        double fade = b0.CoverPath == null ? 420 : HandoffMs;
-        if (!hold) img.Box.StartAnimation("Opacity", Delayed(Keys(fade, (0, 1, null), (1, 0, EaseOutCss)), land));
+        if (!hold)
+        {
+            if (iconCard) img.Box.StartAnimation("Opacity", Keys(land, (0, 1, null), ((float)(HandMs / land), 1, null), (1, 0, EaseCss)));
+            else img.Box.StartAnimation("Opacity", Delayed(Keys(HandoffMs, (0, 1, null), (1, 0, null)), land));
+        }
 
         int v0 = _ccVersion;
         BeginMorph(Math.Max(longest, total) + 30 + (hold ? 2500 : 0), () =>
