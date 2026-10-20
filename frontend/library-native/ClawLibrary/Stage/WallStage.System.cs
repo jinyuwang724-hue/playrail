@@ -76,6 +76,7 @@ public sealed partial class WallStage
     {
         if (!_syOpen || _sy == null) return;
         _syOpen = false;
+        _syUpdatesOpen = false;
         SettingsResetPointer();
         _syTimer?.Stop();
         int v = ++_syVersion;
@@ -176,13 +177,13 @@ public sealed partial class WallStage
     }
 
     /// <summary>一次性的动作（备份、还原、检查更新……）：等后台做完，按结果给提示。</summary>
-    private async Task SyRun(string method, Func<JsonNode?, string> done, params JsonNode?[] args)
+    private async Task SyRun(string method, Func<JsonNode?, string>? done, params JsonNode?[] args)
     {
         try
         {
             _agent ??= new AgentClient();
             var result = await _agent.Call(method, args);
-            Toast(done(result));
+            if (done != null) Toast(done(result));
         }
         catch (Exception ex) { Toast(ex.Message.Contains("不支持的后台调用") ? $"这一项{DsLater}" : $"没有做成：{ex.Message}"); }
         if (_syOpen) _ = SyRefresh();
@@ -205,6 +206,13 @@ public sealed partial class WallStage
     {
         _syRows.Clear();
         var v = _syView;
+        if (_syUpdatesOpen)
+        {
+            SyUpdateRows(v);
+            if (_syFocus >= _syRows.Count || _syFocus < 0 || _syRows[_syFocus].Section || _syRows[_syFocus].Skip)
+                _syFocus = Math.Max(0, _syRows.FindIndex(r => !r.Section && !r.Skip));
+            return;
+        }
         string Armed(string key, string idle) => _syArmed == key ? "再按一次确认" : idle;
         PerfRow Act(string title, string key, string idle, Action run) => new()
         {
@@ -291,18 +299,9 @@ public sealed partial class WallStage
             else _syRows.Add(Later("只允许电源键唤醒", Str(v["wakeError"]) ?? "读不到唤醒设备"));
         }
 
-        // ---- 更新与维护 ----
+        // ---- 更新与维护：只留一行，进三级页面「全部更新」 ----
         _syRows.Add(new PerfRow { Section = true, Title = "更新与维护" });
-        var upd = v?["updates"] as JsonObject;
-        string updText = Str(upd?["state"]) switch
-        {
-            "done" => Int(upd!["count"]) is int n && n > 0 ? $"{n} 个待安装" : "已是最新",
-            "checking" => "正在检查…",
-            "error" => "检查失败",
-            _ => v == null ? "—" : "还没检查",
-        };
-        _syRows.Add(Act("Windows 更新", "wu", updText, () => { SystemInfo.Open("ms-settings:windowsupdate"); Toast("正在打开 Windows 更新"); }));
-        SyUpdateRows(v);
+        _syRows.Add(SyAct("查看全部更新", "updates", SyUpdateSummary(v), () => SyOpenUpdates(true)));
         if (_syFocus >= _syRows.Count || (_syFocus >= 0 && (_syRows[_syFocus].Skip || _syRows[_syFocus].Section)))
         {
             int f = Math.Min(_syFocus, _syRows.Count - 1);
@@ -319,76 +318,132 @@ public sealed partial class WallStage
     private PerfRow SyAct(string title, string key, string idle, Action run) =>
         new() { Title = title, Value = _syArmed == key ? "再按一次确认" : idle, Press = run };
 
+    /// <summary>三级页面「全部更新」是否开着（系统页里「查看全部更新」进来，B 回系统页）。</summary>
+    private bool _syUpdatesOpen;
+
+    private void SyOpenUpdates(bool open)
+    {
+        _syUpdatesOpen = open;
+        _syArmed = null;
+        BuildSyRows();
+        _syFocus = open ? Math.Max(0, _syRows.FindIndex(r => !r.Section && !r.Skip)) : Math.Max(0, _syRows.FindIndex(r => r.Title == "查看全部更新"));
+        _syScroll = 0;
+        _syScrollY = float.NaN;
+        PaintSy();
+    }
+
+    /// <summary>系统页那一行的摘要：一共几个可更新（Windows + 微星 + Intel），或正在检查、已是最新。</summary>
+    private static string SyUpdateSummary(JsonObject? v)
+    {
+        if (v == null) return "—";
+        var u = v["vendorUpdates"] as JsonObject;
+        var w = v["updates"] as JsonObject;
+        bool checking = Str(u?["state"]) == "checking" || Str(w?["state"]) == "checking";
+        int vendor = (u?["items"] as JsonArray)?.OfType<JsonObject>().Count(i => Str(i["result"]) is not ("done" or "restart")) ?? 0;
+        int windows = Str(w?["state"]) == "done" ? Int(w!["count"]) : 0;
+        if (Str(u?["active"]) != null) return "正在更新…";
+        if (checking) return "正在检查…";
+        return vendor + windows > 0 ? $"{vendor + windows} 个可更新" : "已是最新";
+    }
+
+    /// <summary>
+    /// 三级页面：顶上「检查更新」和「全部更新」；下面 Windows 更新、微星、Intel 三节，各自列出要更新的项。
+    /// 微星和 Intel 直接从官网找（第一次打开系统页时自动查一次），每项 A 下载并静默安装；
+    /// BIOS、手柄固件不进「全部更新」，要单独按两下确认。
+    /// </summary>
     private void SyUpdateRows(JsonObject? v)
     {
         var u = v?["vendorUpdates"] as JsonObject;
+        var w = v?["updates"] as JsonObject;
         var items = (u?["items"] as JsonArray)?.OfType<JsonObject>().ToArray() ?? Array.Empty<JsonObject>();
         string state = Str(u?["state"]) ?? "";
         string active = Str(u?["active"]) ?? "";
         var queued = (u?["queued"] as JsonArray)?.Select(n => Str(n) ?? "").ToHashSet() ?? new HashSet<string>();
         var pending = items.Where(i => Str(i["result"]) is not ("done" or "restart")).ToArray();
-        string errors = (u?["errors"] as JsonArray)?.Count > 0 ? " · " + string.Join("；", (u!["errors"] as JsonArray)!.Select(e => Str(e))) : "";
-        string checkText = state switch
+        bool checking = state == "checking" || Str(w?["state"]) == "checking";
+
+        _syRows.Add(new PerfRow { Section = true, Title = "更新" });
+        string checkText = checking ? "正在检查…" : state is "done" or "partial" ? $"{Str(u!["checked"])} 检查" : state == "error" ? "没查成" : v == null ? "—" : "";
+        _syRows.Add(SyAct("检查更新", "check", checkText, () =>
         {
-            "checking" => "正在从微星和 Intel 官网查…",
-            "error" => $"没查成：{Str(u!["error"])}",
-            "done" or "partial" => (pending.Length > 0 ? $"{pending.Length} 个可更新" : "已是最新") + $" · {Str(u!["checked"])} 检查" + errors,
-            _ => v == null ? "—" : "还没检查",
-        };
-        _syRows.Add(SyAct("检查驱动和固件更新", "check", checkText, () =>
-        {
-            if (state == "checking") return;
-            if (u != null) { u["state"] = "checking"; BuildSyRows(); PaintSy(); }
-            _ = SyRun("check_driver_updates", _ => "正在从微星和 Intel 官网查更新");
+            if (checking) return;
+            if (u != null) u["state"] = "checking";
+            BuildSyRows(); PaintSy();
+            _ = SyRun("check_driver_updates", _ => "正在检查更新");
+            _ = SyRun("check_updates", null);
         }));
         var batch = pending.Where(i => !Bool(i["confirm"]) && Str(i["id"]) != active && !queued.Contains(Str(i["id"]) ?? "")).ToArray();
-        if (batch.Length >= 2)
-            _syRows.Add(SyAct($"全部更新（{batch.Length} 项）", "all", "下载并安装，装完自动复查版本", () =>
+        if (batch.Length > 0)
+            _syRows.Add(SyAct($"全部更新（{batch.Length} 项）", "all", "", () =>
             {
                 if (!SyConfirm("all")) return;
                 var ids = new JsonArray(batch.Select(i => (JsonNode?)JsonValue.Create(Str(i["id"]))).ToArray());
                 _ = SyRun("install_updates", _ => $"开始更新 {batch.Length} 项", ids);
             }));
-        foreach (var item in items)
+
+        // ---- Windows 更新 ----
+        _syRows.Add(new PerfRow { Section = true, Title = "Windows 更新" });
+        string wuText = Str(w?["state"]) switch
         {
-            string id = Str(item["id"]) ?? "", key = "u:" + id;
-            string vendor = Str(item["vendor"]) == "msi" ? "微星" : "Intel";
-            string title = $"{Str(item["title"])} · {vendor}";
-            string result = Str(item["result"]) ?? "";
-            string value;
-            if (id == active && u?["job"] is JsonObject job)
+            "done" => Int(w!["count"]) is int n && n > 0 ? $"{n} 个待安装" : "已是最新",
+            "checking" => "正在检查…",
+            "error" => "检查失败",
+            _ => v == null ? "—" : "还没检查",
+        };
+        _syRows.Add(SyAct("Windows 更新", "wu", wuText, () => { SystemInfo.Open("ms-settings:windowsupdate"); Toast("正在打开 Windows 更新"); }));
+
+        // ---- 微星 / Intel ----
+        foreach (var (vendorId, vendorName) in new[] { ("msi", "微星"), ("intel", "Intel") })
+        {
+            _syRows.Add(new PerfRow { Section = true, Title = vendorName });
+            var mine = items.Where(i => Str(i["vendor"]) == vendorId).ToArray();
+            if (mine.Length == 0)
             {
-                long bytes = (long)(Num(job["bytes"]) ?? 0), total = (long)(Num(job["total"]) ?? 0);
-                value = Str(job["state"]) switch
-                {
-                    "downloading" => total > 0 ? $"下载中 {bytes * 100 / total} % · {bytes >> 20} / {total >> 20} MB" : $"下载中 {bytes >> 20} MB",
-                    "verifying" => "校验中…",
-                    "installing" => "安装中…",
-                    _ => "收尾中…",
-                };
+                string why = (u?["errors"] as JsonArray)?.Select(e => Str(e) ?? "").FirstOrDefault(e => e.StartsWith(vendorName)) is string err && err.Length > 0 ? "没查成" : checking ? "正在检查…" : state is "done" or "partial" ? "已是最新" : "—";
+                _syRows.Add(new PerfRow { Title = $"{vendorName}驱动和固件", Value = why, Disabled = true });
+                continue;
             }
-            else if (queued.Contains(id)) value = "排队中";
-            else if (result == "done") value = "已更新";
-            else if (result == "restart") value = "已更新，重启后生效";
-            else if (result.StartsWith("failed")) value = "失败：" + result[(result.IndexOf(':') + 1)..].Trim();
-            else
-            {
-                long size = (long)(Num(item["size"]) ?? 0);
-                value = $"{Str(item["current"])} → {Str(item["latest"])}" + (size > 0 ? $" · {Math.Max(1, size >> 20)} MB" : "");
-                if (_syArmed == key) value = "再按一次确认" + (Str(item["note"]) is string note ? $"（{note}）" : "");
-            }
-            bool busy = id == active || queued.Contains(id);
-            _syRows.Add(new PerfRow
-            {
-                Title = title, Value = value,
-                Press = () =>
-                {
-                    if (busy || result is "done" or "restart") return;
-                    if (Bool(item["confirm"]) && !SyConfirm(key)) return;
-                    _ = SyRun("install_updates", _ => $"开始更新{Str(item["title"])}", new JsonArray(JsonValue.Create(id)));
-                },
-            });
+            foreach (var item in mine) _syRows.Add(SyUpdateItem(item, u, active, queued));
         }
+    }
+
+    private PerfRow SyUpdateItem(JsonObject item, JsonObject? u, string active, HashSet<string> queued)
+    {
+        string id = Str(item["id"]) ?? "", key = "u:" + id;
+        string result = Str(item["result"]) ?? "";
+        string value;
+        if (id == active && u?["job"] is JsonObject job)
+        {
+            long bytes = (long)(Num(job["bytes"]) ?? 0), total = (long)(Num(job["total"]) ?? 0);
+            value = Str(job["state"]) switch
+            {
+                "downloading" => total > 0 ? $"下载中 {bytes * 100 / total} % · {bytes >> 20} / {total >> 20} MB" : $"下载中 {bytes >> 20} MB",
+                "verifying" => "校验中…",
+                "installing" => "安装中…",
+                _ => "收尾中…",
+            };
+        }
+        else if (queued.Contains(id)) value = "排队中";
+        else if (result == "done") value = "已更新";
+        else if (result == "restart") value = "已更新，重启后生效";
+        else if (result.StartsWith("failed")) value = "失败：" + result[(result.IndexOf(':') + 1)..].Trim();
+        else
+        {
+            long size = (long)(Num(item["size"]) ?? 0);
+            value = $"{Str(item["current"])} → {Str(item["latest"])}" + (size > 0 ? $" · {Math.Max(1, size >> 20)} MB" : "");
+            if (_syArmed == key) value = "再按一次确认" + (Str(item["note"]) is string note ? $"（{note}）" : "");
+        }
+        bool busy = id == active || queued.Contains(id);
+        return new PerfRow
+        {
+            Title = Str(item["title"]) ?? id, Value = value,
+            Press = () =>
+            {
+                if (busy || result is "done" or "restart") return;
+                if (Bool(item["confirm"]) && !SyConfirm(key)) return;
+                _ = SyRun("install_updates", _ => $"开始更新{Str(item["title"])}", new JsonArray(JsonValue.Create(id)));
+            },
+        };
     }
 
     private static string SyHomeName(string? aumid)
@@ -431,7 +486,7 @@ public sealed partial class WallStage
         r.Press?.Invoke();
     }
 
-    private void SyBack() => CloseSystem();
+    private void SyBack() { if (_syUpdatesOpen) SyOpenUpdates(false); else CloseSystem(); }
 
     // ---------------- 绘制 ----------------
 
@@ -440,7 +495,7 @@ public sealed partial class WallStage
         if (_sy == null) return;
         float k = _ccK, raster = k * Chrome.Dpi;
         float h = RowsHeight(_syRows), vh = PerfViewH;
-        using (var tl = TextKit.Layout(G.Device, "系统", TextKit.Ui(700), 24, 400, CanvasHorizontalAlignment.Left))
+        using (var tl = TextKit.Layout(G.Device, _syUpdatesOpen ? "系统 · 全部更新" : "系统", TextKit.Ui(700), 24, 600, CanvasHorizontalAlignment.Left))
         {
             var bb = tl.LayoutBounds;
             float w = (float)bb.Width + 4, th = (float)bb.Height + 4;
