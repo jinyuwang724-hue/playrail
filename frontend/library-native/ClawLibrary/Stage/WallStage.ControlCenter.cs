@@ -496,7 +496,7 @@ public sealed partial class WallStage
         float vw = (float)View.Width, vh = (float)View.Height;
         // 设计 px → DIP：1920×1200 物理像素下 1:1
         _ccK = MathF.Min(vw * Chrome.Dpi / 1920f, vh * Chrome.Dpi / 1200f) / Chrome.Dpi * CcBoost;
-        _ccH = CcPad + (CcCardW - 2 * CcPad) + CcPad + CcTextTop + CcTitleLh + 4 + CcSecondLh + 8 + 2 * CcSummaryLh + CcPad;
+        _ccH = CcPad + (CcCardW - 2 * CcPad) + CcPad + CcTextTop + CcTitleLh + 4 + CcSecondLh + CcPad;
         _ccSq = MathF.Round(MathF.Sqrt(CcCardW * _ccH));
         foreach (var cb in _ccBlocks) cb.Rounded = _ccCards;
         float w = CcCardW * _ccK;
@@ -660,28 +660,15 @@ public sealed partial class WallStage
                 using var moved = new Transform2DEffect { Source = sh, TransformMatrix = Matrix3x2.CreateTranslation(0, 1) };
                 ds.DrawImage(moved);
             }
-            if (b.CoverPath == null)
-            {
-                // folia 没封面时的样子：居中 64 px 单色图标（20 %），有读数就写在下面
-                float cx = CcPad + img / 2, cy = CcPad + img / 2 - (b.HasReading ? 14 : 0);
-                using var icon = TextKit.Layout(ds, b.Icon, new FontSpec(CcIconFont, 400), 64, 200, CanvasHorizontalAlignment.Left);
-                var ib = icon.DrawBounds;
-                ds.DrawTextLayout(icon, cx - (float)(ib.X + ib.Width / 2), cy - (float)(ib.Y + ib.Height / 2), Gfx.WithAlpha(CcText, 0.20));
-                if (b.HasReading)
-                {
-                    using var r = TextKit.Layout(ds, b.Reading, TextKit.Ui(600), 18, img, CanvasHorizontalAlignment.Center);
-                    ds.DrawTextLayout(r, CcPad, cy + 44 - (float)r.LayoutBounds.Y, Gfx.WithAlpha(CcText, 0.55));
-                }
-            }
+            if (b.CoverPath == null) CcPaintArt(ds, b, CcPad, CcPad, img, img, CcImgRadius, 92, true);
+            // 拍立得下面只有两行：块名，和一行实时摘要（没有就写这块管什么）
             float y = CcPad + img + CcPad + CcTextTop;
-            using var title = TextKit.Layout(ds, b.Name, TextKit.Ui(700), 14, textW, CanvasHorizontalAlignment.Left, 0, CcTitleLh);
+            using var title = TextKit.Layout(ds, b.Name, TextKit.Ui(700), 15, textW, CanvasHorizontalAlignment.Left, 0, CcTitleLh);
             ds.DrawTextLayout(title, CcPad, y, CcText);
             y += CcTitleLh + 4;
-            using var second = TextKit.Layout(ds, b.Second, TextKit.Ui(500), 12, textW, CanvasHorizontalAlignment.Left, 0, CcSecondLh);
-            ds.DrawTextLayout(second, CcPad, y, Gfx.WithAlpha(CcText, 0.5));
-            y += CcSecondLh + 8;
-            using var summary = TextKit.Layout(ds, b.Summary, TextKit.Ui(400), 10, textW, CanvasHorizontalAlignment.Left, 0, CcSummaryLh, maxLines: 2);
-            ds.DrawTextLayout(summary, CcPad, y, Gfx.WithAlpha(CcSecondary, 1));
+            string line = string.IsNullOrEmpty(b.Summary) ? b.Second : b.Summary;
+            using var second = TextKit.Layout(ds, line, TextKit.Ui(400), 12, textW, CanvasHorizontalAlignment.Left, 0, CcSecondLh, maxLines: 1);
+            ds.DrawTextLayout(second, CcPad, y, Gfx.WithAlpha(CcText, 0.55));
         });
         CcSet(b.Face, surface);
         CcSetCover(b);
@@ -695,19 +682,44 @@ public sealed partial class WallStage
     private void CcPaintRounded(CanvasDrawingSession ds, CcBlock b)
     {
         var (W, H) = CcDims(b);
-        float r = CcRadius;
-        using var clip = CanvasGeometry.CreateRoundedRectangle(ds, 0, 0, W, H, r, r);
+        if (b.CoverPath != null || b.Accent.A == 0)
+        {
+            using var clip = CanvasGeometry.CreateRoundedRectangle(ds, 0, 0, W, H, CcRadius, CcRadius);
+            using var layer = ds.CreateLayer(1, clip);
+            ds.FillRectangle(0, 0, W, H, Gfx.Rgba(0x27, 0x27, 0x2a));
+            return;
+        }
+        CcPaintArt(ds, b, 0, 0, W, H, CcRadius, 120, false);
+    }
+
+    /// <summary>
+    /// 功能块没有封面时的画面（卡片样式整张、拍立得的方图区共用）：板块颜色的斜向渐变，右上一团柔光，
+    /// 左下一层压暗，图标居中偏上；拍立得在左下角再写一个大读数（功耗、刷新率、电量……）。
+    /// </summary>
+    private void CcPaintArt(CanvasDrawingSession ds, CcBlock b, float x, float y, float W, float H, float r, float iconSize, bool reading)
+    {
+        using var clip = CanvasGeometry.CreateRoundedRectangle(ds, x, y, W, H, r, r);
         using var layer = ds.CreateLayer(1, clip);
-        if (b.CoverPath != null || b.Accent.A == 0) { ds.FillRectangle(0, 0, W, H, Gfx.Rgba(0x27, 0x27, 0x2a)); return; }
-        using (var grad = new CanvasLinearGradientBrush(ds, Gfx.Mix(Theme.Bg, 0.42, b.Accent), Gfx.Mix(Theme.Bg, 0.90, b.Accent))
-               { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(W * 0.55f, H) })
-            ds.FillRectangle(0, 0, W, H, grad);
-        using (var glow = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(Gfx.Mix(b.Accent, 0.6, Colors.White), 0.35), Gfx.WithAlpha(b.Accent, 0))
-               { Center = new Vector2(W * 0.85f, H * 0.08f), RadiusX = W * 0.7f, RadiusY = W * 0.7f })
-            ds.FillRectangle(0, 0, W, H, glow);
-        using var icon = TextKit.Layout(ds, b.Icon, new FontSpec(CcIconFont, 400), 120, 300, CanvasHorizontalAlignment.Left);
+        var accent = b.Accent.A == 0 ? Gfx.Rgba(0x52, 0x52, 0x5b) : b.Accent;
+        using (var grad = new CanvasLinearGradientBrush(ds, Gfx.Mix(Theme.Bg, 0.38, accent), Gfx.Mix(Theme.Bg, 0.88, accent))
+               { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x + W * 0.6f, y + H) })
+            ds.FillRectangle(x, y, W, H, grad);
+        using (var glow = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(Gfx.Mix(accent, 0.55, Colors.White), 0.38), Gfx.WithAlpha(accent, 0))
+               { Center = new Vector2(x + W * 0.82f, y + H * 0.10f), RadiusX = W * 0.75f, RadiusY = W * 0.75f })
+            ds.FillRectangle(x, y, W, H, glow);
+        using (var shade = new CanvasLinearGradientBrush(ds, Gfx.WithAlpha(Colors.Black, 0), Gfx.WithAlpha(Colors.Black, 0.35f))
+               { StartPoint = new Vector2(x, y + H * 0.45f), EndPoint = new Vector2(x, y + H) })
+            ds.FillRectangle(x, y, W, H, shade);
+        bool showReading = reading && b.HasReading && !string.IsNullOrEmpty(b.Reading);
+        using var icon = TextKit.Layout(ds, b.Icon, new FontSpec(CcIconFont, 400), iconSize, 300, CanvasHorizontalAlignment.Left);
         var ib = icon.DrawBounds;
-        ds.DrawTextLayout(icon, W / 2 - (float)(ib.X + ib.Width / 2), H / 2 - (float)(ib.Y + ib.Height / 2), Gfx.WithAlpha(CcText, 0.92));
+        float icy = y + H * (showReading ? 0.40f : 0.5f);
+        ds.DrawTextLayout(icon, x + W / 2 - (float)(ib.X + ib.Width / 2), icy - (float)(ib.Y + ib.Height / 2), Gfx.WithAlpha(CcText, 0.92));
+        if (showReading)
+        {
+            using var t = TextKit.Layout(ds, b.Reading, TextKit.Ui(700), 30, W - 32, CanvasHorizontalAlignment.Left);
+            ds.DrawTextLayout(t, x + 16, y + H - 16 - (float)(t.LayoutBounds.Y + t.LayoutBounds.Height), CcText);
+        }
     }
 
     private int CoverPx => (int)Math.Ceiling((_ccCards ? _ccSq : CcCardW - 2 * CcPad) * CcRaster);
