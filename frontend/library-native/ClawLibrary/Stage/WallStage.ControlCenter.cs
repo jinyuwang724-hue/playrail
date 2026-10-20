@@ -197,6 +197,7 @@ public sealed partial class WallStage
         EnsureControlCenterVisuals();
         CcMeasure();
         CcReadData();
+        _ = SyRefresh();   // 系统页的读数先在后台取好，进系统页时直接有内容
         foreach (var b in _ccBlocks) CcPaintCard(b);   // 内容没变的卡不重画（启动后已经预热画过一遍）
         // 关的时候封面引用已经还给图片缓存（CcReleaseCover）；卡面没变就不会重画，所以这里必须显式重新拿封面
         if (!Program.Args.Contains("--no-cover-fix")) foreach (var b in _ccBlocks) CcSetCover(b);   // --no-cover-fix：测试用，复现旧 bug

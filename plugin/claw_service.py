@@ -493,6 +493,14 @@ class Service:
     async def set_display_off(self, seconds):
         return await self._system_write(self._system.set_display_off, seconds)
 
+    async def check_driver_updates(self):
+        return self._system.vendor.check()
+
+    async def install_updates(self, ids, dry_run=False):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        return await self._system.vendor.install(ids, dry_run)
+
     async def set_charge_limit(self, percent):
         return await self._system_write(self._system.set_charge_limit, percent)
 

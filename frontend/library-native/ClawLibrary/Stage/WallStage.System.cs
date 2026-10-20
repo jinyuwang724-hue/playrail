@@ -24,6 +24,8 @@ public sealed partial class WallStage
     private ContainerVisual _syRightView = null!;
     private SpriteVisual _syTitle = null!, _syLeft = null!, _syRight = null!;
     private bool _syOpen, _syBusy, _syAgentDown, _syOldAgent;
+    private string? _syError;
+    private long _syReadAt;
     private int _syFocus, _syVersion, _syBackupPick;
     private SettingsWriteQueue? _syWrites;
     private float _syScroll, _syScrollY = float.NaN;
@@ -37,7 +39,6 @@ public sealed partial class WallStage
 
     private static readonly int[] SyCharge = { 0, 60, 80, 90 };
     private static readonly string[] SyChargeNames = { "关", "60 %", "80 %", "90 %" };
-    private const string SyMsiCenter = "9426MICRO-STARINTERNATION.64797CC12EF8E_kzh8wxbdkxb8p!App", SyIntelDsa = "Intel.Dsa.Tray";
     private static readonly string[] SyButtons ={ "sleep", "hibernate", "shutdown" };
     private static readonly string[] SyButtonNames = { "睡眠", "休眠", "关机" };
     private static readonly int[] SyHibernate = { 0, 1800, 3600, 10800 };
@@ -105,19 +106,24 @@ public sealed partial class WallStage
         _cc!.Children.InsertAtTop(_sy);
     }
 
-    /// <summary>五秒读一次（电量、功率在变，别处改了电源设置要跟上）；后台每次都要起 powercfg 查唤醒设备，所以不读太勤。</summary>
+    /// <summary>
+    /// 平时五秒读一次（电量、功率在变，别处改了电源设置要跟上；后台每次都要起 powercfg 查唤醒设备，所以不读太勤）；
+    /// 正在检查更新或在下载、安装时每秒读一次，进度跟得上。
+    /// </summary>
     private DispatcherQueueTimer MakeSyTimer()
     {
         var t = _dq.CreateTimer();
-        t.Interval = TimeSpan.FromSeconds(5);
+        t.Interval = TimeSpan.FromSeconds(1);
         t.IsRepeating = true;
         t.Tick += (_, _) =>
         {
             if (_syArmed != null && NowMs - _syArmedAt > 3000) { _syArmed = null; BuildSyRows(); PaintSy(); }
-            if (_syOpen && !_settingsGesture.Active && _syWrites?.IsBusy != true) _ = SyRefresh();
+            if (_syOpen && !_settingsGesture.Active && _syWrites?.IsBusy != true && (SyUpdating || NowMs - _syReadAt >= 5000)) _ = SyRefresh();
         };
         return t;
     }
+
+    private bool SyUpdating => _syView?["vendorUpdates"] is JsonObject u && (Str(u["state"]) == "checking" || Str(u["active"]) != null);
 
     // ---------------- 和 agent 打交道 ----------------
 
@@ -131,16 +137,24 @@ public sealed partial class WallStage
             _agent ??= new AgentClient();
             var view = await _agent.Call("get_system_state");
             _syAgentDown = _syOldAgent = false;
+            _syError = null;
             if (!_settingsGesture.Active && _syWrites?.IsBusy != true && revision == (_syWrites?.Revision ?? 0) && view is JsonObject o)
                 _syView = (JsonObject)o.DeepClone();
         }
         catch (Exception ex) when (ex.Message.Contains("不支持的后台调用")) { _syOldAgent = true; }
+        catch (InvalidOperationException ex)
+        {
+            // 后台连上了但这次读出错：保留上次的读数，左下角写出错原因（不是「连不上」）
+            if (_syError != ex.Message) Log.Warn($"system refresh: {ex.Message}");
+            _syError = ex.Message;
+            _syAgentDown = false;
+        }
         catch (Exception ex)
         {
             if (!_syAgentDown) Log.Warn($"system refresh: {ex.Message}");
             _syAgentDown = true;
         }
-        finally { _syBusy = false; }
+        finally { _syBusy = false; _syReadAt = NowMs; }
         if (!_syOpen) return;
         if (_syWrites?.IsBusy != true && revision != (_syWrites?.Revision ?? 0)) { _ = SyRefresh(); return; }
         BuildSyRows();
@@ -288,10 +302,7 @@ public sealed partial class WallStage
             _ => v == null ? "—" : "还没检查",
         };
         _syRows.Add(Act("Windows 更新", "wu", updText, () => { SystemInfo.Open("ms-settings:windowsupdate"); Toast("正在打开 Windows 更新"); }));
-        // 微星：BIOS、手柄固件、驱动（MSI Center M 的 Live Update 上次检查的结果）；Intel：驱动助手上次扫描的结果。
-        // 这里只看结果，A 打开它们自己的程序去更新（BIOS、驱动这种更新不替它们装）。
-        _syRows.Add(Act("微星更新", "msi", SyVendorText(v?["msiUpdates"], "MSI Center M"), () => { SystemInfo.Open("explorer.exe", $"shell:AppsFolder\\{SyMsiCenter}"); Toast("正在打开 MSI Center M"); }));
-        _syRows.Add(Act("Intel 更新", "intel", SyVendorText(v?["intelUpdates"], "Intel 驱动助手"), () => { SystemInfo.Open("explorer.exe", $"shell:AppsFolder\\{SyIntelDsa}"); Toast("正在打开 Intel 驱动与支持助手"); }));
+        SyUpdateRows(v);
         if (v == null) { _syRows.Add(Later("备份设置", _syOldAgent ? DsLater : "—")); }
         else
         {
@@ -346,17 +357,84 @@ public sealed partial class WallStage
         }
     }
 
-    /// <summary>「4 个可更新 · Intel Arc B390 GPU 32.0.101.9150」/「已是最新 · 10-05 检查」/「没有 MSI Center M 的检查结果」。</summary>
-    private static string SyVendorText(JsonNode? n, string tool)
+    /// <summary>
+    /// 驱动、BIOS、手柄固件更新：后台直接从微星和 Intel 官网找（第一次打开系统页时自动查一次）。
+    /// 「检查驱动和固件更新」重新查；每个更新一行，A 下载并静默安装；两个以上时有「全部更新」
+    /// （BIOS、手柄固件不在里面，要单独按两下确认）。
+    /// </summary>
+    private PerfRow SyAct(string title, string key, string idle, Action run) =>
+        new() { Title = title, Value = _syArmed == key ? "再按一次确认" : idle, Press = run };
+
+    private void SyUpdateRows(JsonObject? v)
     {
-        if (n is not JsonObject o) return $"没有{tool}的检查结果";
-        var items = (o["items"] as JsonArray)?.OfType<JsonObject>().ToArray() ?? Array.Empty<JsonObject>();
-        string date = Str(o["checked"]) is string c && c.Length >= 10 ? c[5..10] : "";
-        if (items.Length == 0) return date.Length > 0 ? $"已是最新 · {date} 检查" : "已是最新";
-        var first = items[0];
-        string what = Str(first["name"]) is string p && p.Length > 0 ? p : Str(first["package"]) ?? "";
-        string latest = Str(first["latest"]) ?? "";
-        return $"{items.Length} 个可更新 · {what} {latest}".TrimEnd();
+        var u = v?["vendorUpdates"] as JsonObject;
+        var items = (u?["items"] as JsonArray)?.OfType<JsonObject>().ToArray() ?? Array.Empty<JsonObject>();
+        string state = Str(u?["state"]) ?? "";
+        string active = Str(u?["active"]) ?? "";
+        var queued = (u?["queued"] as JsonArray)?.Select(n => Str(n) ?? "").ToHashSet() ?? new HashSet<string>();
+        var pending = items.Where(i => Str(i["result"]) is not ("done" or "restart")).ToArray();
+        string errors = (u?["errors"] as JsonArray)?.Count > 0 ? " · " + string.Join("；", (u!["errors"] as JsonArray)!.Select(e => Str(e))) : "";
+        string checkText = state switch
+        {
+            "checking" => "正在从微星和 Intel 官网查…",
+            "error" => $"没查成：{Str(u!["error"])}",
+            "done" or "partial" => (pending.Length > 0 ? $"{pending.Length} 个可更新" : "已是最新") + $" · {Str(u!["checked"])} 检查" + errors,
+            _ => v == null ? "—" : "还没检查",
+        };
+        _syRows.Add(SyAct("检查驱动和固件更新", "check", checkText, () =>
+        {
+            if (state == "checking") return;
+            if (u != null) { u["state"] = "checking"; BuildSyRows(); PaintSy(); }
+            _ = SyRun("check_driver_updates", _ => "正在从微星和 Intel 官网查更新");
+        }));
+        var batch = pending.Where(i => !Bool(i["confirm"]) && Str(i["id"]) != active && !queued.Contains(Str(i["id"]) ?? "")).ToArray();
+        if (batch.Length >= 2)
+            _syRows.Add(SyAct($"全部更新（{batch.Length} 项）", "all", "下载并安装，装完自动复查版本", () =>
+            {
+                if (!SyConfirm("all")) return;
+                var ids = new JsonArray(batch.Select(i => (JsonNode?)JsonValue.Create(Str(i["id"]))).ToArray());
+                _ = SyRun("install_updates", _ => $"开始更新 {batch.Length} 项", ids);
+            }));
+        foreach (var item in items)
+        {
+            string id = Str(item["id"]) ?? "", key = "u:" + id;
+            string vendor = Str(item["vendor"]) == "msi" ? "微星" : "Intel";
+            string title = $"{Str(item["title"])} · {vendor}";
+            string result = Str(item["result"]) ?? "";
+            string value;
+            if (id == active && u?["job"] is JsonObject job)
+            {
+                long bytes = (long)(Num(job["bytes"]) ?? 0), total = (long)(Num(job["total"]) ?? 0);
+                value = Str(job["state"]) switch
+                {
+                    "downloading" => total > 0 ? $"下载中 {bytes * 100 / total} % · {bytes >> 20} / {total >> 20} MB" : $"下载中 {bytes >> 20} MB",
+                    "verifying" => "校验中…",
+                    "installing" => "安装中…",
+                    _ => "收尾中…",
+                };
+            }
+            else if (queued.Contains(id)) value = "排队中";
+            else if (result == "done") value = "已更新";
+            else if (result == "restart") value = "已更新，重启后生效";
+            else if (result.StartsWith("failed")) value = "失败：" + result[(result.IndexOf(':') + 1)..].Trim();
+            else
+            {
+                long size = (long)(Num(item["size"]) ?? 0);
+                value = $"{Str(item["current"])} → {Str(item["latest"])}" + (size > 0 ? $" · {Math.Max(1, size >> 20)} MB" : "");
+                if (_syArmed == key) value = "再按一次确认" + (Str(item["note"]) is string note ? $"（{note}）" : "");
+            }
+            bool busy = id == active || queued.Contains(id);
+            _syRows.Add(new PerfRow
+            {
+                Title = title, Value = value,
+                Press = () =>
+                {
+                    if (busy || result is "done" or "restart") return;
+                    if (Bool(item["confirm"]) && !SyConfirm(key)) return;
+                    _ = SyRun("install_updates", _ => $"开始更新{Str(item["title"])}", new JsonArray(JsonValue.Create(id)));
+                },
+            });
+        }
     }
 
     private static string SyHomeName(string? aumid)
@@ -511,8 +589,9 @@ public sealed partial class WallStage
         if (Int(dev?["memoryGB"]) > 0) drows.Add(("内存", $"{Int(dev?["memoryGB"])} GB"));
         Rows(y + header, drows);
 
-        if (_syAgentDown || v == null)
-            PText(ds, _syAgentDown ? "连不上工具箱后台" : _syOldAgent ? $"系统读数{DsLater}" : "正在读取…", ui, 13, muted, 0, h - 12, W);
+        string? foot = _syAgentDown ? "连不上工具箱后台" : _syError != null ? $"后台出错：{_syError}"
+            : v == null ? (_syOldAgent ? $"系统读数{DsLater}" : "正在读取…") : null;
+        if (foot != null) PText(ds, GpFit(ds, foot, ui, 13, W), ui, 13, muted, 0, h - 12, W);
     }
 
     private static string? _syOwnVersion;

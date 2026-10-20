@@ -612,6 +612,10 @@ class PowerControl:
                 return reply.get("display") or {}
             if command in ("system_read", "power_button_set", "hibernate_after_set", "display_off_set", "wake_set", "charge_limit_set"):
                 return reply.get("system") or {}
+            if command in ("update_start", "update_status"):
+                return reply.get("update") or {}
+            if command == "pnp_drivers":
+                return reply.get("drivers") or []
             if command in ("endurance_read", "endurance_set", "frame_pacing_set"):
                 return reply.get("endurance") or {}
             if command == "cpu_info":

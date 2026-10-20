@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("system_page_test", ROOT / "plugin/claw_system.py")
 system = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(system)
+updates = system._updates_module
 
 
 class FakeHelper:
@@ -100,22 +101,40 @@ class SystemPageTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             asyncio.run(self.control.set_charge_limit(50))
 
-    def test_vendor_parsers(self):
-        msi = Path(self.tmp.name) / "NewUpdates.json"
-        msi.write_text(json.dumps([
-            {"Name": "BIOS", "DisplayVersion": "E1T91IMS.10E", "InstalledVersion": "E1T91IMS.10D", "ServerHasNewerVersion": True, "ExistsInLocalMachine": True},
-            {"Name": "DTS Audio Processing", "DisplayVersion": "UWP", "InstalledVersion": "1.0.0.0", "ServerHasNewerVersion": True, "ExistsInLocalMachine": True},
-            {"Name": "MSI App Player", "DisplayVersion": "10.4", "InstalledVersion": "Not installed", "ServerHasNewerVersion": True, "ExistsInLocalMachine": False}]), encoding="utf-8")
-        self.assertEqual([i["name"] for i in system.msi_updates(msi)["items"]], ["BIOS"])
-        intel = Path(self.tmp.name) / "session.xml"
-        intel.write_text('<S xmlns:a="x"><a:BackgroundUpdateLastCheck>2026-10-20T14:09:12Z</a:BackgroundUpdateLastCheck>'
-                         '<a:D><a:Name>Intel® Arc™ B390 GPU</a:Name><a:UpdateId>930514</a:UpdateId><a:UpdateStatus>NeedsUpdate</a:UpdateStatus></a:D>'
-                         '<a:D><a:Name>Intel NPU</a:Name><a:UpdateId>0</a:UpdateId><a:UpdateStatus>NotApplicable</a:UpdateStatus></a:D>'
-                         '<a:W><a:Name>Intel® Arc™ Graphics - Windows*</a:Name><a:Id>930514</a:Id><a:Version>32.0.101.9150 WHQL Certified</a:Version></a:W></S>',
-                         encoding="utf-8")
-        found = system.intel_updates(intel)
-        self.assertEqual(found["checked"], "2026-10-20")
-        self.assertEqual(found["items"], [{"name": "Intel Arc B390 GPU", "package": "Intel Arc Graphics - Windows", "latest": "32.0.101.9150"}])
+    def test_versions(self):
+        self.assertTrue(updates.newer("32.0.101.9150", "32.0.101.9034"))
+        self.assertFalse(updates.newer("32.0.101.8724", "32.0.101.9034"))
+        self.assertTrue(updates.newer("E1T91IMS.10E", "E1T91IMS.10D"))
+        self.assertFalse(updates.newer("E1T91IMS.10D", "E1T91IMS.10D"))
+        self.assertTrue(updates.newer("4.20", "0419"))
+        self.assertFalse(updates.newer("4.19", "0419"))
+
+    def test_intel_matching(self):
+        drivers = [{"name": "Intel(R) Arc(TM) B390 GPU", "hwid": "PCI\VEN_8086&DEV_B080&SUBSYS_15101462&REV_04", "version": "32.0.101.9034"},
+                   {"name": "Intel NPU", "hwid": "PCI\VEN_8086&DEV_B03E&SUBSYS_15101462&REV_04", "version": "32.0.100.5540"}]
+        def sw(i, version, values, url, beta=False):
+            return {"Id": i, "IsBeta": beta, "InstallOptions": "--nouninstall" if "gfx" in url else "",
+                    "Files": [{"Url": url, "Hash": "a" * 40, "Size": 5, "OperatingSystems": ["windows-11-25h2-64"]}],
+                    "Components": [{"Category": "Graphics", "Version": version, "DetectionType": "Default", "DetectionValues": values}]}
+        catalog = [sw(930514, "32.0.101.9150", ["VEN_8086&DEV_B080"], "https://downloadmirror.intel.com/930514/gfx_win_101.9150.exe"),
+                   sw(999, "32.0.101.9999", ["VEN_8086&DEV_B080"], "https://downloadmirror.intel.com/999/gfx_win_101.9999.exe", beta=True),
+                   sw(927127, "32.0.100.5540", ["VEN_8086&DEV_B03E"], "https://downloadmirror.intel.com/927127/npu_win_32.0.100.5540.exe")]
+        found = updates.intel_updates(catalog, drivers)
+        self.assertEqual([i["id"] for i in found], ["intel:930514"])
+        self.assertEqual(found[0]["args"], "-s --nouninstall")
+
+    def test_msi_matching(self):
+        drivers = [{"name": "Intel NPU", "hwid": "PCI\VEN_8086&DEV_B03E&SUBSYS_15101462&REV_04", "version": "32.0.100.4778"}]
+        rows = {"bios": [{"download_id": 1, "download_title": "BIOS", "download_version": "E1T91IMS.10E", "download_url": "https://download.msi.com/bos_exe/nb/E1T91IMS.10E.zip",
+                          "download_sha256": "SHA-256:" + "b" * 64 + "<br>"}],
+                "driver": [{"download_id": 2, "download_title": "Intel NPU Driver", "download_version": "32.0.100.5000", "download_url": "https://download.msi.com/nb_drivers/cs/npu.zip"},
+                           {"download_id": 3, "download_title": "Realtek Audio Driver", "download_version": "99", "download_url": "https://download.msi.com/x.zip"}],
+                "firmware": [{"download_id": 4, "download_title": "Firmware", "download_version": "4.19", "download_url": "https://download.msi.com/archive/frm_exe/nb/MSI Controller FW Updater_2608_3101.zip"}]}
+        found = {i["id"]: i for i in updates.msi_updates(rows, drivers, "E1T91IMS.10D", "0419")}
+        self.assertEqual(sorted(found), ["msi:1", "msi:2"])
+        self.assertTrue(found["msi:1"]["confirm"])
+        self.assertEqual(found["msi:1"]["sha256"], "b" * 64)
+        self.assertEqual((found["msi:2"]["run"], found["msi:2"]["args"]), ("install.bat", "/s"))
 
     def test_setters_reject_odd_values(self):
         for call in (lambda: self.control.set_power_button("display"), lambda: self.control.set_hibernate_after(7),
