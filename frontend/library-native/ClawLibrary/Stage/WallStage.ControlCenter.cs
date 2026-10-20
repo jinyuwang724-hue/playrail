@@ -1374,7 +1374,11 @@ public sealed partial class WallStage
         var card = b0.Gate;
         var cardCover = b0.Cover;
         cardCover.StartAnimation("Opacity", Keys(HandMs + 1, (0, 1, null), ((float)(HandMs / (HandMs + 1)), 1, null), (1, 0, null)));
-        card.StartAnimation("Opacity", Keys(HandMs + 200, (0, 1, null), ((float)(HandMs / (HandMs + 200)), 1, null), (1, 0, EaseCss)));
+        // 游戏库卡用图标时（和来的方向对称）：一起飞，图标卡就开始淡出，飞的封面同时淡进来，飞行中完成交叉过渡
+        bool iconCard = b0.CoverPath == null;
+        double cross = HandMs + FlyMs * 0.8;
+        if (iconCard) card.StartAnimation("Opacity", Keys(cross, (0, 1, null), ((float)(HandMs / cross), 1, null), (1, 0, EaseCss)));
+        else card.StartAnimation("Opacity", Keys(HandMs + 200, (0, 1, null), ((float)(HandMs / (HandMs + 200)), 1, null), (1, 0, EaseCss)));
         // 控制中心正被背景板盖住：它的动态背景（全屏着色器 + 模糊，在 UI 线程上逐帧画）现在就停，别和飞行抢帧
         CcBackStop();
         hero.tile.MorphHide();
@@ -1382,7 +1386,9 @@ public sealed partial class WallStage
         {
             // 落定：墙卡在合成层下面出现，两帧后合成层撤掉（两者此刻画面相同，不做淡出）
             hero.tile.MorphShowAt(land, 1);
-            var gone = Keys(land + 34, (0, 1, null), ((float)((land + 33) / (land + 34)), 1, null), (1, 0, null));
+            var gone = iconCard
+                ? Keys(land + 34, (0, 0, null), ((float)(HandMs / (land + 34)), 0, null), ((float)(cross / (land + 34)), 1, EaseCss), ((float)((land + 33) / (land + 34)), 1, null), (1, 0, null))
+                : Keys(land + 34, (0, 1, null), ((float)((land + 33) / (land + 34)), 1, null), (1, 0, null));
             img.Box.StartAnimation("Opacity", gone);
             // 卡面那层（不透明，盖住了下面的图）最后 0.1 s 淡掉露出真墙卡：两者几何完全一样，只是实时画面的栅格化略软，
             // 这样换手只是一次很轻的清晰度过渡；下面的图在 land + 33 已经撤掉，卡面层淡出时不会透出没有暗角的原图
