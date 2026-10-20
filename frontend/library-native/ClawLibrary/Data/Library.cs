@@ -40,6 +40,8 @@ public sealed class LibraryItem
     public long? LastPlayed;
     /// <summary>Steam 游戏装好了没有（本地游戏总是 true）。没装的卡上写「未安装」，A 键去 Steam 安装。</summary>
     public bool Installed = true;
+    /// <summary>手动加的文件夹里的游戏：直接启动这个 exe。</summary>
+    public string? ExePath;
     public string? Series;
     public double SeedFx;
     public string? SeedColor;
@@ -141,6 +143,18 @@ public sealed class Library
                     g.Installed = installed.Contains(g.Id);
                     if (!g.Installed) g.Badge = "STEAM · 未安装";
                 }
+        foreach (var (title, exe, last) in FolderGames)
+        {
+            var g = new LibraryItem
+            {
+                Id = ClawLibrary.Data.FolderGames.IdOf(exe), Kind = ItemKind.Game, Title = title, Main = title,
+                Subtitle = Path.GetDirectoryName(Path.GetDirectoryName(exe) ?? "") ?? "", Platform = "folder", Badge = "PC · 文件夹",
+                ExePath = exe, LastPlayed = last, SeedFx = 0.5,
+            };
+            g.Hue = HueOf(g.Title);
+            g.OwnArt = art(g.Id);
+            games.Add(g);
+        }
         return Build(games, steamCollections);
     }
 
@@ -150,6 +164,8 @@ public sealed class Library
     /// </summary>
     /// <summary>设置页「游戏库」：显示 Steam 里隐藏的游戏、两种来源各自开关（下次载入游戏库时生效）。</summary>
     public static bool ShowHidden, IncludeSteam = true, IncludeShortcuts = true;
+    /// <summary>设置页手动加的文件夹里扫出来的游戏（载入前填好）。</summary>
+    public static List<(string Title, string Exe, long? Last)> FolderGames = new();
 
     public static Library Build(List<LibraryItem> games, List<SteamCollection> steamCollections)
     {
@@ -157,7 +173,7 @@ public sealed class Library
         foreach (var g in games)
             g.LastPlayedDays = g.LastPlayed is long l ? (int)Math.Max(0, (now - l) / Day) : null;
         var hidden = ShowHidden ? new HashSet<string>() : steamCollections.FirstOrDefault(c => c.Id == "hidden")?.Added.ToHashSet() ?? new HashSet<string>();
-        var shown = games.Where(g => !hidden.Contains(g.Id) && (g.Platform == "steam" ? IncludeSteam : IncludeShortcuts)).ToList();
+        var shown = games.Where(g => !hidden.Contains(g.Id) && (g.Platform == "steam" ? IncludeSteam : g.Platform == "folder" || IncludeShortcuts)).ToList();
         var lib = new Library { Games = shown };
 
         var recent = shown.Where(g => g.LastPlayed != null).OrderByDescending(g => g.LastPlayed).ToList();

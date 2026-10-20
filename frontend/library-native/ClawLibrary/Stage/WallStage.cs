@@ -267,6 +267,12 @@ public sealed partial class WallStage : IDisposable
         var owned = steam != null ? Steam.ReadOwnedApps(steam) : null;
         var installed = steam != null ? Steam.ReadInstalled(steam) : null;
         Log.Info($"steam owned apps={owned?.Count ?? 0} installed={installed?.Count ?? 0}");
+        // 设置页手动加的游戏文件夹：已经是 Steam 非 Steam 快捷方式的不重复加
+        var shortcuts = Steam.ShortcutPaths(user);
+        var played = FolderGames.ReadPlayed();
+        Library.FolderGames = _prefs.Folders.SelectMany(f => FolderGames.Scan(f, shortcuts))
+            .Select(g => (g.Title, g.Exe, played.TryGetValue(FolderGames.IdOf(g.Exe), out var t) ? (long?)t : null)).ToList();
+        if (Library.FolderGames.Count > 0) Log.Info($"folder games: {Library.FolderGames.Count}");
         _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), collections, owned, installed);
         _steamRoot = steam; _steamUser = user;
         if (_lib.Games.Count == 0)
@@ -284,7 +290,7 @@ public sealed partial class WallStage : IDisposable
         if (_steamRoot == null) return;
         // 按墙上的顺序（最近玩过的在前）生成，先看得到的先有图
         var order = _lib.HomeTabs.Count > 0 ? _lib.HomeTabs[0].Items() : _lib.Games;
-        var missing = order.Where(g => g.Kind == ItemKind.Game && g.Art == null).ToList();
+        var missing = order.Where(g => g.Kind == ItemKind.Game && g.Art == null && g.Platform != "folder").ToList();
         if (missing.Count == 0) return;
         Log.Info($"art kits missing: {missing.Count}; building");
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -780,6 +786,19 @@ public sealed partial class WallStage : IDisposable
     /// </summary>
     private void LaunchOrInstall(LibraryItem item)
     {
+        if (item.ExePath is string exe)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(exe) ?? "" });
+                FolderGames.MarkPlayed(item.Id);
+                Toast($"正在启动「{item.Title}」");
+                AfterGameLaunch();
+            }
+            catch (Exception ex) { Toast($"「{item.Title}」没能启动：{ex.Message}"); }
+            Log.Info($"launch folder game {item.Id} {exe}");
+            return;
+        }
         if (!uint.TryParse(item.Id, out var appid)) { Toast($"「{item.Title}」没有可用的启动方式"); return; }
         if (item.Platform != "steam")
         {

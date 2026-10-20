@@ -141,6 +141,7 @@ public sealed partial class WallStage
     {
         if (!_stOpen || _st == null) return;
         _stOpen = false;
+        _stBrowse = null;
         SettingsResetPointer();
         _stTimer?.Stop();
         int v = ++_stVersion;
@@ -267,6 +268,7 @@ public sealed partial class WallStage
     {
         _stRows.Clear();
         var v = _stView;
+        if (_stBrowse != null) { BuildStBrowse(); return; }
         string later = _stAgentDown ? "连不上工具箱后台" : "正在读取…";
         switch (_stCat)
         {
@@ -289,6 +291,67 @@ public sealed partial class WallStage
     }
 
     private void Repaint() { BuildStRows(); PaintSt(); }
+
+    // ---------------- 选游戏文件夹（手柄能用的文件夹浏览） ----------------
+
+    /// <summary>null = 没在浏览；"" = 磁盘列表；其余 = 当前文件夹。</summary>
+    private string? _stBrowse;
+    private readonly Dictionary<string, int> _stFolderCounts = new();
+
+    private async Task StCountFolder(string folder)
+    {
+        _stFolderCounts[folder] = await Task.Run(() => FolderGames.Count(folder));
+        if (_stOpen && _stCat == 1 && _stBrowse == null) Repaint();
+    }
+
+    private void StBrowseTo(string? path)
+    {
+        _stBrowse = path;
+        _stZone = 1;
+        _stArmed = null;
+        BuildStRows();
+        _stFocus = FirstStRow();
+        _stScroll = 0; _stScrollY = float.NaN;
+        PaintSt();
+    }
+
+    private void BuildStBrowse()
+    {
+        string path = _stBrowse!;
+        _stRows.Add(new PerfRow { Section = true, Title = path.Length == 0 ? "选择游戏所在的磁盘（B 取消）" : $"{path}（B 回上一级）" });
+        if (path.Length == 0)
+        {
+            foreach (var d in DriveInfo.GetDrives().Where(d => d.IsReady && d.DriveType is DriveType.Fixed or DriveType.Removable))
+            {
+                string root = d.Name;
+                string label = string.IsNullOrEmpty(d.VolumeLabel) ? (d.DriveType == DriveType.Removable ? "可移动磁盘" : "本地磁盘") : d.VolumeLabel;
+                _stRows.Add(new PerfRow { Title = root.TrimEnd('\\'), Value = $"{label} · 剩 {d.AvailableFreeSpace >> 30} GB", Press = () => StBrowseTo(root) });
+            }
+            return;
+        }
+        bool added = _prefs.Folders.Any(f => string.Equals(f.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
+        _stRows.Add(new PerfRow
+        {
+            Title = "✓ 用这个文件夹", Value = added ? "已经加过了" : "里面每个子文件夹算一款游戏",
+            Press = () =>
+            {
+                if (added) return;
+                string folder = path.TrimEnd('\\');
+                if (folder.Length == 2) folder += "\\";   // 整个盘
+                SaveUi(_prefs with { Folders = _prefs.Folders.Append(folder).ToArray() });
+                _stNeedsReload = true;
+                int n = FolderGames.Count(folder);
+                _stFolderCounts[folder] = n;
+                Toast(n > 0 ? $"已添加：找到 {n} 款游戏（重新载入游戏库后出现）" : "已添加，但里面没找到带 exe 的子文件夹");
+                StBrowseTo(null);
+            },
+        });
+        string[] dirs;
+        try { dirs = Directory.GetDirectories(path).Where(d => (new DirectoryInfo(d).Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0).OrderBy(d => d, StringComparer.CurrentCulture).Take(400).ToArray(); }
+        catch (Exception ex) { _stRows.Add(StInfo("打不开这个文件夹", ex.Message)); return; }
+        foreach (var d in dirs) _stRows.Add(new PerfRow { Title = Path.GetFileName(d), Value = "›", Press = () => StBrowseTo(d) });
+        if (dirs.Length == 0) _stRows.Add(StInfo("（没有子文件夹）", ""));
+    }
 
     /// <summary>强调色变了：开着的页重画。</summary>
     private void CcRepaintPages() { if (_stOpen) PaintSt(); }
@@ -383,7 +446,21 @@ public sealed partial class WallStage
             if (!on && !_prefs.SourceSteam) { Toast("至少要留一种来源"); return; }
             SaveUi(_prefs with { SourceShortcuts = on }); _stNeedsReload = true; Repaint();
         }, true, reload));
-        _stRows.Add(StInfo("手动添加文件夹（如 D:\\gal）", "之后做：要先做好直接启动 exe 和找封面"));
+        foreach (var folder in _prefs.Folders)
+        {
+            string key = "folder:" + folder;
+            int count = _stFolderCounts.TryGetValue(folder, out var c) ? c : -1;
+            _stRows.Add(StAction(folder, key, count < 0 ? "正在数…" : $"{count} 款游戏 · 按两下 A 移除", () =>
+            {
+                if (!StConfirm(key)) return;
+                SaveUi(_prefs with { Folders = _prefs.Folders.Where(f => f != folder).ToArray() });
+                _stNeedsReload = true;
+                Toast($"已移除：{folder}（重新载入游戏库后生效）");
+                Repaint();
+            }));
+            if (count < 0) _ = StCountFolder(folder);
+        }
+        _stRows.Add(StAction("添加游戏文件夹…", "addfolder", "每个子文件夹算一款游戏，直接启动里面的 exe", () => StBrowseTo("")));
         _stRows.Add(StToggle("显示在 Steam 里隐藏的游戏", _prefs.ShowHiddenGames, on => { SaveUi(_prefs with { ShowHiddenGames = on }); _stNeedsReload = true; Repaint(); }, false, reload));
         _stRows.Add(StAction("重新载入游戏库", "reload", _stNeedsReload ? "有改动没生效 · 按 A 重新载入" : "重新读 Steam 和设置", RestartLibrary));
 
@@ -592,6 +669,7 @@ public sealed partial class WallStage
                 if (next == _stCat) return;
                 _stCat = next;
                 _stArmed = null;
+                _stBrowse = null;
                 BuildStRows();
                 _stFocus = FirstStRow();
                 _stScroll = 0; _stScrollY = float.NaN;
@@ -624,6 +702,12 @@ public sealed partial class WallStage
 
     private void StBack()
     {
+        if (_stBrowse != null)
+        {
+            // 上一级；在磁盘列表里再按 B 退出浏览
+            StBrowseTo(_stBrowse.Length == 0 ? null : Path.GetDirectoryName(_stBrowse.TrimEnd('\\')) is string up && up.Length > 0 ? up : "");
+            return;
+        }
         if (_stZone == 1) { _stZone = 0; _stArmed = null; Repaint(); return; }
         CloseSettingsPage();
     }
@@ -646,7 +730,7 @@ public sealed partial class WallStage
         int i = (int)(y / StCatH);
         if (i < 0 || i >= StCats.Length) return false;
         MarkInput();
-        _stCat = i; _stZone = 0; _stArmed = null;
+        _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null;
         BuildStRows();
         _stFocus = FirstStRow();
         _stScroll = 0; _stScrollY = float.NaN;

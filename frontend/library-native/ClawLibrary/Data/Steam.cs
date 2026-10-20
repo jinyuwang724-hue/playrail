@@ -262,6 +262,50 @@ public static class Steam
         return result;
     }
 
+    /// <summary>
+    /// 非 Steam 快捷方式指向的程序和起始目录（去掉引号）：手动加的游戏文件夹里，已经加进 Steam 的游戏就不再重复出现。
+    /// </summary>
+    public static List<string> ShortcutPaths(string? userDir)
+    {
+        var result = new List<string>();
+        if (userDir == null) return result;
+        try
+        {
+            var path = Path.Combine(userDir, "config", "shortcuts.vdf");
+            if (!File.Exists(path)) return result;
+            var data = File.ReadAllBytes(path);
+            int i = 0;
+            string ReadString()
+            {
+                int start = i;
+                while (i < data.Length && data[i] != 0) i++;
+                var s = Encoding.UTF8.GetString(data, start, i - start);
+                i++;
+                return s;
+            }
+            while (i < data.Length)
+            {
+                byte type = data[i++];
+                if (type == 0x08) continue;
+                var name = ReadString();
+                switch (type)
+                {
+                    case 0x00: break;
+                    case 0x01:
+                        var value = ReadString().Trim().Trim('"');
+                        if ((name.Equals("exe", StringComparison.OrdinalIgnoreCase) || name.Equals("StartDir", StringComparison.OrdinalIgnoreCase)) && value.Length > 2)
+                            result.Add(value);
+                        break;
+                    case 0x02: i += 4; break;
+                    case 0x07: i += 8; break;
+                    default: return result;
+                }
+            }
+        }
+        catch (Exception ex) { Log.Warn($"shortcut paths: {ex.Message}"); }
+        return result;
+    }
+
     /// <summary>二进制 shortcuts.vdf：每个条目取 appid（无符号）和 LastPlayTime。</summary>
     private static IEnumerable<(string appid, long last)> BinaryShortcuts(byte[] data)
     {
