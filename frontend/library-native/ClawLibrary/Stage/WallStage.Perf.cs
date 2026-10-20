@@ -521,7 +521,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>控制中心子页右栏的设置列表（性能、手柄共用）：分组标题、行号、焦点 ▸、几选一下划线、焦点数值 ‹ ›。</summary>
-    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus, List<SettingsPointerTarget>? targets = null)
+    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus, List<SettingsPointerTarget>? targets = null, bool numbers = true)
     {
         var ui = TextKit.Ui(400);
         var mono = new FontSpec("Cascadia Mono", 400);
@@ -548,7 +548,7 @@ public sealed partial class WallStage
                 using var g = CanvasGeometry.CreatePath(pb);
                 ds.FillGeometry(g, Gfx.WithAlpha(CcText, a));
             }
-            else PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(CcText, 0.32f * a), 0, cy, 40);
+            else if (numbers) PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(CcText, 0.32f * a), 0, cy, 40);
             if (r.Changed) ds.FillCircle(27, cy, 3, PerfAccent);
             PText(ds, r.Title, ui, 17, Gfx.WithAlpha(CcText, (f ? 1f : 0.88f) * a), 36, cy, 400);
             if (targets != null && r.SetNumber != null && !r.Disabled)

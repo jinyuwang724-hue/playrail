@@ -19,7 +19,7 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     private static readonly string[] StCats = { "通用", "游戏库", "外观", "声音与反馈", "游戏中", "开机自启", "第三方软件", "维护", "关于" };
-    private const float StCatH = 62;
+    private const float StCatH = 52;
 
     private UiPrefs _prefs = new();
     private ContainerVisual? _st;
@@ -263,6 +263,7 @@ public sealed partial class WallStage
         new() { Title = title, Value = _stArmed == key ? "再按一次确认" : idle, Press = run };
 
     private static PerfRow StInfo(string title, string value) => new() { Title = title, Value = value, Disabled = true };
+    private static PerfRow StValue(string title, string value) => new() { Title = title, Value = value };
 
     private void BuildStRows()
     {
@@ -318,7 +319,7 @@ public sealed partial class WallStage
     private void BuildStBrowse()
     {
         string path = _stBrowse!;
-        _stRows.Add(new PerfRow { Section = true, Title = path.Length == 0 ? "选择游戏所在的磁盘（B 取消）" : $"{path}（B 回上一级）" });
+        _stRows.Add(new PerfRow { Section = true, Title = path.Length == 0 ? "选择磁盘" : path });
         if (path.Length == 0)
         {
             foreach (var d in DriveInfo.GetDrives().Where(d => d.IsReady && d.DriveType is DriveType.Fixed or DriveType.Removable))
@@ -332,7 +333,7 @@ public sealed partial class WallStage
         bool added = _prefs.Folders.Any(f => string.Equals(f.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
         _stRows.Add(new PerfRow
         {
-            Title = "✓ 用这个文件夹", Value = added ? "已经加过了" : "里面每个子文件夹算一款游戏",
+            Title = "✓ 用这个文件夹", Value = added ? "已添加" : "",
             Press = () =>
             {
                 if (added) return;
@@ -369,7 +370,7 @@ public sealed partial class WallStage
                 home["current"] = ids[i];
                 Repaint();
                 _ = StRun("set_home_app", _ => $"全屏体验主页：{names[i]}（下次进全屏体验时生效）", JsonValue.Create(ids[i]));
-            }, note: cur < 0 ? "现在没有设置" : ""));
+            }));
         }
         else _stRows.Add(StInfo("全屏体验主页", later));
         _stRows.Add(StPick("打开后落在", new[] { "游戏库", "控制中心" }, (int)_prefs.Boot, i => { SaveUi(_prefs with { Boot = (BootTarget)i }); Repaint(); }, 0));
@@ -385,7 +386,7 @@ public sealed partial class WallStage
         }
         else _stRows.Add(StInfo("开机自动运行工具箱后台", v == null ? later : "没有找到登录任务"));
         _stRows.Add(new PerfRow { Section = true, Title = "语言" });
-        _stRows.Add(StInfo("界面语言", "简体中文（English 之后做）"));
+        _stRows.Add(StValue("界面语言", "简体中文"));
     }
 
     private void BuildStLibrary()
@@ -397,7 +398,7 @@ public sealed partial class WallStage
         int start = Math.Max(0, visible.FindIndex(t => t.Id == _prefs.StartTab));
         _stRows.Add(StPick("开机落在的集合", visible.Select(t => t.Label).ToArray(), start, i => { SaveUi(_prefs with { StartTab = visible[i].Id }); Repaint(); }, 0));
 
-        _stRows.Add(new PerfRow { Section = true, Title = "集合（竖条页签）：←→ 调顺序，A 显示 / 隐藏" });
+        _stRows.Add(new PerfRow { Section = true, Title = "集合" });
         var ordered = tabs.OrderBy(t => _prefs.TabOrder.ToList().IndexOf(t.Id) is int i && i >= 0 ? i : 99 + tabs.IndexOf(t)).ToList();
         for (int k = 0; k < ordered.Count; k++)
         {
@@ -434,7 +435,7 @@ public sealed partial class WallStage
             });
         }
 
-        string reload = _stNeedsReload ? "重新载入后生效" : "";
+        string reload = "";
         _stRows.Add(new PerfRow { Section = true, Title = "游戏来源" });
         _stRows.Add(StToggle("Steam 游戏", _prefs.SourceSteam, on =>
         {
@@ -450,7 +451,7 @@ public sealed partial class WallStage
         {
             string key = "folder:" + folder;
             int count = _stFolderCounts.TryGetValue(folder, out var c) ? c : -1;
-            _stRows.Add(StAction(folder, key, count < 0 ? "正在数…" : $"{count} 款游戏 · 按两下 A 移除", () =>
+            _stRows.Add(StAction(folder, key, count < 0 ? "" : $"{count} 款", () =>
             {
                 if (!StConfirm(key)) return;
                 SaveUi(_prefs with { Folders = _prefs.Folders.Where(f => f != folder).ToArray() });
@@ -460,14 +461,14 @@ public sealed partial class WallStage
             }));
             if (count < 0) _ = StCountFolder(folder);
         }
-        _stRows.Add(StAction("添加游戏文件夹…", "addfolder", "每个子文件夹算一款游戏，直接启动里面的 exe", () => StBrowseTo("")));
+        _stRows.Add(StAction("添加游戏文件夹…", "addfolder", "", () => StBrowseTo("")));
         _stRows.Add(StToggle("显示在 Steam 里隐藏的游戏", _prefs.ShowHiddenGames, on => { SaveUi(_prefs with { ShowHiddenGames = on }); _stNeedsReload = true; Repaint(); }, false, reload));
-        _stRows.Add(StAction("重新载入游戏库", "reload", _stNeedsReload ? "有改动没生效 · 按 A 重新载入" : "重新读 Steam 和设置", RestartLibrary));
+        _stRows.Add(StAction("重新载入游戏库", "reload", _stNeedsReload ? "有改动待生效" : "", RestartLibrary));
 
         _stRows.Add(new PerfRow { Section = true, Title = "封面" });
         long bytes = 0;
         try { if (Directory.Exists(ArtRoot)) bytes = new DirectoryInfo(ArtRoot).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length); } catch { }
-        _stRows.Add(StAction("重新生成全部封面", "art", $"现在占 {bytes >> 20} MB · 从 Steam 原图重做", () =>
+        _stRows.Add(StAction("重新生成全部封面", "art", $"{bytes >> 20} MB", () =>
         {
             if (!StConfirm("art")) return;
             try { Directory.CreateDirectory(App.CacheDir); File.WriteAllText(Path.Combine(App.CacheDir, "art.reset"), "1"); } catch { }
@@ -482,7 +483,7 @@ public sealed partial class WallStage
     {
         var b = _backgroundSettings;
         void SetBg(BackgroundSettings next) { _backgroundSettings = next; ApplyBackgroundSettings(); Repaint(); }
-        _stRows.Add(new PerfRow { Section = true, Title = "背景（控制中心后面就是实时预览）" });
+        _stRows.Add(new PerfRow { Section = true, Title = "背景" });
         var kinds = new[] { BackgroundKind.Latent, BackgroundKind.Monet, BackgroundKind.Nomand, BackgroundKind.Filmstrip };
         _stRows.Add(StPick("背景样式", new[] { "隐现", "莫奈", "漫游", "胶片封面墙" }, Array.IndexOf(kinds, b.Kind), i => SetBg(b with { Kind = kinds[i] }), 0));
         switch (b.Kind)
@@ -511,7 +512,7 @@ public sealed partial class WallStage
         _stRows.Add(StPick("控制中心卡片", new[] { "拍立得", "卡片" }, _ccCards ? 1 : 0, i => { SetCcCardStyle(i == 1); Repaint(); }, 0));
         var accentNames = new[] { "跟随封面" }.Concat(UiPrefs.Accents.Select(a => a.Name)).ToArray();
         _stRows.Add(StPick("强调色", accentNames, _prefs.Accent + 1, i => { SaveUi(_prefs with { Accent = i - 1 }); Repaint(); CcRepaintPages(); }, 0));
-        _stRows.Add(StToggle("降低动态效果", _reducedLocal, on => { _reducedLocal = on; SaveUi(_prefs with { Reduced = on }); Repaint(); }, false, "切换都变成淡入淡出"));
+        _stRows.Add(StToggle("降低动态效果", _reducedLocal, on => { _reducedLocal = on; SaveUi(_prefs with { Reduced = on }); Repaint(); }, false));
     }
 
     private PerfRow StNumber(string title, int value, int min, int max, int step, Func<int, string> fmt, Action<int> set, int def) => new()
@@ -524,7 +525,7 @@ public sealed partial class WallStage
     private void BuildStSound(JsonObject? v, string later)
     {
         _stRows.Add(new PerfRow { Section = true, Title = "界面音效" });
-        _stRows.Add(StToggle("界面音效", _prefs.Sounds, on => { SaveUi(_prefs with { Sounds = on }); SoundFx.Enabled = on; SoundFx.Play(Sfx.Confirm); Repaint(); }, false, "移动、确认、返回各一声"));
+        _stRows.Add(StToggle("界面音效", _prefs.Sounds, on => { SaveUi(_prefs with { Sounds = on }); SoundFx.Enabled = on; SoundFx.Play(Sfx.Confirm); Repaint(); }, false));
         var vol = StNumber("音效音量", _prefs.SoundVolume, 0, 100, 10, n => $"{n} %", n => { SaveUi(_prefs with { SoundVolume = n }); SoundFx.SetVolume(n); SoundFx.Play(Sfx.Move); Repaint(); }, 40);
         vol.Disabled = !_prefs.Sounds;
         _stRows.Add(vol);
@@ -532,10 +533,9 @@ public sealed partial class WallStage
         if (v?["haptics"] is JsonValue)
         {
             bool on = Bool(v["haptics"]);
-            _stRows.Add(StToggle("导航震动", on, to => { v["haptics"] = to; Repaint(); _ = StRun("set_haptics_enabled", null, JsonValue.Create(to)); }, true, "在 Steam 大屏和游戏库里移动焦点时轻震一下"));
+            _stRows.Add(StToggle("导航震动", on, to => { v["haptics"] = to; Repaint(); _ = StRun("set_haptics_enabled", null, JsonValue.Create(to)); }, true));
         }
         else _stRows.Add(StInfo("导航震动", later));
-        _stRows.Add(StInfo("震动强度", "在「手柄」页"));
     }
 
     private void BuildStInGame(JsonObject? v, string later)
@@ -553,7 +553,7 @@ public sealed partial class WallStage
                     en[id] = to;
                     Repaint();
                     _ = StRun("manage_compatibility", r => Str(r?["items"]?[id]) ?? "已更新", JsonValue.Create("set"), JsonValue.Create(id), JsonValue.Create(to));
-                }, false, busy ? "正在处理…" : Str(items?[id]) ?? "");
+                }, false, busy ? "处理中" : (Str(items?[id]) ?? "").StartsWith("需要处理") ? "需要处理" : "");
                 row.Disabled = busy;
                 _stRows.Add(row);
             }
@@ -561,39 +561,38 @@ public sealed partial class WallStage
         }
         else _stRows.Add(StInfo("兼容修复", later));
         _stRows.Add(new PerfRow { Section = true, Title = "调试" });
-        _stRows.Add(StToggle("性能读数（帧时间）", _hudOn, on => { if (on != _hudOn) ToggleHud(); Repaint(); }, false, "左上角显示游戏库自己的帧时间"));
-        _stRows.Add(StInfo("性能浮层、功耗、风扇", "在「性能」页"));
+        _stRows.Add(StToggle("性能读数（帧时间）", _hudOn, on => { if (on != _hudOn) ToggleHud(); Repaint(); }, false));
     }
 
     private void BuildStStartup(JsonObject? v, string later)
     {
-        _stRows.Add(new PerfRow { Section = true, Title = "开机自动运行的程序（和任务管理器里的开关是同一个）" });
+        _stRows.Add(new PerfRow { Section = true, Title = "开机自启" });
         if (v?["startup"] is not JsonArray items) { _stRows.Add(StInfo("自启列表", later)); return; }
         foreach (var it in items.OfType<JsonObject>())
         {
             string id = Str(it["id"]) ?? "", name = Str(it["name"]) ?? id;
             bool on = Bool(it["enabled"]);
-            if (Str(it["protected"]) is string why) { _stRows.Add(StInfo(name, $"开 · {why}")); continue; }
+            if (Str(it["protected"]) is string why) { _stRows.Add(StValue(name, "开")); continue; }
             _stRows.Add(StToggle(name, on, to =>
             {
                 it["enabled"] = to;
                 Repaint();
                 _ = StRun("set_startup_item", _ => to ? $"{name}：开机自动运行" : $"{name}：开机不再自动运行", JsonValue.Create(id), JsonValue.Create(to));
-            }, note: Bool(it["machine"]) ? "所有用户" : ""));
+            }));
         }
     }
 
     private void BuildStVendors(JsonObject? v, string later)
     {
-        _stRows.Add(new PerfRow { Section = true, Title = "工具箱已经替代的软件：禁用 = 停掉服务和计划任务、关掉进程，不卸载" });
+        _stRows.Add(new PerfRow { Section = true, Title = "已被工具箱替代" });
         if (v?["vendors"] is not JsonArray apps) { _stRows.Add(StInfo("第三方软件", later)); return; }
         foreach (var app in apps.OfType<JsonObject>())
         {
             string id = Str(app["id"]) ?? "", name = Str(app["name"]) ?? id;
-            if (!Bool(app["installed"])) { _stRows.Add(StInfo(name, "没有安装")); continue; }
+            if (!Bool(app["installed"])) { _stRows.Add(StValue(name, "没有安装")); continue; }
             bool off = Bool(app["disabled"]);
             int running = Int(app["running"]);
-            string state = off ? "已禁用 · 按 A 恢复" : running > 0 ? "正在运行 · 按 A 禁用" : "开机会启动 · 按 A 禁用";
+            string state = off ? "已禁用" : running > 0 ? "运行中" : "未禁用";
             _stRows.Add(new PerfRow
             {
                 Title = name, Value = state, Changed = off,
@@ -609,10 +608,10 @@ public sealed partial class WallStage
 
     private void BuildStMaintenance(JsonObject? v, string later)
     {
-        _stRows.Add(new PerfRow { Section = true, Title = "排查问题" });
-        _stRows.Add(StAction("导出日志", "logs", "打包到桌面", () => _ = StRun("export_logs", r => $"日志已存到桌面：{Str(r?["name"])}")));
+        _stRows.Add(new PerfRow { Section = true, Title = "诊断" });
+        _stRows.Add(StAction("导出日志", "logs", "", () => _ = StRun("export_logs", r => $"日志已存到桌面：{Str(r?["name"])}")));
         string version = Str(v?["version"]) ?? "—";
-        _stRows.Add(StAction("重启工具箱后台", "restart", _stAgentDown ? "现在连不上 · 按 A 重启" : $"{version} · 已连接", () =>
+        _stRows.Add(StAction("重启工具箱后台", "restart", _stAgentDown ? "未连接" : "", () =>
         {
             if (!StConfirm("restart")) return;
             Toast("工具箱后台正在重启，几秒后自动连回");
@@ -636,7 +635,7 @@ public sealed partial class WallStage
             });
         }
         else _stRows.Add(StInfo("还原设置", v == null ? later : "还没有备份"));
-        _stRows.Add(StAction("恢复默认", "reset", "工具箱设置全部回到默认（先自动备份）", () =>
+        _stRows.Add(StAction("恢复默认", "reset", "", () =>
         {
             if (!StConfirm("reset")) return;
             Toast("正在恢复默认，工具箱后台会重启一下");
@@ -647,13 +646,13 @@ public sealed partial class WallStage
     private void BuildStAbout(JsonObject? v)
     {
         _stRows.Add(new PerfRow { Section = true, Title = "版本" });
-        _stRows.Add(StInfo("游戏库（前端）", SyOwnVersion()));
-        _stRows.Add(StInfo("工具箱后台", Str(v?["version"]) ?? "—"));
-        _stRows.Add(StInfo("Game Bar 小组件", Str(v?["widget"]) ?? "—"));
+        _stRows.Add(StValue("游戏库", SyOwnVersion()));
+        _stRows.Add(StValue("工具箱后台", Str(v?["version"]) ?? "—"));
+        _stRows.Add(StValue("Game Bar 小组件", Str(v?["widget"]) ?? "—"));
         _stRows.Add(new PerfRow { Section = true, Title = "开源许可" });
-        _stRows.Add(StInfo("工具箱自己的代码", "MIT"));
-        _stRows.Add(StInfo("Magpie（画面缩放）", "GPL-3.0"));
-        _stRows.Add(StInfo("Python 3.12（后台运行环境）", "PSF"));
+        _stRows.Add(StValue("工具箱", "MIT"));
+        _stRows.Add(StValue("Magpie", "GPL-3.0"));
+        _stRows.Add(StValue("Python", "PSF"));
     }
 
     // ---------------- 输入 ----------------
@@ -754,7 +753,7 @@ public sealed partial class WallStage
             _stTitle.Offset = new Vector3(40 * k, 32 * k, 0);
         }
         _settingsTargets.Clear();
-        CcSet(_stRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _stRows, _stZone == 1 ? _stFocus : -1, _settingsTargets)));
+        CcSet(_stRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _stRows, _stZone == 1 ? _stFocus : -1, _settingsTargets, numbers: false)));
         _stRight.Size = new Vector2(PerfRightW * k, h * k);
         _stRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _stRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
@@ -764,47 +763,18 @@ public sealed partial class WallStage
         _stLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
     }
 
-    /// <summary>左栏目录：大字分类名 + 一行摘要；当前分类前面一条强调色竖线，焦点在目录时整行有底色。</summary>
+    /// <summary>左栏目录：只有分类名。当前分类白色加粗、前面一条强调色短线；焦点在目录时整行有一层浅底。</summary>
     private void PaintStLeft(CanvasDrawingSession ds, float h)
     {
         var accent = PerfAccent;
-        var muted = Gfx.WithAlpha(CcText, 0.5);
         for (int i = 0; i < StCats.Length; i++)
         {
             float top = i * StCatH;
             bool cur = i == _stCat, focus = cur && _stZone == 0;
-            if (focus) ds.FillRoundedRectangle(0, top + 4, PerfLeftW, StCatH - 8, 8, 8, Gfx.WithAlpha(CcText, 0.12f));
-            if (cur) ds.FillRoundedRectangle(0, top + 14, 4, StCatH - 28, 2, 2, accent);
-            PText(ds, StCats[i], TextKit.Ui((ushort)(cur ? 700 : 500)), 20, Gfx.WithAlpha(CcText, cur ? 1f : 0.62f), 18, top + 23, PerfLeftW - 24);
-            string summary = GpFit(ds, StSummary(i), TextKit.Ui(400), 12, PerfLeftW - 30);
-            PText(ds, summary, TextKit.Ui(400), 12, muted, 18, top + 45, PerfLeftW - 24);
+            if (focus) ds.FillRoundedRectangle(0, top + 4, PerfLeftW - 60, StCatH - 8, 8, 8, Gfx.WithAlpha(CcText, 0.12f));
+            if (cur) ds.FillRoundedRectangle(0, top + 17, 3, StCatH - 34, 1.5f, 1.5f, accent);
+            PText(ds, StCats[i], TextKit.Ui((ushort)(cur ? 600 : 400)), 19, Gfx.WithAlpha(CcText, cur ? 1f : 0.5f), 18, top + StCatH / 2, PerfLeftW - 24);
         }
-        if (_stAgentDown) PText(ds, "连不上工具箱后台：系统相关的项暂时读不到", TextKit.Ui(400), 13, muted, 0, h - 12, PerfLeftW);
-    }
-
-    private string StSummary(int cat)
-    {
-        var v = _stView;
-        switch (cat)
-        {
-            case 0:
-                string home = (v?["home"]?["choices"] as JsonArray)?.FirstOrDefault(c => Str(c?["id"]) == Str(v?["home"]?["current"])) is JsonNode h ? Str(h["name"]) ?? "—" : "—";
-                return $"主页：{home} · 打开后：{(_prefs.Boot == BootTarget.ControlCenter ? "控制中心" : "游戏库")}";
-            case 1: return $"{(Style == TitleStyle.B ? "极简黑体" : "电影字幕")} · {_lib.HomeTabs.Count} 个集合";
-            case 2: return $"{_backgroundSettings.Name} · {(_prefs.Accent >= 0 ? UiPrefs.Accents[_prefs.Accent].Name : "强调色跟随封面")}";
-            case 3: return $"音效{(_prefs.Sounds ? $" {_prefs.SoundVolume} %" : "关")} · 导航震动{(v?["haptics"] is JsonValue hv ? (Bool(hv) ? "开" : "关") : "—")}";
-            case 4:
-                var en = v?["compatibility"]?["enabled"] as JsonObject;
-                int fixes = en == null ? 0 : en.Count(p => Bool(p.Value));
-                return $"兼容修复 {fixes} 项开着";
-            case 5:
-                var items = (v?["startup"] as JsonArray)?.OfType<JsonObject>().ToArray();
-                return items == null ? "—" : $"{items.Count(i => Bool(i["enabled"]))} / {items.Length} 个开机运行";
-            case 6:
-                var apps = (v?["vendors"] as JsonArray)?.OfType<JsonObject>().Where(a => Bool(a["installed"])).ToArray();
-                return apps == null ? "—" : $"{apps.Count(a => Bool(a["disabled"]))} / {apps.Length} 个已禁用";
-            case 7: return "日志、备份、恢复默认、重启后台";
-            default: return $"游戏库 {SyOwnVersion()} · 后台 {Str(v?["version"]) ?? "—"}";
-        }
+        if (_stAgentDown) PText(ds, "连不上工具箱后台", TextKit.Ui(400), 13, Gfx.WithAlpha(CcText, 0.5), 0, h - 12, PerfLeftW);
     }
 }
