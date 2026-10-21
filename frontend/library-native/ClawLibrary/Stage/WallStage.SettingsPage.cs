@@ -144,6 +144,9 @@ public sealed partial class WallStage
         if (!_stOpen || _st == null) return;
         _stOpen = false;
         _stBrowse = null;
+        _stBrowseExe = false;
+        _lgPage = LgPage.None;
+        StEditEnd(false);
         SettingsResetPointer();
         _stTimer?.Stop();
         int v = ++_stVersion;
@@ -209,6 +212,7 @@ public sealed partial class WallStage
         if (!_stOpen) return;
         BuildStRows();
         PaintSt();
+        if (_stCat == 1 && !_lgPolling) await LgRefresh();
     }
 
     /// <summary>交给后台的动作：等它做完，按结果给提示，再读一次。</summary>
@@ -272,6 +276,7 @@ public sealed partial class WallStage
         _stRows.Clear();
         var v = _stView;
         if (_stBrowse != null) { BuildStBrowse(); return; }
+        if (_lgPage != LgPage.None) { BuildLgRows(); return; }
         string later = _stAgentDown ? "连不上工具箱后台" : "正在读取…";
         switch (_stCat)
         {
@@ -324,6 +329,7 @@ public sealed partial class WallStage
     private void StBrowseTo(string? path)
     {
         _stBrowse = path;
+        if (path == null) _stBrowseExe = false;
         _stZone = 1;
         _stArmed = null;
         BuildStRows();
@@ -344,6 +350,18 @@ public sealed partial class WallStage
                 string label = string.IsNullOrEmpty(d.VolumeLabel) ? (d.DriveType == DriveType.Removable ? "可移动磁盘" : "本地磁盘") : d.VolumeLabel;
                 _stRows.Add(new PerfRow { Title = root.TrimEnd('\\'), Value = $"{label} · 剩 {d.AvailableFreeSpace >> 30} GB", Press = () => StBrowseTo(root) });
             }
+            return;
+        }
+        if (_stBrowseExe)
+        {
+            // 添加游戏：子文件夹在前，下面是这一层的 exe，选中一个就进确认页
+            string[] subs;
+            try { subs = Directory.GetDirectories(path).Where(d => (new DirectoryInfo(d).Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0).OrderBy(d => d, StringComparer.CurrentCulture).Take(400).ToArray(); }
+            catch (Exception ex) { _stRows.Add(StInfo("打不开这个文件夹", ex.Message)); return; }
+            foreach (var d in subs) _stRows.Add(new PerfRow { Title = Path.GetFileName(d), Value = "›", Press = () => StBrowseTo(d) });
+            int before = _stRows.Count;
+            BuildStBrowseExes(path);
+            if (subs.Length == 0 && _stRows.Count == before) _stRows.Add(StInfo("（空）", ""));
             return;
         }
         bool added = _prefs.Folders.Any(f => string.Equals(f.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase));
@@ -490,6 +508,8 @@ public sealed partial class WallStage
         _stRows.Add(StAction("添加游戏文件夹…", "addfolder", "", () => StBrowseTo("")));
         _stRows.Add(StToggle("显示在 Steam 里隐藏的游戏", _prefs.ShowHiddenGames, on => { SaveUi(_prefs with { ShowHiddenGames = on }); _stNeedsReload = true; Repaint(); }, false, reload));
         _stRows.Add(StAction("重新载入游戏库", "reload", _stNeedsReload ? "有改动待生效" : "", RestartLibrary));
+
+        BuildLgEntryRows();
 
         _stRows.Add(new PerfRow { Section = true, Title = "封面" });
         long bytes = 0;
@@ -715,6 +735,7 @@ public sealed partial class WallStage
     private void StMove(Direction dir)
     {
         SettingsResumeKeyboard();
+        if (StEditing) return;
         if (_stZone == 0)
         {
             if (dir is Direction.Up or Direction.Down)
@@ -724,6 +745,8 @@ public sealed partial class WallStage
                 _stCat = next;
                 _stArmed = null;
                 _stBrowse = null;
+                _stBrowseExe = false;
+                _lgPage = LgPage.None;
                 BuildStRows();
                 _stFocus = FirstStRow();
                 _stScroll = 0; _stScrollY = float.NaN;
@@ -747,6 +770,7 @@ public sealed partial class WallStage
     private void StActivate()
     {
         SettingsResumeKeyboard();
+        if (StEditing) { StEditEnd(true); return; }
         if (_stZone == 0) { _stZone = 1; PaintSt(); return; }
         if (_stFocus < 0 || _stFocus >= _stRows.Count) return;
         var r = _stRows[_stFocus];
@@ -756,12 +780,14 @@ public sealed partial class WallStage
 
     private void StBack()
     {
+        if (StEditing) { StEditEnd(false); return; }
         if (_stBrowse != null)
         {
             // 上一级；在磁盘列表里再按 B 退出浏览
             StBrowseTo(_stBrowse.Length == 0 ? null : Path.GetDirectoryName(_stBrowse.TrimEnd('\\')) is string up && up.Length > 0 ? up : "");
             return;
         }
+        if (LgBack()) return;
         if (_stZone == 1) { _stZone = 0; _stArmed = null; Repaint(); return; }
         CloseSettingsPage();
     }
@@ -784,7 +810,7 @@ public sealed partial class WallStage
         int i = (int)Math.Floor((y - PerfSecH) / StCatH);
         if (i < 0 || i >= StCats.Length) return false;
         MarkInput();
-        _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null;
+        _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null; _stBrowseExe = false; _lgPage = LgPage.None;
         BuildStRows();
         _stFocus = FirstStRow();
         _stScroll = 0; _stScrollY = float.NaN;
@@ -814,7 +840,7 @@ public sealed partial class WallStage
         _stRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
         RowScrollTo(_stRight, _stRows, _settingsManualScroll || _stZone == 0 ? -1 : _stFocus, ref _stScroll, ref _stScrollY, h, vh, false);
         // 左栏往左多出 StGutter：焦点三角画在页边距里，分类名的左边和标题「设置」对齐
-        CcSet(_stLeft, CcDraw(PerfLeftW + StGutter, vh, raster, ds => PaintStNav(ds, vh)));
+        CcSet(_stLeft, CcDraw(PerfLeftW + StGutter, vh, raster, ds => { if (_lgPage == LgPage.Edit) PaintLgPreview(ds, vh); else PaintStNav(ds, vh); }));
         _stLeft.Size = new Vector2((PerfLeftW + StGutter) * k, vh * k);
         _stLeft.Offset = new Vector3((PerfLeftX - StGutter) * k, PerfTop * k, 0);
     }

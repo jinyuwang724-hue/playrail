@@ -282,11 +282,24 @@ public sealed partial class WallStage : IDisposable
         Log.Info($"steam owned apps={owned?.Count ?? 0} installed={installed?.Count ?? 0}");
         // 设置页手动加的游戏文件夹：已经是 Steam 非 Steam 快捷方式的不重复加
         var shortcuts = Steam.ShortcutPaths(user);
+        // 设置里「添加游戏」加的本地游戏也不在文件夹扫描里重复出现；它的封面原图换过，就把旧的封面套件删掉重新生成
+        var local = LocalGames.Read();
+        shortcuts.AddRange(local.Select(l => l.Exe));
+        foreach (var lg in local)
+        {
+            var kit = Path.Combine(ArtRoot, lg.Id);
+            var src = LocalGames.ArtFile(lg.Id, "p");
+            try
+            {
+                if (src != null && Directory.Exists(kit) && File.GetLastWriteTimeUtc(src) > Directory.GetLastWriteTimeUtc(kit)) Directory.Delete(kit, true);
+            }
+            catch (Exception ex) { Log.Warn($"local art reset {lg.Id}: {ex.Message}"); }
+        }
         var played = FolderGames.ReadPlayed();
         Library.FolderGames = _prefs.Folders.SelectMany(f => FolderGames.Scan(f, shortcuts))
             .Select(g => (g.Title, g.Exe, played.TryGetValue(FolderGames.IdOf(g.Exe), out var t) ? (long?)t : null)).ToList();
         if (Library.FolderGames.Count > 0) Log.Info($"folder games: {Library.FolderGames.Count}");
-        _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), collections, owned, installed, Steam.ShortcutTargets(user));
+        _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), collections, owned, installed, Steam.ShortcutTargets(user), local);
         _steamRoot = steam; _steamUser = user;
         if (_lib.Games.Count == 0)
         {

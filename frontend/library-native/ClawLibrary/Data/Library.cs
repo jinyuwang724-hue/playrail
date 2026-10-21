@@ -71,7 +71,7 @@ public sealed class Library
 
     public static Library Load(string seedPath, Dictionary<string, PlayStats> stats, Func<string, ArtKit?> art,
         List<SteamCollection>? steamCollections = null, List<SteamApp>? owned = null, HashSet<string>? installed = null,
-        List<(string AppId, string Name, string Exe, string StartDir)>? shortcuts = null)
+        List<(string AppId, string Name, string Exe, string StartDir)>? shortcuts = null, List<LocalGame>? local = null)
     {
         var games = new List<LibraryItem>();
         steamCollections ??= new();
@@ -137,6 +137,30 @@ public sealed class Library
                 seen.Add(app.Id);
             }
         }
+        // 设置里「添加游戏」加的本地游戏：id 就是它的快捷方式 appid，已经同步进 Steam 的走 Steam 启动（有游玩记录、Steam 覆盖层），
+        // 还没同步的直接启动 exe。排在快捷方式之前，下面收快捷方式时同一个 id / 同一个 exe 不会再收一次。
+        if (local != null)
+        {
+            var seen = games.Select(g => g.Id).ToHashSet();
+            var inSteam = (shortcuts ?? new()).Select(s => s.AppId).ToHashSet();
+            var played = ClawLibrary.Data.FolderGames.ReadPlayed();
+            foreach (var lg in local)
+            {
+                if (!seen.Add(lg.Id) || string.IsNullOrWhiteSpace(lg.Name)) continue;
+                bool synced = inSteam.Contains(lg.Id);
+                stats.TryGetValue(lg.Id, out var st);
+                var g = new LibraryItem
+                {
+                    Id = lg.Id, Kind = ItemKind.Game, Title = lg.Name, Main = lg.Name, Subtitle = "本地",
+                    Platform = "local", Badge = "PC", SeedFx = 0.5, ExePath = synced ? null : lg.Exe,
+                    LastPlayed = synced ? st?.Last : played.TryGetValue(lg.Id, out var t) ? t : null,
+                    PlaytimeH = synced && st?.Minutes is int m ? Math.Round(m / 60.0) : null,
+                };
+                g.Hue = HueOf(g.Title);
+                g.OwnArt = art(lg.Id);
+                games.Add(g);
+            }
+        }
         // 种子清单以外、后来加进 Steam 的非 Steam 快捷方式：名字用快捷方式自己的名字。
         // 同一个程序加了两次快捷方式的（比如鸣潮有两条）只收一条，已经在清单里的那条优先。
         if (shortcuts != null)
@@ -199,7 +223,7 @@ public sealed class Library
         foreach (var g in games)
             g.LastPlayedDays = g.LastPlayed is long l ? (int)Math.Max(0, (now - l) / Day) : null;
         var hidden = ShowHidden ? new HashSet<string>() : steamCollections.FirstOrDefault(c => c.Id == "hidden")?.Added.ToHashSet() ?? new HashSet<string>();
-        var shown = games.Where(g => !hidden.Contains(g.Id) && (g.Platform == "steam" ? IncludeSteam : g.Platform == "folder" || IncludeShortcuts)).ToList();
+        var shown = games.Where(g => !hidden.Contains(g.Id) && (g.Platform == "steam" ? IncludeSteam : g.Platform is "folder" or "local" || IncludeShortcuts)).ToList();
         var lib = new Library { Games = shown };
 
         var recent = shown.Where(g => g.LastPlayed != null).OrderByDescending(g => g.LastPlayed).ToList();

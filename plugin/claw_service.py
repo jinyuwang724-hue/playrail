@@ -56,6 +56,9 @@ _buttons_spec.loader.exec_module(_buttons_module)
 _captures_spec = importlib.util.spec_from_file_location("claw_toolbox_captures", PLUGIN_ROOT / "claw_captures.py")
 _captures_module = importlib.util.module_from_spec(_captures_spec)
 _captures_spec.loader.exec_module(_captures_module)
+_local_games_spec = importlib.util.spec_from_file_location("claw_toolbox_local_games", PLUGIN_ROOT / "claw_local_games.py")
+_local_games_module = importlib.util.module_from_spec(_local_games_spec)
+_local_games_spec.loader.exec_module(_local_games_module)
 
 # ControllerHapticsService.PlayPattern in Playhub 2.1.0 executes the first step.
 HAPTIC_PATTERNS = {
@@ -149,6 +152,10 @@ class Service:
         # Steam cloud screenshots (Big Picture → 媒体): listed by the Steam front end, copied to data\steam-cloud.
         self._steam_cloud = _captures_module.SteamCloud(self._data, log=logging.info)
         self._cloud_waiters = {}
+        # ClawLibrary 添加游戏: local games, their SteamGridDB art, and writing them into Steam (data\\local-games).
+        self._local_games = _local_games_module.LocalGames(self._data, log=logging.info, game_running=_steam_game_running)
+        self._local_games_task = None
+        self._local_games_error = ""
         # Pad mode switches (set_gamepad_mode, or the firmware switching by itself if it can): notice first, then the firmware listener.
         self._gamepad.watcher.listeners.insert(0, self._pad_mode_changed)
         self._settings_path = self._data / "settings.json"
@@ -997,6 +1004,64 @@ class Service:
             finally:
                 self._cloud_waiters.pop(ident, None)
         return {"offline": True, **await asyncio.to_thread(self._steam_cloud.counts)}
+
+    # ---------------- ClawLibrary 添加游戏 ----------------
+
+    async def local_games_state(self):
+        state = await asyncio.to_thread(self._local_games.state)
+        state["busy"] = bool(self._local_games_task and not self._local_games_task.done())
+        state["error"] = self._local_games_error
+        return state
+
+    async def local_games_search(self, name):
+        if not isinstance(name, str) or len(name) > 260:
+            raise ValueError("名称格式错误")
+        return await asyncio.to_thread(self._local_games.search, name)
+
+    async def local_games_candidates(self, match):
+        return await asyncio.to_thread(self._local_games.candidates, match)
+
+    async def local_games_save(self, game):
+        return await asyncio.to_thread(self._local_games.save, game)
+
+    async def local_games_remove(self, ident):
+        if not isinstance(ident, str) or not ident.isdigit():
+            raise ValueError("游戏编号格式错误")
+        return await asyncio.to_thread(self._local_games.remove, ident)
+
+    async def set_steamgriddb_key(self, key):
+        if not isinstance(key, str) or len(key) > 100:
+            raise ValueError("密钥格式不对")
+        return await asyncio.to_thread(self._local_games.set_key, key)
+
+    def _local_games_run(self, work, *args):
+        """Long jobs (many games' art, writing into Steam) run in the background; local_games_state shows progress."""
+        if self._local_games_task and not self._local_games_task.done():
+            raise RuntimeError("正在处理")
+        self._local_games_error = ""
+
+        async def run():
+            try:
+                await asyncio.to_thread(work, *args)
+            except (RuntimeError, ValueError, OSError) as error:
+                self._local_games_error = str(error) or type(error).__name__
+                logging.info("local games job failed: %s", type(error).__name__)
+            except Exception:
+                logging.exception("local games job failed")
+                self._local_games_error = "出错"
+        self._local_games_task = asyncio.create_task(run())
+        return {"started": True}
+
+    async def local_games_add_many(self, items, collection=None, new_collection=None):
+        if not isinstance(items, list) or len(items) > 500 or not all(isinstance(i, dict) for i in items):
+            raise ValueError("列表格式错误")
+        return self._local_games_run(self._local_games.add_many, items, collection, new_collection)
+
+    async def local_games_fill_art(self):
+        return self._local_games_run(self._local_games.fill_missing)
+
+    async def local_games_sync(self):
+        return self._local_games_run(self._local_games.sync)
 
     async def hide_steam_cloud_screenshot(self, ident):
         if not isinstance(ident, str) or not ident.isdigit() or len(ident) > 24:

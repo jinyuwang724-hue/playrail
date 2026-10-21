@@ -21,7 +21,10 @@ public sealed class AgentClient : IDisposable
     private int _id;
     private bool _disposed;
 
-    public async Task<JsonNode?> Call(string method, params JsonNode?[] args)
+    public Task<JsonNode?> Call(string method, params JsonNode?[] args) => CallLong(method, 10, args);
+
+    /// <summary>要等后台下载 / 搜索的调用（添加游戏的封面）：等 seconds 秒。</summary>
+    public async Task<JsonNode?> CallLong(string method, int seconds, params JsonNode?[] args)
     {
         await Connect();
         var tcs = new TaskCompletionSource<JsonNode?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -33,7 +36,7 @@ public sealed class AgentClient : IDisposable
             await _gate.WaitAsync();
             try { await _writer!.WriteLineAsync(request.ToJsonString()); await _writer.FlushAsync(); }
             finally { _gate.Release(); }
-            return await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            return await tcs.Task.WaitAsync(TimeSpan.FromSeconds(seconds));
         }
         catch
         {

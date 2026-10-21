@@ -64,6 +64,9 @@ METHODS = {
     "set_autostart", "check_updates", "backup_settings", "restore_settings", "reset_settings", "export_logs",
     # ClawLibrary 截图
     "refresh_steam_cloud_screenshots", "hide_steam_cloud_screenshot",
+    # ClawLibrary 添加游戏
+    "local_games_state", "local_games_search", "local_games_candidates", "local_games_save", "local_games_remove",
+    "local_games_add_many", "local_games_fill_art", "local_games_sync", "set_steamgriddb_key",
 }
 
 

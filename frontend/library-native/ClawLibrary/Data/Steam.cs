@@ -473,16 +473,17 @@ public static class Steam
     /// <summary>封面原图：竖封面与无字大背景。grid 里用户自定义的优先，其次 librarycache。</summary>
     public static (string? Portrait, string? Hero) ArtSources(string root, string? userDir, string id)
     {
-        string? portrait = null, hero = null;
+        // 设置里「添加游戏」选的封面优先（同步进 Steam 前 grid 里还没有）
+        string? portrait = LocalGames.ArtFile(id, "p"), hero = LocalGames.ArtFile(id, "_hero");
         try
         {
-            if (userDir != null)
+            if (userDir != null && (portrait == null || hero == null))
             {
                 var grid = Path.Combine(userDir, "config", "grid");
                 if (Directory.Exists(grid))
                 {
-                    portrait = FirstExisting(grid, id + "p");
-                    hero = FirstExisting(grid, id + "_hero");
+                    portrait ??= FirstExisting(grid, id + "p");
+                    hero ??= FirstExisting(grid, id + "_hero");
                 }
             }
             var cache = Path.Combine(root, "appcache", "librarycache", id);
