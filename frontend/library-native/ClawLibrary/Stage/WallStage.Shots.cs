@@ -215,7 +215,7 @@ public sealed partial class WallStage
         if (c.Source.StartsWith("Steam", StringComparison.Ordinal)) return true;
         if (c.GameId == null) return false;
         if (c.GameId.StartsWith("steam:", StringComparison.Ordinal)) return true;
-        return _lib.ById.TryGetValue(c.GameId, out var g) && g.Platform is "steam" or "other";
+        return _lib.ById.TryGetValue(c.GameId, out var g) && (g.Platform is "steam" or "other" || g.Platform == "local" && g.ExePath == null);   // 本地游戏同步进 Steam 后也是快捷方式
     }
 
     private bool ShPasses(Capture c) => _shFilter switch
