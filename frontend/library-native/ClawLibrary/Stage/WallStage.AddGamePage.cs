@@ -723,10 +723,10 @@ public sealed partial class WallStage
                 break;
             }
             case "query":
-                r = AgFieldInput;
+                r = AgMatchMap(AgFieldInput);
                 text = d.Query;
                 right = false;
-                size = 16;
+                size = 16 * AgMatchS;
                 break;
             case "newcat":
             {

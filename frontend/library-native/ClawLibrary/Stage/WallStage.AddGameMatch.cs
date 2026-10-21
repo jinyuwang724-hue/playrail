@@ -25,6 +25,12 @@ public sealed partial class WallStage
     /// <summary>结果列表的顶；搜索中那道光走的线在它上面。</summary>
     private const float AgMatchTop = AgCatTop + 44 + 28;
     private static readonly Rect AgSearchLine = new(AgMatchX, AgMatchTop - 14, AgMatchW, 2);
+    /// <summary>
+    /// 掌机屏幕上看：搜索行和列表整体放大 1.25 倍（以屏幕中线、标题下那条线为原点），上面的尺寸都是放大前的。
+    /// 宽 800 的一列放大后是 1000（140–1140），十款结果底边落在 727。
+    /// </summary>
+    private const float AgMatchS = 1.25f, AgMatchOx = 640, AgMatchOy = AgCatTop;
+    private static Rect AgMatchMap(Rect r) => new(AgMatchOx + (r.X - AgMatchOx) * AgMatchS, AgMatchOy + (r.Y - AgMatchOy) * AgMatchS, r.Width * AgMatchS, r.Height * AgMatchS);
     private Rect _agSubmit;
     private SpriteVisual? _agSearchBar;
     /// <summary>输入框里按的是回车（回车才搜；点别处失去焦点只记下字）。</summary>
@@ -79,6 +85,9 @@ public sealed partial class WallStage
     private void AgPaintMatch(CanvasDrawingSession ds, AgDraft d)
     {
         AgTitle(ds, "匹配游戏");
+        var page = ds.Transform;
+        int hits = _agHits.Count;
+        ds.Transform = Matrix3x2.CreateTranslation(-AgMatchOx, -AgMatchOy) * Matrix3x2.CreateScale(AgMatchS) * Matrix3x2.CreateTranslation(AgMatchOx, AgMatchOy) * page;
 
         // 搜索一行：输入框 + 「搜索」
         bool typing = _agEditing == "query";
@@ -140,6 +149,9 @@ public sealed partial class WallStage
         }
         if (n == 0 && !d.Searching && d.Status.Length > 0)
             PText(ds, d.Status, TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.45), AgMatchX + 36, AgMatchTop + PerfRowH / 2, AgMatchW);
+        ds.Transform = page;
+        // 点击范围也按放大后的位置
+        for (int i = hits; i < _agHits.Count; i++) _agHits[i] = _agHits[i] with { R = AgMatchMap(_agHits[i].R) };
     }
 
     /// <summary>搜索中：右栏顶上的细线上一道白光来回走。</summary>
@@ -154,9 +166,10 @@ public sealed partial class WallStage
             _ag.Children.InsertAtTop(_agSearchBar);
         }
         if (_agSearchBar.IsVisible) return;
-        float k = _ccK, x0 = (float)AgSearchLine.X * k, x1 = (float)(AgSearchLine.Right - 120) * k;
-        _agSearchBar.Size = new Vector2(120 * k, 2 * k);
-        _agSearchBar.Offset = new Vector3(x0, (float)AgSearchLine.Y * k, 0);
+        var line = AgMatchMap(AgSearchLine);
+        float k = _ccK, bw = 120 * AgMatchS, x0 = (float)line.X * k, x1 = (float)(line.Right - bw) * k;
+        _agSearchBar.Size = new Vector2(bw * k, (float)line.Height * k);
+        _agSearchBar.Offset = new Vector3(x0, (float)line.Y * k, 0);
         _agSearchBar.IsVisible = true;
         if (Reduced) return;
         var a = G.C.CreateScalarKeyFrameAnimation();
