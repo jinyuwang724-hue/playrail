@@ -2,7 +2,7 @@
 // 不分左右栏，一整列：标题下面一行是搜索，照 folia 书库首页的搜索框（和游戏库首页搜索面板同一套：带框输入框，
 // 高 44、圆角 12、底 5 %、描边 24 %，打字时描边换强调色，左放大镜、右 ×），右边跟主按钮「搜索」（高 44、圆角 12、15 px 粗体、底 16 %）。
 // 和 folia 一样打字不搜，回车 / 「搜索」才搜；进页时先用 exe 名搜一次。
-// 下面整宽（40–1240）是匹配出来的游戏（设置行：行号、左名称、右年份，正在用的那款前面一个点），搜索中列表上方一道细线上有光来回走。
+// 下面是匹配出来的游戏（搜索行和列表一起收成屏幕正中宽 800 的一列）（设置行：行号、左名称、右年份，正在用的那款前面一个点），搜索中列表上方一道细线上有光来回走。
 // A 用焦点那款并回到封面页，B 回封面页。
 using System.Numerics;
 using ClawLibrary.Engine;
@@ -17,12 +17,14 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     private static readonly FontSpec AgIcons = new("Segoe Fluent Icons", 400);
-    private static readonly Rect AgField = new(40, AgCatTop, 640, 44);
+    // 搜索行和列表收成一列放在屏幕正中（宽 800）；「搜索」按钮固定宽，和输入框一起正好占满这一列
+    private const float AgMatchW = 800, AgMatchX = (1280 - AgMatchW) / 2, AgSubmitW = 108;
+    private static readonly Rect AgField = new(AgMatchX, AgCatTop, AgMatchW - 12 - AgSubmitW, 44);
     private static readonly Rect AgFieldClear = new(AgField.Right - 6 - 32, AgField.Y + 6, 32, 32);
     private static readonly Rect AgFieldInput = new(AgField.X + 36, AgField.Y + 1, AgFieldClear.X - 4 - (AgField.X + 36), 42);
     /// <summary>结果列表的顶；搜索中那道光走的线在它上面。</summary>
     private const float AgMatchTop = AgCatTop + 44 + 28;
-    private static readonly Rect AgSearchLine = new(40, AgMatchTop - 14, AgRowsW, 2);
+    private static readonly Rect AgSearchLine = new(AgMatchX, AgMatchTop - 14, AgMatchW, 2);
     private Rect _agSubmit;
     private SpriteVisual? _agSearchBar;
     /// <summary>输入框里按的是回车（回车才搜；点别处失去焦点只记下字）。</summary>
@@ -102,13 +104,14 @@ public sealed partial class WallStage
         var bf = TextKit.Ui(700);
         string label = d.Searching ? "搜索中" : "搜索";
         float lw = PWidth(ds, label, bf, 15);
-        _agSubmit = new Rect(field.Right + 12, field.Y, 16 + 18 + 8 + lw + 16, 44);
+        _agSubmit = new Rect(field.Right + 12, field.Y, AgSubmitW, 44);
+        float sx = (float)_agSubmit.X + (AgSubmitW - (18 + 8 + lw)) / 2;
         bool sf = _agZone == 0 && _agIndex == 1;
         ds.FillRoundedRectangle(_agSubmit, 12, 12, Gfx.WithAlpha(CcText, sf ? 0.22 : 0.16));
         if (sf) ds.DrawRoundedRectangle(_agSubmit, 12, 12, Gfx.WithAlpha(CcText, 0.26), 1);
         float scy = (float)(_agSubmit.Y + 22);
-        PText(ds, "", AgIcons, 18, CcText, (float)_agSubmit.X + 16, scy, 24);
-        PText(ds, label, bf, 15, CcText, (float)_agSubmit.X + 16 + 18 + 8, scy, lw + 4);
+        PText(ds, "", AgIcons, 18, CcText, sx, scy, 24);
+        PText(ds, label, bf, 15, CcText, sx + 18 + 8, scy, lw + 4);
         _agHits.Add((_agSubmit, 0, 1, () => AgMatchSubmit(d)));
 
         // 手柄焦点：圆角白框（打字时输入框自己换了强调色描边，不再叠一圈）
@@ -127,16 +130,16 @@ public sealed partial class WallStage
         }).ToList();
         var old = ds.Transform;
         // 和分类页一样的整宽设置行：行号 / 焦点三角在左头，名称缩进 36
-        ds.Transform = Matrix3x2.CreateTranslation(40, AgMatchTop) * old;
-        PaintRowList(ds, rows, _agZone == 1 ? _agIndex : -1, null, true, AgRowsW);
+        ds.Transform = Matrix3x2.CreateTranslation(AgMatchX, AgMatchTop) * old;
+        PaintRowList(ds, rows, _agZone == 1 ? _agIndex : -1, null, true, AgMatchW);
         ds.Transform = old;
         for (int i = 0; i < n; i++)
         {
             int at = i;
-            _agHits.Add((new Rect(40, AgMatchTop + i * PerfRowH, AgRowsW, PerfRowH), 1, i, () => { if (!d.Searching) AgChooseMatch(d, at); }));
+            _agHits.Add((new Rect(AgMatchX, AgMatchTop + i * PerfRowH, AgMatchW, PerfRowH), 1, i, () => { if (!d.Searching) AgChooseMatch(d, at); }));
         }
         if (n == 0 && !d.Searching && d.Status.Length > 0)
-            PText(ds, d.Status, TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.45), 40 + 36, AgMatchTop + PerfRowH / 2, AgRowsW);
+            PText(ds, d.Status, TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.45), AgMatchX + 36, AgMatchTop + PerfRowH / 2, AgMatchW);
     }
 
     /// <summary>搜索中：右栏顶上的细线上一道白光来回走。</summary>
