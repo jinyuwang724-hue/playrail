@@ -358,11 +358,19 @@ public sealed partial class WallStage
         else Toast("游戏设置（原型里还没有）");
     }
 
-    /// <summary>X：手柄页里交给手柄页（震动页 = 测试震动）；其余照旧切标题样式。</summary>
+    /// <summary>View：截图页里 = 按游戏筛选；其余照旧开关性能读数。</summary>
+    public void PadView()
+    {
+        if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShToggleFilter(); return; }
+        ToggleHud();
+    }
+
+    /// <summary>X：手柄页里交给手柄页（震动页 = 测试震动）；截图页换排版；墙上展开的卡有截图 = 去看它的截图；其余照旧切标题样式。</summary>
     public void PadX()
     {
         if (_ccOpen && _gpOpen) { MarkInput(); GpPadButton(isY: false); return; }
         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShX(); return; }
+        if (!_ccOpen && _expandedKey != null) { MarkInput(); if (!MorphIntercept() && TryOpenShotsForExpanded()) return; }
         ToggleTitleStyle();
     }
 

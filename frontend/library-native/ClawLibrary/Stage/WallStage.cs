@@ -222,6 +222,7 @@ public sealed partial class WallStage : IDisposable
         _rootEl.Focus(FocusState.Programmatic);
         _rootEl.XamlRoot.Changed += (_, _) => { try { OnResize(); } catch (Exception ex) { Log.Error("resize", ex); } };
         _ = BuildMissingArtAsync();
+        _ = CountShotsAsync();
         if (Program.Args.Contains("--probe")) StartFrameProbe();
         if (Program.Args.Contains("--debug-backplate")) _root.IsVisible = false;
         if (Program.Args.Contains("--bench")) _ = Bench.RunAsync(this);
@@ -1277,6 +1278,7 @@ public sealed partial class WallStage : IDisposable
                     case VirtualKey.Q: case VirtualKey.PageUp: SwitchTab(-1); break;
                     case VirtualKey.E: case VirtualKey.PageDown: SwitchTab(1); break;
                     case VirtualKey.F: ToggleHud(); break;
+                    case VirtualKey.V: PadView(); break;
                     case VirtualKey.T: ToggleTitleStyle(); break;
                     case VirtualKey.R: ToggleReducedMotion(); break;
                     default: return;

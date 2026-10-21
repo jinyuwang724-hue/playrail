@@ -1,10 +1,12 @@
 // 控制中心 → 截图（左下功能坞的「截图」）：自己的一页，不套 3:7 两栏。
-// 底子和别的页一样：控制中心那层封面取色的动态背景、左上 24 px 粗标题、右上状态；标题右边一排游戏（LB / RB 换），当前项白字加下划线。
+// 底子和别的页一样：控制中心那层封面取色的动态背景、左上 24 px 粗标题、右上状态；标题右边三个页签「全部 / Steam / 本地」（LB / RB 换），
+// 当前项白字加下划线。Steam = Steam 库里的游戏和加进 Steam 的非 Steam 游戏；本地 = 其余（文件夹里的游戏、桌面、浏览器……）。
+// 游戏只是筛选：View 键弹出这个页签下有截图的游戏（和「收藏」），选一款就只看它；游戏库展开卡上的「X 截图」直接带着筛选进来。
 // 三种排版（设置 › 外观 › 截图页样式；页面里按 X 也能换），画法在 WallStage.Shots.Paint.cs：
 // - 日历：左边一列大号日期，右边五列拼版，每天最新的一张占 2×2；连拍叠成一摞。
 // - 放映：中间一张大图，左右露出上一张 / 下一张；下面一行读数，最底下按天分组的小图条。
 // - 冲印：控制中心拍立得的相纸，放大到和放映差不多，左右两张斜着露一半。
-// A 看大图（← → 换张、↑ ↓ 选操作、A 执行、X 藏起文字），Y 收藏，B 返回。删除进回收站，要连按两下 A。
+// A 看大图（← → 换张、↑ ↓ 选操作、A 执行、X 藏起文字），Y 收藏，View 筛选，B 返回。删除进回收站，要连按两下 A。
 // 截图从哪来、怎么归到游戏：见 Data/Captures.cs。
 using System.Numerics;
 using System.Text.Json.Nodes;
@@ -23,8 +25,18 @@ public sealed partial class WallStage
     private enum ShStyle { Calendar, Projector, Prints }
     private static readonly string[] ShStyleNames = { "日历", "放映", "冲印" };
 
-    /// <summary>标题右边的一项：一款游戏 / 其他 / 收藏 / 全部。Key 用来换数据后找回同一项。</summary>
+    /// <summary>标题右边的一项：全部 / Steam / 本地（Shots 已经按筛选过滤）。Key 用来换数据后找回同一项。</summary>
     private sealed record ShTab(string Key, string Name, List<Capture> Shots);
+
+    /// <summary>筛选里的一项：一款游戏（Key = Capture.GameId）、「其他」（other）、「收藏」（fav），或第一行的「所有游戏」（null）。</summary>
+    private sealed record ShFilterItem(string? Key, string Name, int Count);
+
+    /// <summary>当前筛选（null = 不筛）；筛选面板开着没有、焦点、内容。</summary>
+    private string? _shFilter;
+    private bool _shFilterOpen;
+    private int _shFilterFocus;
+    private List<ShFilterItem> _shFilterItems = new();
+    private SpriteVisual? _shFilterSprite;
 
     /// <summary>页面上的一格：一张，或一摞连拍（Shots[0] 是最新的那张）。坐标是设计 px。</summary>
     private sealed class ShUnit
@@ -69,7 +81,8 @@ public sealed partial class WallStage
 
     // ---------------- 开 / 关 ----------------
 
-    private void OpenShots()
+    /// <summary>打开截图页。filter：游戏库展开卡上「X 截图」带进来的游戏（Capture.GameId），落在「全部」并只看它。</summary>
+    private void OpenShots(string? filter = null)
     {
         if (_cc == null) return;
         EnsureShVisuals();
@@ -79,7 +92,10 @@ public sealed partial class WallStage
         _shStyle = (ShStyle)Math.Clamp(_prefs.ShotsStyle, 0, 2);
         int v = ++_shVersion;
         _shFavs = Captures.LoadFavorites();
-        _shTabKey = null;   // 每次打开都先落在当前游戏
+        _shFilter = filter;
+        _shFilterOpen = false;
+        if (_shFilterSprite != null) _shFilterSprite.IsVisible = false;
+        _shTabKey = "all";   // 每次打开都落在「全部」
         _shLoaded = false;  // 每次打开重新扫一遍（可能刚截了新图）
         ShRebuild();
         foreach (var vis in CcPageParts()) vis.StartAnimation("Opacity", ToScalar(0, 160, EaseOutCss));
@@ -122,7 +138,9 @@ public sealed partial class WallStage
         _shTitle = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _shTabsSprite = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _shBody = G.Container();
-        foreach (var s in new Visual[] { _shBody, _shTitle, _shTabsSprite }) _sh.Children.InsertAtTop(s);
+        _shFilterSprite = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+        _shFilterSprite.IsVisible = false;
+        foreach (var s in new Visual[] { _shBody, _shTitle, _shTabsSprite, _shFilterSprite }) _sh.Children.InsertAtTop(s);
         _cc!.Children.InsertAtTop(_sh);
     }
 
@@ -138,6 +156,7 @@ public sealed partial class WallStage
             if (v != _shVersion || !_shOpen) return;
             string? keep = ShFocusedPath();
             _shAll = list;
+            SetShotCounts(list);
             _shLoaded = true;
             ShRebuild(keep);
             Log.Info($"shots: {list.Count} images, {_shTabs.Count} tabs");
@@ -155,6 +174,7 @@ public sealed partial class WallStage
             if (v != _shVersion || !_shOpen) return;
             keep = ShFocusedPath();
             _shAll = again;
+            SetShotCounts(again);
             ShRebuild(keep);
         }
         catch (Exception ex) { Log.Warn($"shots load: {ex.Message}"); _shLoaded = true; if (_shOpen) ShRebuild(); }
@@ -173,19 +193,8 @@ public sealed partial class WallStage
     private void ShRebuild(string? keepPath = null)
     {
         _shTabs = ShBuildTabs();
-        if (_shTabKey == null)
-        {
-            // 默认落在当前游戏（控制中心背景取色的那款）；它没有截图就落在最近有截图的那一项
-            var cur = SelectedGame();
-            int i = cur == null ? -1 : _shTabs.FindIndex(t => t.Key == cur.Id);
-            _shTab = Math.Max(0, i);
-        }
-        else
-        {
-            int i = _shTabs.FindIndex(t => t.Key == _shTabKey);
-            _shTab = i >= 0 ? i : Math.Clamp(_shTab, 0, Math.Max(0, _shTabs.Count - 1));
-        }
-        if (_shLoaded) _shTabKey = ShCurrentTab?.Key;   // 还没读完时只有一个空的「全部」，别把它记下来
+        _shTab = Math.Max(0, _shTabs.FindIndex(t => t.Key == _shTabKey));
+        _shTabKey = ShCurrentTab?.Key;
         ShBuildUnits();
         _shFocus = 0;
         if (keepPath != null)
@@ -197,17 +206,141 @@ public sealed partial class WallStage
         ShPaintAll();
     }
 
+    /// <summary>
+    /// 算 Steam 的：Steam 截图（本机和云端）、归到 Steam 游戏或 Steam 里的非 Steam 快捷方式（游戏库里 Platform 是 steam / other）的；
+    /// 其余（手动加的游戏文件夹、桌面、浏览器、对不上的）算本地。
+    /// </summary>
+    private bool ShIsSteam(Capture c)
+    {
+        if (c.Source.StartsWith("Steam", StringComparison.Ordinal)) return true;
+        if (c.GameId == null) return false;
+        if (c.GameId.StartsWith("steam:", StringComparison.Ordinal)) return true;
+        return _lib.ById.TryGetValue(c.GameId, out var g) && g.Platform is "steam" or "other";
+    }
+
+    private bool ShPasses(Capture c) => _shFilter switch
+    {
+        null => true,
+        "fav" => _shFavs.Contains(c.Path),
+        "other" => c.GameId == null,
+        var key => c.GameId == key,
+    };
+
+    /// <summary>三个页签固定在那（没有截图也在，张数写 0）；每个页签里已经按当前筛选过滤。</summary>
     private List<ShTab> ShBuildTabs()
     {
-        var tabs = new List<ShTab>();
-        foreach (var g in _shAll.Where(c => c.GameId != null).GroupBy(c => c.GameId!).OrderByDescending(g => g.Max(c => c.Time)))
-            tabs.Add(new ShTab(g.Key, g.First().Game, g.ToList()));
-        var other = _shAll.Where(c => c.GameId == null).ToList();
-        if (other.Count > 0) tabs.Add(new ShTab("other", "其他", other));
-        var favs = _shAll.Where(c => _shFavs.Contains(c.Path)).ToList();
-        if (favs.Count > 0) tabs.Add(new ShTab("fav", "收藏", favs));
-        if (tabs.Count > 1 || tabs.Count == 0) tabs.Add(new ShTab("all", "全部", _shAll));
-        return tabs;
+        var all = _shAll.Where(ShPasses).ToList();
+        return new List<ShTab>
+        {
+            new("all", "全部", all),
+            new("steam", "Steam", all.Where(ShIsSteam).ToList()),
+            new("local", "本地", all.Where(c => !ShIsSteam(c)).ToList()),
+        };
+    }
+
+    /// <summary>当前页签（不看筛选）里有截图的游戏，最近截过图的在前；最上面是「所有游戏」，有收藏时第二行是「收藏」。</summary>
+    private List<ShFilterItem> ShBuildFilterItems()
+    {
+        string tab = ShCurrentTab?.Key ?? "all";
+        var pool = _shAll.Where(c => tab == "all" || (tab == "steam") == ShIsSteam(c)).ToList();
+        var items = new List<ShFilterItem> { new(null, "所有游戏", pool.Count) };
+        int favs = pool.Count(c => _shFavs.Contains(c.Path));
+        if (favs > 0) items.Add(new("fav", "收藏", favs));
+        foreach (var g in pool.Where(c => c.GameId != null).GroupBy(c => c.GameId!).OrderByDescending(g => g.Max(c => c.Time)))
+            items.Add(new(g.Key, g.First().Game, g.Count()));
+        int other = pool.Count(c => c.GameId == null);
+        if (other > 0) items.Add(new("other", "其他", other));
+        return items;
+    }
+
+    /// <summary>筛选的显示名（页签后面那行小字用）。</summary>
+    private string? ShFilterName() => _shFilter switch
+    {
+        null => null,
+        "fav" => "收藏",
+        "other" => "其他",
+        var key => _shAll.FirstOrDefault(c => c.GameId == key)?.Game ?? (_lib.ById.TryGetValue(key, out var g) ? g.Title : key),
+    };
+
+    // ---------------- 截图跟着游戏走：游戏库展开卡上的「X 截图」 ----------------
+
+    /// <summary>每款游戏（游戏库 Id）有几张截图：启动后后台扫一遍，截图页每次读完再更新。</summary>
+    private Dictionary<string, int> _shotCounts = new();
+
+    internal int ShotCount(string id) => _shotCounts.TryGetValue(id, out var n) ? n : 0;
+
+    private void SetShotCounts(List<Capture> list) =>
+        _shotCounts = list.Where(c => c.GameId != null).GroupBy(c => c.GameId!).ToDictionary(g => g.Key, g => g.Count());
+
+    private async Task CountShotsAsync()
+    {
+        try
+        {
+            var lib = _lib;
+            var list = await Task.Run(() => Captures.Scan(lib));
+            SetShotCounts(list);
+            Log.Info($"shot counts: {list.Count} images, {_shotCounts.Count} games");
+        }
+        catch (Exception ex) { Log.Warn($"shot counts: {ex.Message}"); }
+    }
+
+    /// <summary>墙上展开卡按 X：这款有截图就开控制中心、等出场形变走完，进截图页并筛好它。</summary>
+    private bool TryOpenShotsForExpanded()
+    {
+        if (_ccOpen || _expandedKey is not { } key || Engine.Geometry.SlotByKey(key) is not { } slot) return false;
+        if (ItemFor(slot) is not { } id || Lookup(id) is not { Kind: ItemKind.Game } item || ShotCount(item.Id) == 0) return false;
+        OpenControlCenter();
+        void Enter(int tries)
+        {
+            if (!_ccOpen) return;
+            if (MorphBusy && tries > 0) { After(50, () => Enter(tries - 1)); return; }
+            OpenShots(item.Id);
+        }
+        Enter(60);
+        Log.Info($"shots for game {item.Id}");
+        return true;
+    }
+
+    // ---------------- 筛选面板 ----------------
+
+    /// <summary>View：打开 / 关上筛选。大图里不开。</summary>
+    private void ShToggleFilter()
+    {
+        if (_shViewer) return;
+        if (_shFilterOpen) { ShCloseFilter(); return; }
+        _shFilterItems = ShBuildFilterItems();
+        _shFilterFocus = Math.Max(0, _shFilterItems.FindIndex(i => i.Key == _shFilter));
+        _shFilterOpen = true;
+        ShPaintFilter();
+    }
+
+    private void ShCloseFilter()
+    {
+        _shFilterOpen = false;
+        if (_shFilterSprite != null) _shFilterSprite.IsVisible = false;
+    }
+
+    private void ShFilterMove(Direction dir)
+    {
+        if (dir is not (Direction.Up or Direction.Down) || _shFilterItems.Count == 0) return;
+        int next = Math.Clamp(_shFilterFocus + (dir == Direction.Up ? -1 : 1), 0, _shFilterItems.Count - 1);
+        if (next == _shFilterFocus) return;
+        _shFilterFocus = next;
+        ShPaintFilter();
+    }
+
+    private void ShFilterPick()
+    {
+        if (_shFilterFocus < 0 || _shFilterFocus >= _shFilterItems.Count) return;
+        ShSetFilter(_shFilterItems[_shFilterFocus].Key);
+        ShCloseFilter();
+    }
+
+    private void ShSetFilter(string? key)
+    {
+        _shFilter = key;
+        ShRebuild();
+        Log.Info($"shots filter: {key ?? "-"}");
     }
 
     /// <summary>日历把连拍叠成一格；放映和冲印一张一格。</summary>
@@ -230,6 +363,7 @@ public sealed partial class WallStage
 
     private void ShMove(Direction dir)
     {
+        if (_shFilterOpen) { ShFilterMove(dir); return; }
         if (_shViewer) { ShViewerMove(dir); return; }
         if (_shUnits.Count == 0) return;
         int next = _shFocus;
@@ -266,6 +400,7 @@ public sealed partial class WallStage
 
     private void ShActivate()
     {
+        if (_shFilterOpen) { ShFilterPick(); return; }
         if (_shViewer) { ShRunAction(); return; }
         if (_shUnits.Count == 0) return;
         ShOpenViewer(ShFlat.IndexOf(_shUnits[_shFocus].Top));
@@ -273,6 +408,7 @@ public sealed partial class WallStage
 
     private void ShBack()
     {
+        if (_shFilterOpen) { ShCloseFilter(); return; }
         if (_shViewer) { ShCloseViewer(); return; }
         CloseShots();
     }
@@ -280,6 +416,7 @@ public sealed partial class WallStage
     /// <summary>Y：收藏 / 取消收藏（日历里的连拍收藏最上面那张）。</summary>
     private void ShY()
     {
+        if (_shFilterOpen) return;
         var c = _shViewer ? ShViewerShot() : _shUnits.Count > 0 ? _shUnits[_shFocus].Top : null;
         if (c != null) ShToggleFav(c);
     }
@@ -287,6 +424,7 @@ public sealed partial class WallStage
     /// <summary>X：大图里藏起 / 露出文字；页面里换排版（存进 ui.ini）。</summary>
     private void ShX()
     {
+        if (_shFilterOpen) return;
         if (_shViewer) { _shViewerChrome = !_shViewerChrome; ShPaintViewer(); return; }
         ShSetStyle((ShStyle)(((int)_shStyle + 1) % 3));
         Toast($"截图排版：{ShStyleNames[(int)_shStyle]}");
@@ -301,10 +439,10 @@ public sealed partial class WallStage
         ShRebuild(keep);
     }
 
-    /// <summary>LB / RB：换游戏。大图里不换。</summary>
+    /// <summary>LB / RB：换页签（全部 / Steam / 本地），筛选跟着走。大图里不换。</summary>
     private void ShSwitchTab(int delta)
     {
-        if (_shViewer || _shTabs.Count < 2) return;
+        if (_shViewer || _shFilterOpen || _shTabs.Count < 2) return;
         _shTab = (_shTab + delta + _shTabs.Count) % _shTabs.Count;
         _shTabKey = ShCurrentTab?.Key;
         ShBuildUnits();
@@ -326,7 +464,7 @@ public sealed partial class WallStage
         int ti = _shTabs.FindIndex(t => t.Key == _shTabKey);
         if (ti < 0) { _shTabKey = "all"; ti = _shTabs.FindIndex(t => t.Key == "all"); }
         _shTab = Math.Max(0, ti);
-        if (_shTabKey == "fav" || oldCount != _shTabs.Count)
+        if (_shFilter == "fav" || oldCount != _shTabs.Count)
         {
             ShBuildUnits();
             int f = keep == null ? -1 : _shUnits.FindIndex(u => u.Shots.Any(s => s.Path == keep));
@@ -444,6 +582,7 @@ public sealed partial class WallStage
         }
         else Toast("已移到回收站");
         _shAll.Remove(c);
+        SetShotCounts(_shAll);
         _shFavs.Remove(c.Path);
         Captures.SaveFavorites(_shFavs);
         int at = _shVIndex;
@@ -468,6 +607,13 @@ public sealed partial class WallStage
         float k = _ccK;
         float x = (float)sx / k, y = (float)sy / k;
         if (_shViewer) { ShViewerClick(x, y); return; }
+        if (_shFilterOpen)
+        {
+            int row = ShFilterHit(x, y);
+            if (row >= 0) { _shFilterFocus = row; ShFilterPick(); }
+            else if (row == -1) ShCloseFilter();
+            return;
+        }
         if (y >= 26 && y <= 70)
             for (int i = 0; i < _shTabHits.Count; i++)
                 if (x >= _shTabHits[i].X && x <= _shTabHits[i].X + _shTabHits[i].W)

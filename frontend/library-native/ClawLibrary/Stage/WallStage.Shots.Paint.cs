@@ -120,9 +120,21 @@ public sealed partial class WallStage
             var s = shown.FirstOrDefault(t => t.I == i);
             _shTabHits.Add(s.W > 0 ? (X0 + s.X, s.W) : (-1000, 0));
         }
-        float total = Math.Max(1, x);
+        // 筛选：页签后面一枚小签「只看 某某游戏」（View 换 / 取消）
+        string? filter = ShFilterName() is { } fn ? $"只看 {fn}" : null;
+        float chipX = x + 8, chipW = 0;
+        if (filter != null)
+            using (var probe = new CanvasCommandList(G.Device))
+            using (var pds = probe.CreateDrawingSession())
+                chipW = Math.Min(360, PWidth(pds, filter, ui, 15) + 28);
+        float total = Math.Max(1, filter != null ? chipX + chipW : x);
         CcSet(_shTabsSprite, CcDraw(total, H, raster, ds =>
         {
+            if (filter != null)
+            {
+                ds.FillRoundedRectangle(chipX, H / 2 - 15, chipW, 30, 15, 15, Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.14f));
+                PText(ds, filter, ui, 15, CcText, chipX + 14, H / 2, chipW - 28);
+            }
             foreach (var s in shown)
             {
                 bool cur = s.I == _shTab;
@@ -145,11 +157,76 @@ public sealed partial class WallStage
         string folder = Captures.GameBarFolder();
         CcSet(_shInfo, CcDraw(W, H, ShRaster, ds =>
         {
-            PText(ds, _shLoaded ? "还没有截图" : "正在读取…", TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.8), 0, 20, W, CanvasHorizontalAlignment.Center);
-            if (_shLoaded) PText(ds, $"Game Bar 截图（{folder}）、Steam 截图和 Steam 上传的截图都会出现在这里", TextKit.Ui(400), 14, Gfx.WithAlpha(CcText, 0.5), 0, 52, W, CanvasHorizontalAlignment.Center);
+            string head = !_shLoaded ? "正在读取…" : ShFilterName() is { } fn ? $"「{fn}」在「{ShCurrentTab?.Name}」里没有截图" : "还没有截图";
+            PText(ds, head, TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.8), 0, 20, W, CanvasHorizontalAlignment.Center);
+            if (_shLoaded && _shFilter != null) PText(ds, "按 View 换一款游戏或取消筛选", TextKit.Ui(400), 14, Gfx.WithAlpha(CcText, 0.5), 0, 52, W, CanvasHorizontalAlignment.Center);
+            else if (_shLoaded) PText(ds, $"Game Bar 截图（{folder}）、Steam 截图和 Steam 上传的截图都会出现在这里", TextKit.Ui(400), 14, Gfx.WithAlpha(CcText, 0.5), 0, 52, W, CanvasHorizontalAlignment.Center);
         }));
         _shInfo.Size = new Vector2(W * k, H * k);
         _shInfo.Offset = new Vector3(240 * k, 360 * k, 0);
+    }
+
+    // ---------------- 筛选面板 ----------------
+
+    private const float ShFltW = 400, ShFltTop = 96, ShFltRow = 48, ShFltHead = 52, ShFltRows = 11;
+    private float ShFltX => 1280 - CcEdgeX - ShFltW;
+    /// <summary>筛选面板露出来的第一行（焦点超出时整窗挪）；点击命中用。</summary>
+    private int _shFltFirst;
+
+    /// <summary>
+    /// 整个舞台压暗，右边一块深色面板（底色和功能坞的按钮同一种 zinc-950），一行一款游戏：名字 17、张数等宽 13；
+    /// 焦点那行用功能坞焦点的近白底、深色字；正在筛的那行名字前一个小点。最多露 11 行，焦点走到边上整窗挪。
+    /// </summary>
+    private void ShPaintFilter()
+    {
+        if (_shFilterSprite == null) return;
+        float k = _ccK, raster = ShRaster;
+        int n = _shFilterItems.Count;
+        int rows = (int)Math.Min(ShFltRows, n);
+        _shFltFirst = Math.Clamp(_shFltFirst, Math.Max(0, _shFilterFocus - rows + 1), Math.Min(_shFilterFocus, Math.Max(0, n - rows)));
+        float panelH = ShFltHead + rows * ShFltRow + 52;
+        var ui = TextKit.Ui(400);
+        var dark = Gfx.Rgba(9, 9, 11);
+        CcSet(_shFilterSprite, CcDraw(1280, 800, raster, ds =>
+        {
+            ds.FillRectangle(0, 0, 1280, 800, Gfx.Rgba(0, 0, 0, 0.45));
+            float px = ShFltX, py = ShFltTop;
+            ds.FillRoundedRectangle(px, py, ShFltW, panelH, 18, 18, Gfx.Rgba(9, 9, 11, 0.86));
+            PText(ds, $"按游戏筛选 · {ShCurrentTab?.Name}", TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.42), px + 24, py + 30, ShFltW - 48);
+            for (int r = 0; r < rows; r++)
+            {
+                int i = _shFltFirst + r;
+                var it = _shFilterItems[i];
+                float ry = py + ShFltHead + r * ShFltRow;
+                bool focus = i == _shFilterFocus, current = it.Key == _shFilter;
+                if (focus) ds.FillRoundedRectangle(px + 10, ry + 2, ShFltW - 20, ShFltRow - 4, 12, 12, Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.96));
+                var ink = focus ? dark : Gfx.WithAlpha(CcText, 0.88);
+                float cy = ry + ShFltRow / 2;
+                if (current) ds.FillCircle(px + 30, cy, 3, ink);
+                string count = it.Count.ToString();
+                float cw = PWidth(ds, count, ShMono, 13);
+                PText(ds, it.Name, ui, 17, ink, px + 42, cy, ShFltW - 42 - 24 - cw - 16);
+                PText(ds, count, ShMono, 13, focus ? Gfx.Rgba(9, 9, 11, 0.55) : Gfx.WithAlpha(CcText, 0.45), px + ShFltW - 24 - cw, cy + 1, cw + 4);
+            }
+            // 上下还有没露出来的行：面板边上一道淡淡的提示
+            if (_shFltFirst > 0) PText(ds, "↑", ui, 13, Gfx.WithAlpha(CcText, 0.42), px + ShFltW - 32, py + 30, 16);
+            float fy = py + ShFltHead + rows * ShFltRow + 26;
+            string more = _shFltFirst + rows < n ? $"还有 {n - _shFltFirst - rows} 款 ↓   " : "";
+            PText(ds, $"{more}A 选定   B 关闭", TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.42), px + 24, fy, ShFltW - 48);
+        }));
+        _shFilterSprite.Size = new Vector2(1280 * k, 800 * k);
+        _shFilterSprite.Offset = Vector3.Zero;
+        _shFilterSprite.IsVisible = true;
+    }
+
+    /// <summary>点到筛选面板的哪一行（-1 = 面板外，-2 = 面板里但不在行上）。</summary>
+    private int ShFilterHit(float x, float y)
+    {
+        int rows = (int)Math.Min(ShFltRows, _shFilterItems.Count);
+        float panelH = ShFltHead + rows * ShFltRow + 52;
+        if (x < ShFltX || x > ShFltX + ShFltW || y < ShFltTop || y > ShFltTop + panelH) return -1;
+        int r = (int)MathF.Floor((y - ShFltTop - ShFltHead) / ShFltRow);
+        return r >= 0 && r < rows ? _shFltFirst + r : -2;
     }
 
     // ---------------- 换排版 / 换游戏：整块重建 ----------------

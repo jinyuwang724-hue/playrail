@@ -301,20 +301,24 @@ public sealed class CardText
 
     public const float ActionsHeight = 44;
 
-    public TextArt Actions(double w, double h, TitleStyle style, bool install = false) =>
-        Acquire($"actions|{Math.Round(w)}x{Math.Round(h)}|{style}|{install}", () => BuildActions((float)w, (float)h, style, install));
+    public TextArt Actions(double w, double h, TitleStyle style, bool install = false, int shots = 0) =>
+        Acquire($"actions|{Math.Round(w)}x{Math.Round(h)}|{style}|{install}|{shots}", () => BuildActions((float)w, (float)h, style, install, shots));
 
-    private TextArt BuildActions(float w, float h, TitleStyle style, bool install)
+    private TextArt BuildActions(float w, float h, TitleStyle style, bool install, int shots)
     {
         var dev = _g.Device;
         float left = 32, copyW = w - 64;
-        var buttons = new[] { ("A", install ? "安装" : "开始游戏", true), ("Y", "游戏设置", false), ("B", "收起", false) };
+        // 有截图的游戏多一个「X 截图 · 张数」：进控制中心的截图页，已经筛好这款游戏
+        var buttons = new List<(string, string, bool)> { ("A", install ? "安装" : "开始游戏", true) };
+        if (shots > 0) buttons.Add(("X", $"截图 {shots}", false));
+        buttons.Add(("Y", "游戏设置", false));
+        buttons.Add(("B", "收起", false));
         var font = TextKit.Ui(700);
         var keyFont = TextKit.Ui(800);
         var labels = buttons.Select(bt => TextKit.Layout(dev, bt.Item2, font, 15, 100000, CanvasHorizontalAlignment.Left)).ToArray();
         var keys = buttons.Select(bt => TextKit.Layout(dev, bt.Item1, keyFont, 11, 22, CanvasHorizontalAlignment.Center)).ToArray();
         var widths = labels.Select(l => 16 + 22 + 8 + (float)l.LayoutBounds.Width + 16).ToArray();
-        float total = widths.Sum() + 8 * (buttons.Length - 1);
+        float total = widths.Sum() + 8 * (buttons.Count - 1);
         float x0 = style == TitleStyle.B ? left : left + (copyW - total) / 2;
         float y0 = h - 30 - ActionsHeight;
         var rect = new Engine.Rect(left - Margin, y0 - Margin, copyW + Margin * 2, ActionsHeight + Margin * 2);
@@ -325,7 +329,7 @@ public sealed class CardText
             {
                 cds.TextAntialiasing = CanvasTextAntialiasing.Grayscale;
                 float x = x0;
-                for (int i = 0; i < buttons.Length; i++)
+                for (int i = 0; i < buttons.Count; i++)
                 {
                     bool primary = buttons[i].Item3;
                     double op = primary ? 1 : 0.65;

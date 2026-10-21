@@ -706,7 +706,7 @@ public sealed class Tile : IDisposable
             else { ((CompositionSurfaceBrush)_copy.Brush).Surface = _copyArt.Surface; PositionText(_copy, _copyArt, r, true); }
             if (_expanded)
             {
-                _actionsArt = _s.Text.Actions(r.Width, r.Height, _s.Style, _item.Kind == ItemKind.Game && !_item.Installed);
+                _actionsArt = _s.Text.Actions(r.Width, r.Height, _s.Style, _item.Kind == ItemKind.Game && !_item.Installed, _s.ShotCount(_item.Id));
                 if (_actions == null)
                 {
                     _actions = TextSprite(_actionsArt, r, anchorBottom: true);
