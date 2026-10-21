@@ -18,7 +18,7 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private static readonly string[] StCatsMain = { "通用", "游戏库", "外观", "声音与反馈", "Steam 插件", "开机自启", "禁用第三方软件", "维护", "关于" };
+    private static readonly string[] StCatsMain = { "通用", "游戏库", "外观", "Magpie", "声音与反馈", "Steam 插件", "开机自启", "禁用第三方软件", "维护", "关于" };
     /// <summary>左栏的分类：游戏设置时换成游戏的那几类（WallStage.GameSettings.cs）。</summary>
     private string[] StCats => _gsItem != null ? GsCats : StCatsMain;
     private const float StCatH = PerfRowH;
@@ -281,7 +281,8 @@ public sealed partial class WallStage
         if (!_stOpen) return;
         BuildStRows();
         PaintSt();
-        if (_stCat == 1 && !_lgPolling) await LgRefresh();
+        if (_gsItem == null && _stCat == 1 && !_lgPolling) await LgRefresh();
+        if (_gsItem == null && _stCat == 3 && _mgPrefs == null) await MgLoad();
     }
 
     /// <summary>交给后台的动作：等它做完，按结果给提示，再读一次。</summary>
@@ -353,11 +354,12 @@ public sealed partial class WallStage
             case 0: BuildStGeneral(v, later); break;
             case 1: BuildStLibrary(); break;
             case 2: BuildStLook(); break;
-            case 3: BuildStSound(v, later); break;
-            case 4: BuildStSteam(v, later); break;
-            case 5: BuildStStartup(v, later); break;
-            case 6: BuildStVendors(v, later); break;
-            case 7: BuildStMaintenance(v, later); break;
+            case 3: BuildStMagpie(); break;
+            case 4: BuildStSound(v, later); break;
+            case 5: BuildStSteam(v, later); break;
+            case 6: BuildStStartup(v, later); break;
+            case 7: BuildStVendors(v, later); break;
+            case 8: BuildStMaintenance(v, later); break;
             default: BuildStAbout(v); break;
         }
         if (_stEditTitle != null)

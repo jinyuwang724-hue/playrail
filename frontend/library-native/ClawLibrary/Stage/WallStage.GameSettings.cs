@@ -14,7 +14,7 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private static readonly string[] GsCats = { "通用", "画面", "已安装文件" };
+    private static readonly string[] GsCats = { "通用", "画面", "手柄", "封面", "已安装文件" };
 
     /// <summary>设置页现在是哪款游戏的游戏设置（null = 普通设置页）。</summary>
     private LibraryItem? _gsItem;
@@ -130,18 +130,64 @@ public sealed partial class WallStage
             {
                 var mg = s?["magpie"] as JsonObject;
                 var ls = s?["lossless"] as JsonObject;
-                _stRows.Add(new PerfRow { Section = true, Title = "超分" });
-                if (s == null) { _stRows.Add(StInfo("Magpie 自动铺满", wait)); break; }
-                if (!Bool(mg?["available"])) _stRows.Add(StInfo("Magpie 自动铺满", "没有装"));
-                else if (Str(mg?["key"]) == null) _stRows.Add(StInfo("Magpie 自动铺满", noExe));
-                else _stRows.Add(StToggle("Magpie 自动铺满", Bool(mg?["enabled"]), on => { GsLocal("magpie", "enabled", JsonValue.Create(on)); _ = GsSet("magpie", JsonValue.Create(on)); }));
-                if (!Bool(ls?["installed"])) _stRows.Add(StInfo("小黄鸭自动缩放", "没有装"));
-                else if (Str(s["exe"]) == null) _stRows.Add(StInfo("小黄鸭自动缩放", noExe));
-                else _stRows.Add(StToggle("小黄鸭自动缩放", Bool(ls?["enabled"]), on =>
+                // Magpie：工具箱自带（我们编译、随工具箱装的那份），这里是这款游戏的开关和它自己的超分预设；
+                // 详细的画面设置（铺满、锐化、捕获方式、帧率……）在 设置 › Magpie。
+                _stRows.Add(new PerfRow { Section = true, Title = "Magpie" });
+                if (s == null) { _stRows.Add(StInfo("Magpie", wait)); }
+                else if (!Bool(mg?["available"])) _stRows.Add(StInfo("Magpie", "没有装"));
+                else if (Str(mg?["key"]) == null) _stRows.Add(StInfo("Magpie", noExe));
+                else
+                {
+                    bool on = Bool(mg?["enabled"]);
+                    _stRows.Add(StToggle("Magpie", on, v => { GsLocal("magpie", "enabled", JsonValue.Create(v)); _ = GsSet("magpie", JsonValue.Create(v)); }));
+                    if (on)
+                    {
+                        // 自动缩放：Magpie 的叫法（游戏窗口到前台就自动开始缩放）；关掉 = 进游戏后自己按快捷键开
+                        _stRows.Add(StToggle("自动缩放", mg?["auto"] is JsonValue av && Bool(av), v => { GsLocal("magpie", "auto", JsonValue.Create(v)); _ = GsSet("magpieAuto", JsonValue.Create(v)); }, true));
+                        var presets = (mg?["presets"] as JsonArray)?.Select(Str).OfType<string>().ToArray() ?? new[] { "无" };
+                        string cur = Str(mg?["preset"]) ?? "无";
+                        _stRows.Add(StPick("超分预设", presets, Math.Max(0, Array.IndexOf(presets, cur)), i =>
+                        {
+                            GsLocal("magpie", "preset", JsonValue.Create(presets[i]));
+                            _ = GsSet("magpiePreset", JsonValue.Create(presets[i]));
+                        }, 0));
+                    }
+                }
+                // 小黄鸭（Lossless Scaling）：不是工具箱自带的，是 Steam 上单独买的软件；工具箱只替它给这款游戏建一份配置
+                _stRows.Add(new PerfRow { Section = true, Title = "小黄鸭（Lossless Scaling）" });
+                if (s == null) _stRows.Add(StInfo("小黄鸭", wait));
+                else if (!Bool(ls?["installed"])) _stRows.Add(StInfo("小黄鸭", "没有装"));
+                else if (Str(s["exe"]) == null) _stRows.Add(StInfo("小黄鸭", noExe));
+                else _stRows.Add(StToggle("小黄鸭", Bool(ls?["enabled"]), on =>
                 {
                     GsLocal("lossless", "enabled", JsonValue.Create(on));
                     _ = GsSet("lossless", JsonValue.Create(on), on ? "小黄鸭会在这款游戏打开时自动开始" : "已关掉这款游戏的小黄鸭");
                 }));
+                break;
+            }
+            case 2:
+            {
+                // 手柄档案：这款游戏用全局按键映射，还是自己的一份（软件输入层按 exe 名切换，进游戏自动换）
+                var pad = s?["pad"] as JsonObject;
+                string? padExe = Str(pad?["exe"]);
+                _stRows.Add(new PerfRow { Section = true, Title = "手柄档案" });
+                if (s == null) { _stRows.Add(StInfo("按键映射", wait)); break; }
+                if (padExe == null) { _stRows.Add(StInfo("按键映射", noExe)); break; }
+                bool custom = Bool(pad?["custom"]);
+                _stRows.Add(StPick("按键映射", new[] { "全局", "本游戏专用" }, custom ? 1 : 0, i =>
+                {
+                    GsLocal("pad", "custom", JsonValue.Create(i == 1));
+                    _ = GsSet("padCustom", JsonValue.Create(i == 1), i == 1 ? "已从全局映射复制一份，进这款游戏时自动换上" : "这款游戏改回全局映射");
+                }, 0));
+                if (custom && _gsItem is { } it)
+                    _stRows.Add(StAction("编辑本游戏按键", "gspad", "", () => OpenGamepadForGame(it, padExe)));
+                break;
+            }
+            case 3:
+            {
+                // 封面：我们自己的封面页（和添加游戏同一页），看五种图、从 SteamGridDB / 本地换
+                _stRows.Add(new PerfRow { Section = true, Title = "封面" });
+                if (_gsItem is { } it) _stRows.Add(StAction("查看和更换封面", "gsart", "", () => AgOpenArtFor(it)));
                 break;
             }
             default:

@@ -249,7 +249,8 @@ public sealed partial class WallStage
         After(400, async () =>
         {
             if (v != _gpLayoutEdits || _gpLayout == null) return;
-            await GpWrite("save_input_layout", _gpLayout.DeepClone());
+            if (_gpGame != null) await GpWrite("save_input_layout", _gpLayout.DeepClone(), JsonValue.Create(_gpGame));
+            else await GpWrite("save_input_layout", _gpLayout.DeepClone());
             if (v == _gpLayoutEdits) _gpLayoutEdits = 0;
             await GpSyncLayer();
         });
@@ -557,7 +558,7 @@ public sealed partial class WallStage
             else { Toast($"桌面模式下手柄发不出「{cell.Label}」"); PaintGpBody(); }
             return;
         }
-        if (GpActs(p.Source) == null && firmwareOk && GpFirmwareSource(p.Source))
+        if (_gpGame == null && GpActs(p.Source) == null && firmwareOk && GpFirmwareSource(p.Source))
         {
             GpWriteFirmware(p, chord.Select(c => c.Code).Append(cell.Code).Take(5).ToArray());
             return;
@@ -582,7 +583,7 @@ public sealed partial class WallStage
     {
         if (_gpLayout?["buttons"] is JsonObject buttons && buttons.ContainsKey(p.Source)) { buttons.Remove(p.Source); GpSaveLayout(); }
         int native = GpNativeCode(p.Source);
-        if (native != 0 && !(GpFirmwareCodes(p.Source) is { Length: 1 } c && c[0] == native) && !p.Desktop)
+        if (_gpGame == null && native != 0 && !(GpFirmwareCodes(p.Source) is { Length: 1 } c && c[0] == native) && !p.Desktop)
             GpWriteFirmware(p, new[] { native });
         p.KeyFocus = 1;
         PaintGpBody();

@@ -242,6 +242,11 @@ class Magpie:
         self.runtime = Path(data) / ("magpie-runtime-" + VERSION)
         self.prefs_path = Path(data) / "magpie.json"
         self.games_path = Path(data) / "magpie-games.json"
+        # The library's game settings: per game whether Magpie starts by itself (自动缩放) and which 超分预设
+        self.meta_path = Path(data) / "magpie-game-meta.json"
+        try: self.meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError): self.meta = {}
+        if not isinstance(self.meta, dict): self.meta = {}
         self.emit, self.windows = emit, windows or Windows()
         self.lock = asyncio.Lock(); self.process = self.watcher = self.auto_task = None
         self.switched = 0; self.switched_at = 0; self.touch = None; self.running = None; self.wake = asyncio.Event(); self.overlay_changed = 0; self.plain = []
@@ -280,22 +285,74 @@ class Magpie:
         if key in self.games: return key
         return next((k for k in self.games if k.startswith("dir:") and key.startswith(k[4:].rstrip("\\") + os.sep)), None)
 
-    def set_game(self, key, enabled):
-        """The library's game settings page: turn auto-fill on / off for an exe or an install folder."""
+    @staticmethod
+    def presets():
+        """超分预设 names: 无 (only fill + sharpen) and Magpie's own presets from the catalog."""
+        return ["无"] + [p["name"] for p in CATALOG.get("presets", [])]
+
+    def norm_key(self, key):
         if not isinstance(key, str) or not key or len(key) > 4096: raise ValueError("游戏路径格式错误")
-        if key.startswith("dir:"): key = "dir:" + os.path.normcase(os.path.abspath(key[4:]))
-        else: key = self.game_key(key)
-        if enabled: self.games.setdefault(key, None)
-        else: self.games.pop(key, None)
+        return "dir:" + os.path.normcase(os.path.abspath(key[4:])) if key.startswith("dir:") else self.game_key(key)
+
+    def _save_games(self):
         temp = self.games_path.with_suffix(".tmp")
         temp.write_text(json.dumps(self.games, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         os.replace(temp, self.games_path)
-        return {"enabled": enabled}
+        temp = self.meta_path.with_suffix(".tmp")
+        temp.write_text(json.dumps(self.meta, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        os.replace(temp, self.meta_path)
+
+    def set_game(self, key, enabled=None, auto=None, preset=None):
+        """The library's game settings page: Magpie on / off for a game (an exe, or a Steam install folder
+        "dir:<folder>"), whether it starts by itself when the game comes to the front (自动缩放), and its 超分预设
+        (the game's own settings = the global ones with that preset's effect chain)."""
+        key = self.norm_key(key)
+        meta = dict(self.meta.get(key) or {"auto": True, "preset": "无"})
+        if auto is not None: meta["auto"] = bool(auto)
+        if preset is not None:
+            if preset not in self.presets(): raise ValueError("没有这个超分预设")
+            meta["preset"] = preset
+        if enabled is None: enabled = key in self.games
+        if enabled:
+            chain = next((p["effects"] for p in CATALOG.get("presets", []) if p["name"] == meta["preset"]), [])
+            prefs = {**self.prefs, "pipeline": validate_pipeline([{k: e[k] for k in ("name", "parameters", "scalingType", "scale") if k in e} for e in chain])}
+            self.games[key] = prefs
+            self.meta[key] = meta
+        else:
+            self.games.pop(key, None)
+            self.meta[key] = meta
+        self._save_games()
+        return self.game_info(key)
+
+    def game_info(self, key):
+        key = self.norm_key(key)
+        meta = self.meta.get(key) or {"auto": True, "preset": "无"}
+        enabled = key in self.games if key.startswith("dir:") else self.match_key(key) is not None
+        return {"enabled": enabled, "auto": bool(meta.get("auto", True)), "preset": meta.get("preset", "无"), "presets": self.presets()}
 
     def game_enabled(self, key):
         if not isinstance(key, str) or not key: return False
-        if key.startswith("dir:"): return ("dir:" + os.path.normcase(os.path.abspath(key[4:]))) in self.games
-        return self.match_key(key) is not None
+        return self.game_info(key)["enabled"]
+
+    def auto_for(self, path):
+        k = self.match_key(path)
+        return k is not None and (self.meta.get(k) or {}).get("auto", True) is not False
+
+    async def get_prefs(self):
+        return {"preferences": dict(self.prefs), "captures": list(CAPTURES), "presets": self.presets()}
+
+    async def set_prefs(self, value):
+        """设置页 › Magpie: the defaults every game starts from (fill, sharpen, capture, frame rate, …)."""
+        if not isinstance(value, dict): raise ValueError("画面设置格式错误")
+        prefs = validate({**self.prefs, **{k: v for k, v in value.items() if k in DEFAULTS}, "target": 0})
+        self.prefs.update({k: prefs[k] for k in DEFAULTS})
+        self.save()
+        # Games keep their own preset's chain on top of the new defaults
+        for key in list(self.games):
+            if self.games[key] is not None:
+                self.games[key] = {**self.prefs, "pipeline": self.games[key].get("pipeline", [])}
+        self._save_games()
+        return await self.get_prefs()
 
     def remember(self, path, enabled, prefs=None):
         key = self.game_key(path)
@@ -343,7 +400,7 @@ class Magpie:
                 hwnd = self.windows.u.GetForegroundWindow()
                 root = self.windows.foreground_root() if hasattr(self.windows, "foreground_root") else hwnd
                 item = self.windows.describe(root) if root else None
-                if item and self.match_key(item["path"]) is not None:
+                if item and self.match_key(item["path"]) is not None and self.auto_for(item["path"]):
                     await self.apply({**self.game_prefs(item["path"]), "target": item["hwnd"]})
                     return
         except asyncio.CancelledError: raise

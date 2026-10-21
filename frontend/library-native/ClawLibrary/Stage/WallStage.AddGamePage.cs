@@ -38,6 +38,8 @@ public sealed partial class WallStage
         public int Match = -1;
         public string Status = "";
         public bool Searching;
+        /// <summary>Steam 游戏的封面（游戏设置 › 封面）：只换图，完成时通过 Steam 设成它的自定义封面，不进本地游戏。</summary>
+        public bool SteamArt;
         /// <summary>每种图的候选（Url 为 null = 现在用着的那张），Pick 是用着的下标（-1 = 不用）。</summary>
         public readonly Dictionary<string, List<(string? Url, string Thumb)>> Cands = new();
         public readonly Dictionary<string, int> Pick = new();
@@ -279,6 +281,23 @@ public sealed partial class WallStage
             if (pick >= 0 && pick < list.Count && list[pick].Url is string url) art[kind] = url;
             else if (pick < 0 && list.Any(c => c.Url == null)) art[kind] = "";
         }
+        if (d.SteamArt)
+        {
+            var req = new JsonObject { ["id"] = d.Id, ["platform"] = "steam", ["title"] = d.Name };
+            string title = d.Name;
+            AgClose();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    _agent ??= new AgentClient();
+                    await _agent.CallLong("game_art_save", 180, req, art);
+                    _dq.TryEnqueue(() => Toast($"已换「{title}」的封面"));
+                }
+                catch (Exception ex) { _dq.TryEnqueue(() => Toast($"「{title}」的封面没有换上：{ex.Message}")); }
+            });
+            return;
+        }
         var game = new JsonObject
         {
             ["id"] = d.Id, ["name"] = d.Name.Trim(), ["exe"] = d.Exe, ["steam"] = d.Steam, ["sgdb"] = d.Sgdb, ["steamAppId"] = d.SteamAppId, ["art"] = art,
@@ -331,8 +350,49 @@ public sealed partial class WallStage
 
     // ---------------- 行（和设置页同一套） ----------------
 
+    /// <summary>
+    /// 游戏设置 › 封面：打开我们的封面页（封面概览那一页）。本地游戏和 Steam 里的非 Steam 游戏走本地游戏的编辑；
+    /// Steam 游戏只换图：现有的图从 Steam 的缓存 / 自定义图读，按游戏名到 SteamGridDB 找候选，完成时设成 Steam 的自定义封面。
+    /// </summary>
+    private async void AgOpenArtFor(LibraryItem item)
+    {
+        await LgRefresh();
+        var local = LgGames().FirstOrDefault(g => Str(g["id"]) == item.Id);
+        if (local != null) { AgOpenEdit(local); AgGo(AgPage.Art, AgTabOverview); return; }
+        var d = new AgDraft { Id = item.Id, Name = item.Title, Exe = "", Query = item.Title, SteamArt = true, Steam = true };
+        foreach (var (kind, _) in AgKinds) { d.Cands[kind] = new(); d.Pick[kind] = -1; }
+        try
+        {
+            _agent ??= new AgentClient();
+            if (await _agent.CallLong("game_art_get", 20, new JsonObject { ["id"] = item.Id, ["platform"] = item.Platform, ["title"] = item.Title }) is JsonObject r
+                && r["art"] is JsonObject a)
+                foreach (var (kind, _) in AgKinds)
+                    if (Str(a[kind]) is { Length: > 0 } path) { d.Cands[kind].Add((null, path)); d.Pick[kind] = 0; }
+        }
+        catch (Exception ex) { Log.Warn($"game art: {ex.Message}"); }
+        AgShow(d, AgPage.Art);
+        AgGo(AgPage.Art, AgTabOverview);
+        // 按游戏名先找一次 SteamGridDB，找到就把第一款的候选图拿来（不换页）
+        await AgSearch(d);
+        if (_agDraft == d && d.Matches.Count > 0 && d.Match < 0)
+        {
+            d.Match = 0;
+            var m = d.Matches[0];
+            d.Sgdb = Str(m["source"]) == "sgdb" ? Str(m["id"]) : null;
+            d.SteamAppId = Str(m["steamAppId"]);
+            _ = AgLoadCandidates(d, m);
+            if (d.SteamAppId != null) _ = AgLoadOfficial(d);
+        }
+    }
+
     private List<PerfRow> AgArtRows(AgDraft d)
     {
+        if (d.SteamArt)
+            return new List<PerfRow>
+            {
+                new() { Title = "名称", Value = d.Name, Disabled = true },
+                new() { Title = "匹配", Value = d.Match >= 0 && d.Match < d.Matches.Count ? Str(d.Matches[d.Match]["name"]) ?? "" : d.Searching ? "正在找…" : "未匹配", Press = () => AgGo(AgPage.Match) },
+            };
         var rows = new List<PerfRow>
         {
             new() { Title = "名称", Value = _agEditing == "name" ? "" : d.Name, Press = () => AgBeginEdit("name") },
@@ -1007,7 +1067,7 @@ public sealed partial class WallStage
 
     private void AgPaintArt(CanvasDrawingSession ds, AgDraft d)
     {
-        AgTitle(ds, d.Id == null ? "添加游戏" : "编辑游戏");
+        AgTitle(ds, d.SteamArt ? "更换封面" : d.Id == null ? "添加游戏" : "编辑游戏");
 
         // 左栏：小字 + 信息行 + 程序路径
         PText(ds, "游戏", TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.42), 40, AgBandY, 200);
@@ -1024,9 +1084,12 @@ public sealed partial class WallStage
             if (!rows[i].Section && !rows[i].Disabled) { var row = rows[i]; _agHits.Add((new Rect(40, y, AgLeftW, h), 0, i, () => row.Press?.Invoke())); }
             y += h;
         }
-        PText(ds, "程序", TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.42), 40, y + 30, 200);
-        using (var pl = TextKit.Layout(ds, d.Exe, TextKit.Ui(400), 14, AgLeftW, CanvasHorizontalAlignment.Left, maxLines: 2))
+        if (d.Exe.Length > 0)
+        {
+            PText(ds, "程序", TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.42), 40, y + 30, 200);
+            using var pl = TextKit.Layout(ds, d.Exe, TextKit.Ui(400), 14, AgLeftW, CanvasHorizontalAlignment.Left, maxLines: 2);
             ds.DrawTextLayout(pl, 40, y + 46, AgMuted);
+        }
         AgPaintPreview(ds, d, 466);
 
         // 右栏：页签 + 官方按钮

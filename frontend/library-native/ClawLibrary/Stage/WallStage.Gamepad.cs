@@ -166,9 +166,38 @@ public sealed partial class WallStage
         Log.Info("gamepad page open");
     }
 
+    /// <summary>
+    /// 只编辑某款游戏的按键（游戏设置 › 手柄 › 编辑本游戏按键）：读写软件输入层这款游戏自己的布局（按 exe 名），
+    /// 所有改动都进输入层、不写固件（固件只有一份，是全局的），关掉后回到那款游戏的设置。
+    /// </summary>
+    private string? _gpGame, _gpGameTitle;
+    private LibraryItem? _gpReturn;
+
+    private void OpenGamepadForGame(LibraryItem item, string exe)
+    {
+        _gpGame = exe;
+        _gpGameTitle = item.Title;
+        _gpReturn = item;
+        _gpLayout = null;
+        CloseSettingsPage(instant: true);
+        OpenGamepad();
+    }
+
     private void CloseGamepad(bool instant = false)
     {
         if (!_gpOpen || _gp == null) return;
+        if (_gpReturn is { } back && !instant)
+        {
+            // 回到这款游戏的设置（手柄分类）
+            _gpReturn = null; _gpGame = null; _gpGameTitle = null; _gpLayout = null;
+            CloseGamepad(instant: true);
+            _gsItem = back; _gsState = null; _stCat = 2;
+            OpenSettingsPage();
+            _stFromLibrary = true;
+            _ = GsLoad();
+            return;
+        }
+        _gpReturn = null; _gpGame = null; _gpGameTitle = null;
         _gpOpen = false;
         SettingsResetPointer();
         _gpEditing = false;
@@ -313,7 +342,7 @@ public sealed partial class WallStage
                 var layer = await _agent.Call("get_input_layer_state");
                 if (GpRefreshObsolete(revision)) return;
                 _gpLayer = layer;
-                var layout = await _agent.Call("get_input_layout");
+                var layout = _gpGame != null ? await _agent.Call("get_input_layout", JsonValue.Create(_gpGame)) : await _agent.Call("get_input_layout");
                 if (GpRefreshObsolete(revision)) return;
                 if (layout?["layout"] is JsonObject lay) _gpLayout = (JsonObject)lay.DeepClone();
             }
@@ -751,7 +780,7 @@ public sealed partial class WallStage
         bool connected = _pad?.Connected ?? false;
 
         // 标题：和控制中心的「控制中心」同一个位置、同一个字；下面一行小字是机型、连接状态和模式
-        PText(ds, "手柄", TextKit.Ui(700), 24, CcText, 40, 48, 300);
+        PText(ds, _gpGameTitle != null ? $"手柄 · {_gpGameTitle}" : "手柄", TextKit.Ui(700), 24, CcText, 40, 48, 900);
         string mode = _gpDesktopHeld ? "桌面模式（游戏库里先用手柄模式）"
             : Str(_gpFw?["mode"]) switch { "desktop" => "桌面模式", "xinput" => "手柄模式", "dinput" => "DInput 模式", _ => "" };
         string sub = !connected ? "Claw 8 EX · 没有检测到手柄" : $"Claw 8 EX · 已连接{(mode.Length > 0 ? " · " + mode : "")}";

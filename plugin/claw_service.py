@@ -1053,7 +1053,11 @@ class Service:
             ls_exe = gs.lossless_exe()
             return {"steam": props, "shortcut": appid >= 0x80000000, "exe": exe, "folder": folder,
                     "magpie": {"available": self._magpie.view().get("available", False), "key": magpie_key,
-                               "enabled": self._magpie.game_enabled(magpie_key) if magpie_key else False},
+                               **(self._magpie.game_info(magpie_key) if magpie_key else
+                                  {"enabled": False, "auto": True, "preset": "无", "presets": self._magpie.presets()})},
+                    # 手柄档案: the input layer's per-game layout (by exe name; none = the global one)
+                    "pad": {"exe": os.path.basename(exe) if exe else None,
+                            "custom": bool(exe) and os.path.basename(exe).lower() in self._input.layouts.games()},
                     "lossless": {"installed": bool(ls_exe), "running": bool(gs.lossless_pids()),
                                  "enabled": gs.lossless_enabled(exe) if exe else False}}
         return await asyncio.to_thread(read)
@@ -1061,11 +1065,24 @@ class Service:
     async def game_settings_set(self, item, key, value=None):
         appid, platform, title = self._game_item(item)
         gs, cdp = _game_settings_module, _local_games_module.cdp
-        if key == "magpie":
+        if key in ("magpie", "magpieAuto", "magpiePreset"):
             target = item.get("magpieKey")
             if not isinstance(target, str) or not target:
                 raise ValueError("找不到这款游戏的程序")
-            return self._magpie.set_game(target, bool(value))
+            if key == "magpie": return self._magpie.set_game(target, enabled=bool(value))
+            if key == "magpieAuto": return self._magpie.set_game(target, auto=bool(value))
+            if not isinstance(value, str): raise ValueError("超分预设格式错误")
+            return self._magpie.set_game(target, preset=value)
+        if key == "padCustom":
+            exe = item.get("exe")
+            if not isinstance(exe, str) or not exe.lower().endswith(".exe"):
+                raise ValueError("找不到这款游戏的程序")
+            game = os.path.basename(exe)
+            if value:
+                # Start from the global layout; the gamepad page then edits this game's copy
+                current = await self._input.get_layout(None)
+                return await self._input.save_layout(current["layout"], game)
+            return await self._input.save_layout(None, game)
         if key == "lossless":
             exe = item.get("exe")
             if not isinstance(exe, str) or not exe.lower().endswith(".exe"):
@@ -1090,6 +1107,51 @@ class Service:
             raise RuntimeError("Steam 没开")
         await asyncio.to_thread(cdp.set_app_property, appid, key, value)
         return {"ok": True}
+
+    async def get_magpie_prefs(self):
+        return await self._magpie.get_prefs()
+
+    async def set_magpie_prefs(self, value):
+        return await self._magpie.set_prefs(value)
+
+    async def game_art_get(self, item):
+        """A Steam game's current library images (custom grid ones first, else Steam's own cache)."""
+        appid, platform, title = self._game_item(item)
+        lg = _local_games_module
+        def read():
+            root = lg.steam_root()
+            user = lg.steam_user(root)
+            art = lg.LocalGames._grid_art(user, str(appid), None) if user else {}
+            cache = root / "appcache" / "librarycache" if root else None
+            if cache and cache.is_dir():
+                folder = cache / str(appid)
+                names = {"p": ["library_600x900.jpg", "library_capsule.jpg"], "hero": ["library_hero.jpg"],
+                         "logo": ["logo.png"], "header": ["header.jpg", "library_header.jpg"]}
+                for kind, files in names.items():
+                    if kind in art: continue
+                    for f in files:
+                        for cand in (folder.rglob(f) if folder.is_dir() else []):
+                            art[kind] = str(cand); break
+                        if kind in art: break
+                        flat = cache / f"{appid}_{f}"
+                        if flat.is_file(): art[kind] = str(flat); break
+            return {"art": art}
+        return await asyncio.to_thread(read)
+
+    async def game_art_save(self, item, art):
+        """Set a Steam game's library images from the cover page (urls are downloaded, file: copied)."""
+        appid, platform, title = self._game_item(item)
+        if not isinstance(art, dict): raise ValueError("封面格式错误")
+        cdp = _local_games_module.cdp
+        def save():
+            if not cdp.available(): raise RuntimeError("Steam 没开")
+            files = self._local_games._art_files("steam-" + str(appid), {k: v for k, v in art.items() if k in cdp.ASSET_TYPES})
+            for kind, url in art.items():
+                if kind not in cdp.ASSET_TYPES: continue
+                if url == "": cdp.set_artwork(appid, kind, None)
+                elif kind in files: cdp.set_artwork(appid, kind, files[kind])
+            return {"saved": sorted(files)}
+        return await asyncio.to_thread(save)
 
     async def local_games_state(self):
         state = await asyncio.to_thread(self._local_games.state)

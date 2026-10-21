@@ -25,7 +25,7 @@ public sealed partial class WallStage
                 if (_audioDisposed) return;
                 _musicError = "播放失败，请重新选择曲目";
                 Log.Warn("home music: " + message);
-                if (_stOpen && _stCat == 3) { Toast(_musicError); Repaint(); }
+                if (_stOpen && _gsItem == null && _stCat == 4) { Toast(_musicError); Repaint(); }
             });
             _audioTimer = _dq.CreateTimer();
             _audioTimer.Interval = TimeSpan.FromMilliseconds(100);
