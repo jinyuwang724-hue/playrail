@@ -411,6 +411,19 @@ public static class Bench
                 case "control2": s.ToggleControlCenter(); await Task.Delay(900); s.Move(Direction.Right); await Task.Delay(260); s.Move(Direction.Right); break;
                 case "nav": for (int i = 0; i < 3; i++) { s.Move(Direction.Right); await Task.Delay(250); } break;
                 case "rail" or "railtab" or "settings" or "search" or "searchresults": s.RailTestState(state); break;
+                case "shots0" or "shots1" or "shots2" or "shotsv" or "shotsnav":
+                {
+                    // 截图页：shots0 / 1 / 2 = 日历 / 放映 / 冲印（焦点往右挪一格），shotsv = 大图，shotsnav = 日历里走一圈
+                    s.ToggleControlCenter();
+                    await Task.Delay(1500);
+                    s.ShotsTestState(state == "shotsv" || state == "shotsnav" ? 0 : state[5] - '0');
+                    await Task.Delay(1500);
+                    s.Move(Direction.Right);
+                    await Task.Delay(400);
+                    if (state == "shotsv") s.Activate();
+                    if (state == "shotsnav") { s.Move(Direction.Down); await Task.Delay(400); s.Move(Direction.Down); await Task.Delay(400); s.Move(Direction.Down); }
+                    break;
+                }
             }
             Log.Info($"state {state} reached");
         }

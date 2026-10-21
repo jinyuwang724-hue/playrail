@@ -371,7 +371,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>强调色变了：开着的页重画。</summary>
-    private void CcRepaintPages() { if (_stOpen) PaintSt(); }
+    private void CcRepaintPages() { if (_stOpen) PaintSt(); if (_shOpen) ShPaintAll(); }
 
     private void BuildStGeneral(JsonObject? v, string later)
     {
@@ -536,6 +536,7 @@ public sealed partial class WallStage
 
         _stRows.Add(new PerfRow { Section = true, Title = "界面" });
         _stRows.Add(StPick("控制中心卡片", new[] { "拍立得", "卡片" }, _ccCards ? 1 : 0, i => { SetCcCardStyle(i == 1); Repaint(); }, 0));
+        _stRows.Add(StPick("截图页排版", ShStyleNames, _prefs.ShotsStyle, i => { ShSetStyle((ShStyle)i); Repaint(); }, 0));
         _stRows.Add(StToggle("游戏库显示封面", _prefs.LibraryCover, on =>
         {
             SaveUi(_prefs with { LibraryCover = on });

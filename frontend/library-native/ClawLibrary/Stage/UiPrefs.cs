@@ -32,6 +32,8 @@ public sealed record UiPrefs
     public bool NavHaptics { get; init; } = true;
     /// <summary>控制中心的游戏库卡显示当前游戏封面；关掉时用图标，底色是当前选中游戏的主题色。</summary>
     public bool LibraryCover { get; init; }
+    /// <summary>截图页的排版：0 日历、1 放映、2 冲印。</summary>
+    public int ShotsStyle { get; init; }
 
     public static readonly (string Name, uint Rgb)[] Accents =
     {
@@ -71,6 +73,7 @@ public sealed record UiPrefs
                     "fseSteam" when bool.TryParse(v, out var b) => p with { FseSteam = b },
                     "navHaptics" when bool.TryParse(v, out var b) => p with { NavHaptics = b },
                     "libraryCover" when bool.TryParse(v, out var b) => p with { LibraryCover = b },
+                    "shotsStyle" when int.TryParse(v, out var i) => p with { ShotsStyle = Math.Clamp(i, 0, 2) },
                     "folders" => p with { Folders = v.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) },
                     _ => p,
                 };
@@ -90,7 +93,7 @@ public sealed record UiPrefs
                 $"styleB={StyleB}", $"backdrop={Backdrop}", $"reduced={Reduced}", $"boot={Boot}", $"startTab={StartTab}",
                 $"tabOrder={string.Join(',', TabOrder)}", $"tabsHidden={string.Join(',', TabsHidden)}", $"showHidden={ShowHiddenGames}",
                 $"sourceSteam={SourceSteam}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}",
-                $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}",
+                $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
             });
             File.Move(FilePath + ".tmp", FilePath, true);
         }

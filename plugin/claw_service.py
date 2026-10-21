@@ -53,6 +53,9 @@ _input_spec.loader.exec_module(_input_module)
 _buttons_spec = importlib.util.spec_from_file_location("claw_toolbox_button_mappings", PLUGIN_ROOT / "claw_button_mappings.py")
 _buttons_module = importlib.util.module_from_spec(_buttons_spec)
 _buttons_spec.loader.exec_module(_buttons_module)
+_captures_spec = importlib.util.spec_from_file_location("claw_toolbox_captures", PLUGIN_ROOT / "claw_captures.py")
+_captures_module = importlib.util.module_from_spec(_captures_spec)
+_captures_spec.loader.exec_module(_captures_module)
 
 # ControllerHapticsService.PlayPattern in Playhub 2.1.0 executes the first step.
 HAPTIC_PATTERNS = {
@@ -141,6 +144,8 @@ class Service:
                                                not_games=_power_module.NOT_GAMES, python=sys.executable,
                                                log=logging.info)
         self._input_task = None
+        # Game Bar screenshots: which window each new capture came from (data\captures.jsonl, read by ClawLibrary).
+        self._captures = _captures_module.CaptureLog(self._data, log=logging.info)
         # Pad mode switches (set_gamepad_mode, or the firmware switching by itself if it can): notice first, then the firmware listener.
         self._gamepad.watcher.listeners.insert(0, self._pad_mode_changed)
         self._settings_path = self._data / "settings.json"
@@ -182,6 +187,7 @@ class Service:
         self._power.start()
         self._rumble.start()
         self._gamepad.start()
+        self._captures.start()
         self._input_task = asyncio.create_task(self._start_input())
         await self._configure()  # general mappings also work before any Steam frontend connects
 
@@ -284,6 +290,8 @@ class Service:
         else:
             if action in ("gamebar", "screenshot"):
                 await self._allow_gamebar()
+            if action == "screenshot":
+                await asyncio.to_thread(self._captures.note_request)
             command = {"type": "keyboard", "keys": ["LWin", "G"]} if action == "gamebar" else {"type": "system", "action": action}
             await self._power._call("mapped_input", mapping=_input_module.compile_command(command))
 
@@ -623,6 +631,7 @@ class Service:
         return await self._power.system_set("keyboard")
 
     async def screenshot(self):
+        await asyncio.to_thread(self._captures.note_request)
         return await self._power.system_set("screenshot")
 
     @staticmethod
@@ -984,6 +993,7 @@ class Service:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._overlay_frames.close()
+        await asyncio.to_thread(self._captures.close)
         await self._power.close()
         await self._rumble.close()
         if self._input_task and not self._input_task.done():

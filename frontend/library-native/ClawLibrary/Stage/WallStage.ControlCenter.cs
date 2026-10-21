@@ -243,6 +243,7 @@ public sealed partial class WallStage
         CloseDisplay(instant: true);
         CloseSystem(instant: true);
         CloseSettingsPage(instant: true);
+        CloseShots(instant: true);
         _ccOpen = false;
         int v = ++_ccVersion;
         _ccTimer?.Stop();
@@ -265,6 +266,7 @@ public sealed partial class WallStage
         CloseDisplay(instant: true);
         CloseSystem(instant: true);
         CloseSettingsPage(instant: true);
+        CloseShots(instant: true);
         _cc.IsVisible = false;
         _cc.StopAnimation("Opacity");
         _cc.Opacity = 1;
@@ -290,6 +292,7 @@ public sealed partial class WallStage
         if (_dsOpen) { DsMove(dir); return; }
         if (_syOpen) { SyMove(dir); return; }
         if (_stOpen) { StMove(dir); return; }
+        if (_shOpen) { ShMove(dir); return; }
         if (CcChromeMove(dir)) return;
         if (dir is not (Direction.Left or Direction.Right)) return;
         // 不再限制「200 ms 一步」：滚动是弹簧，连按就直接换终点接着滚（可打断）
@@ -313,6 +316,7 @@ public sealed partial class WallStage
         if (_dsOpen) { DsActivate(); return; }
         if (_syOpen) { SyActivate(); return; }
         if (_stOpen) { StActivate(); return; }
+        if (_shOpen) { ShActivate(); return; }
         if (CcChromeActivate()) return;
         var b = _ccBlocks[_ccFocus];
         switch (_ccFocus)
@@ -348,6 +352,7 @@ public sealed partial class WallStage
         if (MorphIntercept()) return;
         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
         if (_ccOpen && _stOpen) { StResetFocused(); return; }
+        if (_ccOpen && _shOpen) { ShY(); return; }
         if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
         else Toast("游戏设置（原型里还没有）");
@@ -357,6 +362,7 @@ public sealed partial class WallStage
     public void PadX()
     {
         if (_ccOpen && _gpOpen) { MarkInput(); GpPadButton(isY: false); return; }
+        if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShX(); return; }
         ToggleTitleStyle();
     }
 
@@ -375,6 +381,7 @@ public sealed partial class WallStage
     /// <summary>点卡：点到焦点卡 = A，点到别的卡 = 把它移到中间。</summary>
     private void CcClick(double sx, double sy)
     {
+        if (_shOpen) { ShClick(sx, sy); return; }
         if (_stOpen && StCategoryClick(sx, sy)) return;
         if (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen) { SettingsClick(sx, sy); return; }
         if (CcChromeClick(sx, sy)) return;

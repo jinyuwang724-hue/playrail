@@ -140,32 +140,55 @@ public static class Steam
         var set = new HashSet<string>();
         try
         {
-            var dirs = new List<string> { Path.Combine(root, "steamapps") };
-            var lf = Path.Combine(root, "steamapps", "libraryfolders.vdf");
-            if (File.Exists(lf))
-            {
-                var folders = TextVdf.Parse(File.ReadAllText(lf, Encoding.UTF8)).Path("libraryfolders");
-                if (folders != null)
-                    foreach (var (_, node) in folders.Children)
-                        if (node.Value("path") is { } p) dirs.Add(Path.Combine(p, "steamapps"));
-            }
-            foreach (var d in dirs.Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                if (!Directory.Exists(d)) continue;
-                foreach (var acf in Directory.GetFiles(d, "appmanifest_*.acf"))
-                {
-                    try
-                    {
-                        var st = TextVdf.Parse(File.ReadAllText(acf, Encoding.UTF8)).Path("AppState");
-                        if (st?.Value("appid") is not { } id) continue;
-                        if (int.TryParse(st.Value("StateFlags"), out var flags) && (flags & 4) != 0) set.Add(id);
-                    }
-                    catch (Exception ex) { Log.Warn($"{Path.GetFileName(acf)}: {ex.Message}"); }
-                }
-            }
+            foreach (var (id, st, _) in Manifests(root))
+                if (int.TryParse(st.Value("StateFlags"), out var flags) && (flags & 4) != 0) set.Add(id);
         }
         catch (Exception ex) { Log.Warn($"steam installed: {ex.Message}"); }
         return set;
+    }
+
+    /// <summary>appid → 安装目录（库目录\steamapps\common\installdir），截图按进程路径归游戏用。</summary>
+    public static Dictionary<string, string> InstallDirs(string root)
+    {
+        var map = new Dictionary<string, string>();
+        try
+        {
+            foreach (var (id, st, acf) in Manifests(root))
+                if (st.Value("installdir") is { Length: > 0 } dir)
+                    map[id] = Path.Combine(Path.GetDirectoryName(acf)!, "common", dir);
+        }
+        catch (Exception ex) { Log.Warn($"steam install dirs: {ex.Message}"); }
+        return map;
+    }
+
+    /// <summary>各个库目录（libraryfolders.vdf）里的 appmanifest：(appid, AppState 节点)。</summary>
+    private static List<(string Id, TextVdf State, string File)> Manifests(string root)
+    {
+        var list = new List<(string, TextVdf, string)>();
+        var dirs = new List<string> { Path.Combine(root, "steamapps") };
+        var lf = Path.Combine(root, "steamapps", "libraryfolders.vdf");
+        if (File.Exists(lf))
+        {
+            var folders = TextVdf.Parse(File.ReadAllText(lf, Encoding.UTF8)).Path("libraryfolders");
+            if (folders != null)
+                foreach (var (_, node) in folders.Children)
+                    if (node.Value("path") is { } p) dirs.Add(Path.Combine(p, "steamapps"));
+        }
+        foreach (var d in dirs.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!Directory.Exists(d)) continue;
+            foreach (var acf in Directory.GetFiles(d, "appmanifest_*.acf"))
+            {
+                try
+                {
+                    var st = TextVdf.Parse(File.ReadAllText(acf, Encoding.UTF8)).Path("AppState");
+                    if (st?.Value("appid") is not { } id) continue;
+                    list.Add((id, st, acf));
+                }
+                catch (Exception ex) { Log.Warn($"{Path.GetFileName(acf)}: {ex.Message}"); }
+            }
+        }
+        return list;
     }
 
     /// <summary>appinfo.vdf：头（magic、universe、v29 起还有字符串表偏移），然后每个应用一段二进制 KeyValues。</summary>
@@ -346,6 +369,60 @@ public static class Steam
                 default: return list;
             }
         }
+        return list;
+    }
+
+    /// <summary>非 Steam 快捷方式：appid（无符号）、程序、起始目录（去掉引号），截图按进程路径归游戏用。</summary>
+    public static List<(string AppId, string Exe, string StartDir)> ShortcutTargets(string? userDir)
+    {
+        var list = new List<(string, string, string)>();
+        if (userDir == null) return list;
+        try
+        {
+            var path = Path.Combine(userDir, "config", "shortcuts.vdf");
+            if (!File.Exists(path)) return list;
+            var data = File.ReadAllBytes(path);
+            int i = 0, depth = 0;
+            uint appid = 0; bool haveId = false; string exe = "", start = "";
+            string ReadString()
+            {
+                int s = i;
+                while (i < data.Length && data[i] != 0) i++;
+                var v = Encoding.UTF8.GetString(data, s, i - s);
+                i++;
+                return v;
+            }
+            while (i < data.Length)
+            {
+                byte type = data[i++];
+                if (type == 0x08)
+                {
+                    depth--;
+                    if (depth == 1 && haveId) list.Add((appid.ToString(), exe, start));
+                    if (depth == 1) { haveId = false; exe = start = ""; }
+                    if (depth < 0) break;
+                    continue;
+                }
+                var name = ReadString();
+                switch (type)
+                {
+                    case 0x00: depth++; break;
+                    case 0x01:
+                        var value = ReadString().Trim().Trim('"');
+                        if (name.Equals("exe", StringComparison.OrdinalIgnoreCase)) exe = value;
+                        else if (name.Equals("StartDir", StringComparison.OrdinalIgnoreCase)) start = value;
+                        break;
+                    case 0x02:
+                        if (i + 4 > data.Length) return list;
+                        uint v = BitConverter.ToUInt32(data, i); i += 4;
+                        if (name.Equals("appid", StringComparison.OrdinalIgnoreCase)) { appid = v; haveId = true; }
+                        break;
+                    case 0x07: i += 8; break;
+                    default: return list;
+                }
+            }
+        }
+        catch (Exception ex) { Log.Warn($"shortcut targets: {ex.Message}"); }
         return list;
     }
 
