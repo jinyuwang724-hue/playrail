@@ -355,7 +355,8 @@ class LocalGames:
             body = self._json(SGDB_PUBLIC + "/search/autocomplete?" + urllib.parse.urlencode({"term": term}))
             found = (body.get("data") or []) if body.get("success") else []
         return [{"id": str(g["id"]), "name": g.get("name", ""), "source": "sgdb",
-                 "year": time.gmtime(g["release_date"]).tm_year if g.get("release_date") else None}
+                 "year": time.gmtime(g["release_date"]).tm_year if g.get("release_date") else None,
+                 "onSteam": "steam" in (g.get("types") or [])}
                 for g in found if isinstance(g, dict) and g.get("id")]
 
     def _assets(self, match, kind):
@@ -418,6 +419,19 @@ class LocalGames:
             return []
         return [{"id": str(i["id"]), "name": i.get("name", ""), "source": "steam", "year": None, "steamAppId": str(i["id"])}
                 for i in items[:6] if i.get("type", "app") == "app"]
+
+    def _steam_appid_for(self, name):
+        """The store app with exactly this (English) name, or None: SteamGridDB says a game is on Steam but not which app."""
+        key = ("appid", name)
+        if key not in self._cache:
+            url = "https://store.steampowered.com/api/storesearch/?" + urllib.parse.urlencode({"term": name, "l": "english", "cc": "US"})
+            try:
+                items = self._json(url, quick=True).get("items") or []
+            except (OSError, ValueError):
+                return None
+            plain = lambda x: re.sub(r"[\s\W_]+", "", x).lower()
+            self._cache[key] = next((str(i["id"]) for i in items if plain(i.get("name", "")) == plain(name)), None)
+        return self._cache[key]
 
     def _steam_english_name(self, appid):
         request = {"ids": [{"appid": int(appid)}], "context": {"language": "english", "country_code": "US"}}
@@ -526,6 +540,9 @@ class LocalGames:
                 covers = self._assets(m, "p")
             except (PermissionError, OSError, ValueError):
                 covers = []
+            if m.get("onSteam") and not m.get("steamAppId"):
+                appid = self._steam_appid_for(m["name"])
+                m = {**m, "steamAppId": appid} if appid else m
             # The page loads previews itself (remote url), so the list comes back without waiting for downloads
             return {**m, "thumb": covers[0]["thumb"] if covers else None, "covers": len(covers)}
         # A preview for each, but never more than a few seconds: SteamGridDB sometimes answers one game very slowly.
@@ -535,6 +552,9 @@ class LocalGames:
         wait(futures, timeout=7)
         result = [f.result() if f.done() else {**m, "thumb": None, "covers": None} for f, m in zip(futures, result)]
         pool.shutdown(wait=False)
+        # A store entry that a SteamGridDB match already stands for is the same game twice
+        linked = {m.get("steamAppId") for m in result if m["source"] == "sgdb"}
+        result = [m for m in result if not (m["source"] == "steam" and m["id"] in linked)]
         # Games with covers first (SteamGridDB has many empty entries), the exact name first among those
         def plain(x):
             return re.sub(r"[\s\W_]+", "", x).lower()

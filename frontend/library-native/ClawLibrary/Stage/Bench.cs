@@ -419,7 +419,7 @@ public static class Bench
                     await Task.Delay(800);
                     s.Activate();
                     break;
-                case "add0" or "add1" or "add2" or "add3" or "add4" or "add5" or "add6" or "add7" or "add8":
+                case "add0" or "add1" or "add2" or "add3" or "add4" or "add5" or "add6" or "add7" or "add8" or "add9":
                 {
                     // 添加游戏：add0 匹配弹窗，add1 封面图片，add2 封面概览，add3 分类，add4 背景，add5 Steam 官方封面，add6 改名称，add7 弹窗里打字
                     s.ToggleControlCenter();
@@ -434,6 +434,7 @@ public static class Bench
                     if (state == "add4") { s.SwitchTab(1); await Task.Delay(2500); }
                     if (state == "add5") { s.SwitchTab(-1); await Task.Delay(300); s.SwitchTab(-1); await Task.Delay(2500); }
                     if (state == "add6") { s.Move(Direction.Left); await Task.Delay(400); s.Activate(); await Task.Delay(1500); }
+                    if (state == "add9") { await Task.Delay(8000); s.Activate(); await Task.Delay(6000); s.Move(Direction.Right); await Task.Delay(300); s.Move(Direction.Up); await Task.Delay(300); s.Activate(); await Task.Delay(2500); }
                     break;
                 }
                 case "shots0" or "shots1" or "shots2" or "shotsv" or "shotsnav" or "shotsf":

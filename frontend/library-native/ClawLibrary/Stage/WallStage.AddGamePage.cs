@@ -1,8 +1,8 @@
-// 设置 › 游戏库 › 添加游戏 / 编辑游戏。和性能、设置页同一套：左上 24 px 粗标题，标题右边页签（白字 + 2 px 下划线，其余 45 %），
-// 左栏 40–388 是信息（共用的设置行：名称 / 匹配 / 加入 Steam / 分类，下面程序路径），右栏 428–1240 是封面，右下「完成」。
-// 右栏页签：封面图片 / 背景 / 徽标 / 宽幅封面图片（各是一种图的候选网格，A 就换成这张，闪一下 + 提示）、
-// Steam 官方封面（这款游戏在 Steam 商店的官方图，A 换成官方的）、封面概览（正在用的几张；图标在这里，可以从本地选）。
-// 后两页同一种排法：从上到下 封面图片、背景、徽标、宽幅封面图片（概览多一个图标）。
+// 设置 › 游戏库 › 添加游戏 / 编辑游戏。和性能、设置页同一套：左上 24 px 粗标题；左栏 40–388 是信息（共用的设置行：
+// 名称 / 匹配 / 加入 Steam / 分类，下面程序路径），右栏 428–1240 是封面，右下「完成」。
+// 右栏顶上一行页签（截图页同款）：封面图片 / 背景 / 徽标 / 宽幅封面图片（各是一种图的候选网格，A 就换成这张，闪一下 + 提示）、
+// 封面概览（五种图一屏放下，每种都能「从本地选择」）。四种图的页右头有「Steam 官方封面」按钮（商店里有这款才有），
+// 按下弹出这种图的官方版本，A 用它。
 // 选完 exe 直接进来，上面弹出「匹配游戏」弹窗（WallStage.AddGamePopup.cs）；之后「匹配」那一行或 Y 再打开。
 // 分类是单独一页（设置行：新建分类，和每个 Steam 分类的 关 / 开）。「完成」立刻关页，保存在后台做完再提示。
 // 整页画在一张图上（Win2D），只有打字时放一个 XAML TextBox。
@@ -375,24 +375,26 @@ public sealed partial class WallStage
 
     // ---------------- 输入 ----------------
 
-    /// <summary>右栏的页签：四种图，Steam 官方封面，封面概览。</summary>
-    private static readonly string[] AgTabNames = { "封面图片", "背景", "徽标", "宽幅封面图片", "Steam 官方封面", "封面概览" };
-    private const int AgTabOfficial = 4, AgTabOverview = 5;
+    /// <summary>右栏顶上的页签：四种图 + 封面概览。</summary>
+    private static readonly string[] AgTabNames = { "封面图片", "背景", "徽标", "宽幅封面图片", "封面概览" };
+    private const int AgTabOverview = 4;
+    /// <summary>右栏焦点在「Steam 官方封面」按钮上（四种图的页里，商店有这款才有）。</summary>
+    private const int AgOffBtn = -1;
 
     /// <summary>四种图页签对应的图种。</summary>
     private static readonly string[] AgTabKinds = { "p", "hero", "logo", "header" };
 
-    /// <summary>官方封面、封面概览两页从上到下的顺序（概览多一个图标）。</summary>
-    private List<string> AgStackKinds() => _agTab == AgTabOverview ? new() { "p", "hero", "logo", "header", "icon" } : new() { "p", "hero", "logo", "header" };
-
     private static string AgKindTitle(string kind) => AgKinds.First(k => k.Kind == kind).Title;
 
-    /// <summary>右栏当前页签能聚焦的格数。</summary>
+    /// <summary>商店里有这款（拿到了官方图）才显示「Steam 官方封面」按钮。</summary>
+    private bool AgHasOfficial(AgDraft d) => d.SteamAppId != null && d.Official.Count > 0;
+
+    /// <summary>右栏当前页签能聚焦的格数（不算官方按钮）。</summary>
     private int AgRightCount()
     {
         var d = _agDraft;
         if (d == null) return 0;
-        if (_agTab >= AgTabOfficial) return AgStackKinds().Count;
+        if (_agTab == AgTabOverview) return AgOverviewTargets(d).Count;
         string kind = AgTabKinds[_agTab];
         int n = d.Cands[kind].Count;
         return n + (kind == "logo" && n > 0 ? 1 : 0);
@@ -403,6 +405,7 @@ public sealed partial class WallStage
         var d = _agDraft;
         if (d == null) return;
         if (_agPopOpen) { AgPopMove(dir); return; }
+        if (_agOffKind != null) return;
         if (_agEditing != null) AgEndEdit(true);
         int dx = dir == Direction.Left ? -1 : dir == Direction.Right ? 1 : 0, dy = dir == Direction.Up ? -1 : dir == Direction.Down ? 1 : 0;
         switch (_agPage)
@@ -434,6 +437,7 @@ public sealed partial class WallStage
     {
         var rows = AgArtRows(d);
         int n = AgRightCount();
+        int LastRow() => rows.FindLastIndex(r => !r.Section);
         switch (_agZone)
         {
             case 0:   // 左栏的行
@@ -448,15 +452,24 @@ public sealed partial class WallStage
                     // 行里能左右改的（加入 Steam）先改值，其余往右栏走
                     if (_agIndex < rows.Count && rows[_agIndex].Choices != null && rows[_agIndex].Step != null && !rows[_agIndex].Disabled && rows[_agIndex].Choice == 0) rows[_agIndex].Step!(1);
                     else if (n > 0) { _agZone = 1; _agIndex = Math.Min(AgRightDefault(d), n - 1); }
+                    else if (_agTab != AgTabOverview && AgHasOfficial(d)) { _agZone = 1; _agIndex = AgOffBtn; }
                     else { _agZone = 2; _agIndex = 0; }
                 }
                 else if (dx < 0 && _agIndex < rows.Count && rows[_agIndex].Choices != null && rows[_agIndex].Step != null && !rows[_agIndex].Disabled) rows[_agIndex].Step!(-1);
                 break;
             case 1:   // 右栏
-                if (_agTab >= AgTabOfficial)
+                if (_agTab == AgTabOverview)
                 {
-                    if (dy > 0) { if (_agIndex < n - 1) _agIndex++; else { _agZone = 2; _agIndex = 0; } }
-                    else if (dy < 0 && _agIndex > 0) _agIndex--;
+                    var targets = AgOverviewTargets(d);
+                    int next = AgSpatial(targets.Select(t => t.R).ToList(), _agIndex, dx, dy);
+                    if (next >= 0) _agIndex = next;
+                    else if (dx < 0) { _agZone = 0; _agIndex = AgFirstRow(rows); }
+                    else if (dy > 0) { _agZone = 2; _agIndex = 0; }
+                    break;
+                }
+                if (_agIndex == AgOffBtn)
+                {
+                    if (dy > 0) { if (n > 0) _agIndex = 0; else { _agZone = 2; _agIndex = 0; } }
                     else if (dx < 0) { _agZone = 0; _agIndex = AgFirstRow(rows); }
                     break;
                 }
@@ -467,23 +480,45 @@ public sealed partial class WallStage
                     else _agIndex = Math.Clamp(_agIndex + dx, 0, n - 1);
                 }
                 else if (dy > 0) { if (_agIndex + cols < n) _agIndex += cols; else if (_agIndex / cols < (n - 1) / cols) _agIndex = n - 1; else { _agZone = 2; _agIndex = 0; } }
-                else if (dy < 0 && _agIndex - cols >= 0) _agIndex -= cols;
+                else if (dy < 0) { if (_agIndex - cols >= 0) _agIndex -= cols; else if (AgHasOfficial(d)) _agIndex = AgOffBtn; }
                 break;
             default:  // 完成
-                if (dy < 0) { if (n > 0) { _agZone = 1; _agIndex = n - 1; } else { _agZone = 0; _agIndex = rows.FindLastIndex(r => !r.Section); } }
-                else if (dx < 0) { _agZone = 0; _agIndex = rows.FindLastIndex(r => !r.Section); }
+                if (dy < 0) { if (n > 0) { _agZone = 1; _agIndex = n - 1; } else { _agZone = 0; _agIndex = LastRow(); } }
+                else if (dx < 0) { _agZone = 0; _agIndex = LastRow(); }
                 break;
         }
     }
 
+    /// <summary>按位置走：这个方向上中心点最近的一个（-1 = 这边没有了）。</summary>
+    private static int AgSpatial(List<Rect> rects, int from, int dx, int dy)
+    {
+        if (from < 0 || from >= rects.Count) return rects.Count > 0 ? 0 : -1;
+        var c = rects[from];
+        double cx = c.X + c.Width / 2, cy = c.Y + c.Height / 2;
+        int best = -1; double bestD = double.MaxValue;
+        for (int i = 0; i < rects.Count; i++)
+        {
+            if (i == from) continue;
+            var r = rects[i];
+            double x = r.X + r.Width / 2, y = r.Y + r.Height / 2, ddx = x - cx, ddy = y - cy;
+            bool ok = dx > 0 ? ddx > 4 : dx < 0 ? ddx < -4 : dy > 0 ? ddy > 4 : ddy < -4;
+            if (!ok) continue;
+            // 主方向的距离 + 2 倍的偏离
+            double dist = dx != 0 ? Math.Abs(ddx) + 2 * Math.Abs(ddy) : Math.Abs(ddy) + 2 * Math.Abs(ddx);
+            if (dist < bestD) { bestD = dist; best = i; }
+        }
+        return best;
+    }
+
     /// <summary>进右栏时落在哪：图种页签落在正在用的那张。</summary>
-    private int AgRightDefault(AgDraft d) => _agTab < AgTabOfficial ? Math.Max(0, d.Pick[AgTabKinds[_agTab]]) : 0;
+    private int AgRightDefault(AgDraft d) => _agTab < AgTabOverview ? Math.Max(0, d.Pick[AgTabKinds[_agTab]]) : 0;
 
     private void AgActivate()
     {
         var d = _agDraft;
         if (d == null) return;
         if (_agPopOpen) { AgPopEnter(); return; }
+        if (_agOffKind != null) { AgUseOfficial(d, _agOffKind); return; }
         if (_agEditing != null) { AgEndEdit(true); return; }
         NavHaptic("select");
         switch (_agPage)
@@ -500,16 +535,22 @@ public sealed partial class WallStage
         }
     }
 
-    /// <summary>右栏按 A：图种页 = 换成这张；官方页 = 换成官方的；概览 = 去那种图的页签（图标 = 从本地选）。</summary>
+    /// <summary>右栏按 A：图种页 = 换成这张（官方按钮 = 弹出官方图）；概览 = 图去那种图的页签，「从本地选择」= 选文件。</summary>
     private void AgRightPress(AgDraft d, int index)
     {
-        if (_agTab < AgTabOfficial) { AgReplace(d, AgTabKinds[_agTab], index); return; }
-        var kinds = AgStackKinds();
-        if (index < 0 || index >= kinds.Count) return;
-        string kind = kinds[index];
-        if (_agTab == AgTabOfficial) { AgUseOfficial(d, kind, index); return; }
-        if (kind == "icon") { _ = AgPickLocalIcon(d); return; }
-        _agTab = Array.IndexOf(AgTabKinds, kind);
+        if (_agTab < AgTabOverview)
+        {
+            if (index == AgOffBtn) AgOpenOfficial(AgTabKinds[_agTab]);
+            else AgReplace(d, AgTabKinds[_agTab], index);
+            return;
+        }
+        var targets = AgOverviewTargets(d);
+        if (index < 0 || index >= targets.Count) return;
+        var t = targets[index];
+        if (t.Local) { _ = AgPickLocal(d, t.Kind); return; }
+        int tab = Array.IndexOf(AgTabKinds, t.Kind);
+        if (tab < 0) { _ = AgPickLocal(d, t.Kind); return; }   // 图标只有本地这一种来源
+        _agTab = tab;
         _agScroll = 0;
         _agIndex = AgRightDefault(d);
         AgPaint();
@@ -528,40 +569,55 @@ public sealed partial class WallStage
         AgPaint();
     }
 
-    private void AgUseOfficial(AgDraft d, string kind, int index)
+    /// <summary>「Steam 官方封面」弹窗：这一种图在 Steam 商店里的官方版本，A 用它，B 关。</summary>
+    private void AgOpenOfficial(string kind)
     {
-        if (!d.Official.TryGetValue(kind, out var o)) return;
-        var list = d.Cands[kind];
-        int at = list.FindIndex(c => c.Url == o.Url);
-        if (at < 0) { list.Add((o.Url, o.Thumb)); at = list.Count - 1; }
-        if (d.Pick[kind] == at) return;
-        d.Pick[kind] = at;
-        AgFlash(AgStackRects()[index].Image);
-        Toast($"已换成 Steam 官方的{AgKindTitle(kind)}");
+        _agOffKind = kind;
+        NavHaptic("select");
         AgPaint();
     }
 
-    /// <summary>图标从本地选：系统的选文件窗口（触屏、鼠标都能用），选好就用上。</summary>
-    private async Task AgPickLocalIcon(AgDraft d)
+    private void AgCloseOfficial()
+    {
+        _agOffKind = null;
+        AgPaint();
+    }
+
+    private void AgUseOfficial(AgDraft d, string kind)
+    {
+        _agOffKind = null;
+        if (!d.Official.TryGetValue(kind, out var o)) { AgPaint(); return; }
+        var list = d.Cands[kind];
+        int at = list.FindIndex(c => c.Url == o.Url);
+        if (at < 0) { list.Add((o.Url, o.Thumb)); at = list.Count - 1; }
+        d.Pick[kind] = at;
+        _agZone = 1;
+        _agIndex = at;
+        AgPaint();
+        AgFlash(AgGridTile(kind, at));
+        Toast($"已换成 Steam 官方的{AgKindTitle(kind)}");
+    }
+
+    /// <summary>从本地选一张（系统的选文件窗口，触屏、鼠标都能用），选好就用上。</summary>
+    private async Task AgPickLocal(AgDraft d, string kind)
     {
         try
         {
             var picker = new Windows.Storage.Pickers.FileOpenPicker { ViewMode = Windows.Storage.Pickers.PickerViewMode.Thumbnail };
-            foreach (var ext in new[] { ".png", ".ico", ".jpg", ".jpeg", ".webp" }) picker.FileTypeFilter.Add(ext);
+            foreach (var ext in new[] { ".png", ".jpg", ".jpeg", ".webp", ".ico" }) picker.FileTypeFilter.Add(ext);
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(_window));
             var file = await picker.PickSingleFileAsync();
             if (file == null || _agDraft != d) return;
-            var list = d.Cands["icon"];
+            var list = d.Cands[kind];
             string url = "file:" + file.Path;
             int at = list.FindIndex(c => c.Url == url);
             if (at < 0) { list.Add((url, file.Path)); at = list.Count - 1; }
-            d.Pick["icon"] = at;
-            int i = AgStackKinds().IndexOf("icon");
-            if (i >= 0) AgFlash(AgStackRects()[i].Image);
-            Toast("已换图标");
+            d.Pick[kind] = at;
+            if (AgOverviewSlots().TryGetValue(kind, out var slot)) AgFlash(slot);
+            Toast($"已换{AgKindTitle(kind)}");
             AgPaint();
         }
-        catch (Exception ex) { Log.Warn($"pick icon: {ex.Message}"); Toast("没能打开选文件窗口"); }
+        catch (Exception ex) { Log.Warn($"pick local {kind}: {ex.Message}"); Toast("没能打开选文件窗口"); }
     }
 
     private void AgFlash(Rect r)
@@ -578,6 +634,7 @@ public sealed partial class WallStage
     private void AgBack()
     {
         if (_agPopOpen) { AgClosePop(); return; }
+        if (_agOffKind != null) { AgCloseOfficial(); return; }
         if (_agEditing != null) { AgEndEdit(false); return; }
         if (_agPage == AgPage.Category) { AgGo(AgPage.Art); return; }
         AgClose();
@@ -586,14 +643,14 @@ public sealed partial class WallStage
     /// <summary>LB / RB：右栏换页签。</summary>
     private void AgSwitchTab(int delta)
     {
-        if (_agDraft == null || _agPopOpen || _agPage != AgPage.Art) return;
+        if (_agDraft == null || _agPopOpen || _agOffKind != null || _agPage != AgPage.Art) return;
         if (_agEditing != null) AgEndEdit(true);
         _agTab = (_agTab + delta + AgTabNames.Length) % AgTabNames.Length;
         _agScroll = 0;
         if (_agZone == 1)
         {
             int n = AgRightCount();
-            if (n == 0) { _agZone = 0; _agIndex = AgFirstRow(AgArtRows(_agDraft)); }
+            if (n == 0) { if (_agTab != AgTabOverview && AgHasOfficial(_agDraft)) _agIndex = AgOffBtn; else { _agZone = 0; _agIndex = AgFirstRow(AgArtRows(_agDraft)); } }
             else _agIndex = Math.Min(AgRightDefault(_agDraft), n - 1);
         }
         NavHaptic("tab");
@@ -604,13 +661,13 @@ public sealed partial class WallStage
     private void AgY()
     {
         if (_agPopOpen) { _agPopIndex = -1; AgPopFocusBox(); AgPaintPop(); }
-        else if (_agPage == AgPage.Art) AgOpenPop();
+        else if (_agPage == AgPage.Art && _agOffKind == null) AgOpenPop();
     }
 
     /// <summary>X：分类。</summary>
     private void AgX()
     {
-        if (!_agPopOpen && _agPage == AgPage.Art && _agDraft is { Steam: true }) AgGo(AgPage.Category);
+        if (!_agPopOpen && _agOffKind == null && _agPage == AgPage.Art && _agDraft is { Steam: true }) AgGo(AgPage.Category);
     }
 
     private void AgClick(double sx, double sy)
@@ -618,6 +675,12 @@ public sealed partial class WallStage
         float x = (float)sx / _ccK, y = (float)sy / _ccK;
         var p = new Point(x, y);
         if (_agPopOpen) { AgPopClick(p); return; }
+        if (_agOffKind != null)
+        {
+            if (_agOffUse.Contains(p) && _agDraft != null) AgUseOfficial(_agDraft, _agOffKind);
+            else if (!_agOffPanel.Contains(p)) AgCloseOfficial();
+            return;
+        }
         foreach (var (r, i) in _agTabHits)
             if (r.Contains(p)) { AgSwitchTab(i - _agTab); return; }
         foreach (var h in _agHits)
@@ -758,7 +821,7 @@ public sealed partial class WallStage
                     default: AgPaintCategory(s, d); break;
                 }
             }
-            if (!_agPopOpen) { Page(ds); return; }
+            if (!_agPopOpen && _agOffKind == null) { Page(ds); return; }
             // 弹窗开着：页面糊一层（一次性画成模糊图，不是实时毛玻璃），点击只给弹窗
             using var cl = new CanvasCommandList(ds);
             using (var cds = cl.CreateDrawingSession()) Page(cds);
@@ -767,6 +830,7 @@ public sealed partial class WallStage
             ds.DrawImage(blur);
             _agHits.Clear();
             _agTabHits.Clear();
+            if (_agOffKind != null && !_agPopOpen) AgPaintOfficial(ds, d);
         }));
         _agSprite.Size = new Vector2(1280 * k, 800 * k);
         _agSprite.Offset = Vector3.Zero;
@@ -844,23 +908,24 @@ public sealed partial class WallStage
         ds.DrawRectangle(new Rect(r.X - 1.5, r.Y - 1.5, r.Width + 3, r.Height + 3), CcText, 3);
     }
 
-    // 两栏（和性能、设置页同一套位置）：左栏 40–388 放信息，右栏 428–1240 放封面；右栏内容到 708，下面是「完成」
-    /// <summary>左栏第一行的顶：和设置页右栏第一行同一高度（标题下面空一个节头）。</summary>
-    private const float AgRowsY = PerfTop + PerfSecH;
-    private const float AgLeftW = PerfLeftW, AgRightX = PerfRightX, AgRightW = PerfRightW, AgContentTop = PerfTop + PerfSecH, AgContentBottom = 708;
+    // 两栏（和性能、设置页同一套位置）：左栏 40–388 放信息，右栏 428–1240 放封面；右栏内容到 708，下面是「完成」。
+    // 两栏顶上同一行：左边小字「游戏」，右边是封面页签（和截图页的页签同款）＋右头「Steam 官方封面」按钮。
+    private const float AgBandY = 112, AgRowsY = 150;
+    private const float AgLeftW = PerfLeftW, AgRightX = PerfRightX, AgRightW = PerfRightW, AgContentTop = 150, AgContentBottom = 708;
+
+    /// <summary>「Steam 官方封面」弹窗开着时是哪种图（null = 没开）；弹窗面板和「用这张」按钮的位置（点击用）。</summary>
+    private string? _agOffKind;
+    private Rect _agOffPanel, _agOffUse;
 
     private void AgPaintArt(CanvasDrawingSession ds, AgDraft d)
     {
-        float tx = AgTitle(ds, d.Id == null ? "添加游戏" : "编辑游戏");
-        var counts = AgTabNames.Select((t, i) => (t, i < AgTabOfficial
-            ? d.Pending.Contains(AgTabKinds[i]) ? (string?)"…" : d.Cands[AgTabKinds[i]].Count(c => c.Url != null && !c.Url.StartsWith("file:")).ToString()
-            : null)).ToList();
-        AgTabs(ds, counts, _agTab, tx);
+        AgTitle(ds, d.Id == null ? "添加游戏" : "编辑游戏");
 
-        // 左栏：信息行 + 程序路径
+        // 左栏：小字 + 信息行 + 程序路径
+        PText(ds, "游戏", TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.42), 40, AgBandY, 200);
         var rows = AgArtRows(d);
         var old = ds.Transform;
-        // 行名左边和标题、程序路径对齐（行名在行里缩进 36，焦点三角落在页边距里，和设置页左栏一样）
+        // 行名左边和标题对齐（行名在行里缩进 36，焦点三角落在页边距里，和设置页左栏一样）
         ds.Transform = Matrix3x2.CreateTranslation(40 - 36, AgRowsY) * old;
         PaintRowList(ds, rows, _agZone == 0 ? _agIndex : -1, null, false, AgLeftW + 36);
         ds.Transform = old;
@@ -875,13 +940,49 @@ public sealed partial class WallStage
         using (var pl = TextKit.Layout(ds, d.Exe, TextKit.Ui(400), 14, AgLeftW, CanvasHorizontalAlignment.Left, maxLines: 3))
             ds.DrawTextLayout(pl, 40, y + 46, AgMuted);
 
-        // 右栏
-        using (ds.CreateLayer(1, new Rect(AgRightX - 8, PerfTop - 8, AgRightW + 16, AgContentBottom - PerfTop + 16)))
+        // 右栏：页签 + 官方按钮
+        var counts = AgTabNames.Select((t, i) => (t, i < AgTabOverview
+            ? d.Pending.Contains(AgTabKinds[i]) ? (string?)"…" : d.Cands[AgTabKinds[i]].Count(c => c.Url != null && !c.Url.StartsWith("file:")).ToString()
+            : null)).ToList();
+        AgTabsAt(ds, counts, _agTab, AgRightX - 12, AgBandY);
+        if (_agTab < AgTabOverview && AgHasOfficial(d))
         {
-            if (_agTab < AgTabOfficial) AgPaintGrid(ds, d, AgTabKinds[_agTab]);
-            else AgPaintStack(ds, d);
+            var f = TextKit.Ui(500);
+            float tw = PWidth(ds, "Steam 官方封面", f, 14), bw = tw + 32;
+            var b = new Rect(AgRightX + AgRightW - bw, AgBandY - 16, bw, 32);
+            bool bf = _agZone == 1 && _agIndex == AgOffBtn;
+            ds.FillRoundedRectangle(b, 10, 10, bf ? Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.96) : Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.12));
+            PText(ds, "Steam 官方封面", f, 14, bf ? Gfx.Rgba(9, 9, 11) : CcText, (float)b.X, AgBandY, (float)bw, CanvasHorizontalAlignment.Center);
+            _agHits.Add((b, 1, AgOffBtn, () => AgOpenOfficial(AgTabKinds[_agTab])));
+        }
+
+        using (ds.CreateLayer(1, new Rect(AgRightX - 8, AgContentTop - 8, AgRightW + 16, AgContentBottom - AgContentTop + 16)))
+        {
+            if (_agTab < AgTabOverview) AgPaintGrid(ds, d, AgTabKinds[_agTab]);
+            else AgPaintOverview(ds, d);
         }
         AgDone(ds, _agZone == 2, () => AgFinish(d));
+    }
+
+    /// <summary>页签（截图页同款）画在给定的中线上：名字 17，后面小号数字；当前白字 + 2 px 下划线，其余 45 %。</summary>
+    private void AgTabsAt(CanvasDrawingSession ds, IReadOnlyList<(string Name, string? Count)> tabs, int current, float x0, float cy)
+    {
+        const float Pad = 12, Gap = 6;
+        var ui = TextKit.Ui(400);
+        float x = x0;
+        for (int i = 0; i < tabs.Count; i++)
+        {
+            bool cur = i == current;
+            float nw = PWidth(ds, tabs[i].Name, ui, 17);
+            float cw = tabs[i].Count is { } c ? PWidth(ds, c, AgMono, 13) : 0;
+            var col = cur ? CcText : Gfx.WithAlpha(CcText, 0.45);
+            PText(ds, tabs[i].Name, ui, 17, col, x + Pad, cy, nw + 4);
+            if (tabs[i].Count is { } count) PText(ds, count, AgMono, 13, Gfx.WithAlpha(CcText, cur ? 0.5 : 0.4), x + Pad + nw + Gap, cy + 1, cw + 4);
+            if (cur) ds.FillRectangle(x + Pad, cy + 13, nw, 2, CcText);
+            float w = Pad + nw + (cw > 0 ? Gap + cw : 0) + Pad;
+            _agTabHits.Add((new Rect(x, cy - 22, w, 44), i));
+            x += w + 8;
+        }
     }
 
     private static (int Cols, float W, float H, bool Contain) AgGridGeo(string kind) => kind switch
@@ -906,7 +1007,7 @@ public sealed partial class WallStage
         var list = d.Cands[kind];
         int n = AgRightCount(), pick = d.Pick[kind];
         float rowH = h + 20, view = AgContentBottom - AgContentTop;
-        if (_agZone == 1)
+        if (_agZone == 1 && _agIndex >= 0)
         {
             int frow = _agIndex / cols;
             if (frow * rowH < _agScroll) _agScroll = frow * rowH;
@@ -937,71 +1038,76 @@ public sealed partial class WallStage
         }
     }
 
-    /// <summary>官方封面 / 封面概览：从上到下 封面图片、背景、徽标、宽幅封面图片（概览再加图标），每种上面一行小字。</summary>
-    private List<(string Kind, Rect Label, Rect Image)> AgStackRects()
+    /// <summary>封面概览：一屏放下五种图——左上封面图片，右上背景，背景下面宽幅封面图片和徽标并排，封面图片下面图标。</summary>
+    private static Dictionary<string, Rect> AgOverviewSlots() => new()
     {
-        var list = new List<(string, Rect, Rect)>();
-        float y = AgContentTop - _agScroll;
-        foreach (var kind in AgStackKinds())
+        ["p"] = new Rect(AgRightX, AgContentTop + 24, 180, 270),
+        ["hero"] = new Rect(AgRightX + 208, AgContentTop + 24, 604, 195),
+        ["header"] = new Rect(AgRightX + 208, AgContentTop + 293, 290, 136),
+        ["logo"] = new Rect(AgRightX + 522, AgContentTop + 293, 290, 136),
+        ["icon"] = new Rect(AgRightX, AgContentTop + 372, 96, 96),
+    };
+
+    /// <summary>概览里能聚焦的：每种图本身（A 去它的页签；图标 = 本地选），和它的「从本地选择」。</summary>
+    private List<(Rect R, string Kind, bool Local)> AgOverviewTargets(AgDraft d)
+    {
+        var list = new List<(Rect, string, bool)>();
+        foreach (var (kind, r) in AgOverviewSlots())
         {
-            var (w, h) = kind switch
-            {
-                "p" => (200f, 300f),
-                "hero" => (AgRightW, AgRightW / 3.1f),
-                "logo" => (420f, 160f),
-                "header" => (420f, 196f),
-                _ => (128f, 128f),
-            };
-            // 小字在图上方，第一行小字和设置页的节头同一高度，图和左栏第一行齐
-            var label = new Rect(AgRightX, y - 24, AgRightW, 20);
-            var image = new Rect(AgRightX, y, w, h);
-            list.Add((kind, label, image));
-            y += h + 60;
+            list.Add((r, kind, false));
+            list.Add((AgLocalButton(kind, r), kind, true));
         }
         return list;
     }
 
-    private void AgPaintStack(CanvasDrawingSession ds, AgDraft d)
+    private static Rect AgLocalButton(string kind, Rect img) =>
+        new Rect(img.X, img.Y + img.Height + 8, 112, 30);
+
+    private void AgPaintOverview(CanvasDrawingSession ds, AgDraft d)
     {
-        bool official = _agTab == AgTabOfficial;
-        var rects = AgStackRects();
-        // 焦点那一块露出来
-        if (_agZone == 1 && _agIndex < rects.Count)
+        var targets = AgOverviewTargets(d);
+        for (int i = 0; i < targets.Count; i++)
         {
-            var f = rects[_agIndex];
-            double top = f.Label.Y, bottom = f.Image.Y + f.Image.Height;
-            if (top < PerfTop + 8) _agScroll -= (float)(PerfTop + 8 - top);
-            else if (bottom > AgContentBottom) _agScroll += (float)(bottom - AgContentBottom);
-            rects = AgStackRects();
-        }
-        for (int i = 0; i < rects.Count; i++)
-        {
-            var (kind, label, image) = rects[i];
-            if (image.Y > AgContentBottom + 8 || image.Y + image.Height < PerfTop - 30) continue;
+            var (r, kind, local) = targets[i];
             bool focused = _agZone == 1 && i == _agIndex;
-            string? thumb;
-            bool inUse = false;
-            if (official)
-            {
-                thumb = d.Official.TryGetValue(kind, out var o) ? o.Thumb : null;
-                inUse = thumb != null && d.Pick[kind] >= 0 && d.Pick[kind] < d.Cands[kind].Count && d.Cands[kind][d.Pick[kind]].Url == d.Official[kind].Url;
-            }
-            else thumb = d.Pick[kind] >= 0 && d.Pick[kind] < d.Cands[kind].Count ? d.Cands[kind][d.Pick[kind]].Thumb : null;
-            PText(ds, AgKindTitle(kind), TextKit.Ui(500), 13, focused ? CcText : Gfx.WithAlpha(CcText, 0.42), (float)label.X, (float)label.Y + 10, (float)label.Width);
-            AgImage(ds, image, thumb, kind is "logo" or "icon", focused, official ? d.SteamAppId != null && d.Official.Count == 0 : d.Pending.Contains(kind));
-            if (inUse) AgInUse(ds, image);
-            if (kind == "icon" && !official)
-            {
-                // 图标：本地上传（概览里唯一的按钮）
-                var f = TextKit.Ui(500);
-                float tw = PWidth(ds, "从本地选择", f, 15), bw = tw + 36, bh = 40;
-                var b = new Rect(image.X + image.Width + 24, image.Y + (image.Height - bh) / 2, bw, bh);
-                ds.FillRoundedRectangle(b, 12, 12, focused ? Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.96) : Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.14));
-                PText(ds, "从本地选择", f, 15, focused ? Gfx.Rgba(9, 9, 11) : CcText, (float)b.X, (float)(b.Y + bh / 2), (float)bw, CanvasHorizontalAlignment.Center);
-                _agHits.Add((b, 1, i, () => _ = AgPickLocalIcon(d)));
-            }
             int idx = i;
-            _agHits.Add((image, 1, idx, () => AgRightPress(d, idx)));
+            if (local)
+            {
+                var f = TextKit.Ui(500);
+                ds.FillRoundedRectangle(r, 10, 10, focused ? Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.96) : Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.12));
+                PText(ds, "从本地选择", f, 14, focused ? Gfx.Rgba(9, 9, 11) : CcText, (float)r.X, (float)(r.Y + r.Height / 2), (float)r.Width, CanvasHorizontalAlignment.Center);
+                _agHits.Add((r, 1, idx, () => _ = AgPickLocal(d, kind)));
+                continue;
+            }
+            string? thumb = d.Pick[kind] >= 0 && d.Pick[kind] < d.Cands[kind].Count ? d.Cands[kind][d.Pick[kind]].Thumb : null;
+            bool labelFocus = focused || (i + 1 < targets.Count && _agZone == 1 && _agIndex == i + 1);
+            PText(ds, AgKindTitle(kind), TextKit.Ui(500), 13, labelFocus ? CcText : Gfx.WithAlpha(CcText, 0.42), (float)r.X, (float)r.Y - 14, (float)r.Width);
+            AgImage(ds, r, thumb, kind is "logo" or "icon", focused, d.Pending.Contains(kind));
+            _agHits.Add((r, 1, idx, () => AgRightPress(d, idx)));
+        }
+    }
+
+    /// <summary>「Steam 官方封面」弹窗：和匹配弹窗同一种面板（强调色压暗），里面是这一种图的官方版本和「用这张」。</summary>
+    private void AgPaintOfficial(CanvasDrawingSession ds, AgDraft d)
+    {
+        string kind = _agOffKind!;
+        ds.FillRectangle(0, 0, 1280, 800, Gfx.Rgba(0, 0, 0, 0.45));
+        var (iw, ih) = kind switch { "p" => (240f, 360f), "hero" => (512f, 165f), "logo" => (420f, 160f), _ => (420f, 196f) };
+        float pw = 560, ph = 52 + ih + 24 + 44 + 24;
+        float px = (1280 - pw) / 2, py = (800 - ph) / 2;
+        _agOffPanel = new Rect(px, py, pw, ph);
+        ds.FillRoundedRectangle(_agOffPanel, 18, 18, Gfx.WithAlpha(Gfx.Mix(Theme.Bg, 0.78, PerfAccent), 0.96));
+        PText(ds, $"Steam 官方 · {AgKindTitle(kind)}", TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.55), px + 24, py + 30, pw - 48);
+        var img = new Rect(px + (pw - iw) / 2, py + 52, iw, ih);
+        bool has = d.Official.TryGetValue(kind, out var o);
+        AgImage(ds, img, has ? o.Thumb : null, kind == "logo", false);
+        var f = TextKit.Ui(600);
+        float bw = 140, bh = 44;
+        _agOffUse = has ? new Rect(px + (pw - bw) / 2, img.Y + ih + 24, bw, bh) : Rect.Empty;
+        if (has)
+        {
+            ds.FillRoundedRectangle(_agOffUse, 12, 12, Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.96));
+            PText(ds, "用这张", f, 17, Gfx.Rgba(9, 9, 11), (float)_agOffUse.X, (float)(_agOffUse.Y + bh / 2), bw, CanvasHorizontalAlignment.Center);
         }
     }
 
