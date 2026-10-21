@@ -411,17 +411,28 @@ public static class Bench
                 case "control2": s.ToggleControlCenter(); await Task.Delay(900); s.Move(Direction.Right); await Task.Delay(260); s.Move(Direction.Right); break;
                 case "nav": for (int i = 0; i < 3; i++) { s.Move(Direction.Right); await Task.Delay(250); } break;
                 case "rail" or "railtab" or "settings" or "search" or "searchresults": s.RailTestState(state); break;
-                case "add0" or "add1" or "add2" or "add3":
+                case "ccpage1" or "ccpage2" or "ccpage3" or "ccpage4" or "ccpage5":
+                    // 控制中心第 N 块的页面（1 性能 … 5 设置），对齐参照用
+                    s.ToggleControlCenter();
+                    await Task.Delay(1500);
+                    for (int i = 0; i < state[6] - '0'; i++) { s.Move(Direction.Right); await Task.Delay(300); }
+                    await Task.Delay(800);
+                    s.Activate();
+                    break;
+                case "add0" or "add1" or "add2" or "add3" or "add4" or "add5" or "add6":
                 {
-                    // 添加游戏页：add0 = 选定游戏，add1 = 选图（竖封面），add2 = 选图（标志页签），add3 = 分类
+                    // 添加游戏：add0 选定游戏，add1 封面，add2 游戏库里，add3 分类，add4 更换（竖封面），add5 Steam 官方
                     s.ToggleControlCenter();
                     await Task.Delay(1500);
                     s.AddGameTestState(Program.Args.FirstOrDefault(a => a.StartsWith("--exe="))?[6..] ?? @"C:\Windows
 otepad.exe");
-                    await Task.Delay(20000);
+                    await Task.Delay(12000);
                     if (state != "add0") { s.Activate(); await Task.Delay(9000); }
-                    if (state == "add2") { s.SwitchTab(1); await Task.Delay(300); s.SwitchTab(1); await Task.Delay(300); s.SwitchTab(1); await Task.Delay(1500); }
+                    if (state == "add2") { s.SwitchTab(1); await Task.Delay(1500); }
                     if (state == "add3") { s.PadX(); await Task.Delay(1000); }
+                    if (state == "add4") { s.Activate(); await Task.Delay(4000); s.Move(Direction.Right); await Task.Delay(1500); }
+                    if (state == "add5") { s.SwitchTab(-1); await Task.Delay(2500); }
+                    if (state == "add6") { s.Move(Direction.Down); await Task.Delay(400); s.Activate(); await Task.Delay(1500); }
                     break;
                 }
                 case "shots0" or "shots1" or "shots2" or "shotsv" or "shotsnav" or "shotsf":

@@ -521,11 +521,11 @@ public sealed partial class WallStage
     }
 
     /// <summary>控制中心子页右栏的设置列表（性能、手柄共用）：分组标题、行号、焦点 ▸、几选一下划线、焦点数值 ‹ ›。</summary>
-    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus, List<SettingsPointerTarget>? targets = null, bool numbers = true)
+    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus, List<SettingsPointerTarget>? targets = null, bool numbers = true, float listWidth = PerfRightW)
     {
         var ui = TextKit.Ui(400);
         var mono = new FontSpec("Cascadia Mono", 400);
-        float y = 0, W = PerfRightW;
+        float y = 0, W = listWidth;
         int n = 0;
         for (int i = 0; i < rows.Count; i++)
         {

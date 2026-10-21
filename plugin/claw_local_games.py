@@ -416,7 +416,7 @@ class LocalGames:
             items = self._json(url, quick=True).get("items") or []
         except (OSError, ValueError):
             return []
-        return [{"id": str(i["id"]), "name": i.get("name", ""), "source": "steam", "year": None}
+        return [{"id": str(i["id"]), "name": i.get("name", ""), "source": "steam", "year": None, "steamAppId": str(i["id"])}
                 for i in items[:6] if i.get("type", "app") == "app"]
 
     def _steam_english_name(self, appid):
@@ -483,7 +483,8 @@ class LocalGames:
                 if not found_name:
                     return []
                 try:
-                    return self._sgdb_search(found_name)[:2]
+                    # Remember which store app it came from: the page offers that app's official images too
+                    return [{**m, "steamAppId": app["id"]} for m in self._sgdb_search(found_name)[:2]]
                 except (PermissionError, OSError, ValueError):
                     return []
             with ThreadPoolExecutor(3) as inner:
@@ -541,6 +542,13 @@ class LocalGames:
         if not result and not status:
             status = "未找到"
         return {"query": term, "matches": result, "status": status}
+
+    def official(self, appid):
+        """A Steam store app's own library images (remote urls): {p, header, hero, logo}."""
+        if not str(appid).isdigit():
+            raise ValueError("appid 格式错误")
+        lists = self._store_assets(str(appid))
+        return {k: v for k, v in lists.items() if k != "icon"}
 
     def candidates(self, match, only=None, previews=True):
         """Images for one match, with local previews: {p, header, hero, logo, icon: [{url, thumb}]}. only = one kind
@@ -659,7 +667,7 @@ class LocalGames:
             old.pop("newCollection", None)
             old.update(name=name, exe=exe, dir=os.path.dirname(exe), args=str(game.get("args", ""))[:500],
                        steam=bool(game.get("steam", True)), collections=collections, newCollections=new_collections,
-                       sgdb=game.get("sgdb"))
+                       sgdb=game.get("sgdb"), steamAppId=str(game["steamAppId"]) if str(game.get("steamAppId") or "").isdigit() else None)
             self._save(games)
         art = self._art_files(old["id"], game.get("art"))
         with self._lock:

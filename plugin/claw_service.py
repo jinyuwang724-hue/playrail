@@ -1022,6 +1022,11 @@ class Service:
         """previews=False: remote preview urls (ClawLibrary downloads them itself, tile by tile)."""
         return await asyncio.to_thread(self._local_games.candidates, match, kind, previews is not False)
 
+    async def local_games_official(self, appid):
+        if not isinstance(appid, str) or not appid.isdigit():
+            raise ValueError("appid 格式错误")
+        return await asyncio.to_thread(self._local_games.official, appid)
+
     async def local_games_save(self, game):
         return await asyncio.to_thread(self._local_games.save, game)
 
