@@ -622,6 +622,18 @@ class LocalGames:
             if url == "":
                 for old in self.art.glob(ident + suffix + ".*"):
                     old.unlink(missing_ok=True)
+            elif isinstance(url, str) and url.startswith("file:"):
+                # Picked from the user's own disk (the icon's 从本地选择): copied, not downloaded
+                src = Path(url[5:])
+                ext = src.suffix.lower()
+                if ext not in (".png", ".ico", ".jpg", ".jpeg", ".webp") or not src.is_file() or src.stat().st_size > MAX_IMAGE:
+                    raise ValueError("图片不能用")
+                self.art.mkdir(parents=True, exist_ok=True)
+                for old in self.art.glob(ident + suffix + ".*"):
+                    old.unlink(missing_ok=True)
+                target = self.art / (ident + suffix + ext)
+                shutil.copyfile(src, target)
+                files[kind] = str(target)
             elif url:
                 files[kind] = self._download(url, self.art, ident + suffix)
         return files

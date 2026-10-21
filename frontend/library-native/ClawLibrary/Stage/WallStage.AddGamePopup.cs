@@ -1,5 +1,5 @@
 // 添加游戏 › 匹配游戏弹窗：选完 exe 进添加页时弹出（之后「匹配」那一行 / Y 再打开）。
-// 样子照截图页的筛选面板：整页压暗，背后的页面糊一层；中间一块深色圆角面板，顶上一行小字，下面是搜索框（真输入框，
+// 样子照截图页的筛选面板：整页压暗，背后的页面糊一层；中间一块强调色压暗的圆角面板，顶上一行小字，下面是搜索框（真输入框，
 // 默认 exe 名，打字停半秒自动重搜，搜索中下划线上有一道光来回走），再下面是下拉列表：一行一款，左名称、右年份，
 // 焦点那行近白底深色字。弹出时面板从 0.96 弹到 1、压暗层淡入。A / 回车用焦点那款，B 关掉（不配图也行）。
 using System.Numerics;
@@ -226,7 +226,8 @@ public sealed partial class WallStage
         var dark = Gfx.Rgba(9, 9, 11);
         CcSet(_agPopPanel, CcDraw(AgPopW, h, raster, ds =>
         {
-            ds.FillRoundedRectangle(0, 0, AgPopW, h, 18, 18, Gfx.Rgba(9, 9, 11, 0.94));
+            // 底色：强调色压暗（和控制中心的封面取色一致），不是纯黑
+            ds.FillRoundedRectangle(0, 0, AgPopW, h, 18, 18, Gfx.WithAlpha(Gfx.Mix(Theme.Bg, 0.78, PerfAccent), 0.96));
             PText(ds, "匹配游戏", TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.42), 24, 30, 300);
             // 右上：几款；连不上 / 密钥无效时换成这两个字
             string count = d.Searching ? "" : d.Status is "连不上" or "密钥无效" ? d.Status : n.ToString();
