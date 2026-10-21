@@ -5,7 +5,7 @@ from ctypes import wintypes
 
 SOURCES = ("QS", "Claw")
 SYSTEM_ACTIONS = {"gamebar", "library", "controlCenter", "steamMainMenu", "steamQuickAccess",
-                  "steamLibrary", "magpieToggle", "keyboard", "screenshot", "volumeUp", "volumeDown", "mute"}
+                  "steamLibrary", "magpieToggle", "keyboard", "screenshot", "steamScreenshot", "volumeUp", "volumeDown", "mute"}
 DEFAULT_GENERAL = {"QS": {"type": "system", "action": "gamebar"},
                    "Claw": {"type": "system", "action": "library"}}
 LEGACY_ACTIONS = {"MainMenu": "steamMainMenu", "QuickAccess": "steamQuickAccess", "MagpieToggle": "magpieToggle"}

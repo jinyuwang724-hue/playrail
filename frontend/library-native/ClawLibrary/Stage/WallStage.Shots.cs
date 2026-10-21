@@ -412,7 +412,7 @@ public sealed partial class WallStage
 
     private void ShDelete(Capture c)
     {
-        if (!Captures.Recycle(c.Path)) { Toast("没有删掉：文件可能正被占用"); return; }
+        if (!Captures.Delete(c)) { Toast("没有删掉：文件可能正被占用"); return; }
         Log.Info($"shots: recycled {c.Path}");
         Toast("已移到回收站");
         _shAll.Remove(c);

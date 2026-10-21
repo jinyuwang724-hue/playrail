@@ -117,15 +117,15 @@ public sealed partial class WallStage
         new("0", 0x8B, "key:Num0", 4, 5.25f, 2), new(".", 0x89, "key:NumDecimal", 6, 5.25f),
     };
 
-    /// <summary>系统页：三列四行，与专用键共用。</summary>
+    /// <summary>系统页：三列（Claw 和 Windows / Steam / 声音和超分），与专用键共用。两种截图：Game Bar 的存进「捕获」，Steam 的进 Steam 截图。</summary>
     private static readonly GpCell[] GpSystemCells =
     {
-        new("Xbox Game Bar", 0, "sys:gamebar", 0, 0), new("Claw 游戏库", 0, "sys:library", 0, 1),
-        new("Claw 控制中心", 0, "sys:controlCenter", 0, 2), new("显示键盘", 0, "sys:keyboard", 0, 3),
+        new("Claw 游戏库", 0, "sys:library", 0, 0), new("Claw 控制中心", 0, "sys:controlCenter", 0, 1),
+        new("Xbox Game Bar", 0, "sys:gamebar", 0, 2), new("Game Bar 截图", 0, "sys:screenshot", 0, 3), new("显示键盘", 0, "sys:keyboard", 0, 4),
         new("Steam 左侧主菜单", 0, "sys:steamMainMenu", 1, 0), new("Steam 右侧快速访问", 0, "sys:steamQuickAccess", 1, 1),
-        new("截图", 0, "sys:screenshot", 1, 2), new("切换超分", 0, "sys:magpieToggle", 1, 3),
+        new("Steam 游戏库", 0, "sys:steamLibrary", 1, 2), new("Steam 截图", 0, "sys:steamScreenshot", 1, 3),
         new("音量 +", 0x99, "sys:volumeUp", 2, 0), new("音量 −", 0x9A, "sys:volumeDown", 2, 1),
-        new("静音", 0x9B, "sys:mute", 2, 2), new("Steam 游戏库", 0, "sys:steamLibrary", 2, 3),
+        new("静音", 0x9B, "sys:mute", 2, 2), new("切换超分", 0, "sys:magpieToggle", 2, 3),
     };
 
     private static GpCell[] GpChooserCells(int tab) => tab switch { 0 => GpPadCells, 1 => GpMouseCells, 2 => GpKeyboardCells, 3 => GpNumpadCells, _ => GpSystemCells };
@@ -596,7 +596,7 @@ public sealed partial class WallStage
     private const float GpTabY = 160, GpPadCell = 44;
     private const float GpKbU = 52, GpKbX = GpCx - 7.5f * GpKbU, GpKbY = 236, GpKbFnGap = 14;
     private const float GpNpU = 60, GpNpX = GpCx - 4 * GpNpU, GpNpY = 232;
-    private const float GpSysW = 200, GpSysH = 52, GpSysPitchX = 216, GpSysPitchY = 64, GpSysX = GpCx - (3 * GpSysPitchX - 16) / 2, GpSysY = 300;
+    private const float GpSysW = 200, GpSysH = 52, GpSysPitchX = 216, GpSysPitchY = 64, GpSysX = GpCx - (3 * GpSysPitchX - 16) / 2, GpSysY = 280;
     /// <summary>手柄页的线稿：580 宽，中心 (GpCx, 420)；鼠标页画的鼠标中心 (GpCx, 410)。</summary>
     private const float GpPadArtW = 580, GpPadArtCy = 420, GpMouseCy = 410;
 

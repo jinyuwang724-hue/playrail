@@ -285,7 +285,7 @@ public sealed partial class WallStage : IDisposable
         Library.FolderGames = _prefs.Folders.SelectMany(f => FolderGames.Scan(f, shortcuts))
             .Select(g => (g.Title, g.Exe, played.TryGetValue(FolderGames.IdOf(g.Exe), out var t) ? (long?)t : null)).ToList();
         if (Library.FolderGames.Count > 0) Log.Info($"folder games: {Library.FolderGames.Count}");
-        _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), collections, owned, installed);
+        _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), collections, owned, installed, Steam.ShortcutTargets(user));
         _steamRoot = steam; _steamUser = user;
         if (_lib.Games.Count == 0)
         {

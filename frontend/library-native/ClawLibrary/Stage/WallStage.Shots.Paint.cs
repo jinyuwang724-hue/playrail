@@ -146,7 +146,7 @@ public sealed partial class WallStage
         CcSet(_shInfo, CcDraw(W, H, ShRaster, ds =>
         {
             PText(ds, _shLoaded ? "还没有截图" : "正在读取…", TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.8), 0, 20, W, CanvasHorizontalAlignment.Center);
-            if (_shLoaded) PText(ds, $"Game Bar 截图保存在 {folder}", TextKit.Ui(400), 14, Gfx.WithAlpha(CcText, 0.5), 0, 52, W, CanvasHorizontalAlignment.Center);
+            if (_shLoaded) PText(ds, $"Game Bar 截图（{folder}）和 Steam 截图都会出现在这里", TextKit.Ui(400), 14, Gfx.WithAlpha(CcText, 0.5), 0, 52, W, CanvasHorizontalAlignment.Center);
         }));
         _shInfo.Size = new Vector2(W * k, H * k);
         _shInfo.Offset = new Vector3(240 * k, 360 * k, 0);
@@ -888,7 +888,7 @@ public sealed partial class WallStage
         float AH = SecH + RowH * ShActions.Length;
         bool fav = _shFavs.Contains(c.Path);
         string ext = Path.GetExtension(c.Path).TrimStart('.').ToUpperInvariant();
-        string head = ShSize(c) is { } sz ? $"{sz.W} × {sz.H} · {ext} · {ShBytes(c.Bytes)}" : $"{ext} · {ShBytes(c.Bytes)}";
+        string head = ShSize(c) is { } sz ? $"{c.Source} · {sz.W} × {sz.H} · {ext} · {ShBytes(c.Bytes)}" : $"{c.Source} · {ext} · {ShBytes(c.Bytes)}";
         CcSet(_shVActs, CcDraw(AW, AH, raster, ds =>
         {
             PText(ds, head, TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.5), 0, SecH - 10, AW);

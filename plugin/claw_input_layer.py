@@ -53,11 +53,40 @@ KEYS.update({str(d): (0x30 + d, False) for d in range(10)})
 KEYS.update({"F%d" % n: (0x6F + n, False) for n in range(1, 25)})
 KEYS.update({"Num%d" % d: (0x60 + d, False) for d in range(10)})
 KEY_ALIASES = {"Ctrl": "LCtrl", "Shift": "LShift", "Alt": "LAlt", "Win": "LWin", "Escape": "Esc", "Return": "Enter"}
-# System commands. Screenshot = Game Bar's own shortcut (saved to Videos\Captures).
-SYSTEM = {"screenshot": ["LWin", "LAlt", "PrintScreen"], "keyboard": None,
+# System commands. Screenshot = Game Bar's own shortcut (saved to Videos\Captures);
+# steamScreenshot = Steam's in-game screenshot key (F12 unless changed in Steam, see steam_screenshot_keys).
+SYSTEM = {"screenshot": ["LWin", "LAlt", "PrintScreen"], "steamScreenshot": "steam", "keyboard": None,
           "volumeUp": ["VolumeUp"], "volumeDown": ["VolumeDown"], "mute": ["VolumeMute"],
           "gamebar": None, "library": None, "controlCenter": None, "steamMainMenu": None,
           "steamQuickAccess": None, "steamLibrary": None, "magpieToggle": None}
+STEAM_KEY_MODIFIERS = {"SHIFT": "LShift", "CTRL": "LCtrl", "CONTROL": "LCtrl", "ALT": "LAlt"}
+
+
+def steam_screenshot_keys():
+    """Steam's screenshot hotkey. Steam only writes it to localconfig.vdf once it is changed
+    ("InGameOverlayScreenshotHotKey" "KEY_F12", modifiers before the key); otherwise it is F12."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
+            root = Path(winreg.QueryValueEx(key, "SteamPath")[0])
+        configs = sorted(root.glob("userdata/*/config/localconfig.vdf"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if configs:
+            text = configs[0].read_text(encoding="utf-8", errors="replace")
+            match = re.search(r'"InGameOverlayScreenshotHotKey"\s+"([^"]+)"', text, re.IGNORECASE)
+            if match:
+                keys = []
+                for token in re.split(r"[\s+]+", match.group(1).strip()):
+                    token = token.upper()
+                    name = token[4:] if token.startswith("KEY_") else STEAM_KEY_MODIFIERS.get(token, "")
+                    name = next((k for k in KEYS if k.upper() == name.upper()), None) if name else None
+                    if name is None:
+                        return ["F12"]
+                    keys.append(name)
+                if keys:
+                    return keys
+    except Exception as exc:
+        logging.info("steam screenshot key: %s", exc)
+    return ["F12"]
 STICK_MODES = ("stick", "none")
 SECOND_BATCH = {"mouse": "摇杆当鼠标", "scroll": "摇杆当滚轮", "dpad": "摇杆当十字键", "flick": "快速转向摇杆",
                 "radial": "径向菜单", "mouseRegion": "鼠标区域", "touchMenu": "触摸菜单", "hotbar": "热键栏菜单"}
@@ -222,6 +251,8 @@ def compile_command(command):
         keys = SYSTEM[command["action"]]
         if keys is None:
             return {"kind": "action", "action": command["action"]}
+        if keys == "steam":
+            keys = steam_screenshot_keys()
         return compile_command({"type": "keyboard", "keys": keys})
     return {"kind": "none"}
 

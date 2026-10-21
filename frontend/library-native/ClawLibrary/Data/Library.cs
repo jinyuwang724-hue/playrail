@@ -70,7 +70,8 @@ public sealed class Library
     private const long Day = 86400;
 
     public static Library Load(string seedPath, Dictionary<string, PlayStats> stats, Func<string, ArtKit?> art,
-        List<SteamCollection>? steamCollections = null, List<SteamApp>? owned = null, HashSet<string>? installed = null)
+        List<SteamCollection>? steamCollections = null, List<SteamApp>? owned = null, HashSet<string>? installed = null,
+        List<(string AppId, string Name, string Exe, string StartDir)>? shortcuts = null)
     {
         var games = new List<LibraryItem>();
         steamCollections ??= new();
@@ -134,6 +135,31 @@ public sealed class Library
                 g.OwnArt = art(app.Id);
                 games.Add(g);
                 seen.Add(app.Id);
+            }
+        }
+        // 种子清单以外、后来加进 Steam 的非 Steam 快捷方式：名字用快捷方式自己的名字。
+        // 同一个程序加了两次快捷方式的（比如鸣潮有两条）只收一条，已经在清单里的那条优先。
+        if (shortcuts != null)
+        {
+            var seen = games.Select(g => g.Id).ToHashSet();
+            static string ExeKey(string exe) => exe.Trim().Trim('"').Replace('/', '\\').ToLowerInvariant();
+            var taken = shortcuts.Where(s => seen.Contains(s.AppId) && s.Exe.Length > 0).Select(s => ExeKey(s.Exe)).ToHashSet();
+            foreach (var (id, name, exe, _) in shortcuts)
+            {
+                if (seen.Contains(id) || string.IsNullOrWhiteSpace(name)) continue;
+                if (exe.Length > 0 && !taken.Add(ExeKey(exe))) continue;
+                stats.TryGetValue(id, out var st);
+                var g = new LibraryItem
+                {
+                    Id = id, Kind = ItemKind.Game, Title = name.Trim(), Main = name.Trim(), Subtitle = "非 Steam",
+                    Platform = "other", Badge = "PC", SeedFx = 0.5,
+                    LastPlayed = st?.Last,
+                    PlaytimeH = st?.Minutes is int m ? Math.Round(m / 60.0) : null,
+                };
+                g.Hue = HueOf(g.Title);
+                g.OwnArt = art(id);
+                games.Add(g);
+                seen.Add(id);
             }
         }
         if (installed != null)

@@ -3,7 +3,8 @@
 // Game Bar 不记录游戏：后台（claw_captures.py）看着捕获文件夹，每出现一张就记下当时是哪个窗口截的（进程路径 + 标题），
 // 写在 %LOCALAPPDATA%\ClawToolbox\data\captures.jsonl；这里按进程路径对游戏库（Steam 安装目录、非 Steam 快捷方式的程序 /
 // 起始目录、手动加的游戏文件夹），最准。没记录的（后台没开时截的、以前的）再看文件名「窗口标题 年_月_日 时_分_秒.png」，
-// 按窗口标题归到游戏库里的游戏（名字对得上就算），对不上的（桌面、浏览器、别的软件）归到「其他」。Steam 截图的文件夹名就是 appid，直接对应。
+// 按窗口标题归到游戏库里的游戏（名字对得上就算），对不上的（桌面、浏览器、别的软件）归到「其他」。Steam 截图的文件夹名就是 appid，直接对应；
+// 游戏库里没有的 appid 用 Steam 自己的数据起名（appinfo / appmanifest、截图记的快捷方式名），不靠手写的名单。
 // 连拍：同一款游戏、前后相隔不到 3 秒的几张叠成一摞。
 // 读不到就返回空，绝不抛出。
 using System.Globalization;
@@ -101,24 +102,45 @@ public static partial class Captures
             if (Steam.Root() is string root && Steam.UserDir(root) is string user)
             {
                 var remote = System.IO.Path.Combine(user, "760", "remote");
+                var folders = new List<(string AppId, string Dir)>();
                 if (Directory.Exists(remote))
                     foreach (var appDir in Directory.GetDirectories(remote))
                     {
                         var shots = System.IO.Path.Combine(appDir, "screenshots");
-                        if (!Directory.Exists(shots)) continue;
-                        string appid = System.IO.Path.GetFileName(appDir);
-                        lib.ById.TryGetValue(appid, out var game);
-                        foreach (var f in new DirectoryInfo(shots).EnumerateFiles())
-                        {
-                            if (!IsImage(f.Name)) continue;
-                            var m = SteamName().Match(System.IO.Path.GetFileNameWithoutExtension(f.Name));
-                            list.Add(new Capture
-                            {
-                                Path = f.FullName, Time = m.Success && TryTime(m, out var t) ? t : f.LastWriteTime, Bytes = f.Length,
-                                GameId = game?.Id, Game = game?.Title ?? $"Steam {appid}", Source = "Steam",
-                            });
-                        }
+                        if (Directory.Exists(shots)) folders.Add((Steam.ScreenshotAppId(System.IO.Path.GetFileName(appDir)), shots));
                     }
+                // 文件夹名就是 appid：游戏库里有就归到那款；同一个程序的另一条非 Steam 快捷方式归到游戏库里那条；
+                // 都不是（卸掉的、隐藏的、删掉的快捷方式）就用 Steam 自己记的名字，单独一项，不算「其他」
+                var unknown = folders.Select(f => f.AppId).Where(id => !lib.ById.ContainsKey(id)).ToHashSet();
+                var steamNames = new Dictionary<string, string>();
+                var alias = new Dictionary<string, LibraryItem>();
+                if (unknown.Count > 0)
+                {
+                    owners = owners.Count > 0 ? owners : ExeOwners(lib);
+                    foreach (var (id, name, exe, _) in Steam.ShortcutTargets(user))
+                        if (unknown.Contains(id))
+                        {
+                            if (exe.Length > 0 && MatchExe(exe, owners) is { } owner) alias[id] = owner;
+                            else if (name.Length > 0) steamNames[id] = name;
+                        }
+                    foreach (var (id, n) in Steam.ScreenshotShortcutNames(user)) steamNames.TryAdd(id, n);
+                    foreach (var (id, n) in Steam.AppNames(root, unknown)) steamNames.TryAdd(id, n);
+                }
+                foreach (var (appid, shots) in folders)
+                {
+                    var game = (lib.ById.TryGetValue(appid, out var g) || alias.TryGetValue(appid, out g)) && g.Kind == ItemKind.Game ? g : null;
+                    string title = game?.Title ?? (steamNames.TryGetValue(appid, out var n) ? n : $"Steam {appid}");
+                    foreach (var f in new DirectoryInfo(shots).EnumerateFiles())
+                    {
+                        if (!IsImage(f.Name)) continue;
+                        var m = SteamName().Match(System.IO.Path.GetFileNameWithoutExtension(f.Name));
+                        list.Add(new Capture
+                        {
+                            Path = f.FullName, Time = m.Success && TryTime(m, out var t) ? t : f.LastWriteTime, Bytes = f.Length,
+                            GameId = game?.Id ?? "steam:" + appid, Game = title, Source = "Steam",
+                        });
+                    }
+                }
             }
         }
         catch (Exception ex) { Log.Warn($"steam screenshots scan: {ex.Message}"); }
@@ -210,7 +232,7 @@ public static partial class Captures
         {
             foreach (var (id, dir) in Steam.InstallDirs(root))
                 if (lib.ById.TryGetValue(id, out var g) && g.Kind == ItemKind.Game) Add(null, dir, g);
-            foreach (var (id, exe, start) in Steam.ShortcutTargets(Steam.UserDir(root)))
+            foreach (var (id, _, exe, start) in Steam.ShortcutTargets(Steam.UserDir(root)))
                 if (lib.ById.TryGetValue(id, out var g) && g.Kind == ItemKind.Game)
                 {
                     if (exe.Length > 0) Add(exe, System.IO.Path.GetDirectoryName(exe), g);
@@ -304,6 +326,21 @@ public static partial class Captures
 
     private const uint FO_DELETE = 3;
     private const ushort FOF_SILENT = 0x4, FOF_NOCONFIRMATION = 0x10, FOF_ALLOWUNDO = 0x40, FOF_NOERRORUI = 0x400;
+
+    /// <summary>
+    /// 删一张截图（进回收站）。Steam 截图连同 screenshots\thumbnails 里同名的缩略图一起删；
+    /// Steam 自己的截图列表（screenshots.vdf）不去改，Steam 开着的时候改了也会被它写回去。
+    /// </summary>
+    public static bool Delete(Capture c)
+    {
+        if (!Recycle(c.Path)) return false;
+        if (c.Source == "Steam" && System.IO.Path.GetDirectoryName(c.Path) is string dir)
+        {
+            var thumb = System.IO.Path.Combine(dir, "thumbnails", System.IO.Path.GetFileName(c.Path));
+            if (File.Exists(thumb)) Recycle(thumb);
+        }
+        return true;
+    }
 
     public static bool Recycle(string path)
     {

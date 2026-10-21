@@ -161,6 +161,47 @@ public static class Steam
         return map;
     }
 
+    /// <summary>
+    /// 不在游戏库里的 appid 叫什么（截图页用：卸掉的、隐藏的、工具）：appinfo.vdf 里的名字（有中文名用中文名），其次 appmanifest 的 name。
+    /// </summary>
+    public static Dictionary<string, string> AppNames(string root, HashSet<string> ids)
+    {
+        var map = new Dictionary<string, string>();
+        if (ids.Count == 0) return map;
+        try
+        {
+            foreach (var (id, st, _) in Manifests(root))
+                if (ids.Contains(id) && st.Value("name") is { Length: > 0 } n) map[id] = n;
+            foreach (var (id, app) in ReadAppInfo(Path.Combine(root, "appcache", "appinfo.vdf"), ids)) map[id] = app.Name;
+        }
+        catch (Exception ex) { Log.Warn($"steam app names: {ex.Message}"); }
+        return map;
+    }
+
+    /// <summary>
+    /// Steam 截图记的非 Steam 游戏名字（760\screenshots.vdf 的 shortcutnames，键是 64 位游戏 id），
+    /// 换成 32 位 appid → 名字。快捷方式删掉以后它还留着。
+    /// </summary>
+    public static Dictionary<string, string> ScreenshotShortcutNames(string userDir)
+    {
+        var map = new Dictionary<string, string>();
+        try
+        {
+            var path = Path.Combine(userDir, "760", "screenshots.vdf");
+            if (!File.Exists(path)) return map;
+            var names = TextVdf.Parse(File.ReadAllText(path, Encoding.UTF8)).Path("screenshots", "shortcutnames");
+            if (names != null)
+                foreach (var (k, v) in names.Values)
+                    if (ulong.TryParse(k, out var gid) && v.Length > 0) map[(gid >> 32).ToString()] = v;
+        }
+        catch (Exception ex) { Log.Warn($"steam screenshot names: {ex.Message}"); }
+        return map;
+    }
+
+    /// <summary>截图文件夹名 → appid：Steam 游戏就是 appid；非 Steam 游戏可能是 64 位游戏 id（高 32 位是 appid）。</summary>
+    public static string ScreenshotAppId(string folder) =>
+        ulong.TryParse(folder, out var v) && v > uint.MaxValue ? (v >> 32).ToString() : folder;
+
     /// <summary>各个库目录（libraryfolders.vdf）里的 appmanifest：(appid, AppState 节点)。</summary>
     private static List<(string Id, TextVdf State, string File)> Manifests(string root)
     {
@@ -235,7 +276,7 @@ public static class Steam
             if (!want.Contains(id.ToString())) { pos = end; continue; }
             pos += 4 + 4 + 8 + 20 + 4 + 20;   // infoState、lastUpdated、picsToken、sha1、changeNumber、二进制 sha1
             var stack = new List<string>();
-            string? name = null, type = null, dev = null, assocType = null, assocName = null;
+            string? name = null, zh = null, type = null, dev = null, assocType = null, assocName = null;
             uint release = 0;
             while (pos < end)
             {
@@ -262,6 +303,7 @@ public static class Steam
                             if (key == "name") name = v;
                             else if (key == "type") type = v;
                         }
+                        else if (stack.Count == 3 && stack[1] == "common" && stack[2] == "name_localized" && key == "schinese" && v.Length > 0) zh = v;
                         else if (stack.Count == 4 && stack[2] == "associations")
                         {
                             if (key == "type") assocType = v;
@@ -278,8 +320,9 @@ public static class Steam
                 }
             }
             pos = end;
+            // 有简体中文名（商店里显示的那个）就用中文名
             if (name != null && type != null)
-                result[id.ToString()] = new SteamApp(id.ToString(), name, type, dev,
+                result[id.ToString()] = new SteamApp(id.ToString(), zh ?? name, type, dev,
                     release > 0 ? DateTimeOffset.FromUnixTimeSeconds(release).Year : null);
         }
         return result;
@@ -372,10 +415,10 @@ public static class Steam
         return list;
     }
 
-    /// <summary>非 Steam 快捷方式：appid（无符号）、程序、起始目录（去掉引号），截图按进程路径归游戏用。</summary>
-    public static List<(string AppId, string Exe, string StartDir)> ShortcutTargets(string? userDir)
+    /// <summary>非 Steam 快捷方式：appid（无符号）、名字、程序、起始目录（去掉引号）。游戏库自动收新加的快捷方式、截图按进程路径归游戏都用它。</summary>
+    public static List<(string AppId, string Name, string Exe, string StartDir)> ShortcutTargets(string? userDir)
     {
-        var list = new List<(string, string, string)>();
+        var list = new List<(string, string, string, string)>();
         if (userDir == null) return list;
         try
         {
@@ -383,7 +426,7 @@ public static class Steam
             if (!File.Exists(path)) return list;
             var data = File.ReadAllBytes(path);
             int i = 0, depth = 0;
-            uint appid = 0; bool haveId = false; string exe = "", start = "";
+            uint appid = 0; bool haveId = false; string exe = "", start = "", title = "";
             string ReadString()
             {
                 int s = i;
@@ -398,8 +441,8 @@ public static class Steam
                 if (type == 0x08)
                 {
                     depth--;
-                    if (depth == 1 && haveId) list.Add((appid.ToString(), exe, start));
-                    if (depth == 1) { haveId = false; exe = start = ""; }
+                    if (depth == 1 && haveId) list.Add((appid.ToString(), title, exe, start));
+                    if (depth == 1) { haveId = false; exe = start = title = ""; }
                     if (depth < 0) break;
                     continue;
                 }
@@ -411,6 +454,7 @@ public static class Steam
                         var value = ReadString().Trim().Trim('"');
                         if (name.Equals("exe", StringComparison.OrdinalIgnoreCase)) exe = value;
                         else if (name.Equals("StartDir", StringComparison.OrdinalIgnoreCase)) start = value;
+                        else if (name.Equals("AppName", StringComparison.OrdinalIgnoreCase)) title = value;
                         break;
                     case 0x02:
                         if (i + 4 > data.Length) return list;
