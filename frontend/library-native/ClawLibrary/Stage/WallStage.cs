@@ -1252,9 +1252,15 @@ public sealed partial class WallStage : IDisposable
         _rootEl.PointerWheelChanged += (_, e) =>
         {
             var p = e.GetCurrentPoint(_rootEl).Properties;
-            if (SettingsPageOpen)
+            if (SettingsPageOpen && !_agOpen)
             {
                 if (!p.IsHorizontalMouseWheel) SettingsWheel(p.MouseWheelDelta);
+                e.Handled = true;
+                return;
+            }
+            if (_ccOpen)
+            {
+                CcWheel(p.MouseWheelDelta, p.IsHorizontalMouseWheel);
                 e.Handled = true;
                 return;
             }
@@ -1303,11 +1309,25 @@ public sealed partial class WallStage : IDisposable
     }
 
     private (double x, double y, ulong t, double vx, double vy, double moved, uint id)? _drag;
+    /// <summary>这次拖动从哪按下的（滑动看总位移）。</summary>
+    private (double x, double y) _dragFrom;
+    /// <summary>手指从屏幕左边 64 DIP 以内往右划 = 返回（控制中心各页，和 B 一样）。贴着边框划会被 Windows 拿去开小组件，所以区域放宽一些。</summary>
+    private (double x, double y, uint id)? _edge;
+    private const double EdgeBackPx = 64, EdgeBackMin = 80;
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         var pt = e.GetCurrentPoint(_rootEl);
-        if (SettingsPageOpen)
+        if (_ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx)
+        {
+            MarkInput();
+            _edge = (pt.Position.X, pt.Position.Y, pt.PointerId);
+            _rootEl.CapturePointer(e.Pointer);
+            e.Handled = true;
+            return;
+        }
+        // 添加游戏页叠在设置页上面：它的点按、拖动走下面通用那条（AgClick），不能让设置页的手势接走
+        if (SettingsPageOpen && !_agOpen)
         {
             e.Handled = true;
             if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;
@@ -1320,6 +1340,7 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, 0, 0, 0, pt.PointerId);
+        _dragFrom = (pt.Position.X, pt.Position.Y);
         _glide = Vector2.Zero;
         _rootEl.CapturePointer(e.Pointer);
         _rootEl.Focus(FocusState.Pointer);
@@ -1327,6 +1348,7 @@ public sealed partial class WallStage : IDisposable
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
     {
+        if (_edge?.id == e.Pointer.PointerId) { e.Handled = true; return; }
         if (_settingsGesture.Owns(e.Pointer.PointerId))
         {
             var point = e.GetCurrentPoint(_rootEl);
@@ -1341,11 +1363,22 @@ public sealed partial class WallStage : IDisposable
         double dt = Math.Max(1, (pt.Timestamp - d.t) / 1000.0);
         double moved = d.moved + Math.Abs(dx) + Math.Abs(dy);
         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, dx / dt * 1000, dy / dt * 1000, moved, d.id);
-        if (moved > 4) PanBy(dx, dy);
+        if (moved > 4) { if (_ccOpen) CcDrag(dx, dy); else PanBy(dx, dy); }
     }
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        if (_edge is { } edge && edge.id == e.Pointer.PointerId)
+        {
+            var at = e.GetCurrentPoint(_rootEl).Position;
+            _edge = null;
+            _rootEl.ReleasePointerCapture(e.Pointer);
+            e.Handled = true;
+            double ex = at.X - edge.x, ey = at.Y - edge.y;
+            if (ex >= EdgeBackMin && Math.Abs(ey) < ex) Back();
+            else if (Math.Abs(ex) + Math.Abs(ey) <= 8) ClickAt(at.X, at.Y);
+            return;
+        }
         if (_settingsGesture.Owns(e.Pointer.PointerId))
         {
             var point = e.GetCurrentPoint(_rootEl);
@@ -1360,6 +1393,7 @@ public sealed partial class WallStage : IDisposable
         _drag = null;
         _rootEl.ReleasePointerCapture(e.Pointer);
         if (d.moved <= 4) { ClickAt(pt.Position.X, pt.Position.Y); return; }
+        if (_ccOpen) { CcSwipe(pt.Position.X - _dragFrom.x, pt.Position.Y - _dragFrom.y); return; }
         if ((pt.Timestamp - d.t) / 1000.0 > 80) return;
         // 惯性：滑行距离 = 松手速度 × 0.3（power），按时间常数 280ms 指数衰减；速度上限 4000 px/s
         double speed = Math.Sqrt(d.vx * d.vx + d.vy * d.vy);
@@ -1376,6 +1410,7 @@ public sealed partial class WallStage : IDisposable
     {
         SettingsPointerCancel(e.Pointer.PointerId);
         if (_drag?.id == e.Pointer.PointerId) _drag = null;
+        if (_edge?.id == e.Pointer.PointerId) _edge = null;
     }
 
     public DispatcherQueueTimer After(double ms, Action action)

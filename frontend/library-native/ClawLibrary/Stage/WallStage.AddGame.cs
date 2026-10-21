@@ -210,6 +210,10 @@ public sealed partial class WallStage
 
     // ---------------- 设置行里打字（密钥）：XAML TextBox 盖在焦点行的值上，那一行的值先不画 ----------------
 
+    /// <summary>打字时列表多往上推的量（设计 px）；打字的那一行底边不低于 StKbLimit（屏幕键盘在这台掌机上占下面 400）。</summary>
+    private float _stKbLift;
+    private const float StKbLimit = 360;
+
     private void StEditText(string text, Action<string> done)
     {
         if (_stEditBox == null)
@@ -237,6 +241,7 @@ public sealed partial class WallStage
             {
                 if (FindChild(_stEditBox, "DeleteButton") is FrameworkElement x) { x.MaxWidth = 0; x.Opacity = 0; x.IsHitTestVisible = false; }
             };
+            HookTouchKeyboard(_stEditBox);
             _rootEl.Overlay.Children.Add(_stEditBox);
         }
         if (_stFocus < 0 || _stFocus >= _stRows.Count) return;
@@ -245,6 +250,11 @@ public sealed partial class WallStage
         float k = _ccK;
         _stEditDone = done;
         _stEditTitle = _stRows[_stFocus].Title;
+        // 屏幕键盘从底下出来（占下半屏）：这一行在下半屏就把列表往上推，推到键盘上面能看见；
+        // 列表到底了也照推（底下露出空白，键盘反正盖着），收键盘时弹回去
+        float rowTop = PerfTop + top - _stScroll;
+        _stKbLift = Math.Max(0, rowTop + PerfRowH - StKbLimit);
+        _stScroll += _stKbLift;
         Repaint();
         _stEditBox.Text = text;
         _stEditBox.FontSize = 17 * k;
@@ -254,9 +264,7 @@ public sealed partial class WallStage
         Canvas.SetLeft(_stEditBox, (PerfRightX + 320) * k);
         Canvas.SetTop(_stEditBox, (PerfTop + top - _stScroll) * k);
         _stEditBox.Visibility = Visibility.Visible;
-        _stEditBox.Focus(FocusState.Programmatic);
-        _stEditBox.SelectAll();
-        ShowTouchKeyboard();
+        FocusTextBox(_stEditBox, () => StEditing);
     }
 
     private void StEditEnd(bool commit)
@@ -266,20 +274,67 @@ public sealed partial class WallStage
         string text = _stEditBox.Text;
         _stEditDone = null;
         _stEditTitle = null;
+        _stKbLift = 0;
         _stEditBox.Visibility = Visibility.Collapsed;
         _rootEl.Focus(FocusState.Programmatic);
         if (commit) done?.Invoke(text);
         if (_stOpen) Repaint();
     }
 
-    /// <summary>手柄上没有键盘：打字时把触摸键盘叫出来（叫不出来就算了，接了键盘照样能打）。</summary>
+    // ---------------- 屏幕键盘 ----------------
+
+    private bool _kbPending;
+
+    /// <summary>
+    /// 输入框拿到焦点就叫触摸键盘（所有输入框都挂在 GotFocus 上，手柄 A、鼠标、手指点都走这里）：先请系统出，
+    /// 0.6 秒后还没挡住窗口（手柄被 Windows 当成硬件键盘时可能这样）就用 TabTip 打开。接了键盘照样能打。
+    /// </summary>
     private void ShowTouchKeyboard()
     {
-        try
+        nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
+        bool asked = TouchKeyboard.TryShow(hwnd);
+        if (_kbPending) return;
+        _kbPending = true;
+        After(600, () =>
         {
-            nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
-            Windows.UI.ViewManagement.InputPaneInterop.GetForWindow(hwnd)?.TryShow();
-        }
-        catch (Exception ex) { Log.Warn($"touch keyboard: {ex.Message}"); }
+            _kbPending = false;
+            if (!TextInputFocused() || TouchKeyboard.Visible(hwnd)) return;
+            Log.Info($"touch keyboard: system pane {(asked ? "did not show" : "refused")}, opening TabTip");
+            TouchKeyboard.Toggle();
+        });
+    }
+
+    /// <summary>输入框失去焦点：稍等一下（焦点可能只是换到另一个输入框），没有输入框在打字就收起键盘。</summary>
+    private void HideTouchKeyboardSoon()
+    {
+        After(150, () =>
+        {
+            if (TextInputFocused()) return;
+            TouchKeyboard.Hide(WinRT.Interop.WindowNative.GetWindowHandle(_window));
+        });
+    }
+
+    private bool TextInputFocused() =>
+        _rootEl.XamlRoot != null && Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(_rootEl.XamlRoot) is TextBox;
+
+    /// <summary>
+    /// 给输入框焦点：等这次点按 / 按键处理完再给。手指、鼠标点下去那一下舞台会拿走焦点，松手时同步给输入框的话
+    /// 马上又被抢回去，输入框一失焦就收掉了（点了没反应就是这个）。
+    /// </summary>
+    private void FocusTextBox(TextBox box, Func<bool> stillWanted)
+    {
+        _dq.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (!stillWanted() || box.Visibility != Visibility.Visible) return;
+            box.Focus(FocusState.Programmatic);
+            box.SelectAll();
+        });
+    }
+
+    /// <summary>每个输入框建好时挂上：拿到焦点叫键盘，失去焦点收键盘。</summary>
+    private void HookTouchKeyboard(TextBox box)
+    {
+        box.GotFocus += (_, _) => ShowTouchKeyboard();
+        box.LostFocus += (_, _) => HideTouchKeyboardSoon();
     }
 }

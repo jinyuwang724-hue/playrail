@@ -575,6 +575,7 @@ public sealed partial class WallStage
         _searchBox.TextChanged += (_, _) => HideClearButton();
         _searchBox.GotFocus += (_, _) => { HideClearButton(); _searchTyping = true; RepaintRail(); };
         _searchBox.LostFocus += (_, _) => { _searchTyping = false; RepaintRail(); };
+        HookTouchKeyboard(_searchBox);
         _rootEl.Overlay.Children.Add(_searchBox);
     }
 

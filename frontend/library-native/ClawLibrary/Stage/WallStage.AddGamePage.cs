@@ -139,6 +139,7 @@ public sealed partial class WallStage
         AgEndEdit(false);
         _agPage = page;
         _agScroll = 0;
+        _agManualScroll = false;
         switch (page)
         {
             case AgPage.Art:
@@ -410,6 +411,7 @@ public sealed partial class WallStage
         if (d == null) return;
         if (_agOffKind != null) return;
         if (_agEditing != null) AgEndEdit(true);
+        _agManualScroll = false;
         int dx = dir == Direction.Left ? -1 : dir == Direction.Right ? 1 : 0, dy = dir == Direction.Up ? -1 : dir == Direction.Down ? 1 : 0;
         switch (_agPage)
         {
@@ -654,6 +656,7 @@ public sealed partial class WallStage
         if (_agEditing != null) AgEndEdit(true);
         _agTab = (_agTab + delta + AgTabNames.Length) % AgTabNames.Length;
         _agScroll = 0;
+        _agManualScroll = false;
         if (_agZone == 1)
         {
             int n = AgRightCount();
@@ -759,6 +762,7 @@ public sealed partial class WallStage
                 else if (e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; AgEndEdit(false); }
             };
             _agBox.LostFocus += (_, _) => { if (_agEditing != null) AgEndEdit(true); };
+            HookTouchKeyboard(_agBox);
             _agBox.Loaded += (_, _) =>
             {
                 if (FindChild(_agBox, "DeleteButton") is FrameworkElement x) { x.MaxWidth = 0; x.Opacity = 0; x.IsHitTestVisible = false; }
@@ -778,9 +782,7 @@ public sealed partial class WallStage
         Canvas.SetTop(_agBox, r.Y * k);
         _agBox.Visibility = Visibility.Visible;
         AgPaint();
-        _agBox.Focus(FocusState.Programmatic);
-        _agBox.SelectAll();
-        ShowTouchKeyboard();
+        FocusTextBox(_agBox, () => _agEditing == what);
     }
 
     private void AgEndEdit(bool commit)
@@ -1028,12 +1030,14 @@ public sealed partial class WallStage
         var list = d.Cands[kind];
         int n = AgRightCount(), pick = d.Pick[kind];
         float rowH = h + 20, view = AgContentBottom - AgContentTop;
-        if (_agZone == 1 && _agIndex >= 0)
+        if (_agZone == 1 && _agIndex >= 0 && !_agManualScroll)
         {
             int frow = _agIndex / cols;
             if (frow * rowH < _agScroll) _agScroll = frow * rowH;
             if (frow * rowH + h > _agScroll + view) _agScroll = frow * rowH + h - view;
         }
+        // 手指 / 滚轮滚过头就停在两头
+        _agScroll = Math.Clamp(_agScroll, 0, Math.Max(0, ((n + cols - 1) / cols) * rowH - 20 - view));
         if (n == 0)
         {
             AgImage(ds, new Rect(AgRightX, AgContentTop, w, h), null, contain, false, d.Pending.Contains(kind));

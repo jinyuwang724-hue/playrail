@@ -100,6 +100,8 @@ public sealed partial class WallStage
             if (_settingsWasList && up.Kind != SettingsTargetKind.Category && up.Kind != SettingsTargetKind.Action) SettingsApplyTarget(up, x);
             else GpApplyPointerTarget(up, x / _ccK);
         }
+        else if (mode == SettingsPointerMode.Pending && _settingsPressedTarget == null && _stOpen)
+            StCategoryClick(x, y);   // 设置页左栏的分类：点一下切过去（和鼠标点同一个入口）
         else if (mode == SettingsPointerMode.Scroll && !_settingsWasList && _settingsPressedTarget?.Kind != SettingsTargetKind.Slider)
             GpPointerSwipe((x - _settingsGesture.StartX) / _ccK, (y - _settingsGesture.StartY) / _ccK);
         _settingsPressedTarget = null;
