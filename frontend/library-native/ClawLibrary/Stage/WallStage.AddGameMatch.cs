@@ -1,8 +1,8 @@
 // 添加游戏 › 匹配游戏（子页面）：选完 exe 先进这页，之后「匹配」那一行 / Y 再进来。
-// 和其他页同一套两栏：左栏 40–388 是搜索，照 folia 书库首页的搜索框（和游戏库首页搜索面板同一套：带框输入框，
-// 高 44、圆角 12、底 5 %、描边 24 %，打字时描边换强调色，左放大镜、右 ×；下面主按钮「搜索」，高 44、圆角 12、15 px 粗体、底 16 %）。
+// 不分左右栏，一整列：标题下面一行是搜索，照 folia 书库首页的搜索框（和游戏库首页搜索面板同一套：带框输入框，
+// 高 44、圆角 12、底 5 %、描边 24 %，打字时描边换强调色，左放大镜、右 ×），右边跟主按钮「搜索」（高 44、圆角 12、15 px 粗体、底 16 %）。
 // 和 folia 一样打字不搜，回车 / 「搜索」才搜；进页时先用 exe 名搜一次。
-// 右栏 428–1240 是匹配出来的游戏（设置行：行号、左名称、右年份，正在用的那款前面一个点），搜索中右栏顶上一道细线上有光来回走。
+// 下面整宽（40–1240）是匹配出来的游戏（设置行：行号、左名称、右年份，正在用的那款前面一个点），搜索中列表上方一道细线上有光来回走。
 // A 用焦点那款并回到封面页，B 回封面页。
 using System.Numerics;
 using ClawLibrary.Engine;
@@ -17,11 +17,12 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     private static readonly FontSpec AgIcons = new("Segoe Fluent Icons", 400);
-    private static readonly Rect AgField = new(40, AgRowsY, AgLeftW, 44);
+    private static readonly Rect AgField = new(40, AgCatTop, 640, 44);
     private static readonly Rect AgFieldClear = new(AgField.Right - 6 - 32, AgField.Y + 6, 32, 32);
     private static readonly Rect AgFieldInput = new(AgField.X + 36, AgField.Y + 1, AgFieldClear.X - 4 - (AgField.X + 36), 42);
-    /// <summary>搜索中那道光走的线（右栏顶上）。</summary>
-    private static readonly Rect AgSearchLine = new(AgRightX, AgBandY + 20, AgRightW, 2);
+    /// <summary>结果列表的顶；搜索中那道光走的线在它上面。</summary>
+    private const float AgMatchTop = AgCatTop + 44 + 28;
+    private static readonly Rect AgSearchLine = new(40, AgMatchTop - 14, AgRowsW, 2);
     private Rect _agSubmit;
     private SpriteVisual? _agSearchBar;
     /// <summary>输入框里按的是回车（回车才搜；点别处失去焦点只记下字）。</summary>
@@ -29,20 +30,21 @@ public sealed partial class WallStage
 
     // ---------------- 输入 ----------------
 
-    /// <summary>左栏：0 输入框、1「搜索」；右栏：第几款。</summary>
+    /// <summary>搜索那一行（zone 0）：0 输入框、1「搜索」，左右走；列表（zone 1）：第几款，上下走，顶上再往上回输入框。</summary>
     private void AgMoveMatch(AgDraft d, int dx, int dy)
     {
         int n = d.Matches.Count;
         if (_agZone == 0)
         {
-            if (dy != 0) _agIndex = Math.Clamp(_agIndex + dy, 0, 1);
-            else if (dx > 0 && n > 0) { _agZone = 1; _agIndex = Math.Clamp(d.Match, 0, n - 1); }
+            if (dx != 0 && _agIndex != Math.Clamp(_agIndex + dx, 0, 1)) _agIndex += dx;
+            else if (dy > 0 && n > 0) { _agZone = 1; _agIndex = Math.Clamp(d.Match, 0, n - 1); }
             else return;
         }
         else
         {
-            if (dy != 0 && n > 0) _agIndex = Math.Clamp(_agIndex + dy, 0, n - 1);
-            else if (dx < 0) { _agZone = 0; _agIndex = _agIndex == 0 ? 0 : 1; }
+            if (dy > 0 && _agIndex < n - 1) _agIndex++;
+            else if (dy < 0 && _agIndex > 0) _agIndex--;
+            else if (dy < 0) { _agZone = 0; _agIndex = 0; }
             else return;
         }
         NavHaptic("move");
@@ -75,10 +77,8 @@ public sealed partial class WallStage
     private void AgPaintMatch(CanvasDrawingSession ds, AgDraft d)
     {
         AgTitle(ds, "匹配游戏");
-        var caption = Gfx.WithAlpha(CcText, 0.42);
 
-        // 左栏：输入框 + 「搜索」
-        PText(ds, "搜索", TextKit.Ui(500), 13, caption, 40, AgBandY, 200);
+        // 搜索一行：输入框 + 「搜索」
         bool typing = _agEditing == "query";
         var field = AgField;
         float fcy = (float)(field.Y + field.Height / 2);
@@ -102,7 +102,7 @@ public sealed partial class WallStage
         var bf = TextKit.Ui(700);
         string label = d.Searching ? "搜索中" : "搜索";
         float lw = PWidth(ds, label, bf, 15);
-        _agSubmit = new Rect(40, field.Bottom + 16, 16 + 18 + 8 + lw + 16, 44);
+        _agSubmit = new Rect(field.Right + 12, field.Y, 16 + 18 + 8 + lw + 16, 44);
         bool sf = _agZone == 0 && _agIndex == 1;
         ds.FillRoundedRectangle(_agSubmit, 12, 12, Gfx.WithAlpha(CcText, sf ? 0.22 : 0.16));
         if (sf) ds.DrawRoundedRectangle(_agSubmit, 12, 12, Gfx.WithAlpha(CcText, 0.26), 1);
@@ -116,14 +116,8 @@ public sealed partial class WallStage
         if (ring is { } f)
             ds.DrawRoundedRectangle(new Rect(f.X - 2, f.Y - 2, f.Width + 4, f.Height + 4), 14, 14, CcText, 2);
 
-        // 右栏：匹配出来的游戏，左名称、右年份
+        // 下面整宽：匹配出来的游戏，左名称、右年份
         int n = d.Matches.Count;
-        PText(ds, "游戏", TextKit.Ui(500), 13, caption, AgRightX, AgBandY, 200);
-        if (!d.Searching && n > 0)
-        {
-            float cw = PWidth(ds, "游戏", TextKit.Ui(500), 13);
-            PText(ds, n.ToString(), AgMono, 13, Gfx.WithAlpha(CcText, 0.4), AgRightX + cw + 8, AgBandY + 1, 60);
-        }
         if (d.Searching) ds.FillRectangle(AgSearchLine, Gfx.WithAlpha(CcText, 0.08));
         var rows = d.Matches.Select((m, i) => new PerfRow
         {
@@ -132,17 +126,17 @@ public sealed partial class WallStage
             Changed = i == d.Match,
         }).ToList();
         var old = ds.Transform;
-        // 和设置页右栏一样：行号 / 焦点三角在栏里，名称缩进 36
-        ds.Transform = Matrix3x2.CreateTranslation(AgRightX, AgRowsY) * old;
-        PaintRowList(ds, rows, _agZone == 1 ? _agIndex : -1, null, true, AgRightW);
+        // 和分类页一样的整宽设置行：行号 / 焦点三角在左头，名称缩进 36
+        ds.Transform = Matrix3x2.CreateTranslation(40, AgMatchTop) * old;
+        PaintRowList(ds, rows, _agZone == 1 ? _agIndex : -1, null, true, AgRowsW);
         ds.Transform = old;
         for (int i = 0; i < n; i++)
         {
             int at = i;
-            _agHits.Add((new Rect(AgRightX, AgRowsY + i * PerfRowH, AgRightW, PerfRowH), 1, i, () => { if (!d.Searching) AgChooseMatch(d, at); }));
+            _agHits.Add((new Rect(40, AgMatchTop + i * PerfRowH, AgRowsW, PerfRowH), 1, i, () => { if (!d.Searching) AgChooseMatch(d, at); }));
         }
         if (n == 0 && !d.Searching && d.Status.Length > 0)
-            PText(ds, d.Status, TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.45), AgRightX, AgRowsY + PerfRowH / 2, AgRightW);
+            PText(ds, d.Status, TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.45), 40 + 36, AgMatchTop + PerfRowH / 2, AgRowsW);
     }
 
     /// <summary>搜索中：右栏顶上的细线上一道白光来回走。</summary>

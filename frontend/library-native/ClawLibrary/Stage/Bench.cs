@@ -426,7 +426,7 @@ public static class Bench
                     await Task.Delay(1500);
                     s.AddGameTestState(Program.Args.FirstOrDefault(a => a.StartsWith("--exe="))?[6..] ?? @"C:\Windows\notepad.exe");
                     await Task.Delay(12000);
-                    if (state == "add7") { s.Move(Direction.Left); await Task.Delay(300); s.Activate(); await Task.Delay(1500); break; }
+                    if (state == "add7") { s.Move(Direction.Up); await Task.Delay(300); s.Activate(); await Task.Delay(1500); break; }
                     if (state != "add0") { s.Activate(); await Task.Delay(9000); }
                     if (state == "add2" || state == "add8") { s.SwitchTab(-1); await Task.Delay(2500); }
                     if (state == "add8") { s.Move(Direction.Right); await Task.Delay(300); for (int i = 0; i < 4; i++) { s.Move(Direction.Down); await Task.Delay(300); } await Task.Delay(1500); }
