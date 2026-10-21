@@ -217,3 +217,147 @@ class CaptureLog:
             tmp = self.path.with_suffix(".tmp")
             tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
             os.replace(tmp, self.path)
+
+
+# ---------------- Steam cloud screenshots ----------------
+# Screenshots uploaded to Steam (what Big Picture → 媒体 shows) are not on disk. The Steam front end
+# lists them with the client's own PublishedFile.GetUserFiles call (steam-screenshots.js) and hands the
+# list here; the agent keeps a local copy under data\steam-cloud so ClawLibrary's 截图 page can show
+# them like any other image. Deleting there only removes the copy and hides the id: the upload on Steam
+# stays (removing it would be permanent and is Steam's own 媒体 page's job).
+CLOUD_HOSTS = ("images.steamusercontent.com", "steamuserimages-a.akamaihd.net")
+CLOUD_MAX_FILE = 64 * 1024 * 1024
+
+
+def cloud_item(raw):
+    """A validated entry from the front end, or None."""
+    from urllib.parse import urlsplit
+    if not isinstance(raw, dict):
+        return None
+    try:
+        ident = str(int(str(raw.get("id"))))
+        url = str(raw.get("url") or "")
+        if urlsplit(url).scheme != "https" or urlsplit(url).hostname not in CLOUD_HOSTS:
+            return None
+        appid = int(raw.get("appid") or 0)
+        shortcutid = int(raw.get("shortcutid") or 0)
+        created = int(raw.get("time") or 0)
+    except (TypeError, ValueError):
+        return None
+    name = str(raw.get("shortcutname") or "")[:200]
+    return {"id": ident, "url": url, "appid": appid, "shortcutid": shortcutid, "shortcutname": name, "time": created,
+            "width": int(raw.get("width") or 0), "height": int(raw.get("height") or 0)}
+
+
+class SteamCloud:
+    def __init__(self, data, fetch=None, log=logging.info):
+        self.dir = Path(data) / "steam-cloud"
+        self.index_path = self.dir / "index.json"
+        self.hidden_path = self.dir / "hidden.json"
+        self.fetch = fetch or self._fetch
+        self.log = log
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _fetch(url):
+        import urllib.request
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ClawToolbox"}), timeout=30) as r:
+            body = r.read(CLOUD_MAX_FILE + 1)
+        if len(body) > CLOUD_MAX_FILE:
+            raise ValueError("too large")
+        return body
+
+    def _read(self, path, default):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return default
+
+    def _write(self, path, value):
+        self.dir.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+
+    @staticmethod
+    def _ext(body):
+        return ".png" if body[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg"
+
+    def update(self, raw_items, budget=None):
+        """Store the list and download what is missing. budget: seconds to spend before returning
+        (the rest continues in the background). Returns {"total", "local", "pending"}."""
+        items = [i for i in map(cloud_item, raw_items if isinstance(raw_items, list) else []) if i]
+        with self._lock:
+            hidden = set(self._read(self.hidden_path, []))
+            old = {e["id"]: e for e in self._read(self.index_path, []) if isinstance(e, dict) and "id" in e}
+            index = []
+            for item in items:
+                if item["id"] in hidden:
+                    continue
+                file = old.get(item["id"], {}).get("file")
+                if file and (self.dir / file).is_file():
+                    item["file"] = file
+                index.append(item)
+            # Copies whose upload is gone from Steam go too.
+            keep = {e.get("file") for e in index}
+            for e in old.values():
+                if e.get("file") and e["file"] not in keep:
+                    try:
+                        (self.dir / e["file"]).unlink()
+                    except OSError:
+                        pass
+            self._write(self.index_path, index)
+        missing = [e for e in index if not e.get("file")]
+        if missing:
+            worker = threading.Thread(target=self._download, args=(missing,), name="claw-steam-cloud", daemon=True)
+            worker.start()
+            if budget:
+                worker.join(budget)
+        return self.counts()
+
+    def counts(self):
+        index = self._read(self.index_path, [])
+        local = sum(1 for e in index if isinstance(e, dict) and e.get("file"))
+        return {"total": len(index), "local": local, "pending": len(index) - local}
+
+    def _download(self, missing):
+        done = 0
+        for item in missing:
+            try:
+                body = self.fetch(item["url"])
+                name = item["id"] + self._ext(body)
+                self.dir.mkdir(parents=True, exist_ok=True)
+                tmp = self.dir / (name + ".part")
+                tmp.write_bytes(body)
+                os.replace(tmp, self.dir / name)
+                if item.get("time"):
+                    os.utime(self.dir / name, (item["time"], item["time"]))
+            except Exception as e:
+                self.log(f"steam cloud screenshot {item['id']}: {e}")
+                continue
+            with self._lock:
+                index = self._read(self.index_path, [])
+                for e in index:
+                    if e.get("id") == item["id"]:
+                        e["file"] = name
+                self._write(self.index_path, index)
+            done += 1
+        self.log(f"steam cloud screenshots: downloaded {done}/{len(missing)}")
+
+    def hide(self, ident):
+        """The library deleted the local copy: never download this one again."""
+        ident = str(ident)
+        with self._lock:
+            hidden = self._read(self.hidden_path, [])
+            if ident not in hidden:
+                hidden.append(ident)
+                self._write(self.hidden_path, hidden)
+            index = self._read(self.index_path, [])
+            for e in index:
+                if e.get("id") == ident and e.get("file"):
+                    try:
+                        (self.dir / e["file"]).unlink()
+                    except OSError:
+                        pass
+            self._write(self.index_path, [e for e in index if e.get("id") != ident])
+        return {"hidden": ident}

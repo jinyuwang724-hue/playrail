@@ -146,6 +146,9 @@ class Service:
         self._input_task = None
         # Game Bar screenshots: which window each new capture came from (data\captures.jsonl, read by ClawLibrary).
         self._captures = _captures_module.CaptureLog(self._data, log=logging.info)
+        # Steam cloud screenshots (Big Picture → 媒体): listed by the Steam front end, copied to data\steam-cloud.
+        self._steam_cloud = _captures_module.SteamCloud(self._data, log=logging.info)
+        self._cloud_waiters = {}
         # Pad mode switches (set_gamepad_mode, or the firmware switching by itself if it can): notice first, then the firmware listener.
         self._gamepad.watcher.listeners.insert(0, self._pad_mode_changed)
         self._settings_path = self._data / "settings.json"
@@ -965,6 +968,40 @@ class Service:
         self._save()
         await self._configure()
         return await self.get_state()
+
+    async def steam_cloud_screenshots(self, request_id, items):
+        """The Steam front end's list of uploaded screenshots (on its own schedule, or answering
+        refresh_steam_cloud_screenshots). Downloads continue in the background."""
+        if not isinstance(items, list) or len(items) > 20000:
+            raise ValueError("截图列表格式错误")
+        waiter = self._cloud_waiters.get(request_id) if isinstance(request_id, str) else None
+        if waiter is not None:
+            if not waiter.done():
+                waiter.set_result(items)
+            return {"handled": True}
+        return await asyncio.to_thread(self._steam_cloud.update, items)
+
+    async def refresh_steam_cloud_screenshots(self):
+        """ClawLibrary's 截图 page opened: ask Steam for the current list and give the downloads a few
+        seconds. Without a Steam front end the copies already here are all there is."""
+        if self._ready:
+            ident = uuid.uuid4().hex
+            future = asyncio.get_running_loop().create_future()
+            self._cloud_waiters[ident] = future
+            try:
+                await self._emit("router_event", {"type": "cloud_screenshots", "id": ident})
+                items = await asyncio.wait_for(future, 5)
+                return await asyncio.to_thread(self._steam_cloud.update, items, 3.5)
+            except asyncio.TimeoutError:
+                pass
+            finally:
+                self._cloud_waiters.pop(ident, None)
+        return {"offline": True, **await asyncio.to_thread(self._steam_cloud.counts)}
+
+    async def hide_steam_cloud_screenshot(self, ident):
+        if not isinstance(ident, str) or not ident.isdigit() or len(ident) > 24:
+            raise ValueError("截图编号格式错误")
+        return await asyncio.to_thread(self._steam_cloud.hide, ident)
 
     async def action_result(self, result):
         if (not isinstance(result, dict) or type(result.get("ok")) is not bool

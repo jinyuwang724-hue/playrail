@@ -51,6 +51,7 @@ $taskMagpie = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\magpie.js'),[T
 $taskPower = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\power.js'),[Text.Encoding]::UTF8)
 $taskRumble = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\rumble.js'),[Text.Encoding]::UTF8)
 $taskSteamContext = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\steam-context.js'),[Text.Encoding]::UTF8)
+$taskCloudShots = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\steam-screenshots.js'),[Text.Encoding]::UTF8)
 $taskFrontend = [IO.File]::ReadAllText((Join-Path $taskRoot 'plugin\frontend.js'),[Text.Encoding]::UTF8)
 $taskFrontend = $taskFrontend.Replace('import { createMenuRouter } from "./menu-router.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { installNavigationHaptics } from "./navigation-haptics.js";', '')
@@ -60,7 +61,8 @@ $taskFrontend = $taskFrontend.Replace('import { createModuleSelection, createToo
 $taskFrontend = $taskFrontend.Replace('import { createMagpieController, createMagpiePanel } from "./magpie.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { syncOverlayInset, syncQuickAccessSize } from "./magpie.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { installSteamContext } from "./steam-context.js";', '')
+$taskFrontend = $taskFrontend.Replace('import { installCloudScreenshots } from "./steam-screenshots.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { createPowerController, createPowerPanel, powerSummaries, powerTiles } from "./power.js";', '')
 $taskFrontend = $taskFrontend.Replace('import { createRumbleController, createRumbleRows } from "./rumble.js";', '')
-[IO.File]::WriteAllText((Join-Path $taskRoot 'plugin\dist\index.js'),($taskRouter + [Environment]::NewLine + $taskHaptics + [Environment]::NewLine + $taskGameAdder + [Environment]::NewLine + $taskPanelLifecycle + [Environment]::NewLine + $taskToolboxUI + [Environment]::NewLine + $taskMagpie + [Environment]::NewLine + $taskPower + [Environment]::NewLine + $taskRumble + [Environment]::NewLine + $taskSteamContext + [Environment]::NewLine + $taskFrontend),(New-Object Text.UTF8Encoding($false)))
+[IO.File]::WriteAllText((Join-Path $taskRoot 'plugin\dist\index.js'),($taskRouter + [Environment]::NewLine + $taskHaptics + [Environment]::NewLine + $taskGameAdder + [Environment]::NewLine + $taskPanelLifecycle + [Environment]::NewLine + $taskToolboxUI + [Environment]::NewLine + $taskMagpie + [Environment]::NewLine + $taskPower + [Environment]::NewLine + $taskRumble + [Environment]::NewLine + $taskSteamContext + [Environment]::NewLine + $taskCloudShots + [Environment]::NewLine + $taskFrontend),(New-Object Text.UTF8Encoding($false)))
 Write-Output 'Build complete.'

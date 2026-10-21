@@ -51,7 +51,7 @@ METHODS = {
     "get_magpie_state", "get_magpie_targets", "get_magpie_catalog", "apply_magpie", "stop_magpie",
     "set_magpie_plain", "toggle_magpie", "magpie_auto_start", "set_magpie_pause",
     "get_game_picker_path", "get_game_picker_locations", "inspect_game_file",
-    "play_navigation_haptic", "set_navigation_context",
+    "play_navigation_haptic", "set_navigation_context", "steam_cloud_screenshots",
     # Game Bar widget
     "widget_state", "set_brightness", "set_volume", "set_mute", "set_refresh_rate", "set_fps_limit",
     "close_game", "power_action", "toggle_keyboard", "screenshot",
@@ -62,6 +62,8 @@ METHODS = {
     "get_system_state", "get_settings_state", "set_home_app", "set_startup_item", "set_vendor_app",
     "set_haptics_enabled", "restart_agent", "check_driver_updates", "install_updates", "set_steam_keys", "library_haptic", "install_windows_updates", "set_charge_limit", "set_power_button", "set_hibernate_after", "set_display_off", "set_wake_lock",
     "set_autostart", "check_updates", "backup_settings", "restore_settings", "reset_settings", "export_logs",
+    # ClawLibrary 截图
+    "refresh_steam_cloud_screenshots", "hide_steam_cloud_screenshot",
 }
 
 

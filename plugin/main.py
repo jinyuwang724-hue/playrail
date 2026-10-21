@@ -32,7 +32,7 @@ FORWARDED = (
     "get_magpie_state", "get_magpie_targets", "get_magpie_catalog", "apply_magpie", "stop_magpie",
     "set_magpie_plain", "toggle_magpie", "magpie_auto_start", "set_magpie_pause",
     "get_game_picker_path", "get_game_picker_locations", "inspect_game_file",
-    "play_navigation_haptic", "set_navigation_context",
+    "play_navigation_haptic", "set_navigation_context", "steam_cloud_screenshots",
 )
 OFFLINE = {"mode": "Unknown", "phase": "工具箱后台未运行，正在重新连接", "enabled": False,
            "error": "工具箱后台未连接；按键暂由 ClawTweaks 处理"}

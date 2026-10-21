@@ -146,7 +146,7 @@ public sealed partial class WallStage
         CcSet(_shInfo, CcDraw(W, H, ShRaster, ds =>
         {
             PText(ds, _shLoaded ? "还没有截图" : "正在读取…", TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.8), 0, 20, W, CanvasHorizontalAlignment.Center);
-            if (_shLoaded) PText(ds, $"Game Bar 截图（{folder}）和 Steam 截图都会出现在这里", TextKit.Ui(400), 14, Gfx.WithAlpha(CcText, 0.5), 0, 52, W, CanvasHorizontalAlignment.Center);
+            if (_shLoaded) PText(ds, $"Game Bar 截图（{folder}）、Steam 截图和 Steam 上传的截图都会出现在这里", TextKit.Ui(400), 14, Gfx.WithAlpha(CcText, 0.5), 0, 52, W, CanvasHorizontalAlignment.Center);
         }));
         _shInfo.Size = new Vector2(W * k, H * k);
         _shInfo.Offset = new Vector3(240 * k, 360 * k, 0);

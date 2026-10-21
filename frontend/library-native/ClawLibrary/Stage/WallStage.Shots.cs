@@ -7,6 +7,7 @@
 // A 看大图（← → 换张、↑ ↓ 选操作、A 执行、X 藏起文字），Y 收藏，B 返回。删除进回收站，要连按两下 A。
 // 截图从哪来、怎么归到游戏：见 Data/Captures.cs。
 using System.Numerics;
+using System.Text.Json.Nodes;
 using ClawLibrary.Data;
 using ClawLibrary.Engine;
 using Microsoft.UI.Composition;
@@ -140,9 +141,30 @@ public sealed partial class WallStage
             _shLoaded = true;
             ShRebuild(keep);
             Log.Info($"shots: {list.Count} images, {_shTabs.Count} tabs");
+
+            // Steam 云端截图：请 agent 经 Steam 前端拿一遍最新的列表、下几秒新图；多出来的就重扫一遍
+            int cloud = list.Count(c => c.CloudId != null);
+            JsonNode? refreshed;
+            if (_agent == null) return;
+            try { refreshed = await _agent.Call("refresh_steam_cloud_screenshots"); }
+            catch (Exception ex) { Log.Warn($"shots steam cloud: {ex.Message}"); return; }
+            int local = (int?)refreshed?["local"] ?? cloud;
+            Log.Info($"shots: steam cloud {local}/{(int?)refreshed?["total"] ?? -1} local{((bool?)refreshed?["offline"] == true ? " (steam offline)" : "")}");
+            if (local == cloud || v != _shVersion || !_shOpen) return;
+            var again = await Task.Run(() => Captures.Scan(lib));
+            if (v != _shVersion || !_shOpen) return;
+            keep = ShFocusedPath();
+            _shAll = again;
+            ShRebuild(keep);
         }
         catch (Exception ex) { Log.Warn($"shots load: {ex.Message}"); _shLoaded = true; if (_shOpen) ShRebuild(); }
         finally { _shLoading = false; }
+    }
+
+    private async Task HideCloudShot(string id)
+    {
+        try { if (_agent != null) await _agent.Call("hide_steam_cloud_screenshot", id); }
+        catch (Exception ex) { Log.Warn($"shots hide cloud {id}: {ex.Message}"); }
     }
 
     // ---------------- 数据 → 分组 ----------------
@@ -414,7 +436,13 @@ public sealed partial class WallStage
     {
         if (!Captures.Delete(c)) { Toast("没有删掉：文件可能正被占用"); return; }
         Log.Info($"shots: recycled {c.Path}");
-        Toast("已移到回收站");
+        if (c.CloudId is string cloudId)
+        {
+            // 只删这里的副本，并让 agent 以后不再下这一张；Steam 上的上传不动
+            _ = HideCloudShot(cloudId);
+            Toast("已从这里移除（Steam 上的上传还在）");
+        }
+        else Toast("已移到回收站");
         _shAll.Remove(c);
         _shFavs.Remove(c.Path);
         Captures.SaveFavorites(_shFavs);

@@ -63,5 +63,23 @@ class CapturesTest(unittest.TestCase):
         captures.Foreground()()   # must not raise
 
 
+
+class SteamCloudTest(unittest.TestCase):
+    def test_downloads_hides_and_drops_gone_uploads(self):
+        with tempfile.TemporaryDirectory() as d:
+            got = []
+            cloud = captures.SteamCloud(d, fetch=lambda url: got.append(url) or b"\xff\xd8jpeg", log=lambda *_: None)
+            items = [{"id": "1", "url": "https://images.steamusercontent.com/ugc/1", "appid": 2161700, "time": 1761749916},
+                     {"id": "2", "url": "https://images.steamusercontent.com/ugc/2", "shortcutname": "Wuthering Waves"},
+                     {"id": "3", "url": "https://example.com/x.jpg"}]
+            self.assertEqual(cloud.update(items, 5), {"total": 2, "local": 2, "pending": 0})
+            self.assertEqual(len(got), 2)                       # other hosts are never fetched
+            cloud.hide("1")
+            self.assertEqual(cloud.update(items, 5)["total"], 1)  # hidden stays hidden
+            self.assertEqual(len(got), 2)                       # kept copies are not fetched again
+            cloud.update([], 5)
+            self.assertFalse((Path(d) / "steam-cloud" / "2.jpg").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -26,6 +26,8 @@ public sealed class Capture
     public DateTime Time;
     public long Bytes;
     public string Source = "Game Bar";
+    /// <summary>Steam 云端截图的编号（本地那份是 agent 下的副本）；别的为 null。</summary>
+    public string? CloudId;
     /// <summary>连拍组号：同一摞的几张一样；不是连拍为 -1。</summary>
     public int Burst = -1;
 }
@@ -145,6 +147,9 @@ public static partial class Captures
         }
         catch (Exception ex) { Log.Warn($"steam screenshots scan: {ex.Message}"); }
 
+        try { ScanCloud(lib, names, list); }
+        catch (Exception ex) { Log.Warn($"steam cloud screenshots scan: {ex.Message}"); }
+
         list.Sort((a, b) => b.Time.CompareTo(a.Time));
         // 连拍：同一款游戏、和上一张（更新的那张）相隔不到 3 秒
         int group = 0;
@@ -158,6 +163,59 @@ public static partial class Captures
             }
         }
         return list;
+    }
+
+    private static string CloudDir => System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClawToolbox", "data", "steam-cloud");
+
+    /// <summary>
+    /// 上传到 Steam 的截图（大屏幕 → 媒体里看到的那些）：Steam 前端列出来、agent 下到 data\steam-cloud（index.json 记着
+    /// 编号、appid、非 Steam 游戏的名字、拍摄时间）。Steam 游戏按 appid 归；非 Steam 游戏按 Steam 记的名字对游戏库。
+    /// 本机 Steam 截图文件夹里已经有同一张的（同一款、拍摄时间差 2 秒以内）不重复显示。
+    /// </summary>
+    private static void ScanCloud(Library lib, List<(string Norm, LibraryItem Item)> names, List<Capture> list)
+    {
+        var index = System.IO.Path.Combine(CloudDir, "index.json");
+        if (!File.Exists(index)) return;
+        using var doc = JsonDocument.Parse(File.ReadAllText(index, Encoding.UTF8));
+        var entries = new List<(string Id, string File, string AppId, string Shortcut, long Time)>();
+        foreach (var e in doc.RootElement.EnumerateArray())
+        {
+            if (!e.TryGetProperty("file", out var f) || f.GetString() is not { Length: > 0 } file) continue;
+            string S(string k) => e.TryGetProperty(k, out var v) ? (v.ValueKind == JsonValueKind.Number ? v.GetRawText() : v.GetString() ?? "") : "";
+            entries.Add((S("id"), file, S("appid"), S("shortcutname"), long.TryParse(S("time"), out var t) ? t : 0));
+        }
+        if (entries.Count == 0) return;
+        var unknown = entries.Where(e => e.AppId is { Length: > 0 } and not "0" && !lib.ById.ContainsKey(e.AppId)).Select(e => e.AppId).ToHashSet();
+        var appNames = unknown.Count > 0 && Steam.Root() is string root ? Steam.AppNames(root, unknown) : new();
+        var local = list.Where(c => c.Source == "Steam").ToList();
+        foreach (var (id, file, appid, shortcut, time) in entries)
+        {
+            var path = System.IO.Path.Combine(CloudDir, file);
+            var info = new FileInfo(path);
+            if (!info.Exists) continue;
+            LibraryItem? game = null;
+            string title, key;
+            if (appid is { Length: > 0 } and not "0")
+            {
+                game = lib.ById.TryGetValue(appid, out var g) && g.Kind == ItemKind.Game ? g : null;
+                title = game?.Title ?? (appNames.TryGetValue(appid, out var n) ? n : $"Steam {appid}");
+                key = game?.Id ?? "steam:" + appid;
+            }
+            else
+            {
+                game = shortcut.Length > 0 ? Match(shortcut, names) : null;
+                title = game?.Title ?? (shortcut.Length > 0 ? shortcut : "其他");
+                key = game?.Id ?? (shortcut.Length > 0 ? "steam:" + Norm(shortcut) : "other");
+            }
+            var when = time > 0 ? DateTimeOffset.FromUnixTimeSeconds(time).LocalDateTime : info.LastWriteTime;
+            if (local.Any(c => c.GameId == key && Math.Abs((c.Time - when).TotalSeconds) <= 2)) continue;
+            list.Add(new Capture
+            {
+                Path = path, Time = when, Bytes = info.Length, GameId = key == "other" ? null : key, Game = title,
+                Source = "Steam 云端", CloudId = id,
+            });
+        }
     }
 
     private static bool TryTime(Match m, out DateTime t)

@@ -6,6 +6,7 @@ import { createModuleSelection, createToolboxUI, toolboxModules, toolboxStyles }
 import { createMagpieController, createMagpiePanel } from "./magpie.js";
 import { syncOverlayInset, syncQuickAccessSize } from "./magpie.js";
 import { installSteamContext } from "./steam-context.js";
+import { installCloudScreenshots } from "./steam-screenshots.js";
 import { createPowerController, createPowerPanel, powerSummaries, powerTiles } from "./power.js";
 import { createRumbleController, createRumbleRows } from "./rumble.js";
 const manifest = { name: "Claw 掌机工具箱" };
@@ -295,6 +296,7 @@ export default function plugin() {
       routers.get(window)?.modeChanged(event.enabled && event.ready ? event.mode : "Unknown");
       update({ ...state, status: event, settings: { ...state.settings, enabled: event.enabled } });
     }
+    if (event.type === "cloud_screenshots") void cloudShots?.sync(event.id);
     if (event.type === "button") update({ ...state, recent: [...state.recent, event].slice(-8) });
     if (event.type === "action") {
       const start = performance.now();
@@ -322,10 +324,13 @@ export default function plugin() {
   frontendReady = api.call("frontend_ready", true, frontendId);
   const steamContext = installSteamContext(window, UI, (method, ...args) => api.call(method, ...args), { frontendId, ready: frontendReady,
     onError: error => console.warn("[Claw] Steam context unavailable", error) });
+  // Uploaded Steam screenshots (Big Picture → 媒体): the agent keeps a copy for ClawLibrary's 截图 page.
+  const cloudShots = installCloudScreenshots(window, (method, ...args) => api.call(method, ...args), { ready: frontendReady,
+    onError: error => console.warn("[Claw] Steam cloud screenshots unavailable", error) });
   frontendReady.then(value => { update(value); void haptics.sync(); }).catch(error => update({ ...state, status: { ...state.status, error: String(error) } }));
   return {
     name: manifest.name, title: h(Title), content: h(Content),
     icon: UI.IconsModule?.Controller ? h(UI.IconsModule.Controller, { width: 20, height: 20, style: { width: 20, height: 20 } }) : null,
-    onDismount() { disposed = true; clearInterval(plainTimer); removeInset(); syncOverlayInset(window, null); syncQuickAccessSize(window, null); steamContext.dispose(); disposePanel(); haptics.dispose(); routers.get(window)?.dispose(); routers.delete(window); magpie.dispose(); power.dispose(); rumble.dispose(); api.removeEventListener("power_status", powerListener); api.removeEventListener("magpie_status", magpieListener); api.removeEventListener("router_event", listener); api.removeEventListener("haptic_status", hapticListener); api.call("frontend_ready", false, frontendId).catch(() => {}); },
+    onDismount() { disposed = true; clearInterval(plainTimer); removeInset(); syncOverlayInset(window, null); syncQuickAccessSize(window, null); steamContext.dispose(); cloudShots.dispose(); disposePanel(); haptics.dispose(); routers.get(window)?.dispose(); routers.delete(window); magpie.dispose(); power.dispose(); rumble.dispose(); api.removeEventListener("power_status", powerListener); api.removeEventListener("magpie_status", magpieListener); api.removeEventListener("router_event", listener); api.removeEventListener("haptic_status", hapticListener); api.call("frontend_ready", false, frontendId).catch(() => {}); },
   };
 }
