@@ -24,6 +24,11 @@ public sealed record UiPrefs
     public int Accent { get; init; } = -1;
     public bool Sounds { get; init; }
     public int SoundVolume { get; init; } = 40;
+    public int SoundTheme { get; init; }
+    public bool MusicEnabled { get; init; }
+    public int MusicVolume { get; init; } = 20;
+    public string MusicTrack { get; init; } = Data.MusicLibrary.DefaultId;
+    public bool MusicLoop { get; init; } = true;
     /// <summary>手动加的游戏文件夹（每个子文件夹一款游戏）。</summary>
     public string[] Folders { get; init; } = Array.Empty<string>();
     /// <summary>全屏体验主页选了「Steam 大屏幕」：游戏库被当主页打开时转去 Steam 大屏幕（替代 AnyFSE）。</summary>
@@ -71,6 +76,11 @@ public sealed record UiPrefs
                     "accent" when int.TryParse(v, out var i) => p with { Accent = Math.Clamp(i, -1, Accents.Length - 1) },
                     "sounds" when bool.TryParse(v, out var b) => p with { Sounds = b },
                     "soundVolume" when int.TryParse(v, out var i) => p with { SoundVolume = Math.Clamp(i, 0, 100) },
+                    "soundTheme" when int.TryParse(v, out var i) => p with { SoundTheme = Math.Clamp(i, 0, 2) },
+                    "musicEnabled" when bool.TryParse(v, out var b) => p with { MusicEnabled = b },
+                    "musicVolume" when int.TryParse(v, out var i) => p with { MusicVolume = Math.Clamp(i, 0, 100) },
+                    "musicTrack" when v.Length > 0 => p with { MusicTrack = v },
+                    "musicLoop" when bool.TryParse(v, out var b) => p with { MusicLoop = b },
                     "fseSteam" when bool.TryParse(v, out var b) => p with { FseSteam = b },
                     "navHaptics" when bool.TryParse(v, out var b) => p with { NavHaptics = b },
                     "libraryCover" when bool.TryParse(v, out var b) => p with { LibraryCover = b },
@@ -95,6 +105,7 @@ public sealed record UiPrefs
                 $"tabOrder={string.Join(',', TabOrder)}", $"tabsHidden={string.Join(',', TabsHidden)}", $"showHidden={ShowHiddenGames}",
                 $"sourceSteam={SourceSteam}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}",
                 $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
+                $"soundTheme={SoundTheme}", $"musicEnabled={MusicEnabled}", $"musicVolume={MusicVolume}", $"musicTrack={MusicTrack}", $"musicLoop={MusicLoop}",
             });
             File.Move(FilePath + ".tmp", FilePath, true);
         }

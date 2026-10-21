@@ -189,6 +189,7 @@ public sealed partial class WallStage
     private void OpenControlCenter()
     {
         if (_stack.Count == 0) return;
+        SoundFx.Play(Sfx.Open);
         long t0 = NowMs;
         if (_searchOpen) CloseSearch();
         if (_expandedKey != null) Collapse(false);

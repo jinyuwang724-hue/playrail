@@ -41,3 +41,5 @@ desktop.ini
 
 # Game Bar widget: C++/WinRT generated sources
 /native/GameBarWidget/Generated Files/
+/tests/LibraryAudio/bin/
+/tests/LibraryAudio/obj/

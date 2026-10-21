@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $packages = Join-Path $env:USERPROFILE '.nuget\packages'
 $out = Join-Path $root 'artifacts\gamebar-widget'
-$properties = @('/p:Configuration=Release','/p:Platform=x64',
+$properties = @('/p:Configuration=Release','/p:Platform=x64','/p:AppxBundle=Never',
     "/p:CPPWINRT_DIR=$packages\microsoft.windows.cppwinrt\2.0.250303.1",
     "/p:GAMEBAR_DIR=$(Join-Path $root 'artifacts\nuget-gamebar\pkg')",
     "/p:MUX_DIR=$packages\microsoft.ui.xaml\2.8.7",
@@ -12,7 +12,9 @@ $properties = @('/p:Configuration=Release','/p:Platform=x64',
     "/p:OutDir=$out\bin\", "/p:IntDir=$out\obj\")
 & 'C:\BuildTools2022\MSBuild\Current\Bin\MSBuild.exe' (Join-Path $root 'native\GameBarWidget\ClawWidget.vcxproj') /nologo /v:m @properties
 if ($LASTEXITCODE -ne 0) { throw 'Widget build failed.' }
-$msix = Get-ChildItem (Join-Path $out 'bin\ClawWidget\AppPackages') -Recurse -Filter *.msix | Sort-Object LastWriteTime | Select-Object -Last 1
+$version = ([xml](Get-Content -LiteralPath (Join-Path $root 'native\GameBarWidget\Package.appxmanifest') -Raw)).Package.Identity.Version
+$msix = Get-ChildItem (Join-Path $out 'bin\ClawWidget') -Recurse -Filter ("ClawWidget_{0}_x64.msix" -f $version) | Sort-Object LastWriteTime | Select-Object -Last 1
+if (-not $msix) { throw "Widget package $version not found." }
 $signed = Join-Path $root 'artifacts\gamebar-signing\ClawWidget.msix'
 New-Item -ItemType Directory -Force (Split-Path -Parent $signed) | Out-Null
 Copy-Item $msix.FullName $signed -Force

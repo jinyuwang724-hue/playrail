@@ -1,0 +1,22 @@
+{
+  "name": "Claw · 叠页",
+  "selectedByUser": true,
+  "date": "2026-10-21",
+  "timezone": "Asia/Shanghai",
+  "palette": "black, cool white, cool gray; no yellow",
+  "master": "claw-pages-master.png",
+  "masterSize": [1254, 1254],
+  "masterSHA256": "828FAC5C7551D6DE32AF6093B87CD9138F5F93C4614D982BCCBB0C0ADAFFFAB7",
+  "generator": "built-in image_gen.imagegen",
+  "prompt": "prompt.txt",
+  "png": "claw-pages-1024.png",
+  "ico": "claw-pages.ico",
+  "icoSizes": [16, 20, 24, 32, 40, 48, 64, 128, 256],
+  "exportCommand": "tools/Export-BrandIcons.ps1",
+  "installedLibraryVersion": "0.1.41.0",
+  "installedWidgetVersion": "0.4.20.0",
+  "validationReport": "../../artifacts/icon-pages-validation.json",
+  "installedAssetsVerified": 75,
+  "libraryStartupVerified": true,
+  "settingsPreserved": true
+}

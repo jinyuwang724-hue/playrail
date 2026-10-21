@@ -118,7 +118,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var appWindow = AppWindow;
-            appWindow.SetIcon("Assets\\Square44x44Logo.png");
+            appWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "ClawIcon.ico"));
             if (windowed)
             {
                 appWindow.Resize(new Windows.Graphics.SizeInt32(1920, 1200));

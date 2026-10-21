@@ -218,6 +218,7 @@ public sealed partial class WallStage : IDisposable
         _pad = new Input.GamepadPoller(_dq, this, () => IsForeground());
         _pad.Start();
         StartRailTimers();
+        StartHomeAudio();
         UpdateBackdropRunning();
         _rootEl.Focus(FocusState.Programmatic);
         _rootEl.XamlRoot.Changed += (_, _) => { try { OnResize(); } catch (Exception ex) { Log.Error("resize", ex); } };
@@ -823,7 +824,7 @@ public sealed partial class WallStage : IDisposable
                 Toast($"正在启动「{item.Title}」");
                 AfterGameLaunch();
             }
-            catch (Exception ex) { Toast($"「{item.Title}」没能启动：{ex.Message}"); }
+            catch (Exception ex) { SoundFx.Play(Sfx.Error); Toast($"「{item.Title}」没能启动：{ex.Message}"); }
             Log.Info($"launch folder game {item.Id} {exe}");
             return;
         }
@@ -1074,6 +1075,7 @@ public sealed partial class WallStage : IDisposable
         if (_ccOpen && _gpOpen) { GpSwitchTab(delta); return; }   // 手柄页「选择指令」里 LB / RB 换页签
         if (_ccOpen && _shOpen) { if (!MorphIntercept()) ShSwitchTab(delta); return; }   // 截图页换游戏
         if (_stack.Count > 1 || _ccOpen || MorphIntercept()) return;
+        SoundFx.Play(Sfx.Switch);
         if (_expandedKey != null) Collapse(false);
         if (_searchOpen) CloseSearch();
         _tabIndex = (_tabIndex + delta + _lib.HomeTabs.Count) % _lib.HomeTabs.Count;
@@ -1434,6 +1436,7 @@ public sealed partial class WallStage : IDisposable
 
     public void Dispose()
     {
+        DisposeHomeAudio();
         _pad?.Dispose();
         _backdrop?.Dispose();
         _agent?.Dispose();

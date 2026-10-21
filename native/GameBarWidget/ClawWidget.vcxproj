@@ -75,10 +75,7 @@
   </ItemGroup>
   <ItemGroup>
     <AppxManifest Include="Package.appxmanifest"><SubType>Designer</SubType></AppxManifest>
-    <Image Include="Assets\Square150x150Logo.png" />
-    <Image Include="Assets\Square44x44Logo.png" />
-    <Image Include="Assets\StoreLogo.png" />
-    <Image Include="Assets\SplashScreen.png" />
+    <Image Include="Assets\*.png" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Import Project="$(GAMEBAR_DIR)\build\native\Microsoft.Gaming.XboxGameBar.targets" />

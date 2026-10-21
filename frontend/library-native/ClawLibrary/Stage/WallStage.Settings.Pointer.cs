@@ -132,6 +132,8 @@ public sealed partial class WallStage
         _settingsManualScroll = true;
         var row = rows[hit.Row];
         if (!row.Disabled && !row.Skip)
+        {
+            SoundFx.Play(row.Choices?.Length == 2 ? Sfx.Toggle : hit.Kind is SettingsTargetKind.Choice or SettingsTargetKind.Increase or SettingsTargetKind.Decrease ? Sfx.Switch : Sfx.Confirm);
             switch (hit.Kind)
             {
                 case SettingsTargetKind.Row: row.Press?.Invoke(); break;
@@ -142,6 +144,7 @@ public sealed partial class WallStage
                 case SettingsTargetKind.Increase: row.Step?.Invoke(1); break;
                 case SettingsTargetKind.Slider: SettingsSliderAt(hit, x); break;
             }
+        }
         SettingsPaint();
     }
 

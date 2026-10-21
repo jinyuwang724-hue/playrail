@@ -51,7 +51,7 @@ public sealed partial class WallStage
         if (!Program.Args.Contains("--style=b")) Style = _prefs.StyleB ? TitleStyle.B : TitleStyle.D;
         _reducedLocal = _prefs.Reduced;
         SoundFx.Enabled = _prefs.Sounds;
-        SoundFx.SetVolume(_prefs.SoundVolume);
+        SoundFx.Configure(_prefs.SoundTheme, _prefs.SoundVolume);
         // 封面重新生成：上次在设置里点了，这次启动先删掉旧的封面套件（缺的会在后台重新生成）
         var flag = Path.Combine(App.CacheDir, "art.reset");
         if (File.Exists(flag))
@@ -89,6 +89,8 @@ public sealed partial class WallStage
     /// <summary>启动游戏后：设置成「隐藏游戏库」时，游戏起来前把窗口收到任务栏，渲染随之停下。</summary>
     private void AfterGameLaunch()
     {
+        SoundFx.Play(Sfx.Launch);
+        _homeMusic?.HoldForLaunch();
         if (_prefs.AfterLaunch != AfterLaunch.Hide) return;
         nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
         After(1500, () => ShowWindow(hwnd, 6));   // SW_MINIMIZE
@@ -146,6 +148,7 @@ public sealed partial class WallStage
         _stOpen = false;
         _stBrowse = null;
         _stBrowseExe = false;
+        _stBrowseMusic = false;
         _lgPage = LgPage.None;
         StEditEnd(false);
         SettingsResetPointer();
@@ -333,7 +336,7 @@ public sealed partial class WallStage
     private void StBrowseTo(string? path)
     {
         _stBrowse = path;
-        if (path == null) _stBrowseExe = false;
+        if (path == null) { _stBrowseExe = false; _stBrowseMusic = false; }
         _stZone = 1;
         _stArmed = null;
         BuildStRows();
@@ -356,6 +359,7 @@ public sealed partial class WallStage
             }
             return;
         }
+        if (_stBrowseMusic) { BuildMusicBrowse(path); return; }
         if (_stBrowseExe)
         {
             // 添加游戏：子文件夹在前，下面是这一层的 exe，选中一个就进确认页
@@ -583,11 +587,7 @@ public sealed partial class WallStage
 
     private void BuildStSound(JsonObject? v, string later)
     {
-        _stRows.Add(new PerfRow { Section = true, Title = "界面音效" });
-        _stRows.Add(StToggle("界面音效", _prefs.Sounds, on => { SaveUi(_prefs with { Sounds = on }); SoundFx.Enabled = on; SoundFx.Play(Sfx.Confirm); Repaint(); }, false));
-        var vol = StNumber("音效音量", _prefs.SoundVolume, 0, 100, 10, n => $"{n} %", n => { SaveUi(_prefs with { SoundVolume = n }); SoundFx.SetVolume(n); SoundFx.Play(Sfx.Move); Repaint(); }, 40);
-        vol.Disabled = !_prefs.Sounds;
-        _stRows.Add(vol);
+        BuildAudioRows();
         _stRows.Add(new PerfRow { Section = true, Title = "震动" });
         _stRows.Add(StToggle("导航震动", _prefs.NavHaptics, on => { SaveUi(_prefs with { NavHaptics = on }); if (on) NavHaptic("confirm"); Repaint(); }, true));
     }
@@ -750,6 +750,7 @@ public sealed partial class WallStage
                 _stArmed = null;
                 _stBrowse = null;
                 _stBrowseExe = false;
+                _stBrowseMusic = false;
                 _lgPage = LgPage.None;
                 BuildStRows();
                 _stFocus = FirstStRow();
@@ -767,7 +768,7 @@ public sealed partial class WallStage
             return;
         }
         var r = _stFocus >= 0 && _stFocus < _stRows.Count ? _stRows[_stFocus] : null;
-        if (r != null && !r.Disabled && r.Step != null) { r.Step(dir == Direction.Left ? -1 : 1); return; }
+        if (r != null && !r.Disabled && r.Step != null) { SoundFx.Play(r.Choices?.Length == 2 ? Sfx.Toggle : Sfx.Switch); r.Step(dir == Direction.Left ? -1 : 1); return; }
         if (dir == Direction.Left) { _stZone = 0; PaintSt(); }
     }
 
@@ -779,6 +780,7 @@ public sealed partial class WallStage
         if (_stFocus < 0 || _stFocus >= _stRows.Count) return;
         var r = _stRows[_stFocus];
         if (r.Disabled) return;
+        SoundFx.Play(r.Choices?.Length == 2 ? Sfx.Toggle : r.Choices != null || r.Numeric ? Sfx.Switch : Sfx.Confirm);
         r.Press?.Invoke();
     }
 
@@ -814,7 +816,7 @@ public sealed partial class WallStage
         int i = (int)Math.Floor((y - PerfSecH) / StCatH);
         if (i < 0 || i >= StCats.Length) return false;
         MarkInput();
-        _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null; _stBrowseExe = false; _lgPage = LgPage.None;
+        _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null; _stBrowseExe = false; _stBrowseMusic = false; _lgPage = LgPage.None;
         BuildStRows();
         _stFocus = FirstStRow();
         _stScroll = 0; _stScrollY = float.NaN;
