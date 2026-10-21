@@ -35,7 +35,6 @@ public sealed record UiPrefs
     /// <summary>截图页的排版：0 日历、1 放映、2 冲印。</summary>
     public int ShotsStyle { get; init; }
     /// <summary>添加游戏 › 匹配弹窗的搜索栏样子：0 胶囊 / 1 大字 / 2 顶栏。</summary>
-    public int SearchStyle { get; init; }
 
     public static readonly (string Name, uint Rgb)[] Accents =
     {
@@ -76,7 +75,6 @@ public sealed record UiPrefs
                     "navHaptics" when bool.TryParse(v, out var b) => p with { NavHaptics = b },
                     "libraryCover" when bool.TryParse(v, out var b) => p with { LibraryCover = b },
                     "shotsStyle" when int.TryParse(v, out var i) => p with { ShotsStyle = Math.Clamp(i, 0, 2) },
-                    "searchStyle" when int.TryParse(v, out var i) => p with { SearchStyle = Math.Clamp(i, 0, 2) },
                     "folders" => p with { Folders = v.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) },
                     _ => p,
                 };
@@ -96,7 +94,7 @@ public sealed record UiPrefs
                 $"styleB={StyleB}", $"backdrop={Backdrop}", $"reduced={Reduced}", $"boot={Boot}", $"startTab={StartTab}",
                 $"tabOrder={string.Join(',', TabOrder)}", $"tabsHidden={string.Join(',', TabsHidden)}", $"showHidden={ShowHiddenGames}",
                 $"sourceSteam={SourceSteam}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}",
-                $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}", $"searchStyle={SearchStyle}",
+                $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
             });
             File.Move(FilePath + ".tmp", FilePath, true);
         }

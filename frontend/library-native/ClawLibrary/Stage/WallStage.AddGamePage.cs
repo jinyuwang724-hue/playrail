@@ -3,7 +3,7 @@
 // 右栏顶上一行页签（截图页同款）：封面图片 / 背景 / 徽标 / 宽幅封面图片（各是一种图的候选网格，A 就换成这张，闪一下 + 提示）、
 // 封面概览（五种图一屏放下，每种都能「从本地选择」）。四种图的页右头有「Steam 官方封面」按钮（商店里有这款才有），
 // 按下弹出这种图的官方版本，A 用它。
-// 选完 exe 直接进来，上面弹出「匹配游戏」弹窗（WallStage.AddGamePopup.cs）；之后「匹配」那一行或 Y 再打开。
+// 选完 exe 先进「匹配游戏」子页面（WallStage.AddGameMatch.cs），选定一款再到这页；之后「匹配」那一行或 Y 再进去。
 // 分类是单独一页（设置行：新建分类，和每个 Steam 分类的 关 / 开）。「完成」立刻关页，保存在后台做完再提示。
 // 整页画在一张图上（Win2D），只有打字时放一个 XAML TextBox。
 using System.Numerics;
@@ -25,7 +25,7 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private enum AgPage { Art, Category }
+    private enum AgPage { Art, Category, Match }
 
     private sealed class AgDraft
     {
@@ -73,8 +73,7 @@ public sealed partial class WallStage
         if (string.IsNullOrEmpty(name) || dir.TrimEnd('\\').Length <= 2) name = Path.GetFileNameWithoutExtension(exe);
         var d = new AgDraft { Name = name, Exe = exe, Query = Path.GetFileNameWithoutExtension(exe) };
         foreach (var (kind, _) in AgKinds) { d.Cands[kind] = new(); d.Pick[kind] = -1; }
-        AgShow(d, AgPage.Art);
-        AgOpenPop();
+        AgShow(d, AgPage.Match);
     }
 
     private void AgOpenEdit(JsonObject g)
@@ -126,8 +125,8 @@ public sealed partial class WallStage
     {
         if (!_agOpen || _ag == null) return;
         AgEndEdit(false);
-        AgClosePop(instant: true);
         _agOpen = false;
+        AgMatchSearching();
         _agDraft = null;
         _ag.IsVisible = false;
         if (_st != null && _stOpen) { _st.IsVisible = true; Repaint(); }
@@ -150,6 +149,12 @@ public sealed partial class WallStage
                 break;
             case AgPage.Category:
                 _agZone = 0; _agIndex = AgFirstRow(AgCategoryRows());
+                break;
+            case AgPage.Match:
+                // 有结果就落在用着的那款上（A 就用它），没有就落在输入框；还没搜过就先用现在的搜索词搜一次
+                if (_agDraft is { } m && m.Matches.Count > 0) { _agZone = 1; _agIndex = Math.Clamp(m.Match, 0, m.Matches.Count - 1); }
+                else { _agZone = 0; _agIndex = 0; }
+                if (_agDraft is { Matches.Count: 0, Searching: false } s && s.Query.Trim().Length > 0) _ = AgSearch(s);
                 break;
         }
         AgPaint();
@@ -179,8 +184,8 @@ public sealed partial class WallStage
         }
         if (v != d.Version) return;
         d.Searching = false;
-        // 弹窗里：有结果就高亮第一款（直接按 A / 回车就用它），继续打字会重新搜
-        if (_agDraft == d && _agPopOpen) _agPopIndex = d.Matches.Count > 0 ? 0 : -1;
+        // 匹配页：有结果焦点就落到第一款（直接按 A 就用它），没有就回输入框
+        if (_agDraft == d && _agPage == AgPage.Match && _agEditing == null) { _agZone = d.Matches.Count > 0 ? 1 : 0; _agIndex = 0; }
         AgRepaint(d);
     }
 
@@ -192,7 +197,6 @@ public sealed partial class WallStage
         d.Sgdb = match != null && Str(match["source"]) == "sgdb" ? Str(match["id"]) : null;
         d.SteamAppId = match != null ? Str(match["steamAppId"]) : null;
         d.Official.Clear();
-        AgClosePop();
         AgGo(AgPage.Art, _agTab);
         if (match != null) _ = AgLoadCandidates(d, match);
         if (d.SteamAppId != null) _ = AgLoadOfficial(d);
@@ -311,7 +315,7 @@ public sealed partial class WallStage
         var rows = new List<PerfRow>
         {
             new() { Title = "名称", Value = _agEditing == "name" ? "" : d.Name, Press = () => AgBeginEdit("name") },
-            new() { Title = "匹配", Value = d.Match >= 0 && d.Match < d.Matches.Count ? Str(d.Matches[d.Match]["name"]) ?? "" : d.Sgdb != null ? "SteamGridDB" : "未匹配", Press = AgOpenPop },
+            new() { Title = "匹配", Value = d.Match >= 0 && d.Match < d.Matches.Count ? Str(d.Matches[d.Match]["name"]) ?? "" : d.Sgdb != null ? "SteamGridDB" : "未匹配", Press = () => AgGo(AgPage.Match) },
             new()
             {
                 Title = "加入 Steam", Choices = new[] { "关", "开" }, Choice = d.Steam ? 1 : 0,
@@ -404,7 +408,6 @@ public sealed partial class WallStage
     {
         var d = _agDraft;
         if (d == null) return;
-        if (_agPopOpen) { AgPopMove(dir); return; }
         if (_agOffKind != null) return;
         if (_agEditing != null) AgEndEdit(true);
         int dx = dir == Direction.Left ? -1 : dir == Direction.Right ? 1 : 0, dy = dir == Direction.Up ? -1 : dir == Direction.Down ? 1 : 0;
@@ -412,6 +415,9 @@ public sealed partial class WallStage
         {
             case AgPage.Art:
                 AgMoveArt(d, dx, dy);
+                break;
+            case AgPage.Match:
+                AgMoveMatch(d, dx, dy);
                 break;
             case AgPage.Category:
             {
@@ -517,7 +523,6 @@ public sealed partial class WallStage
     {
         var d = _agDraft;
         if (d == null) return;
-        if (_agPopOpen) { AgPopEnter(); return; }
         if (_agOffKind != null) { AgUseOfficial(d, _agOffKind); return; }
         if (_agEditing != null) { AgEndEdit(true); return; }
         NavHaptic("select");
@@ -527,6 +532,9 @@ public sealed partial class WallStage
                 if (_agZone == 0) { var rows = AgArtRows(d); if (_agIndex < rows.Count && !rows[_agIndex].Disabled) rows[_agIndex].Press?.Invoke(); return; }
                 if (_agZone == 1) { AgRightPress(d, _agIndex); return; }
                 AgFinish(d);
+                return;
+            case AgPage.Match:
+                AgActivateMatch(d);
                 return;
             case AgPage.Category:
                 if (_agZone == 0) { var rows = AgCategoryRows(); if (_agIndex < rows.Count) rows[_agIndex].Press?.Invoke(); return; }
@@ -633,17 +641,16 @@ public sealed partial class WallStage
 
     private void AgBack()
     {
-        if (_agPopOpen) { AgClosePop(); return; }
         if (_agOffKind != null) { AgCloseOfficial(); return; }
         if (_agEditing != null) { AgEndEdit(false); return; }
-        if (_agPage == AgPage.Category) { AgGo(AgPage.Art); return; }
+        if (_agPage is AgPage.Category or AgPage.Match) { AgGo(AgPage.Art, _agTab); return; }
         AgClose();
     }
 
     /// <summary>LB / RB：右栏换页签。</summary>
     private void AgSwitchTab(int delta)
     {
-        if (_agDraft == null || _agPopOpen || _agOffKind != null || _agPage != AgPage.Art) return;
+        if (_agDraft == null || _agOffKind != null || _agPage != AgPage.Art) return;
         if (_agEditing != null) AgEndEdit(true);
         _agTab = (_agTab + delta + AgTabNames.Length) % AgTabNames.Length;
         _agScroll = 0;
@@ -657,24 +664,23 @@ public sealed partial class WallStage
         AgPaint();
     }
 
-    /// <summary>Y：打开匹配弹窗（弹窗里 = 回到输入框）。</summary>
+    /// <summary>Y：进匹配页（匹配页里 = 改搜索词）。</summary>
     private void AgY()
     {
-        if (_agPopOpen) { _agPopIndex = -1; AgPopFocusBox(); AgPaintPop(); }
-        else if (_agPage == AgPage.Art && _agOffKind == null) AgOpenPop();
+        if (_agPage == AgPage.Match) { _agZone = 0; _agIndex = 0; AgBeginEdit("query"); }
+        else if (_agPage == AgPage.Art && _agOffKind == null) AgGo(AgPage.Match);
     }
 
     /// <summary>X：分类。</summary>
     private void AgX()
     {
-        if (!_agPopOpen && _agOffKind == null && _agPage == AgPage.Art && _agDraft is { Steam: true }) AgGo(AgPage.Category);
+        if (_agOffKind == null && _agPage == AgPage.Art && _agDraft is { Steam: true }) AgGo(AgPage.Category);
     }
 
     private void AgClick(double sx, double sy)
     {
         float x = (float)sx / _ccK, y = (float)sy / _ccK;
         var p = new Point(x, y);
-        if (_agPopOpen) { AgPopClick(p); return; }
         if (_agOffKind != null)
         {
             if (_agOffUse.Contains(p) && _agDraft != null) AgUseOfficial(_agDraft, _agOffKind);
@@ -703,7 +709,8 @@ public sealed partial class WallStage
         if (d == null) return;
         Rect r;
         string text;
-        const bool right = true;
+        bool right = true;
+        float size = 17;
         switch (what)
         {
             case "name":
@@ -715,6 +722,12 @@ public sealed partial class WallStage
                 text = d.Name;
                 break;
             }
+            case "query":
+                r = AgFieldInput;
+                text = d.Query;
+                right = false;
+                size = 16;
+                break;
             case "newcat":
             {
                 var rows = AgCategoryRows();
@@ -742,7 +755,7 @@ public sealed partial class WallStage
                 _agBox.Resources[key] = ink;
             _agBox.KeyDown += (_, e) =>
             {
-                if (e.Key == Windows.System.VirtualKey.Enter) { e.Handled = true; AgEndEdit(true); }
+                if (e.Key == Windows.System.VirtualKey.Enter) { e.Handled = true; _agEditEnter = true; AgEndEdit(true); }
                 else if (e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; AgEndEdit(false); }
             };
             _agBox.LostFocus += (_, _) => { if (_agEditing != null) AgEndEdit(true); };
@@ -756,11 +769,11 @@ public sealed partial class WallStage
         _agEditing = what;
         _agBox.Text = text;
         _agBox.TextAlignment = right ? TextAlignment.Right : TextAlignment.Left;
-        _agBox.FontSize = 17 * k;
+        _agBox.FontSize = size * k;
         _agBox.Width = r.Width * k;
         _agBox.Height = r.Height * k;
         // 字的垂直位置和画出来的字一样：17 px 字，行高约 1.33 倍
-        _agBox.Padding = new Thickness(0, Math.Max(0, (r.Height - 17 * 1.33) / 2 * k - 1), 0, 0);
+        _agBox.Padding = new Thickness(0, Math.Max(0, (r.Height - size * 1.33) / 2 * k - 1), 0, 0);
         Canvas.SetLeft(_agBox, r.X * k);
         Canvas.SetTop(_agBox, r.Y * k);
         _agBox.Visibility = Visibility.Visible;
@@ -773,6 +786,8 @@ public sealed partial class WallStage
     private void AgEndEdit(bool commit)
     {
         var what = _agEditing;
+        bool enter = _agEditEnter;
+        _agEditEnter = false;
         if (what == null || _agBox == null) return;
         _agEditing = null;
         string text = _agBox.Text.Trim();
@@ -784,6 +799,11 @@ public sealed partial class WallStage
             {
                 case "name":
                     if (text.Length > 0) d.Name = text;
+                    break;
+                case "query":
+                    // 回车才搜（和 folia 一样打字不搜）；点别处只记下字
+                    d.Query = text;
+                    if (enter && text.Length > 0) { _agZone = 0; _agIndex = 1; _ = AgSearch(d); }
                     break;
                 case "newcat":
                     if (text.Length > 0)
@@ -818,10 +838,11 @@ public sealed partial class WallStage
                 switch (_agPage)
                 {
                     case AgPage.Art: AgPaintArt(s, d); break;
+                    case AgPage.Match: AgPaintMatch(s, d); break;
                     default: AgPaintCategory(s, d); break;
                 }
             }
-            if (!_agPopOpen && _agOffKind == null) { Page(ds); return; }
+            if (_agOffKind == null) { Page(ds); return; }
             // 弹窗开着：页面糊一层（一次性画成模糊图，不是实时毛玻璃），点击只给弹窗
             using var cl = new CanvasCommandList(ds);
             using (var cds = cl.CreateDrawingSession()) Page(cds);
@@ -830,11 +851,11 @@ public sealed partial class WallStage
             ds.DrawImage(blur);
             _agHits.Clear();
             _agTabHits.Clear();
-            if (_agOffKind != null && !_agPopOpen) AgPaintOfficial(ds, d);
+            AgPaintOfficial(ds, d);
         }));
         _agSprite.Size = new Vector2(1280 * k, 800 * k);
         _agSprite.Offset = Vector3.Zero;
-        if (_agPopOpen) AgPaintPop();
+        AgMatchSearching();
     }
 
     /// <summary>左上标题（截图页同款：24 px 粗体，40, 32）。返回页签起点：和截图页一样，页签字离标题右边 40。</summary>
@@ -1229,7 +1250,6 @@ public sealed partial class WallStage
         if (Program.Args.FirstOrDefault(a => a.StartsWith("--name=")) is { } n && _agDraft is { } d)
         {
             d.Query = n[7..].Replace('_', ' ');
-            if (_agPopBox != null) _agPopBox.Text = d.Query;
             _ = AgSearch(d);
         }
     }

@@ -421,12 +421,12 @@ public static class Bench
                     break;
                 case "add0" or "add1" or "add2" or "add3" or "add4" or "add5" or "add6" or "add7" or "add8" or "add9":
                 {
-                    // 添加游戏：add0 匹配弹窗，add1 封面图片，add2 封面概览，add3 分类，add4 背景，add5 Steam 官方封面，add6 改名称，add7 弹窗里打字
+                    // 添加游戏：add0 匹配页，add1 封面图片，add2 封面概览，add3 分类，add4 背景，add5 Steam 官方封面，add6 改名称，add7 匹配页里打字
                     s.ToggleControlCenter();
                     await Task.Delay(1500);
                     s.AddGameTestState(Program.Args.FirstOrDefault(a => a.StartsWith("--exe="))?[6..] ?? @"C:\Windows\notepad.exe");
                     await Task.Delay(12000);
-                    if (state == "add7") { s.Move(Direction.Up); await Task.Delay(300); s.Activate(); await Task.Delay(1500); break; }
+                    if (state == "add7") { s.Move(Direction.Left); await Task.Delay(300); s.Activate(); await Task.Delay(1500); break; }
                     if (state != "add0") { s.Activate(); await Task.Delay(9000); }
                     if (state == "add2" || state == "add8") { s.SwitchTab(-1); await Task.Delay(2500); }
                     if (state == "add8") { s.Move(Direction.Right); await Task.Delay(300); for (int i = 0; i < 4; i++) { s.Move(Direction.Down); await Task.Delay(300); } await Task.Delay(1500); }
