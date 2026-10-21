@@ -419,7 +419,7 @@ public static class Bench
                     await Task.Delay(800);
                     s.Activate();
                     break;
-                case "add0" or "add1" or "add2" or "add3" or "add4" or "add5" or "add6":
+                case "add0" or "add1" or "add2" or "add3" or "add4" or "add5" or "add6" or "add7":
                 {
                     // 添加游戏：add0 选定游戏，add1 封面，add2 游戏库里，add3 分类，add4 更换（竖封面），add5 Steam 官方
                     s.ToggleControlCenter();
@@ -427,6 +427,7 @@ public static class Bench
                     s.AddGameTestState(Program.Args.FirstOrDefault(a => a.StartsWith("--exe="))?[6..] ?? @"C:\Windows
 otepad.exe");
                     await Task.Delay(12000);
+                    if (state == "add7") { s.Move(Direction.Up); await Task.Delay(300); s.Activate(); await Task.Delay(1500); break; }
                     if (state != "add0") { s.Activate(); await Task.Delay(9000); }
                     if (state == "add2") { s.SwitchTab(1); await Task.Delay(1500); }
                     if (state == "add3") { s.PadX(); await Task.Delay(1000); }
