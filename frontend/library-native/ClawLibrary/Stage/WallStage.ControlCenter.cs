@@ -287,6 +287,7 @@ public sealed partial class WallStage
 
     private void CcMove(Direction dir)
     {
+        if (_agOpen) { AgMove(dir); return; }
         if (_perfOpen) { PerfMove(dir); return; }
         if (_gpOpen) { GpMove(dir); return; }
         if (_dsOpen) { DsMove(dir); return; }
@@ -311,6 +312,7 @@ public sealed partial class WallStage
 
     private void CcActivate()
     {
+        if (_agOpen) { AgActivate(); return; }
         if (_perfOpen) { PerfActivate(); return; }
         if (_gpOpen) { GpActivate(); return; }
         if (_dsOpen) { DsActivate(); return; }
@@ -350,6 +352,7 @@ public sealed partial class WallStage
     {
         MarkInput();
         if (MorphIntercept()) return;
+        if (_ccOpen && _agOpen) { AgY(); return; }
         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
         if (_ccOpen && _stOpen) { StResetFocused(); return; }
         if (_ccOpen && _shOpen) { ShY(); return; }
@@ -368,6 +371,7 @@ public sealed partial class WallStage
     /// <summary>X：手柄页里交给手柄页（震动页 = 测试震动）；截图页换排版；墙上展开的卡有截图 = 去看它的截图；其余照旧切标题样式。</summary>
     public void PadX()
     {
+        if (_ccOpen && _agOpen) { MarkInput(); AgX(); return; }
         if (_ccOpen && _gpOpen) { MarkInput(); GpPadButton(isY: false); return; }
         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShX(); return; }
         if (!_ccOpen && _expandedKey != null) { MarkInput(); if (!MorphIntercept() && TryOpenShotsForExpanded()) return; }
@@ -389,6 +393,7 @@ public sealed partial class WallStage
     /// <summary>点卡：点到焦点卡 = A，点到别的卡 = 把它移到中间。</summary>
     private void CcClick(double sx, double sy)
     {
+        if (_agOpen) { AgClick(sx, sy); return; }
         if (_shOpen) { ShClick(sx, sy); return; }
         if (_stOpen && StCategoryClick(sx, sy)) return;
         if (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen) { SettingsClick(sx, sy); return; }

@@ -411,6 +411,19 @@ public static class Bench
                 case "control2": s.ToggleControlCenter(); await Task.Delay(900); s.Move(Direction.Right); await Task.Delay(260); s.Move(Direction.Right); break;
                 case "nav": for (int i = 0; i < 3; i++) { s.Move(Direction.Right); await Task.Delay(250); } break;
                 case "rail" or "railtab" or "settings" or "search" or "searchresults": s.RailTestState(state); break;
+                case "add0" or "add1" or "add2" or "add3":
+                {
+                    // 添加游戏页：add0 = 选定游戏，add1 = 选图（竖封面），add2 = 选图（标志页签），add3 = 分类
+                    s.ToggleControlCenter();
+                    await Task.Delay(1500);
+                    s.AddGameTestState(Program.Args.FirstOrDefault(a => a.StartsWith("--exe="))?[6..] ?? @"C:\Windows
+otepad.exe");
+                    await Task.Delay(20000);
+                    if (state != "add0") { s.Activate(); await Task.Delay(9000); }
+                    if (state == "add2") { s.SwitchTab(1); await Task.Delay(300); s.SwitchTab(1); await Task.Delay(300); s.SwitchTab(1); await Task.Delay(1500); }
+                    if (state == "add3") { s.PadX(); await Task.Delay(1000); }
+                    break;
+                }
                 case "shots0" or "shots1" or "shots2" or "shotsv" or "shotsnav" or "shotsf":
                 {
                     // 截图页：shots0 / 1 / 2 = 日历 / 放映 / 冲印（焦点往右挪一格），shotsv = 大图，shotsnav = 日历里走一圈，shotsf = Steam 页签 + 筛选面板

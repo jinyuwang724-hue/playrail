@@ -1070,6 +1070,7 @@ public sealed partial class WallStage : IDisposable
     {
         if (_backgroundSettingsOpen) return;
         MarkInput();
+        if (_ccOpen && _agOpen) { AgSwitchTab(delta); return; }   // 添加游戏页换图种
         if (_ccOpen && _gpOpen) { GpSwitchTab(delta); return; }   // 手柄页「选择指令」里 LB / RB 换页签
         if (_ccOpen && _shOpen) { if (!MorphIntercept()) ShSwitchTab(delta); return; }   // 截图页换游戏
         if (_stack.Count > 1 || _ccOpen || MorphIntercept()) return;

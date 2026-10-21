@@ -3,7 +3,8 @@ into Steam as a non-Steam shortcut with its artwork and collection.
 
 Everything lives in data\\local-games: games.json (read directly by ClawLibrary at load), art\\ (the
 chosen images, named the way Steam's grid folder names them: <appid>p, <appid>_hero, <appid>_logo,
-<appid>), thumbs\\ (candidate previews) and the user's own SteamGridDB API key (never logged).
+<appid>, plus <appid>_icon), thumbs\\ (candidate previews) and the user's optional SteamGridDB API key (never
+logged; without one the website's own search endpoints are used).
 
 A game's id is the Steam shortcut appid it will get (crc32 of exe + name with the top bit set, the way
 Steam ROM Manager does it), fixed when the game is added. So once it is in shortcuts.vdf, the library's
@@ -15,7 +16,7 @@ runs), shortcuts.vdf gets the new entries, the grid folder the images, the colle
 members, and Steam is started again the way it was started at sign-in. Collections are cloud-synced,
 so state() checks afterwards whether Steam kept them.
 """
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 import hashlib
 import json
 import logging
@@ -34,11 +35,14 @@ import winreg
 import zlib
 
 SGDB = "https://www.steamgriddb.com/api/v2"
+# The website's own (undocumented) endpoints: no key needed. Used when the user has not set a key.
+SGDB_PUBLIC = "https://www.steamgriddb.com/api/public"
 MAX_IMAGE = 40 * 1024 * 1024
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 STEAM_TASK = r"\ClawToolbox\SteamAdmin"
-# Art kinds, as Steam names the files in userdata\<id>\config\grid
-KINDS = {"p": "p", "hero": "_hero", "logo": "_logo", "header": ""}
+# Art kinds, as Steam names the files in userdata\<id>\config\grid (the icon is not a grid file: shortcuts.vdf's
+# "icon" field points at it, so it is copied there as <appid>_icon too)
+KINDS = {"p": "p", "header": "", "hero": "_hero", "logo": "_logo", "icon": "_icon"}
 ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+*"
 
 
@@ -280,6 +284,7 @@ class LocalGames:
         self._lock = threading.RLock()
         self.job = {"phase": "", "done": 0, "total": 0}
         self.last_sync = None
+        self._cache = {}
 
     # ---- files ----
     def _load(self):
@@ -303,49 +308,140 @@ class LocalGames:
 
     # ---- network ----
     @staticmethod
-    def _fetch(url, headers=None, limit=MAX_IMAGE):
-        request = urllib.request.Request(url, headers={"User-Agent": "ClawToolbox", **(headers or {})})
-        with urllib.request.urlopen(request, timeout=20) as r:
-            body = r.read(limit + 1)
+    def _fetch(url, headers=None, limit=MAX_IMAGE, data=None, timeout=20, tries=3):
+        """GET (or POST json when data is given), three tries: SteamGridDB's CDN drops TLS handshakes now and then."""
+        body = None
+        for attempt in range(tries):
+            request = urllib.request.Request(url, data=data, headers={"User-Agent": "Mozilla/5.0 ClawToolbox", **(headers or {})})
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as r:
+                    body = r.read(limit + 1)
+                break
+            except urllib.error.HTTPError:
+                raise
+            except OSError:
+                if attempt == tries - 1:
+                    raise
+                time.sleep(0.4 * (attempt + 1))
         if len(body) > limit:
             raise ValueError("too large")
         return body
 
-    def _sgdb(self, path):
-        key = self._key()
-        if not key:
-            raise PermissionError("无密钥")
+    def _json(self, url, headers=None, payload=None, quick=False):
+        """quick: the Steam store from China is sometimes very slow; one short try, the search does without it."""
+        data = json.dumps(payload).encode() if payload is not None else None
+        hdrs = {**(headers or {}), **({"Content-Type": "application/json"} if data else {})}
+        if quick:
+            return json.loads(self.fetch(url, hdrs, 4 * 1024 * 1024, data, timeout=6, tries=1))
+        return json.loads(self.fetch(url, hdrs, 4 * 1024 * 1024, data) if data else self.fetch(url, hdrs, 4 * 1024 * 1024))
+
+    def _official(self, path):
+        """SteamGridDB's documented API with the user's own key."""
         try:
-            body = json.loads(self.fetch(SGDB + path, {"Authorization": "Bearer " + key}, 4 * 1024 * 1024))
+            body = self._json(SGDB + path, {"Authorization": "Bearer " + self._key()})
         except urllib.error.HTTPError as e:
             if e.code in (401, 403):
                 raise PermissionError("密钥无效")
             if e.code == 404:
                 return []
             raise
-        if not body.get("success", False):
+        return (body.get("data") or []) if body.get("success", False) else []
+
+    def _sgdb_search(self, term):
+        """SteamGridDB games for a name: [{id, name, year, source}]. Without a key: the website's own search."""
+        if self._key():
+            found = self._official("/search/autocomplete/" + urllib.parse.quote(term))
+        else:
+            body = self._json(SGDB_PUBLIC + "/search/autocomplete?" + urllib.parse.urlencode({"term": term}))
+            found = (body.get("data") or []) if body.get("success") else []
+        return [{"id": str(g["id"]), "name": g.get("name", ""), "source": "sgdb",
+                 "year": time.gmtime(g["release_date"]).tm_year if g.get("release_date") else None}
+                for g in found if isinstance(g, dict) and g.get("id")]
+
+    def _assets(self, match, kind):
+        """One kind of image for a match: [{url, thumb}] (thumb = remote preview url). Cached per match."""
+        key = (match["source"], str(match["id"]), kind)
+        if key in self._cache:
+            return self._cache[key]
+        ident = str(match["id"])
+        items = []
+        if match["source"] == "steam":
+            items = self._store_assets(ident).get(kind, [])
+        elif self._key():
+            path = {"p": f"/grids/game/{ident}?dimensions=600x900,342x482,660x930&types=static&nsfw=false&humor=false",
+                    "header": f"/grids/game/{ident}?dimensions=920x430,460x215&types=static&nsfw=false&humor=false",
+                    "hero": f"/heroes/game/{ident}?types=static&nsfw=false&humor=false",
+                    "logo": f"/logos/game/{ident}?types=static&nsfw=false&humor=false",
+                    "icon": f"/icons/game/{ident}?types=static&nsfw=false&humor=false"}[kind]
+            items = self._official(path)
+        else:
+            asset_type = {"p": "grid", "header": "grid", "hero": "hero", "logo": "logo", "icon": "icon"}[kind]
+            body = self._json(SGDB_PUBLIC + "/search/assets", payload={"asset_type": asset_type, "game_id": [int(ident)], "page": 0, "limit": 48})
+            items = ((body.get("data") or {}).get("assets") or []) if body.get("success") else []
+            items = [i for i in items if not i.get("nsfw") and not i.get("humor") and not i.get("is_animated") and not i.get("is_deleted")]
+            if kind == "p":
+                items = [i for i in items if i.get("height", 0) > i.get("width", 0)]
+            elif kind == "header":
+                items = [i for i in items if i.get("width", 0) > 1.6 * i.get("height", 1)]
+        result = [{"url": i["url"], "thumb": i.get("thumb") or i["url"]} for i in items
+                  if isinstance(i, dict) and str(i.get("url", "")).startswith("https://")]
+        self._cache[key] = result
+        return result
+
+    def _store_assets(self, appid):
+        """A Steam store app's library images. Newer ones sit under hashed paths, which the store's item API names."""
+        request = {"ids": [{"appid": int(appid)}], "context": {"language": "schinese", "country_code": "CN"},
+                   "data_request": {"include_assets": True}}
+        url = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?" + urllib.parse.urlencode(
+            {"input_json": json.dumps(request, separators=(",", ":"))})
+        try:
+            items = self._json(url).get("response", {}).get("store_items") or [{}]
+        except (OSError, ValueError):
+            items = [{}]
+        assets = items[0].get("assets") or {}
+        fmt = assets.get("asset_url_format") or ""
+
+        def asset(*names):
+            for n in names:
+                if assets.get(n) and fmt:
+                    u = "https://shared.cloudflare.steamstatic.com/store_item_assets/" + fmt.replace("${FILENAME}", assets[n])
+                    return [{"url": u, "thumb": u}]
             return []
-        return body.get("data") or []
+        return {"p": asset("library_capsule_2x", "library_capsule"), "hero": asset("library_hero_2x", "library_hero"),
+                "logo": asset("library_logo_2x", "library_logo"), "header": asset("header_2x", "header"), "icon": []}
 
     def _steam_search(self, term):
         url = "https://store.steampowered.com/api/storesearch/?" + urllib.parse.urlencode({"term": term, "l": "schinese", "cc": "CN"})
         try:
-            items = json.loads(self.fetch(url, None, 2 * 1024 * 1024)).get("items") or []
+            items = self._json(url, quick=True).get("items") or []
         except (OSError, ValueError):
             return []
-        return [{"id": str(i["id"]), "name": i.get("name", ""), "source": "steam"} for i in items[:8] if i.get("type", "app") == "app"]
+        return [{"id": str(i["id"]), "name": i.get("name", ""), "source": "steam", "year": None}
+                for i in items[:6] if i.get("type", "app") == "app"]
+
+    def _steam_english_name(self, appid):
+        request = {"ids": [{"appid": int(appid)}], "context": {"language": "english", "country_code": "US"}}
+        url = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?" + urllib.parse.urlencode(
+            {"input_json": json.dumps(request, separators=(",", ":"))})
+        try:
+            items = self._json(url, quick=True).get("response", {}).get("store_items") or [{}]
+            return items[0].get("name") or None
+        except (OSError, ValueError):
+            return None
 
     def _download(self, url, folder, stem=None):
         if not isinstance(url, str) or not url.startswith("https://"):
             raise ValueError("图片地址格式错误")
         ext = os.path.splitext(urllib.parse.urlsplit(url).path)[1].lower()
-        ext = ext if ext in (".png", ".jpg", ".jpeg", ".webp") else ".jpg"
+        ext = ext if ext in (".png", ".jpg", ".jpeg", ".webp", ".ico") else ".jpg"
         stem = stem or hashlib.sha1(url.encode()).hexdigest()[:20]
         folder.mkdir(parents=True, exist_ok=True)
         target = folder / (stem + ext)
-        if stem and target.is_file() and folder == self.thumbs:
+        if folder == self.thumbs and target.is_file() and target.stat().st_size > 0:
             return str(target)
         body = self.fetch(url)
+        if not body:
+            raise ValueError("empty image")
         tmp = target.with_suffix(".part")
         tmp.write_bytes(body)
         for old in folder.glob(stem + ".*"):
@@ -354,88 +450,117 @@ class LocalGames:
         os.replace(tmp, target)
         return str(target)
 
-    # ---- searching ----
-    def search(self, name):
-        """Matches for a game name: SteamGridDB games (with a key), else Steam store apps."""
-        term = clean_title(str(name or ""))[:120]
-        if not term:
-            return {"query": term, "matches": [], "status": "未找到"}
-        key = self._key()
-        matches = []
-        status = ""
-        if key:
+    def _preview(self, item):
+        try:
+            return {**item, "thumb": self._download(item["thumb"], self.thumbs)}
+        except (OSError, ValueError):
             try:
-                matches = [{"id": str(g["id"]), "name": g.get("name", ""), "year": time.gmtime(g["release_date"]).tm_year
-                            if g.get("release_date") else None, "source": "sgdb"}
-                           for g in self._sgdb("/search/autocomplete/" + urllib.parse.quote(term))[:10]]
-            except PermissionError as e:
-                status = str(e)
-            except (OSError, ValueError) as e:
-                self.log(f"local games: sgdb search failed: {type(e).__name__}")
-                status = "连不上"
-        if not matches:
-            # Many galgames are on the Steam store under their Chinese name; with a key their SteamGridDB
-            # entry is found through the store's appid, without one the store's own artwork is used.
-            for app in self._steam_search(term):
-                if key and status == "":
-                    try:
-                        found = self._sgdb("/games/steam/" + app["id"])
-                        if isinstance(found, dict) and found.get("id"):
-                            matches.append({"id": str(found["id"]), "name": found.get("name") or app["name"], "source": "sgdb"})
-                            continue
-                    except (PermissionError, OSError, ValueError):
-                        pass
-                matches.append(app)
-        if not matches and not status:
-            status = "未找到" if key else "无密钥"
-        return {"query": term, "matches": matches, "status": status}
-
-    def candidates(self, match):
-        """Images for one match, with local previews: {p, hero, logo, header: [{url, thumb}]}."""
-        if not isinstance(match, dict) or match.get("source") not in ("sgdb", "steam") or not str(match.get("id", "")).isdigit():
-            raise ValueError("匹配格式错误")
-        ident = str(match["id"])
-        if match["source"] == "steam":
-            # Newer store images sit under hashed paths; the store's own item API names them (no key needed)
-            request = {"ids": [{"appid": int(ident)}], "context": {"language": "schinese", "country_code": "CN"},
-                       "data_request": {"include_assets": True}}
-            url = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/?" + urllib.parse.urlencode(
-                {"input_json": json.dumps(request, separators=(",", ":"))})
-            try:
-                items = json.loads(self.fetch(url, None, 2 * 1024 * 1024)).get("response", {}).get("store_items") or [{}]
-            except (OSError, ValueError):
-                items = [{}]
-            assets = items[0].get("assets") or {}
-            fmt = assets.get("asset_url_format") or ""
-
-            def asset(*names):
-                return [{"url": "https://shared.cloudflare.steamstatic.com/store_item_assets/" + fmt.replace("${FILENAME}", assets[n]),
-                         "thumb": "https://shared.cloudflare.steamstatic.com/store_item_assets/" + fmt.replace("${FILENAME}", assets[n])}
-                        for n in names if assets.get(n) and fmt][:1]
-            lists = {"p": asset("library_capsule_2x", "library_capsule"), "hero": asset("library_hero_2x", "library_hero"),
-                     "logo": asset("library_logo_2x", "library_logo"), "header": asset("header_2x", "header")}
-        else:
-            def images(path, n):
-                return [{"url": i["url"], "thumb": i.get("thumb") or i["url"]} for i in self._sgdb(path)[:n]
-                        if isinstance(i, dict) and str(i.get("url", "")).startswith("https://")]
-            lists = {
-                "p": images(f"/grids/game/{ident}?dimensions=600x900,342x482,660x930&types=static&nsfw=false&humor=false", 16),
-                "hero": images(f"/heroes/game/{ident}?types=static&nsfw=false&humor=false", 10),
-                "logo": images(f"/logos/game/{ident}?types=static&nsfw=false&humor=false", 10),
-                "header": images(f"/grids/game/{ident}?dimensions=920x430,460x215&types=static&nsfw=false&humor=false", 4),
-            }
-
-        def preview(item):
-            try:
-                item["thumb"] = self._download(item["thumb"], self.thumbs)
-                return item
+                return {**item, "thumb": self._download(item["url"], self.thumbs)}
             except (OSError, ValueError):
                 return None
 
-        with ThreadPoolExecutor(6) as pool:
-            for kind in ("p", "hero", "logo"):
-                lists[kind] = [i for i in pool.map(preview, lists[kind]) if i]
-        lists["header"] = lists["header"][:1]
+    # ---- searching ----
+    def search(self, name):
+        """Games that may be this one, each with a cover preview: SteamGridDB's matches for the name, then (for
+        Chinese names, which SteamGridDB rarely knows) the Steam store's Chinese-name matches looked up on
+        SteamGridDB by their English name, then those store entries themselves (store artwork)."""
+        term = clean_title(str(name or ""))[:120]
+        if not term:
+            return {"query": term, "matches": [], "status": "未找到"}
+        cjk = re.search(r"[぀-ヿ㐀-鿿]", term) is not None
+
+        def store_chain():
+            # The store knows Chinese names, but not with edition suffixes ("樱之诗10周年"): shorten until something matches
+            store = []
+            for q in dict.fromkeys([term, re.sub(r"\s*[0-9０-９]+\s*周年.*$", "", term), re.sub(r"\s*[0-9０-９].*$", "", term)]):
+                if q and len(q) >= 2:
+                    store = self._steam_search(q)
+                    if store:
+                        break
+
+            def english(app):
+                found_name = self._steam_english_name(app["id"])
+                if not found_name:
+                    return []
+                try:
+                    return self._sgdb_search(found_name)[:2]
+                except (PermissionError, OSError, ValueError):
+                    return []
+            with ThreadPoolExecutor(3) as inner:
+                return store, [m for found in inner.map(english, store[:3]) for m in found]
+
+        # SteamGridDB and the store side by side; the store gets a few seconds and is left out when slower
+        pool = ThreadPoolExecutor(2)
+        side = pool.submit(store_chain)
+        matches, status = [], ""
+        try:
+            matches = self._sgdb_search(term)[:8]
+        except PermissionError as e:
+            status = str(e)
+        except (OSError, ValueError) as e:
+            self.log(f"local games: sgdb search failed: {type(e).__name__}")
+            status = "连不上"
+        try:
+            store, via_store = side.result(timeout=10)
+        except Exception:
+            store, via_store = [], []
+        pool.shutdown(wait=False)
+        if status:
+            via_store = []
+        if cjk:
+            # SteamGridDB's own search on a Chinese name returns loose fuzzy hits: keep only names that contain it
+            def norm(x):
+                return re.sub(r"[\s\W_]+", "", x).lower()
+            matches = [m for m in matches if norm(term) in norm(m["name"]) or norm(m["name"]) in norm(term)]
+        ordered = (via_store + matches if cjk else matches + via_store) + store
+        seen, result = set(), []
+        for m in ordered:
+            if (m["source"], m["id"]) not in seen:
+                seen.add((m["source"], m["id"]))
+                result.append(m)
+        result = result[:10]
+
+        def with_thumb(m):
+            try:
+                covers = self._assets(m, "p")
+            except (PermissionError, OSError, ValueError):
+                covers = []
+            # The page loads previews itself (remote url), so the list comes back without waiting for downloads
+            return {**m, "thumb": covers[0]["thumb"] if covers else None, "covers": len(covers)}
+        # A preview for each, but never more than a few seconds: SteamGridDB sometimes answers one game very slowly.
+        # Late lists still land in the cache for the image page.
+        pool = ThreadPoolExecutor(6)
+        futures = [pool.submit(with_thumb, m) for m in result]
+        wait(futures, timeout=7)
+        result = [f.result() if f.done() else {**m, "thumb": None, "covers": None} for f, m in zip(futures, result)]
+        pool.shutdown(wait=False)
+        # Games with covers first (SteamGridDB has many empty entries), the exact name first among those
+        def plain(x):
+            return re.sub(r"[\s\W_]+", "", x).lower()
+        result.sort(key=lambda m: (0 if m.get("covers") else 1, 0 if plain(m["name"]) == plain(term) else 1))
+        if not result and not status:
+            status = "未找到"
+        return {"query": term, "matches": result, "status": status}
+
+    def candidates(self, match, only=None, previews=True):
+        """Images for one match, with local previews: {p, header, hero, logo, icon: [{url, thumb}]}. only = one kind
+        (the page asks for the tab on screen first, then the rest, so the first previews show up quickly)."""
+        if not isinstance(match, dict) or match.get("source") not in ("sgdb", "steam") or not str(match.get("id", "")).isdigit():
+            raise ValueError("匹配格式错误")
+        if only is not None and only not in KINDS:
+            raise ValueError("图种格式错误")
+        limits = {"p": 30, "header": 12, "hero": 12, "logo": 12, "icon": 12}
+        lists = {}
+        for kind in [only] if only else KINDS:
+            try:
+                lists[kind] = self._assets(match, kind)[:limits[kind]]
+            except (PermissionError, OSError, ValueError) as e:
+                self.log(f"local games: {kind} list failed: {type(e).__name__}")
+                lists[kind] = []
+        if previews:
+            with ThreadPoolExecutor(8) as pool:
+                for kind in lists:
+                    lists[kind] = [i for i in pool.map(self._preview, lists[kind]) if i]
         return lists
 
     # ---- games ----
@@ -452,16 +577,21 @@ class LocalGames:
             except (OSError, ValueError):
                 pass
         for g in games:
+            g["collections"] = self._collections_of(g)
             g["inSteam"] = g["id"] in present
             # After a sync: Steam's cloud copy of the collections may have replaced ours
-            g["collectionOk"] = not g.get("collection") or not g["inSteam"] or g["id"] in members.get(g["collection"], set())
+            g["collectionOk"] = not g["inSteam"] or all(g["id"] in members.get(c, set()) for c in g["collections"])
         return {"games": games, "key": bool(self._key()), "collections": [{"id": c["id"], "name": c["name"]} for c in collections],
                 "pending": sum(1 for g in games if self._pending(g)),
                 "job": dict(self.job), "lastSync": self.last_sync, "steam": user is not None}
 
     @staticmethod
+    def _collections_of(g):
+        return list(g.get("collections") or ([g["collection"]] if g.get("collection") else []))
+
+    @staticmethod
     def _pending(g):
-        return bool(g.get("steam")) and (not g.get("inSteam") or not g.get("collectionOk") or bool(g.get("newCollection"))
+        return bool(g.get("steam")) and (not g.get("inSteam") or not g.get("collectionOk") or bool(g.get("newCollections"))
                                          or g.get("artSynced") is False or g.get("collectionSynced") is False)
 
     def set_key(self, key):
@@ -489,7 +619,7 @@ class LocalGames:
         return files
 
     def save(self, game):
-        """Add or update one game: {id?, name, exe, steam, collection, newCollection, art: {kind: url}}."""
+        """Add or update one game: {id?, name, exe, steam, collections: [id], newCollections: [name], art: {kind: url}}."""
         if not isinstance(game, dict):
             raise ValueError("游戏格式错误")
         name = str(game.get("name", "")).strip()[:128]
@@ -498,8 +628,12 @@ class LocalGames:
             raise ValueError("名称不对")
         if not exe.lower().endswith(".exe") or not os.path.isfile(exe):
             raise ValueError("找不到程序")
-        collection = game.get("collection") or None
-        new_collection = str(game.get("newCollection") or "").strip()[:128] or None
+        collections = [str(c) for c in (game.get("collections") or []) if isinstance(c, str) and c][:32]
+        new_collections = []
+        for n in game.get("newCollections") or []:
+            n = str(n).strip()[:128]
+            if n and not re.search(r"[\x00-\x1f]", n) and n not in new_collections:
+                new_collections.append(n)
         with self._lock:
             games = self._load()
             old = next((g for g in games if g["id"] == game.get("id")), None) if game.get("id") else None
@@ -519,11 +653,13 @@ class LocalGames:
                         pass
                 old = {"id": ident or shortcut_appid(f'"{exe}"', name), "added": int(time.time())}
                 games.append(old)
-            if (old.get("collection"), old.get("newCollection")) != (collection if not new_collection else None, new_collection) and (collection or new_collection):
+            if (sorted(self._collections_of(old)), old.get("newCollections") or []) != (sorted(collections), new_collections):
                 old["collectionSynced"] = False
+            old.pop("collection", None)
+            old.pop("newCollection", None)
             old.update(name=name, exe=exe, dir=os.path.dirname(exe), args=str(game.get("args", ""))[:500],
-                       steam=bool(game.get("steam", True)), collection=collection if not new_collection else None,
-                       newCollection=new_collection, sgdb=game.get("sgdb"))
+                       steam=bool(game.get("steam", True)), collections=collections, newCollections=new_collections,
+                       sgdb=game.get("sgdb"))
             self._save(games)
         art = self._art_files(old["id"], game.get("art"))
         with self._lock:
@@ -552,13 +688,20 @@ class LocalGames:
     def auto_art(self, game):
         """Best match's first image of each kind: {kind: url} (empty when nothing is found)."""
         found = self.search(game.get("name", ""))
-        if not found["matches"]:
+        match = next((m for m in found["matches"] if m.get("covers")), None)
+        if match is None:
             return {}, None
-        match = found["matches"][0]
-        lists = self.candidates(match)
-        return {k: v[0]["url"] for k, v in lists.items() if v}, match
+        art = {}
+        for kind in KINDS:
+            try:
+                first = self._assets(match, kind)[:1]
+            except (PermissionError, OSError, ValueError):
+                first = []
+            if first:
+                art[kind] = first[0]["url"]
+        return art, match
 
-    def add_many(self, items, collection=None, new_collection=None):
+    def add_many(self, items, collections=None, new_collections=None):
         """Folder games taken in at once; art is filled in one by one (job shows progress)."""
         if not isinstance(items, list) or len(items) > 500:
             raise ValueError("列表格式错误")
@@ -566,7 +709,8 @@ class LocalGames:
         added = 0
         for item in items:
             try:
-                game = {"name": item.get("name"), "exe": item.get("exe"), "steam": True, "collection": collection, "newCollection": new_collection}
+                game = {"name": item.get("name"), "exe": item.get("exe"), "steam": True,
+                        "collections": collections or [], "newCollections": new_collections or []}
                 try:
                     art, match = self.auto_art(game)
                     game["art"], game["sgdb"] = art, match and match["id"]
@@ -589,7 +733,7 @@ class LocalGames:
             try:
                 art, match = self.auto_art(g)
                 if art:
-                    self.save({**g, "art": art, "sgdb": match and match["id"]})
+                    self.save({**g, "collections": self._collections_of(g), "art": art, "sgdb": match and match["id"]})
                     filled += 1
             except (PermissionError, OSError, ValueError) as e:
                 self.log(f"local games: no art for {g['id']} ({type(e).__name__})")
@@ -645,25 +789,51 @@ class LocalGames:
             shortcuts = []
             tree.append([0x00, "shortcuts", shortcuts])
         by_exe = {exe_key(Vdf.get(e, "Exe")): str((Vdf.get(e, "appid") or 0) & 0xFFFFFFFF) for _, _, e in shortcuts}
-        ids = {str((Vdf.get(e, "appid") or 0) & 0xFFFFFFFF) for _, _, e in shortcuts}
+        by_id = {str((Vdf.get(e, "appid") or 0) & 0xFFFFFFFF): e for _, _, e in shortcuts}
         template = shortcuts[0][2] if shortcuts else None
-        changed = False
+        entries = []
         for g in pending:
             entry = next(x for x in games if x["id"] == g["id"])
-            if entry["id"] in ids:
-                continue
             same = by_exe.get(exe_key(entry["exe"]))
-            if same:
+            if entry["id"] not in by_id and same:
                 # Added in Steam in the meantime: keep Steam's entry and move ours (and its art) onto that id
                 for old in self.art.glob(entry["id"] + "*"):
                     os.replace(old, old.with_name(old.name.replace(entry["id"], same, 1)))
                 entry["art"] = {k: v.replace(entry["id"], same, 1) for k, v in (entry.get("art") or {}).items()}
                 entry["id"] = g["id"] = same
-                continue
-            index = max([int(k) for _, k, _ in shortcuts if k.isdigit()] + [-1]) + 1
-            shortcuts.append([0x00, str(index), new_shortcut(entry, template)])
-            ids.add(entry["id"])
-            changed = True
+            entries.append(entry)
+        grid = cfg / "grid"
+        grid.mkdir(parents=True, exist_ok=True)
+        icons = {}
+        for entry in entries:
+            for kind, suffix in KINDS.items():
+                src = (entry.get("art") or {}).get(kind)
+                for old in grid.glob(entry["id"] + suffix + ".*"):
+                    old.unlink(missing_ok=True)
+                if src and os.path.isfile(src):
+                    target = grid / (entry["id"] + suffix + os.path.splitext(src)[1])
+                    shutil.copyfile(src, target)
+                    if kind == "icon":
+                        icons[entry["id"]] = str(target)
+            entry["artSynced"] = True
+        changed = False
+        for entry in entries:
+            existing = by_id.get(entry["id"])
+            if existing is None:
+                index = max([int(k) for _, k, _ in shortcuts if k.isdigit()] + [-1]) + 1
+                fields = new_shortcut(entry, template)
+                shortcuts.append([0x00, str(index), fields])
+                by_id[entry["id"]] = existing = fields
+                changed = True
+            for field in existing:
+                if field[0] != 0x01 or field[1].lower() != "icon":
+                    continue
+                # Our icon when there is one; one we set earlier and the user since dropped is cleared; any other is left
+                ours = os.path.basename(field[2]).lower().startswith(entry["id"] + "_icon.")
+                want = icons.get(entry["id"], "" if ours else field[2])
+                if field[2] != want:
+                    field[2] = want
+                    changed = True
         if changed:
             path = cfg / "shortcuts.vdf"
             if path.is_file():
@@ -671,34 +841,26 @@ class LocalGames:
             tmp = path.with_suffix(".claw-tmp")
             tmp.write_bytes(Vdf.dump(tree))
             os.replace(tmp, path)
-        grid = cfg / "grid"
-        grid.mkdir(parents=True, exist_ok=True)
-        for g in pending:
-            entry = next(x for x in games if x["id"] == g["id"])
-            for kind, suffix in KINDS.items():
-                src = (entry.get("art") or {}).get(kind)
-                if src and os.path.isfile(src):
-                    for old in grid.glob(entry["id"] + suffix + ".*"):
-                        old.unlink(missing_ok=True)
-                    shutil.copyfile(src, grid / (entry["id"] + suffix + os.path.splitext(src)[1]))
-            entry["artSynced"] = True
         wanted = {}
-        for g in pending:
-            entry = next(x for x in games if x["id"] == g["id"])
-            if entry.get("newCollection"):
-                wanted.setdefault("new:" + entry["newCollection"], []).append(entry["id"])
-            elif entry.get("collection"):
-                wanted.setdefault(entry["collection"], []).append(entry["id"])
-        for g in pending:
-            next(x for x in games if x["id"] == g["id"])["collectionSynced"] = True
+        for entry in entries:
+            for c in self._collections_of(entry):
+                wanted.setdefault(c, []).append(entry["id"])
+            for n in entry.get("newCollections") or []:
+                wanted.setdefault("new:" + n, []).append(entry["id"])
+            entry["collectionSynced"] = True
         if wanted:
             created = write_collections(user, wanted)
-            for entry in games:
-                if entry.get("newCollection"):
-                    entry["collection"] = created.get("new:" + entry["newCollection"]) or next(
-                        (c["id"] for c in read_collections(user) if c["name"] == entry["newCollection"]), None)
-                    entry["newCollection"] = None
-        return len(pending)
+            names = {c["name"]: c["id"] for c in read_collections(user)}
+            for entry in entries:
+                ids = self._collections_of(entry)
+                for n in entry.get("newCollections") or []:
+                    ident = created.get("new:" + n) or names.get(n)
+                    if ident and ident not in ids:
+                        ids.append(ident)
+                entry.pop("collection", None)
+                entry["collections"] = ids
+                entry["newCollections"] = []
+        return len(entries)
 
     @staticmethod
     def _start_steam(root):

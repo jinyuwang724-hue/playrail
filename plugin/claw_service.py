@@ -1018,8 +1018,9 @@ class Service:
             raise ValueError("名称格式错误")
         return await asyncio.to_thread(self._local_games.search, name)
 
-    async def local_games_candidates(self, match):
-        return await asyncio.to_thread(self._local_games.candidates, match)
+    async def local_games_candidates(self, match, kind=None, previews=True):
+        """previews=False: remote preview urls (ClawLibrary downloads them itself, tile by tile)."""
+        return await asyncio.to_thread(self._local_games.candidates, match, kind, previews is not False)
 
     async def local_games_save(self, game):
         return await asyncio.to_thread(self._local_games.save, game)
@@ -1052,10 +1053,10 @@ class Service:
         self._local_games_task = asyncio.create_task(run())
         return {"started": True}
 
-    async def local_games_add_many(self, items, collection=None, new_collection=None):
+    async def local_games_add_many(self, items, collections=None, new_collections=None):
         if not isinstance(items, list) or len(items) > 500 or not all(isinstance(i, dict) for i in items):
             raise ValueError("列表格式错误")
-        return self._local_games_run(self._local_games.add_many, items, collection, new_collection)
+        return self._local_games_run(self._local_games.add_many, items, collections, new_collections)
 
     async def local_games_fill_art(self):
         return self._local_games_run(self._local_games.fill_missing)
