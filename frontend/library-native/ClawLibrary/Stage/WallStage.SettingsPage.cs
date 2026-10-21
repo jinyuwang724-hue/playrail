@@ -211,6 +211,7 @@ public sealed partial class WallStage
         _stOpen = false;
         _gsItem = null;
         _gsState = null;
+        _stBrowseFromLibrary = false;
         _stBrowse = null;
         _stBrowseExe = false;
         _stBrowseMusic = false;
@@ -888,6 +889,7 @@ public sealed partial class WallStage
         if (StEditing) { StEditEnd(false); return; }
         if (_stBrowse != null)
         {
+            if (_stBrowse.Length == 0 && _stBrowseFromLibrary) { _stBrowseFromLibrary = false; CloseSettingsToLibrary(); return; }
             // 上一级；在磁盘列表里再按 B 退出浏览
             StBrowseTo(_stBrowse.Length == 0 ? null : Path.GetDirectoryName(_stBrowse.TrimEnd('\\')) is string up && up.Length > 0 ? up : "");
             return;
@@ -930,7 +932,7 @@ public sealed partial class WallStage
         if (_st == null) return;
         float k = _ccK, raster = k * Chrome.Dpi;
         float h = RowsHeight(_stRows), vh = PerfViewH;
-        using (var tl = TextKit.Layout(G.Device, _gsItem?.Title ?? "设置", TextKit.Ui(700), 24, 900, CanvasHorizontalAlignment.Left))
+        using (var tl = TextKit.Layout(G.Device, _gsItem?.Title ?? (_stBrowseFromLibrary ? "添加游戏" : "设置"), TextKit.Ui(700), 24, 900, CanvasHorizontalAlignment.Left))
         {
             var bb = tl.LayoutBounds;
             float w = (float)bb.Width + 4, th = (float)bb.Height + 4;

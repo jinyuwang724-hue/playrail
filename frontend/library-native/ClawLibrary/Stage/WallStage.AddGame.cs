@@ -169,6 +169,8 @@ public sealed partial class WallStage
         var existing = LgGames().FirstOrDefault(g => string.Equals(Str(g["exe"]), exe, StringComparison.OrdinalIgnoreCase));
         _stBrowse = null;
         _stBrowseExe = false;
+        _agFromLibrary = _stBrowseFromLibrary;
+        _stBrowseFromLibrary = false;
         BuildStRows();
         _stFocus = FirstStRow();
         if (existing != null) AgOpenEdit(existing); else AgOpenNew(exe);
@@ -286,29 +288,25 @@ public sealed partial class WallStage
     /// <summary>添加游戏页是从游戏库竖条的 ＋ 进来的：完成 / 退出后直接回游戏库。</summary>
     private bool _agFromLibrary;
 
+    /// <summary>选 exe 的那一页是从游戏库竖条的 ＋ 进来的：在最上一层按 B 直接回游戏库，选好 exe 后添加完也回游戏库。</summary>
+    private bool _stBrowseFromLibrary;
+
     /// <summary>
-    /// 竖条 ＋：用 Windows 的选文件窗口挑一个 exe（手柄、触屏、鼠标都行），选好直接进添加游戏页（照 folia 的进场，
-    /// 不经过控制中心主页）；已经加过的进编辑。
+    /// 竖条 ＋：照 folia 的进场跳到我们自己的选 exe 页（设置 › 游戏库 › 添加游戏… 那一页，磁盘 → 文件夹 → exe），
+    /// 选好直接进添加游戏页；已经加过的进编辑。
     /// </summary>
     private async Task AddGameFromLibrary()
     {
-        string? exe = null;
-        try
-        {
-            var picker = new Windows.Storage.Pickers.FileOpenPicker { SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.ComputerFolder };
-            picker.FileTypeFilter.Add(".exe");
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(_window));
-            exe = (await picker.PickSingleFileAsync())?.Path;
-        }
-        catch (Exception ex) { Log.Warn($"pick game exe: {ex.Message}"); Toast("没能打开选文件窗口"); }
-        if (exe == null) return;
-        await LgRefresh();
+        _ = LgRefresh();
         _backgroundSettingsOpen = false;
         if (!_ccOpen) OpenSettingsFromLibrary();
         else if (!_stOpen) OpenSettingsPage();
-        _agFromLibrary = true;
-        var existing = LgGames().FirstOrDefault(g => string.Equals(Str(g["exe"]), exe, StringComparison.OrdinalIgnoreCase));
-        if (existing != null) AgOpenEdit(existing); else AgOpenNew(exe);
+        _stCat = 1;
+        _stZone = 1;
+        _stBrowseFromLibrary = true;
+        _stBrowseExe = true;
+        StBrowseTo("");
+        await Task.CompletedTask;
     }
 
     // ---------------- 屏幕键盘 ----------------
