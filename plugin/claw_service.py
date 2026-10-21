@@ -1028,7 +1028,12 @@ class Service:
         return await asyncio.to_thread(self._local_games.official, appid)
 
     async def local_games_save(self, game):
-        return await asyncio.to_thread(self._local_games.save, game)
+        saved = await asyncio.to_thread(self._local_games.save, game)
+        # Straight into Steam as well (live, or into its files when Steam is closed); never restarts Steam on its own.
+        # A failure leaves the game pending for 「同步到 Steam」.
+        if saved and saved.get("steam") and not (self._local_games_task and not self._local_games_task.done()):
+            self._local_games_run(self._local_games.sync, False)
+        return saved
 
     async def local_games_remove(self, ident):
         if not isinstance(ident, str) or not ident.isdigit():

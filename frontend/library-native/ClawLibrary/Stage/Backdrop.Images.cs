@@ -15,6 +15,8 @@ public sealed partial class Backdrop
     private CanvasRenderTarget? _imageFrame, _poster, _previousPoster, _readability, _previousReadability;
     private PixelShaderEffect? _lens, _paper;
     private Action<Action>? _postImage;
+    /// <summary>外面最后要的封面（壁纸盖住它时也记着）。</summary>
+    private string? _requestedCover;
     private int _imageVersion;
     private bool _disposed;
     private double _imageTime, _imageFadeMs = 800;
@@ -37,6 +39,8 @@ public sealed partial class Backdrop
         InvalidateImageFrame();
         _dirty = true;
         if (reload && _postImage != null) LoadCoverImage(_coverPath, _postImage);
+        // 壁纸开关、换了一张壁纸、换了样式：该用的图变了就换过去
+        if (_postImage != null && (_settings.WallpaperInUse ?? _requestedCover) != _coverPath) SetCover(_requestedCover, _postImage);
         Log.Info($"background: {settings.Name} / {settings.Variant}");
     }
 

@@ -533,6 +533,40 @@ public sealed partial class WallStage
         _stRows.Add(StPick("游戏库", new[] { "保持", "收到后台并暂停" }, (int)_prefs.AfterLaunch, i => { SaveUi(_prefs with { AfterLaunch = (AfterLaunch)i }); Repaint(); }, 0));
     }
 
+    /// <summary>
+    /// 莫奈 / 漫游的图：跟着游戏封面换，或者固定用一张本地壁纸。选壁纸用 Windows 自己的选文件窗口（手柄、触屏、鼠标都能用）；
+    /// 第一次切到「本地壁纸」还没选过图就直接打开它。
+    /// </summary>
+    private void AddWallpaperRows(BackgroundSettings b, Action<BackgroundSettings> setBg)
+    {
+        _stRows.Add(StPick("背景图片", new[] { "游戏封面", "本地壁纸" }, b.UseWallpaper ? 1 : 0, i =>
+        {
+            if (i == 1 && (b.Wallpaper.Length == 0 || !File.Exists(b.Wallpaper))) _ = PickWallpaper(setBg);
+            else setBg(b with { UseWallpaper = i == 1 });
+        }, 0));
+        if (b.UseWallpaper)
+            _stRows.Add(new PerfRow { Title = "选择壁纸…", Value = b.Wallpaper.Length > 0 ? Path.GetFileName(b.Wallpaper) : "", Press = () => _ = PickWallpaper(setBg) });
+    }
+
+    private async Task PickWallpaper(Action<BackgroundSettings> setBg)
+    {
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker
+            {
+                ViewMode = Windows.Storage.Pickers.PickerViewMode.Thumbnail,
+                SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.PicturesLibrary,
+            };
+            foreach (var ext in new[] { ".jpg", ".jpeg", ".png", ".webp", ".bmp" }) picker.FileTypeFilter.Add(ext);
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(_window));
+            var file = await picker.PickSingleFileAsync();
+            if (file == null) return;
+            setBg(_backgroundSettings with { UseWallpaper = true, Wallpaper = file.Path });
+            Toast("已换成本地壁纸");
+        }
+        catch (Exception ex) { Log.Warn($"pick wallpaper: {ex.Message}"); Toast("没能打开选文件窗口"); }
+    }
+
     private void BuildStLook()
     {
         var b = _backgroundSettings;
@@ -547,10 +581,12 @@ public sealed partial class WallStage
                 break;
             case BackgroundKind.Nomand:
                 _stRows.Add(StPick("背景效果", new[] { "镜头畸变", "纸张纹理" }, (int)b.Nomand, i => SetBg(b with { Nomand = (NomandEffect)i }), 0));
+                AddWallpaperRows(b, SetBg);
                 break;
             case BackgroundKind.Monet:
                 _stRows.Add(StToggle("色块漂移", b.MonetDrift, on => SetBg(b with { MonetDrift = on }), true));
                 _stRows.Add(StToggle("光带", b.MonetStreaks, on => SetBg(b with { MonetStreaks = on }), true));
+                AddWallpaperRows(b, SetBg);
                 break;
             case BackgroundKind.Filmstrip:
                 _stRows.Add(StPick("封面排列", new[] { "横向条带", "竖向条带" }, (int)b.FilmLayout, i => SetBg(b with { FilmLayout = (FilmLayout)i }), 0));
