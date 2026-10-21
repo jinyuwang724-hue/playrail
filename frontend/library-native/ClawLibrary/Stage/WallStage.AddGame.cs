@@ -281,6 +281,36 @@ public sealed partial class WallStage
         if (_stOpen) Repaint();
     }
 
+    // ---------------- 从游戏库添加 ----------------
+
+    /// <summary>添加游戏页是从游戏库竖条的 ＋ 进来的：完成 / 退出后直接回游戏库。</summary>
+    private bool _agFromLibrary;
+
+    /// <summary>
+    /// 竖条 ＋：用 Windows 的选文件窗口挑一个 exe（手柄、触屏、鼠标都行），选好直接进添加游戏页（照 folia 的进场，
+    /// 不经过控制中心主页）；已经加过的进编辑。
+    /// </summary>
+    private async Task AddGameFromLibrary()
+    {
+        string? exe = null;
+        try
+        {
+            var picker = new Windows.Storage.Pickers.FileOpenPicker { SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.ComputerFolder };
+            picker.FileTypeFilter.Add(".exe");
+            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(_window));
+            exe = (await picker.PickSingleFileAsync())?.Path;
+        }
+        catch (Exception ex) { Log.Warn($"pick game exe: {ex.Message}"); Toast("没能打开选文件窗口"); }
+        if (exe == null) return;
+        await LgRefresh();
+        _backgroundSettingsOpen = false;
+        if (!_ccOpen) OpenSettingsFromLibrary();
+        else if (!_stOpen) OpenSettingsPage();
+        _agFromLibrary = true;
+        var existing = LgGames().FirstOrDefault(g => string.Equals(Str(g["exe"]), exe, StringComparison.OrdinalIgnoreCase));
+        if (existing != null) AgOpenEdit(existing); else AgOpenNew(exe);
+    }
+
     // ---------------- 屏幕键盘 ----------------
 
     private bool _kbPending;

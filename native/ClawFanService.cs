@@ -87,10 +87,17 @@ sealed class FanFileStore : IFanStore {
     }
 }
 
+// The package temperature jumps 65→86 °C within a second even at 10 W. The curve follows a smoothed
+// temperature (8 s time constant); raises wait 4 s, drops 10 s. Only a really hot reading (≥92 °C) goes
+// straight up. (Before 2026-10-21 every reading ≥75 °C ratcheted the duty up and it never came down
+// while the spikes kept coming, so the fan sat at the 4700 rpm cap at 10 W.)
 sealed class FanGovernor {
+    const double Smoothing = 8, Hot = 92;
     readonly List<KeyValuePair<double, int>> history = new List<KeyValuePair<double, int>>();
+    double? smooth, smoothAt;
     public int? Duty { get; private set; }
-    public void Reset() { history.Clear(); Duty = null; }
+    public double? Smoothed { get { return smooth; } }
+    public void Reset() { history.Clear(); Duty = null; smooth = null; smoothAt = null; }
     public static int At(int[] curve, double temp) {
         int[] axis = { 50, 60, 70, 75, 80, 90 };
         if (temp <= axis[0]) return curve[0];
@@ -99,12 +106,16 @@ sealed class FanGovernor {
         return curve[5];
     }
     public int Update(int[] curve, double temp, double now) {
-        int want = At(curve, temp);
+        double dt = smoothAt.HasValue ? Math.Max(0, now - smoothAt.Value) : 0;
+        smooth = smooth.HasValue ? smooth.Value + (temp - smooth.Value) * (1 - Math.Exp(-dt / Smoothing)) : temp;
+        smoothAt = now;
+        int want = At(curve, smooth.Value);
         history.RemoveAll(p => now - p.Key >= 10);
         history.Add(new KeyValuePair<double, int>(now, want));
-        if (!Duty.HasValue || temp >= 75) Duty = temp >= 75 ? Math.Max(want, Duty ?? 0) : want;
-        else if (now - history[0].Key >= 5 && history.Where(p => now - p.Key < 6).Min(p => p.Value) > Duty.Value)
-            Duty = history.Where(p => now - p.Key < 6).Min(p => p.Value);
+        if (!Duty.HasValue) Duty = want;
+        else if (temp >= Hot) Duty = Math.Max(At(curve, temp), Duty.Value);
+        else if (now - history[0].Key >= 3 && history.Where(p => now - p.Key < 4).Min(p => p.Value) > Duty.Value)
+            Duty = history.Where(p => now - p.Key < 4).Min(p => p.Value);
         else if (now - history[0].Key >= 9 && history.Max(p => p.Value) < Duty.Value)
             Duty = history.Max(p => p.Value);
         return Duty.Value;
@@ -255,9 +266,9 @@ sealed class FanEngine {
         lock (gate) {
             var result = new Dictionary<string, object>(state);
             result["settings"] = config.fan.Copy(); result["revision"] = config.revision;
-            result["execution"] = "service"; result["serviceVersion"] = "1.0.2";
+            result["execution"] = "service"; result["serviceVersion"] = "1.0.3";
             result["servicePid"] = Process.GetCurrentProcess().Id;
-            result["target"] = written; result["temperature"] = temperature;
+            result["target"] = written; result["temperature"] = temperature; result["smoothedTemperature"] = governor.Smoothed;
             result["writeCount"] = writes; result["lastWrite"] = lastWrite;
             result["error"] = error; result["paused"] = paused;
             result["repairCount"] = repairs; result["temperatureRetries"] = temperatureRetries;

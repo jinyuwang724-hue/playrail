@@ -263,11 +263,13 @@ public sealed partial class WallStage
             case RailKind.Search:
                 OpenSearch();
                 break;
+            case RailKind.AddGame:
+                _ = AddGameFromLibrary();
+                break;
             case RailKind.Settings:
                 // ⚙：打开设置页（独立的整页，在控制中心里）
                 _backgroundSettingsOpen = false;
-                if (!_ccOpen) OpenControlCenter();
-                OpenSettingsPage();
+                OpenSettingsFromLibrary();
                 break;
             case RailKind.Setting:
                 ToggleSetting(it.Index);

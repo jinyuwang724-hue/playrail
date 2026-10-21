@@ -131,9 +131,16 @@ public sealed partial class WallStage
         AgMatchSearching();
         _agDraft = null;
         _ag.IsVisible = false;
-        if (_st != null && _stOpen) { _st.IsVisible = true; Repaint(); }
         _ = LgRefresh();
         Log.Info("add game page close");
+        if (_agFromLibrary)
+        {
+            // 从游戏库的 ＋ 进来的：直接回游戏库（新游戏在库里重新载入后出现）
+            _agFromLibrary = false;
+            _stNeedsReload = true;
+            if (_stFromLibrary) { CloseSettingsToLibrary(); return; }
+        }
+        if (_st != null && _stOpen) { _st.IsVisible = true; Repaint(); }
     }
 
     private void AgGo(AgPage page, int tab = 0)
@@ -280,6 +287,7 @@ public sealed partial class WallStage
         };
         string name = d.Name.Trim();
         bool isNew = d.Id == null;
+        bool fromLibrary = _agFromLibrary;
         AgClose();
         _ = Task.Run(async () =>
         {
@@ -287,7 +295,14 @@ public sealed partial class WallStage
             {
                 _agent ??= new AgentClient();
                 await _agent.CallLong("local_games_save", 180, game);
-                _dq.TryEnqueue(() => { _stNeedsReload = true; Toast(isNew ? $"已添加：{name}" : $"已保存：{name}"); _ = LgRefresh(); });
+                _dq.TryEnqueue(() =>
+                {
+                    _stNeedsReload = true;
+                    Toast(isNew ? $"已添加：{name}" : $"已保存：{name}");
+                    _ = LgRefresh();
+                    // 从游戏库的 ＋ 加的、人已经回到墙上：重新载入一次，新游戏马上上墙
+                    if (fromLibrary && isNew && !_ccOpen) After(1200, () => { if (!_ccOpen) RestartLibrary(); });
+                });
             }
             catch (Exception ex) { _dq.TryEnqueue(() => Toast($"「{name}」没有存上：{ex.Message}")); }
         });

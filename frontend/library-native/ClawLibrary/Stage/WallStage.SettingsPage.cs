@@ -18,7 +18,9 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private static readonly string[] StCats = { "通用", "游戏库", "外观", "声音与反馈", "Steam 插件", "开机自启", "禁用第三方软件", "维护", "关于" };
+    private static readonly string[] StCatsMain = { "通用", "游戏库", "外观", "声音与反馈", "Steam 插件", "开机自启", "禁用第三方软件", "维护", "关于" };
+    /// <summary>左栏的分类：游戏设置时换成游戏的那几类（WallStage.GameSettings.cs）。</summary>
+    private string[] StCats => _gsItem != null ? GsCats : StCatsMain;
     private const float StCatH = PerfRowH;
     /// <summary>首页：游戏库打开后先到哪（控制中心，或它下面的六个页面之一）。顺序和 BootTarget 一致。</summary>
     private static readonly string[] BootNames = { "游戏库", "控制中心", "性能", "手柄", "显示与声音", "系统", "设置" };
@@ -90,6 +92,8 @@ public sealed partial class WallStage
     {
         SoundFx.Play(Sfx.Launch);
         _homeMusic?.HoldForLaunch();
+        // 游戏设置里开了 Magpie 自动铺满的游戏：后台等它的窗口到前台（最多 90 秒）就套上这款游戏的画面效果
+        _ = Task.Run(async () => { try { _agent ??= new AgentClient(); await _agent.Call("magpie_auto_start"); } catch (Exception ex) { Log.Warn($"magpie auto start: {ex.Message}"); } });
         if (_prefs.AfterLaunch != AfterLaunch.Hide) return;
         nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
         After(1500, () => ShowWindow(hwnd, 6));   // SW_MINIMIZE
@@ -115,6 +119,66 @@ public sealed partial class WallStage
     }
 
     // ---------------- 开 / 关 ----------------
+
+    /// <summary>
+    /// 设置页是从游戏库（竖条 ⚙）直接进来的：B 退到底就回游戏库，不经过控制中心主页。
+    /// </summary>
+    private bool _stFromLibrary;
+
+    /// <summary>
+    /// 游戏库 → 设置页：照 folia 设置面板的进场（SettingsModal 的 shell：240 ms ease-out，墙淡出、
+    /// 面板从下面 20 px、0.98 倍升起并淡入），不走游戏库卡飞进控制中心的形变。
+    /// </summary>
+    private void OpenSettingsFromLibrary()
+    {
+        if (_ccOpen) { OpenSettingsPage(); return; }
+        OpenControlCenter(quiet: true);
+        OpenSettingsPage();
+        _stFromLibrary = true;
+        if (_st == null || Reduced) return;
+        float k = _ccK;
+        _st.CenterPoint = new Vector3((float)View.Width / 2, (float)View.Height / 2, 0);
+        _st.Offset = new Vector3(0, 20 * k, 0);
+        _st.Scale = new Vector3(0.98f, 0.98f, 1);
+        _st.StartAnimation("Offset", ToV3(Vector3.Zero, 240, EaseOutCss, 40));
+        _st.StartAnimation("Scale", ToV3(Vector3.One, 240, EaseOutCss, 40));
+    }
+
+    /// <summary>从游戏库进来的设置页按 B 回去：面板往下 16 px、0.985 倍淡出，墙淡入（folia 的 exit），控制中心收起。</summary>
+    private void CloseSettingsToLibrary()
+    {
+        _stFromLibrary = false;
+        if (_cc == null || _st == null || !_ccOpen) { CloseSettingsPage(); return; }
+        var st = _st;
+        float k = _ccK;
+        CloseSettingsPage();
+        foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 0; }
+        double ms = Reduced ? 1 : 240;
+        if (!Reduced)
+        {
+            st.CenterPoint = new Vector3((float)View.Width / 2, (float)View.Height / 2, 0);
+            st.StartAnimation("Offset", ToV3(new Vector3(0, 16 * k, 0), 220, EaseOutCss));
+            st.StartAnimation("Scale", ToV3(new Vector3(0.985f, 0.985f, 1), 220, EaseOutCss));
+        }
+        _ccOpen = false;
+        int v = ++_ccVersion;
+        _ccTimer?.Stop();
+        _root.StopAnimation("Opacity");
+        _root.IsVisible = true;
+        _root.Opacity = 0;
+        _root.StartAnimation("Opacity", G.Scalar(0, 1, ms, EaseOutCss));
+        After(ms + 20, () =>
+        {
+            if (v != _ccVersion) return;
+            HideControlCenter();
+            foreach (var p in new[] { "Offset", "Scale" }) st.StopAnimation(p);
+            st.Offset = Vector3.Zero;
+            st.Scale = Vector3.One;
+            foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 1; }
+        });
+        UpdateBackdropRunning();
+        Log.Info("settings page close → library");
+    }
 
     private void OpenSettingsPage()
     {
@@ -145,6 +209,8 @@ public sealed partial class WallStage
         if (!_stOpen || _st == null) return;
         if (_agOpen) { _agOpen = false; _agDraft = null; AgHideBox(); if (_ag != null) _ag.IsVisible = false; }
         _stOpen = false;
+        _gsItem = null;
+        _gsState = null;
         _stBrowse = null;
         _stBrowseExe = false;
         _stBrowseMusic = false;
@@ -281,7 +347,8 @@ public sealed partial class WallStage
         if (_stBrowse != null) { BuildStBrowse(); return; }
         if (_lgPage != LgPage.None) { BuildLgRows(); return; }
         string later = _stAgentDown ? "连不上工具箱后台" : "正在读取…";
-        switch (_stCat)
+        if (_gsItem != null) BuildGsRows();
+        else switch (_stCat)
         {
             case 0: BuildStGeneral(v, later); break;
             case 1: BuildStLibrary(); break;
@@ -825,7 +892,7 @@ public sealed partial class WallStage
         }
         if (LgBack()) return;
         if (_stZone == 1) { _stZone = 0; _stArmed = null; Repaint(); return; }
-        CloseSettingsPage();
+        if (_stFromLibrary) CloseSettingsToLibrary(); else CloseSettingsPage();
     }
 
     /// <summary>Y：焦点这一项恢复默认。</summary>
@@ -861,7 +928,7 @@ public sealed partial class WallStage
         if (_st == null) return;
         float k = _ccK, raster = k * Chrome.Dpi;
         float h = RowsHeight(_stRows), vh = PerfViewH;
-        using (var tl = TextKit.Layout(G.Device, "设置", TextKit.Ui(700), 24, 400, CanvasHorizontalAlignment.Left))
+        using (var tl = TextKit.Layout(G.Device, _gsItem?.Title ?? "设置", TextKit.Ui(700), 24, 900, CanvasHorizontalAlignment.Left))
         {
             var bb = tl.LayoutBounds;
             float w = (float)bb.Width + 4, th = (float)bb.Height + 4;

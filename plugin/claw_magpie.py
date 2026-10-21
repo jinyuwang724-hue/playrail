@@ -272,6 +272,31 @@ class Magpie:
     @staticmethod
     def game_key(path): return os.path.normcase(os.path.abspath(path)) if path else ""
 
+    def match_key(self, path):
+        """The remembered entry for a game's exe: the exe itself, or a whole install folder ("dir:<folder>",
+        how the library turns it on for a Steam game before its exe is known)."""
+        key = self.game_key(path)
+        if not key: return None
+        if key in self.games: return key
+        return next((k for k in self.games if k.startswith("dir:") and key.startswith(k[4:].rstrip("\\") + os.sep)), None)
+
+    def set_game(self, key, enabled):
+        """The library's game settings page: turn auto-fill on / off for an exe or an install folder."""
+        if not isinstance(key, str) or not key or len(key) > 4096: raise ValueError("游戏路径格式错误")
+        if key.startswith("dir:"): key = "dir:" + os.path.normcase(os.path.abspath(key[4:]))
+        else: key = self.game_key(key)
+        if enabled: self.games.setdefault(key, None)
+        else: self.games.pop(key, None)
+        temp = self.games_path.with_suffix(".tmp")
+        temp.write_text(json.dumps(self.games, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        os.replace(temp, self.games_path)
+        return {"enabled": enabled}
+
+    def game_enabled(self, key):
+        if not isinstance(key, str) or not key: return False
+        if key.startswith("dir:"): return ("dir:" + os.path.normcase(os.path.abspath(key[4:]))) in self.games
+        return self.match_key(key) is not None
+
     def remember(self, path, enabled, prefs=None):
         key = self.game_key(path)
         if not key: return
@@ -284,7 +309,7 @@ class Magpie:
 
     def game_prefs(self, path):
         """This game's saved settings, or the last used ones."""
-        return dict(self.games.get(self.game_key(path)) or self.prefs)
+        return dict(self.games.get(self.match_key(path) or "") or self.prefs)
 
     def view(self):
         source = self.source or {}
@@ -300,8 +325,8 @@ class Magpie:
     async def get(self): return self.view()
 
     async def targets(self):
-        return [{**t, "remembered": self.game_key(t["path"]) in self.games,
-                 "preferences": self.game_prefs(t["path"]) if self.game_key(t["path"]) in self.games else None}
+        return [{**t, "remembered": self.match_key(t["path"]) is not None,
+                 "preferences": self.game_prefs(t["path"]) if self.match_key(t["path"]) is not None else None}
                 for t in self.windows.targets()]
 
     async def auto_start(self):
@@ -318,7 +343,7 @@ class Magpie:
                 hwnd = self.windows.u.GetForegroundWindow()
                 root = self.windows.foreground_root() if hasattr(self.windows, "foreground_root") else hwnd
                 item = self.windows.describe(root) if root else None
-                if item and self.game_key(item["path"]) in self.games:
+                if item and self.match_key(item["path"]) is not None:
                     await self.apply({**self.game_prefs(item["path"]), "target": item["hwnd"]})
                     return
         except asyncio.CancelledError: raise

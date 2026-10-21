@@ -186,7 +186,8 @@ public sealed partial class WallStage
 
     // ---------------- 开 / 关 ----------------
 
-    private void OpenControlCenter()
+    /// <param name="quiet">从游戏库直接进某一页（设置页）：不走游戏库卡的形变，墙在 240 ms 里淡出，主页卡片不出现。</param>
+    private void OpenControlCenter(bool quiet = false)
     {
         if (_stack.Count == 0) return;
         SoundFx.Play(Sfx.Open);
@@ -224,7 +225,15 @@ public sealed partial class WallStage
         _ccTimer ??= CcMakeTimer();
         _ccTimer.Start();
 
-        if (Reduced || !MorphExit())
+        if (quiet)
+        {
+            foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 0; }
+            double ms = Reduced ? 1 : 240;
+            _root.StartAnimation("Opacity", G.Scalar(1, 0, ms, EaseOutCss));
+            int v = _ccVersion;
+            After(ms + 10, () => { if (v == _ccVersion && _ccOpen) { _root.IsVisible = false; _root.StopAnimation("Opacity"); _root.Opacity = 1; } });
+        }
+        else if (Reduced || !MorphExit())
         {
             // 没有能飞的 hero（或降低动态效果）：墙按原来的 0.28 s 淡出
             double ms = Reduced ? 1 : CcCloseMs;
@@ -245,6 +254,7 @@ public sealed partial class WallStage
         CloseSystem(instant: true);
         CloseSettingsPage(instant: true);
         CloseShots(instant: true);
+        _stFromLibrary = false;
         _ccOpen = false;
         int v = ++_ccVersion;
         _ccTimer?.Stop();
@@ -359,7 +369,7 @@ public sealed partial class WallStage
         if (_ccOpen && _shOpen) { ShY(); return; }
         if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
-        else Toast("游戏设置（原型里还没有）");
+        else OpenGameSettingsForFocus();
     }
 
     /// <summary>View：截图页里 = 按游戏筛选；其余照旧开关性能读数。</summary>

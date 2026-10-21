@@ -164,3 +164,36 @@ def add_to_collections(appid, collection_ids, new_names):
 def user_collections():
     return evaluate("collectionStore.userCollections.filter(c=>c.bAllowsDragAndDrop&&(c.id==='favorite'||c.id.startsWith('uc-')))"
                     ".map(c=>({id:c.id,name:c.displayName,added:c.allApps.map(a=>String(a.appid))}))") or []
+
+
+# ---------------- per-game properties (the library's game settings page) ----------------
+
+def app_properties(appid):
+    """What Steam's Properties dialog shows for an app (also a non-Steam shortcut)."""
+    return evaluate("(async()=>{" + _WAIT +
+                    f"const id={int(appid)};"
+                    "const d=await new Promise(r=>{const h=SteamClient.Apps.RegisterForAppDetails(id,x=>{h.unregister();r(x)});setTimeout(()=>r(null),4000)});"
+                    "if(!d)return null;"
+                    "return {launchOptions:d.strLaunchOptions||'',overlay:!!d.bOverlayEnabled,cloudAvailable:!!d.bCloudAvailable,"
+                    "cloud:!!d.bCloudEnabledForApp,folder:d.strInstallFolder||'',size:d.lDiskUsageBytes||0,"
+                    "installed:!!d.bHasAnyLocalContent,favorite:collectionStore.BIsFavorite(id),hidden:collectionStore.BIsHidden(id)};"
+                    "})()", timeout=15)
+
+
+def set_app_property(appid, key, value):
+    """One property; toggles are only flipped when they differ, so repeating a request is harmless."""
+    j, a = json.dumps, int(appid)
+    shortcut = a >= 0x80000000
+    body = {
+        "launchOptions": (f"SteamClient.Apps.{'SetShortcutLaunchOptions' if shortcut else 'SetAppLaunchOptions'}(id,{j(str(value))});"),
+        "overlay": f"if(!!d.bOverlayEnabled!=={j(bool(value))})SteamClient.Apps.ToggleEnableSteamOverlayForApp(id);",
+        "cloud": f"if(d.bCloudAvailable&&!!d.bCloudEnabledForApp!=={j(bool(value))})SteamClient.Apps.ToggleAppSteamCloudEnabled(id);",
+        "favorite": f"collectionStore.SetAppsAsFavorite([id],{j(bool(value))});",
+        "hidden": f"collectionStore.SetAppsAsHidden([id],{j(bool(value))});",
+        "verify": "SteamClient.Apps.VerifyApp(id);",
+    }.get(key)
+    if body is None:
+        raise ValueError("不认识的游戏设置")
+    return evaluate("(async()=>{" + _WAIT + f"const id={a};"
+                    "const d=await new Promise(r=>{const h=SteamClient.Apps.RegisterForAppDetails(id,x=>{h.unregister();r(x)});setTimeout(()=>r({}),4000)});"
+                    + body + "return true;})()", timeout=15)

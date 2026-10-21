@@ -59,6 +59,9 @@ _captures_spec.loader.exec_module(_captures_module)
 _local_games_spec = importlib.util.spec_from_file_location("claw_toolbox_local_games", PLUGIN_ROOT / "claw_local_games.py")
 _local_games_module = importlib.util.module_from_spec(_local_games_spec)
 _local_games_spec.loader.exec_module(_local_games_module)
+_game_settings_spec = importlib.util.spec_from_file_location("claw_toolbox_game_settings", PLUGIN_ROOT / "claw_game_settings.py")
+_game_settings_module = importlib.util.module_from_spec(_game_settings_spec)
+_game_settings_spec.loader.exec_module(_game_settings_module)
 
 # ControllerHapticsService.PlayPattern in Playhub 2.1.0 executes the first step.
 HAPTIC_PATTERNS = {
@@ -1006,6 +1009,87 @@ class Service:
         return {"offline": True, **await asyncio.to_thread(self._steam_cloud.counts)}
 
     # ---------------- ClawLibrary 添加游戏 ----------------
+
+    # ---------------- 游戏库：游戏设置页 ----------------
+
+    def _game_item(self, item):
+        if not isinstance(item, dict) or not str(item.get("id", "")).isdigit():
+            raise ValueError("游戏格式错误")
+        appid = int(item["id"])
+        if not 0 < appid <= 0xFFFFFFFF:
+            raise ValueError("游戏编号格式错误")
+        return appid, str(item.get("platform") or ""), str(item.get("title") or "")[:200]
+
+    def _game_exe(self, appid, platform, folder):
+        """The game's exe: a non-Steam shortcut's own target; for a Steam game the likeliest exe in its folder."""
+        gs, lg = _game_settings_module, _local_games_module
+        if appid >= 0x80000000:
+            user = lg.steam_user(lg.steam_root())
+            if user:
+                for _, _, entry in lg.shortcut_entries(lg.read_shortcuts(user)):
+                    if (lg.Vdf.get(entry, "appid") or 0) & 0xFFFFFFFF == appid:
+                        return lg.unquote(lg.Vdf.get(entry, "Exe") or "") or None
+            for g in self._local_games._load():
+                if g.get("id") == str(appid):
+                    return g.get("exe")
+            return None
+        return gs.steam_game_exe(folder) if folder else None
+
+    async def game_settings_get(self, item):
+        appid, platform, title = self._game_item(item)
+        gs, cdp = _game_settings_module, _local_games_module.cdp
+
+        def read():
+            props = None
+            if cdp.available():
+                try:
+                    props = cdp.app_properties(appid)
+                except cdp.CdpError as e:
+                    logging.info("game settings: %s", e)
+            folder = (props or {}).get("folder") or ""
+            exe = self._game_exe(appid, platform, folder)
+            # Magpie: a Steam game by its install folder (its exe may differ from our guess), others by exe
+            magpie_key = ("dir:" + folder) if appid < 0x80000000 and folder else exe
+            ls_exe = gs.lossless_exe()
+            return {"steam": props, "shortcut": appid >= 0x80000000, "exe": exe, "folder": folder,
+                    "magpie": {"available": self._magpie.view().get("available", False), "key": magpie_key,
+                               "enabled": self._magpie.game_enabled(magpie_key) if magpie_key else False},
+                    "lossless": {"installed": bool(ls_exe), "running": bool(gs.lossless_pids()),
+                                 "enabled": gs.lossless_enabled(exe) if exe else False}}
+        return await asyncio.to_thread(read)
+
+    async def game_settings_set(self, item, key, value=None):
+        appid, platform, title = self._game_item(item)
+        gs, cdp = _game_settings_module, _local_games_module.cdp
+        if key == "magpie":
+            target = item.get("magpieKey")
+            if not isinstance(target, str) or not target:
+                raise ValueError("找不到这款游戏的程序")
+            return self._magpie.set_game(target, bool(value))
+        if key == "lossless":
+            exe = item.get("exe")
+            if not isinstance(exe, str) or not exe.lower().endswith(".exe"):
+                raise ValueError("找不到这款游戏的程序")
+            ls = gs.lossless_exe()
+            if not ls:
+                raise RuntimeError("没有装小黄鸭（Lossless Scaling）")
+            pids = await asyncio.to_thread(gs.lossless_pids)
+            # LS writes its in-memory settings back when it exits: stop it hard first, then edit, then start again
+            for pid in pids:
+                await self._power._call("kill", pid=pid)
+            if pids:
+                await asyncio.sleep(0.5)
+            await asyncio.to_thread(gs.lossless_write, exe, title, bool(value))
+            await asyncio.to_thread(gs.lossless_start, ls)
+            return {"enabled": bool(value)}
+        if key not in ("launchOptions", "overlay", "cloud", "favorite", "hidden", "verify"):
+            raise ValueError("不认识的游戏设置")
+        if key == "launchOptions" and (not isinstance(value, str) or len(value) > 2000):
+            raise ValueError("启动选项太长")
+        if not await asyncio.to_thread(cdp.available):
+            raise RuntimeError("Steam 没开")
+        await asyncio.to_thread(cdp.set_app_property, appid, key, value)
+        return {"ok": True}
 
     async def local_games_state(self):
         state = await asyncio.to_thread(self._local_games.state)

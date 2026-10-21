@@ -12,6 +12,7 @@ import asyncio
 import ctypes
 from ctypes import wintypes as W
 import json
+import math
 import importlib.util
 import logging
 import os
@@ -61,8 +62,9 @@ DEFAULTS = {
 # 性能 may go past it.
 FAN_CAP = 76
 FAN_CAPS = {"quiet": FAN_CAP, "balanced": FAN_CAP, "performance": 100}
-# Avoid audible oscillation; high-temperature increases bypass the delay.
-FAN_RISE, FAN_FALL, FAN_HOT = 6.0, 10.0, 75
+# Avoid audible oscillation: the curve follows a smoothed package temperature (it jumps 65→86 °C within a
+# second even at 10 W); raises wait FAN_RISE, drops FAN_FALL; only a really hot reading goes straight up.
+FAN_RISE, FAN_FALL, FAN_HOT, FAN_SMOOTH = 4.0, 10.0, 92, 8.0
 # Six duty points (%) per mode at FAN_TEMPS °C, linear in between. 均衡 is the user's curve
 # (20 % ≤50 °C, 30 % 60 °C, 50 % 70 °C, 76 % ≥80 °C); 静音 is it 5 °C later; 性能 is more
 # aggressive and reaches full speed at 90 °C. The user can edit every mode's points.
@@ -145,18 +147,27 @@ def fan_duty_at(points, temp):
 
 
 class FanGovernor:
+    """Same rules as the fan service's FanGovernor (native/ClawFanService.cs)."""
     def __init__(self):
         self.history = []  # (time, duty the curve asks for)
         self.duty = None
+        self.smooth = self.smooth_at = None
 
     def reset(self):
         self.history, self.duty = [], None
+        self.smooth = self.smooth_at = None
 
     def update(self, points, temp, now):
-        want = fan_duty_at(points, temp)
+        dt = max(0.0, now - self.smooth_at) if self.smooth_at is not None else 0.0
+        self.smooth = temp if self.smooth is None else self.smooth + (temp - self.smooth) * (1 - math.exp(-dt / FAN_SMOOTH))
+        self.smooth_at = now
+        want = fan_duty_at(points, self.smooth)
         self.history = [(t, w) for t, w in self.history if now - t < FAN_FALL] + [(now, want)]
-        if self.duty is None or temp >= FAN_HOT:
-            self.duty = max(want, self.duty or 0) if temp >= FAN_HOT else want
+        if self.duty is None:
+            self.duty = want
+            return self.duty
+        if temp >= FAN_HOT:
+            self.duty = max(fan_duty_at(points, temp), self.duty)
             return self.duty
         span = now - self.history[0][0]
         rise = min(w for t, w in self.history if now - t < FAN_RISE)

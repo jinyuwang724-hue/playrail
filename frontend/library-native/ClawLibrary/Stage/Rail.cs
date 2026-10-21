@@ -18,7 +18,7 @@ using Colors = Microsoft.UI.Colors;
 
 namespace ClawLibrary.Stage;
 
-public enum RailKind { Tab, Shortcut, Account, Search, Settings, Explorer, Setting, Back }
+public enum RailKind { Tab, Shortcut, Account, Search, AddGame, Settings, Explorer, Setting, Back }
 
 public sealed class RailItem
 {
@@ -140,9 +140,9 @@ public sealed class Rail
         float nameH = (float)name.LayoutBounds.Height;
         float accH = av + 8 + nameH;
         float accY = statusY - groupGap - accH;
-        // 工具：竖着一列（搜索、设置、文件管理器），照 folia 缝里的工具格：40 × 40 方格、圆角 12、静止时无底无框，间隔 8
+        // 工具：竖着一列（搜索、添加游戏、设置、文件管理器），照 folia 缝里的工具格：40 × 40 方格、圆角 12、静止时无底无框，间隔 8
         const float toolW = 40, toolH = 40, toolGap = 8;
-        var tools = new[] { (RailKind.Search, ""), (RailKind.Settings, ""), (RailKind.Explorer, "") };
+        var tools = new[] { (RailKind.Search, ""), (RailKind.AddGame, ""), (RailKind.Settings, ""), (RailKind.Explorer, "") };
         float toolsH = tools.Length * toolH + (tools.Length - 1) * toolGap;
         float ruleY = accY - groupGap / 2 - 0.5f;   // 工具与账户之间一道短分隔线
         float toolsY = accY - groupGap - toolsH;
@@ -198,7 +198,7 @@ public sealed class Rail
         if (focus >= 0 && focus < Items.Count)
         {
             var it = Items[focus];
-            if (it.Kind is RailKind.Search or RailKind.Settings or RailKind.Explorer)
+            if (it.Kind is RailKind.Search or RailKind.AddGame or RailKind.Settings or RailKind.Explorer)
             {
                 // 工具格：方形焦点环（folia focus-visible：2 px 描边，离按钮 2 px），底色上面已经画了
                 var b = it.Bounds;
