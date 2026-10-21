@@ -213,7 +213,7 @@ public sealed class Library
     /// 只在 Steam 页签里出现；不自己编分类。Steam 里「已隐藏」的游戏不上墙。空的分类不显示。
     /// </summary>
     /// <summary>设置页「游戏库」：显示 Steam 里隐藏的游戏、两种来源各自开关（下次载入游戏库时生效）。</summary>
-    public static bool ShowHidden, IncludeSteam = true, IncludeShortcuts = true;
+    public static bool ShowHidden, IncludeSteam = true;
     /// <summary>设置页手动加的文件夹里扫出来的游戏（载入前填好）。</summary>
     public static List<(string Title, string Exe, long? Last)> FolderGames = new();
 
@@ -223,7 +223,7 @@ public sealed class Library
         foreach (var g in games)
             g.LastPlayedDays = g.LastPlayed is long l ? (int)Math.Max(0, (now - l) / Day) : null;
         var hidden = ShowHidden ? new HashSet<string>() : steamCollections.FirstOrDefault(c => c.Id == "hidden")?.Added.ToHashSet() ?? new HashSet<string>();
-        var shown = games.Where(g => !hidden.Contains(g.Id) && (g.Platform == "steam" ? IncludeSteam : g.Platform is "folder" or "local" || IncludeShortcuts)).ToList();
+        var shown = games.Where(g => !hidden.Contains(g.Id) && (g.Platform != "steam" || IncludeSteam)).ToList();
         var lib = new Library { Games = shown };
 
         var recent = shown.Where(g => g.LastPlayed != null).OrderByDescending(g => g.LastPlayed).ToList();

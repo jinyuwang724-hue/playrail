@@ -47,7 +47,6 @@ public sealed partial class WallStage
         _prefs = UiPrefs.Load();
         Library.ShowHidden = _prefs.ShowHiddenGames;
         Library.IncludeSteam = _prefs.SourceSteam;
-        Library.IncludeShortcuts = _prefs.SourceShortcuts;
         if (!Program.Args.Contains("--style=b")) Style = _prefs.StyleB ? TitleStyle.B : TitleStyle.D;
         _reducedLocal = _prefs.Reduced;
         SoundFx.Enabled = _prefs.Sounds;
@@ -491,14 +490,9 @@ public sealed partial class WallStage
         _stRows.Add(new PerfRow { Section = true, Title = "游戏来源" });
         _stRows.Add(StToggle("Steam 游戏", _prefs.SourceSteam, on =>
         {
-            if (!on && !_prefs.SourceShortcuts) { Toast("至少要留一种来源"); return; }
             SaveUi(_prefs with { SourceSteam = on }); _stNeedsReload = true; Repaint();
         }, true, reload));
-        _stRows.Add(StToggle("非 Steam 快捷方式", _prefs.SourceShortcuts, on =>
-        {
-            if (!on && !_prefs.SourceSteam) { Toast("至少要留一种来源"); return; }
-            SaveUi(_prefs with { SourceShortcuts = on }); _stNeedsReload = true; Repaint();
-        }, true, reload));
+        // 加进 Steam 的非 Steam 游戏就是本地游戏（和设置里添加的一样），一直显示，不再单独开关
         foreach (var folder in _prefs.Folders)
         {
             string key = "folder:" + folder;
