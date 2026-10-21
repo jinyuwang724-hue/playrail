@@ -179,6 +179,10 @@ public sealed partial class Backdrop : IDisposable
     /// <summary>换封面：后台缩到 50×50 取代表色，颜色在 800 ms 里渐变过去。post 把结果送回 UI 线程。</summary>
     public void SetCover(string? imagePath, Action<Action> post)
     {
+        // 莫奈 / 漫游选了本地壁纸：一直用壁纸，封面只记下来（关掉壁纸时换回去）
+        _requestedCover = imagePath;
+        _postImage ??= post;
+        imagePath = _settings.WallpaperInUse ?? imagePath;
         if (imagePath == _coverPath) return;
         _coverPath = imagePath;
         LoadCoverImage(imagePath, post);

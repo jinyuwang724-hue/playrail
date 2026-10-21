@@ -18,6 +18,7 @@ so state() checks afterwards whether Steam kept them.
 """
 from concurrent.futures import ThreadPoolExecutor, wait
 import hashlib
+import importlib.util
 import json
 import logging
 import os
@@ -38,6 +39,10 @@ SGDB = "https://www.steamgriddb.com/api/v2"
 # The website's own (undocumented) endpoints: no key needed. Used when the user has not set a key.
 SGDB_PUBLIC = "https://www.steamgriddb.com/api/public"
 MAX_IMAGE = 40 * 1024 * 1024
+# Steam's own UI interface (live changes without a restart); loaded from next to this file like the service loads us
+_cdp_spec = importlib.util.spec_from_file_location("claw_toolbox_steam_cdp", Path(__file__).with_name("claw_steam_cdp.py"))
+cdp = importlib.util.module_from_spec(_cdp_spec)
+_cdp_spec.loader.exec_module(cdp)
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 STEAM_TASK = r"\ClawToolbox\SteamAdmin"
 # Art kinds, as Steam names the files in userdata\<id>\config\grid (the icon is not a grid file: shortcuts.vdf's
@@ -269,6 +274,19 @@ def write_collections(user, wanted):
     return created
 
 
+def live_or_file_collections(user):
+    """Steam's collections as the running client has them (changes made live show at once); the cloud-storage file
+    when Steam is closed or its UI interface is off."""
+    if cdp.available():
+        try:
+            live = cdp.user_collections()
+            live.sort(key=lambda c: (c["id"] != "favorite", c["name"]))
+            return live
+        except cdp.CdpError:
+            pass
+    return read_collections(user) if user else []
+
+
 # ---------------- the store ----------------
 
 class LocalGames:
@@ -384,8 +402,9 @@ class LocalGames:
                 items = [i for i in items if i.get("height", 0) > i.get("width", 0)]
             elif kind == "header":
                 items = [i for i in items if i.get("width", 0) > 1.6 * i.get("height", 1)]
-        result = [{"url": i["url"], "thumb": i.get("thumb") or i["url"]} for i in items
-                  if isinstance(i, dict) and str(i.get("url", "")).startswith("https://")]
+        # w / h: the image's own size, shown under each candidate
+        result = [{"url": i["url"], "thumb": i.get("thumb") or i["url"], "w": i.get("width") or i.get("w"), "h": i.get("height") or i.get("h")}
+                  for i in items if isinstance(i, dict) and str(i.get("url", "")).startswith("https://")]
         self._cache[key] = result
         return result
 
@@ -402,11 +421,16 @@ class LocalGames:
         assets = items[0].get("assets") or {}
         fmt = assets.get("asset_url_format") or ""
 
+        # The store's fixed sizes (the logo's varies, so it has none)
+        sizes = {"library_capsule_2x": (600, 900), "library_capsule": (300, 450), "library_hero_2x": (3840, 1240),
+                 "library_hero": (1920, 620), "header_2x": (920, 430), "header": (460, 215)}
+
         def asset(*names):
             for n in names:
                 if assets.get(n) and fmt:
                     u = "https://shared.cloudflare.steamstatic.com/store_item_assets/" + fmt.replace("${FILENAME}", assets[n])
-                    return [{"url": u, "thumb": u}]
+                    w, h = sizes.get(n, (None, None))
+                    return [{"url": u, "thumb": u, "w": w, "h": h}]
             return []
         return {"p": asset("library_capsule_2x", "library_capsule"), "hero": asset("library_hero_2x", "library_hero"),
                 "logo": asset("library_logo_2x", "library_logo"), "header": asset("header_2x", "header"), "icon": []}
@@ -595,13 +619,13 @@ class LocalGames:
     def state(self, user=None):
         user = user or steam_user(steam_root())
         games = self._load()
-        collections = read_collections(user) if user else []
+        collections = live_or_file_collections(user)
         members = {c["id"]: set(c["added"]) for c in collections}
         present = {}
         if user:
             try:
                 for _, _, entry in shortcut_entries(read_shortcuts(user)):
-                    present[str((Vdf.get(entry, "appid") or 0) & 0xFFFFFFFF)] = exe_key(Vdf.get(entry, "Exe"))
+                    present[str((Vdf.get(entry, "appid") or 0) & 0xFFFFFFFF)] = entry
             except (OSError, ValueError):
                 pass
         for g in games:
@@ -609,9 +633,39 @@ class LocalGames:
             g["inSteam"] = g["id"] in present
             # After a sync: Steam's cloud copy of the collections may have replaced ours
             g["collectionOk"] = not g["inSteam"] or all(g["id"] in members.get(c, set()) for c in g["collections"])
+        # Local games also means the non-Steam games already added in Steam itself (not through us): listed after ours,
+        # with Steam's name, images and collections; editing one makes it ours (same appid, nothing added twice)
+        ours_ids = {g["id"] for g in games}
+        ours_exes = {exe_key(g["exe"]) for g in games}
+        for appid, entry in present.items():
+            exe = unquote(Vdf.get(entry, "Exe") or "")
+            name = str(Vdf.get(entry, "AppName") or Vdf.get(entry, "appname") or "").strip()
+            if appid in ours_ids or exe_key(exe) in ours_exes or not name or not exe:
+                continue
+            games.append({"id": appid, "name": name, "exe": exe, "dir": unquote(Vdf.get(entry, "StartDir") or ""),
+                          "args": Vdf.get(entry, "LaunchOptions") or "", "steam": True, "fromSteam": True,
+                          "collections": [c["id"] for c in collections if appid in set(c["added"])], "newCollections": [],
+                          "art": self._grid_art(user, appid, Vdf.get(entry, "icon")), "inSteam": True, "collectionOk": True})
         return {"games": games, "key": bool(self._key()), "collections": [{"id": c["id"], "name": c["name"]} for c in collections],
                 "pending": sum(1 for g in games if self._pending(g)),
                 "job": dict(self.job), "lastSync": self.last_sync, "steam": user is not None}
+
+    @staticmethod
+    def _grid_art(user, appid, icon):
+        """Images Steam already has for a shortcut: the grid folder's files, and the shortcut's own icon."""
+        art = {}
+        grid = user / "config" / "grid"
+        for kind, suffix in KINDS.items():
+            if kind == "icon":
+                continue
+            found = sorted(grid.glob(appid + suffix + ".*"), key=lambda p: p.stat().st_mtime, reverse=True)
+            found = [p for p in found if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")]
+            if found:
+                art[kind] = str(found[0])
+        icon = unquote(icon or "")
+        if icon and os.path.isfile(icon):
+            art["icon"] = icon
+        return art
 
     @staticmethod
     def _collections_of(g):
@@ -619,7 +673,7 @@ class LocalGames:
 
     @staticmethod
     def _pending(g):
-        return bool(g.get("steam")) and (not g.get("inSteam") or not g.get("collectionOk") or bool(g.get("newCollections"))
+        return bool(g.get("steam")) and not g.get("fromSteam") and (not g.get("inSteam") or not g.get("collectionOk") or bool(g.get("newCollections"))
                                          or g.get("artSynced") is False or g.get("collectionSynced") is False)
 
     def set_key(self, key):
@@ -710,6 +764,9 @@ class LocalGames:
                 for kind, url in (game.get("art") or {}).items():
                     if url == "":
                         entry["art"].pop(kind, None)
+                        entry["artCleared"] = sorted(set(entry.get("artCleared") or []) | {kind})
+                    elif url:
+                        entry["artCleared"] = [k for k in (entry.get("artCleared") or []) if k != kind]
                 entry["artVersion"] = int(time.time())
                 if art or any(url == "" for url in (game.get("art") or {}).values()):
                     entry["artSynced"] = False
@@ -782,21 +839,36 @@ class LocalGames:
         return {"filled": filled, "missing": len(missing)}
 
     # ---- Steam ----
-    def sync(self):
-        """Write every pending game into Steam. Steam is shut down first and started again afterwards."""
+    def sync(self, restart=True):
+        """Write every pending game into Steam:
+        Steam running with its UI interface → changed live (shortcut, images, collections), nothing restarts;
+        Steam closed → the files are written directly and Steam reads them when it starts;
+        Steam running without that interface → only with restart: shut down, write the files, start again."""
         root = steam_root()
         user = steam_user(root)
         if root is None or user is None:
             raise RuntimeError("找不到 Steam")
-        if self.game_running():
-            raise RuntimeError("游戏运行中")
         with self._lock:
             games = self._load()
             view = self.state(user)
             pending = [g for g in view["games"] if self._pending(g)]
             if not pending:
-                return {"synced": 0, "restarted": False}
+                return {"synced": 0, "restarted": False, "live": False}
             was_running = steam_running()
+            if was_running and cdp.available():
+                self.job = {"phase": "写入 Steam", "done": 0, "total": len(pending)}
+                try:
+                    written = self._live_steam(user, games, pending)
+                finally:
+                    self._save(games)
+                    self.job = {"phase": "", "done": 0, "total": 0}
+                self.last_sync = {"time": int(time.time()), "count": written}
+                self.log(f"local games: synced {written} to Steam live")
+                return {"synced": written, "restarted": False, "live": True}
+            if was_running and not restart:
+                return {"synced": 0, "restarted": False, "live": False, "needsRestart": True}
+            if was_running and self.game_running():
+                raise RuntimeError("游戏运行中")
             if was_running:
                 self.job = {"phase": "关闭 Steam", "done": 0, "total": len(pending)}
                 subprocess.run([str(root / "steam.exe"), "-shutdown"], capture_output=True, creationflags=NO_WINDOW, timeout=30)
@@ -821,6 +893,69 @@ class LocalGames:
         self.log(f"local games: synced {written} to Steam (restart {was_running})")
         return {"synced": written, "restarted": was_running}
 
+    def _rekey(self, entry, new_id):
+        """Steam gave the shortcut another appid than ours: move our entry and its art files onto it."""
+        old_id = entry["id"]
+        for old in self.art.glob(old_id + "*"):
+            os.replace(old, old.with_name(old.name.replace(old_id, new_id, 1)))
+        entry["art"] = {k: v.replace(old_id, new_id, 1) for k, v in (entry.get("art") or {}).items()}
+        entry["id"] = new_id
+
+    def _live_steam(self, user, games, pending):
+        """Through the running Steam client: add / rename the shortcut, set its images and icon, put it in collections."""
+        try:
+            by_exe = {exe_key(Vdf.get(e, "Exe")): str((Vdf.get(e, "appid") or 0) & 0xFFFFFFFF)
+                      for _, _, e in shortcut_entries(read_shortcuts(user))}
+        except (OSError, ValueError):
+            by_exe = {}
+        grid = user / "config" / "grid"
+        written = 0
+        for g in pending:
+            entry = next(x for x in games if x["id"] == g["id"])
+            fresh = not cdp.exists(entry["id"])
+            if fresh:
+                same = by_exe.get(exe_key(entry["exe"]))
+                if same and cdp.exists(same):
+                    new_id = same
+                else:
+                    new_id = str(int(cdp.add_shortcut(entry["name"], entry["exe"], entry["dir"], entry.get("args", ""))) & 0xFFFFFFFF)
+                if new_id != entry["id"]:
+                    self._rekey(entry, new_id)
+                    g["id"] = new_id
+            ident = entry["id"]
+            cdp.update_shortcut(ident, entry["name"])
+            if fresh or entry.get("artSynced") is not True:
+                art = entry.get("art") or {}
+                for kind in cdp.ASSET_TYPES:
+                    src = art.get(kind)
+                    if src and os.path.isfile(src):
+                        cdp.set_artwork(ident, kind, src)
+                    elif kind in (entry.get("artCleared") or []):
+                        cdp.set_artwork(ident, kind, None)
+                entry["artCleared"] = []
+                icon = art.get("icon")
+                if icon and os.path.isfile(icon):
+                    grid.mkdir(parents=True, exist_ok=True)
+                    for old in grid.glob(ident + "_icon.*"):
+                        old.unlink(missing_ok=True)
+                    target = grid / (ident + "_icon" + os.path.splitext(icon)[1])
+                    shutil.copyfile(icon, target)
+                    cdp.set_icon(ident, str(target))
+                entry["artSynced"] = True
+            ids, names = self._collections_of(entry), list(entry.get("newCollections") or [])
+            if ids or names:
+                made = cdp.add_to_collections(ident, ids, names) or {}
+                for n in names:
+                    if made.get(n) and made[n] not in ids:
+                        ids.append(made[n])
+                entry.pop("collection", None)
+                entry["collections"] = ids
+                entry["newCollections"] = []
+            entry["collectionSynced"] = True
+            written += 1
+            self.job["done"] = written
+        return written
+
     def _write_steam(self, user, games, pending):
         cfg = user / "config"
         tree = read_shortcuts(user)
@@ -837,10 +972,8 @@ class LocalGames:
             same = by_exe.get(exe_key(entry["exe"]))
             if entry["id"] not in by_id and same:
                 # Added in Steam in the meantime: keep Steam's entry and move ours (and its art) onto that id
-                for old in self.art.glob(entry["id"] + "*"):
-                    os.replace(old, old.with_name(old.name.replace(entry["id"], same, 1)))
-                entry["art"] = {k: v.replace(entry["id"], same, 1) for k, v in (entry.get("art") or {}).items()}
-                entry["id"] = g["id"] = same
+                self._rekey(entry, same)
+                g["id"] = same
             entries.append(entry)
         grid = cfg / "grid"
         grid.mkdir(parents=True, exist_ok=True)
@@ -848,14 +981,17 @@ class LocalGames:
         for entry in entries:
             for kind, suffix in KINDS.items():
                 src = (entry.get("art") or {}).get(kind)
-                for old in grid.glob(entry["id"] + suffix + ".*"):
-                    old.unlink(missing_ok=True)
+                # Replace the kinds we have, clear the ones taken out; images Steam had that we never touched stay
+                if (src and os.path.isfile(src)) or kind in (entry.get("artCleared") or []):
+                    for old in grid.glob(entry["id"] + suffix + ".*"):
+                        old.unlink(missing_ok=True)
                 if src and os.path.isfile(src):
                     target = grid / (entry["id"] + suffix + os.path.splitext(src)[1])
                     shutil.copyfile(src, target)
                     if kind == "icon":
                         icons[entry["id"]] = str(target)
             entry["artSynced"] = True
+            entry["artCleared"] = []
         changed = False
         for entry in entries:
             existing = by_id.get(entry["id"])
