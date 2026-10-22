@@ -259,7 +259,7 @@ public sealed partial class WallStage
     private void PaintGpGroupList(CanvasDrawingSession ds, GpPickerState p)
     {
         var groups = GpGroups(p.Desktop);
-        float y0 = GpSidebarY(1);
+        float y0 = 196 + PerfSecH + PerfRowH / 2;   // 和右边第一行对齐
         for (int i = 0; i < groups.Count; i++)
         {
             float cy = y0 + i * GpCatH;
