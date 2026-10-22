@@ -138,40 +138,42 @@ public sealed partial class WallStage
     /// <summary>图上焦点：-1 = 焦点在上面的设置行。</summary>
     private int _gsMapFocus = -1;
     private readonly List<GpItem> _gsMapItems = new();
-    /// <summary>映射图（手柄页映射页的设计坐标，内容约 200…1180 × 180…620）缩进右栏：比例、内容中线和上边。</summary>
-    private const float GsMapScale = 0.83f, GsMapSrcCx = 690, GsMapSrcY = 180;
+    private float GsMapTop => PerfTop + RowsHeight(_stRows) + 8;
 
-    /// <summary>手柄页映射页的那些格子（去掉快速设置键、Claw 键、摇杆方向这种不归游戏布局管的），两侧重新排紧。</summary>
+    /// <summary>
+    /// 右栏（428…1240）里的排法：字和图标和手柄页一样大（不整体缩小），线稿缩到 0.48（365 宽）居中，两侧各一列贴着它；
+    /// 底部四栏每栏一格一行（右栏窄，两格一行放不下映射值）。
+    /// </summary>
+    private GpMapGeo GsMapGeo
+    {
+        get
+        {
+            float t = GsMapTop, cx = PerfRightX + PerfRightW / 2, half = GpW * 0.48f / 2;
+            return new(0.48f, cx, t + 96, cx - half - 12, cx + half + 12, t + 30, 46, 196, t + 222, t + 260, 40, PerfRightX + 4, PerfRightW / 4f, 1);
+        }
+    }
+
+    /// <summary>手柄页映射页的那些格子，去掉快速设置键、Claw 键、摇杆互换这种不归游戏布局管的。</summary>
     private void GsBuildMapItems()
     {
         var keep = _gpItems.ToList();
         _gpItems.Clear();
-        BuildGpMapItems(false);
-        var items = _gpItems.Where(it => it.Key.Length > 0 && !GpIsSpecial(it.Key) && it.Choices == null).ToList();
+        BuildGpMapItems(false, GsMapGeo, s => !GpIsSpecial(s) && s is not ("LStick" or "RStick"));
+        _gsMapItems.Clear();
+        _gsMapItems.AddRange(_gpItems);
         _gpItems.Clear();
         _gpItems.AddRange(keep);
-        foreach (int col in new[] { -1, -2 })
-        {
-            int i = 0;
-            foreach (var it in items.Where(x => x.Col == col)) { it.Y = GpMapSideY + i++ * GpMapSideStep; it.Cy = it.Y; }
-        }
-        _gsMapItems.Clear();
-        _gsMapItems.AddRange(items);
     }
-
-    private float GsMapTop => PerfTop + RowsHeight(_stRows) + 8;
-    private Matrix3x2 GsMapTransform => Matrix3x2.CreateTranslation(-GsMapSrcCx, -GsMapSrcY) * Matrix3x2.CreateScale(GsMapScale)
-        * Matrix3x2.CreateTranslation(PerfRightX + PerfRightW / 2, GsMapTop);
 
     private void GsPaintPadMap(CanvasDrawingSession ds)
     {
         GsBuildMapItems();
         var accent = PerfAccent;
+        var g = GsMapGeo;
         var old = ds.Transform;
-        ds.Transform = GsMapTransform * old;
-        PaintGpMapHeads(ds);
-        // 线稿：和映射页一样整层 0.99、中心挪到 (GpMapCx, GpMapCy)
-        var art = Matrix3x2.CreateScale(GpMapScale) * Matrix3x2.CreateTranslation(GpMapCx - GpCx * GpMapScale, GpMapCy - GpCy * GpMapScale);
+        PaintGpMapHeads(ds, g);
+        // 线稿：和映射页一样按整层画（缩放、挪到 ArtCx / ArtCy），这样线稿上的区域染色也对得上
+        var art = Matrix3x2.CreateScale(g.ArtScale) * Matrix3x2.CreateTranslation(g.ArtCx - GpCx * g.ArtScale, g.ArtCy - GpCy * g.ArtScale);
         var focus = _gsMapFocus >= 0 && _gsMapFocus < _gsMapItems.Count ? _gsMapItems[_gsMapFocus] : null;
         if (_gpBitmaps.TryGetValue("front", out var bmp))
         {
@@ -236,16 +238,9 @@ public sealed partial class WallStage
     private bool GsMapClick(double sx, double sy)
     {
         if (!GsPadMapMode) return false;
-        if (!Matrix3x2.Invert(GsMapTransform, out var inv)) return false;
-        var p = Vector2.Transform(new Vector2((float)sx / _ccK, (float)sy / _ccK), inv);
-        if (p.Y < GpMapSideY - 30) return false;
+        float x = (float)sx / _ccK, y = (float)sy / _ccK;
         GsBuildMapItems();
-        int best = -1; float bestD = 90;
-        for (int i = 0; i < _gsMapItems.Count; i++)
-        {
-            float dd = Vector2.Distance(p, new Vector2(_gsMapItems[i].Cx, _gsMapItems[i].Cy));
-            if (dd < bestD) { bestD = dd; best = i; }
-        }
+        int best = _gsMapItems.FindIndex(it => new Rect(it.Col == -1 ? it.X - it.MapW : it.X, it.Y - it.MapH / 2, it.MapW, it.MapH).Contains(new Point(x, y)));
         if (best < 0) return false;
         _stZone = 1;
         _gsMapFocus = best;

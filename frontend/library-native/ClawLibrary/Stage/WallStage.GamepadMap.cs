@@ -2,8 +2,9 @@
 // 肩键 / 扳机 / View / Menu / 快速设置 / Claw / 背键挂在线稿左右两侧，底下压紧的四栏：左摇杆、十字键、右摇杆、正面按键。
 // 每行 = 这个键的小图标 + 它现在映射到什么（键盘画键帽、鼠标画鼠标、手柄键画手柄键的图标），尽量不用字；没改过的写一个淡淡的「原键」。
 // 焦点到 M1 / M2 时线稿翻到背面（GpPageFaces）。焦点那行白字，线稿上它管的那块染强调色。
-// 线稿整层（_gpArtPage）在映射页几乎保持原大、往左上挪一点给两侧和底部让位（合成层弹簧），换回别的分类再回到原位。
-// 底部四栏压成两行，整页内容竖向居中，视线落在线稿上。
+// 掌机上要看得清：映射行（键的图标、键帽、字）整体放大 GpMapInk 倍，线稿整层（_gpArtPage）在映射页缩到 0.70 给它们让位
+// （合成层弹簧），换回别的分类再回到原位。焦点的样子不变：白字 + 线稿上那块染色，不加框。
+// 底部四栏各两行，整页内容竖向居中。游戏设置 › 手柄用同一套画法，按右栏宽度单独排（GpMapGeo）。
 using System.Numerics;
 using System.Text.Json.Nodes;
 using Microsoft.Graphics.Canvas;
@@ -15,20 +16,22 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     // ---- 几何（设计 px） ----
+    /// <summary>映射行的图标、键帽、字放大多少（以行的锚点为中心整体放大；选择指令页用它自己的尺寸）。</summary>
+    private const float GpMapInk = 1.35f;
+
     /// <summary>
-    /// 映射页线稿：整层 0.99（752 宽），中心挪到 (712, 348)，线稿 336…1088 × 176…520 —— 比其他页只小一点点，
-    /// 往左挪一点是给右侧那列映射值留出屏幕边距。
+    /// 映射图的排法（设计 px）：线稿整层的比例和中心；两侧一列（左边图标右缘贴 LeftX，右边图标从 RightX 起，第一行 SideY，
+    /// 行距 SideStep，一行宽 SideW）；底部四栏（标题 ColHeadY，第一行 ColY，行距 ColStep，从 ColX 起每栏 ColW，一行放 PerRow 格）。
     /// </summary>
-    private const float GpMapScale = 0.99f, GpMapCx = 712, GpMapCy = 348;
-    /// <summary>两侧：左边图标右缘贴 322，右边图标从 1102 起；第一行 y 228，行距 36（挨着线稿上半截的肩部和握把）。</summary>
-    private const float GpMapLeftX = 322, GpMapRightX = 1102, GpMapSideY = 228, GpMapSideStep = 36;
+    private sealed record GpMapGeo(float ArtScale, float ArtCx, float ArtCy, float LeftX, float RightX, float SideY, float SideStep, float SideW,
+        float ColHeadY, float ColY, float ColStep, float ColX, float ColW, int PerRow);
+
     /// <summary>
-    /// 底部四栏压成两行：栏标题 y 560，第一行 y 588，行距 28；栏从 336 起、栏宽 188（和线稿同宽），
-    /// 每栏里两个小格一行（摇杆：方向 + 按下；十字键、ABXY 各 2×2），小格宽 94。
+    /// 手柄页（分类右边 220…1240）：线稿 0.70（532 宽），中心 (730, 320)，464…996 × 198…442；
+    /// 两侧行距 48、一行 220 宽，贴着线稿；底部四栏铺满 230…1230，每栏两格一行，行距 44。
     /// </summary>
-    private const float GpMapColHeadY = 560, GpMapColY = 588, GpMapColStep = 28, GpMapColX = 336, GpMapColW = 188, GpMapSubW = 94;
-    /// <summary>映射值最宽多少（放不下的键帽串截掉、加「…」）：两侧 124，底部小格 58。</summary>
-    private const float GpMapTargetW = 124, GpMapSubTargetW = 58;
+    private const float GpMapScale = 0.70f, GpMapCx = 730, GpMapCy = 320;
+    private static readonly GpMapGeo GpMapPage = new(GpMapScale, GpMapCx, GpMapCy, 452, 1008, 214, 48, 220, 490, 532, 44, 230, 250, 2);
 
     private static readonly string[] GpMapColTitles = { "左摇杆", "十字键", "右摇杆", "正面按键" };
 
@@ -47,13 +50,19 @@ public sealed partial class WallStage
 
     // ---------------- 布局 ----------------
 
-    /// <summary>按键映射页的格子：两侧 + 底部四栏，位置写进 GpItem（X / Y 是这一行的锚点，Cx / Cy 是按方位找焦点用的中心）。</summary>
-    private void BuildGpMapItems(bool desktop)
+    /// <summary>
+    /// 按键映射页的格子：两侧 + 底部四栏，位置写进 GpItem（X / Y 是这一行的锚点，MapW / MapH 是这一行占的宽高，
+    /// Cx / Cy 是按方位找焦点用的中心）。keep 筛掉不要的键（游戏设置里没有快速设置键、Claw 键、摇杆互换），剩下的排紧。
+    /// </summary>
+    private void BuildGpMapItems(bool desktop, GpMapGeo? geo = null, Func<string, bool>? keep = null)
     {
-        var sideL = desktop ? GpDeskSideL : GpMapSideL;
-        var sideR = desktop ? GpDeskSideR : GpMapSideR;
-        var cols = desktop ? GpDeskCols : GpMapCols;
-        void Add(string src, int col, float x, float y)
+        var g = geo ?? GpMapPage;
+        bool Keep(string s) => keep == null || keep(s);
+        var sideL = (desktop ? GpDeskSideL : GpMapSideL).Where(Keep).ToArray();
+        var sideR = (desktop ? GpDeskSideR : GpMapSideR).Where(Keep).ToArray();
+        var cols = (desktop ? GpDeskCols : GpMapCols).Select(c => c.Where(Keep).ToArray()).ToArray();
+        float subW = g.ColW / g.PerRow;
+        void Add(string src, int col, float x, float y, float w, float h)
         {
             var it = GpMapCell(src, desktop);
             it.Map = true;
@@ -62,17 +71,19 @@ public sealed partial class WallStage
             it.Side = col == -1 ? -1 : 1;
             it.X = x;
             it.Y = y;
-            it.Cx = col == -1 ? x - 70 : col == -2 ? x + 70 : x + 40;
+            it.MapW = w;
+            it.MapH = h;
+            it.Cx = col == -1 ? x - w / 2 : x + w / 2;
             it.Cy = y;
             it.Tokens = GpMapTokens(src, desktop, it);
             _gpItems.Add(it);
         }
-        for (int i = 0; i < sideL.Length; i++) Add(sideL[i], -1, GpMapLeftX, GpMapSideY + i * GpMapSideStep);
-        for (int i = 0; i < sideR.Length; i++) Add(sideR[i], -2, GpMapRightX, GpMapSideY + i * GpMapSideStep);
-        // 每栏两个小格一行：摇杆（方向、按下）一行；十字键 ↑ ↓ / ← →、正面按键 A B / X Y 各两行
+        for (int i = 0; i < sideL.Length; i++) Add(sideL[i], -1, g.LeftX, g.SideY + i * g.SideStep, g.SideW, g.SideStep);
+        for (int i = 0; i < sideR.Length; i++) Add(sideR[i], -2, g.RightX, g.SideY + i * g.SideStep, g.SideW, g.SideStep);
+        // 手柄页每栏两个小格一行：摇杆（方向、按下）一行；十字键 ↑ ↓ / ← →、正面按键 A B / X Y 各两行
         for (int c = 0; c < cols.Length; c++)
             for (int r = 0; r < cols[c].Length; r++)
-                Add(cols[c][r], c, GpMapColX + c * GpMapColW + r % 2 * GpMapSubW, GpMapColY + r / 2 * GpMapColStep);
+                Add(cols[c][r], c, g.ColX + c * g.ColW + r % g.PerRow * subW, g.ColY + r / g.PerRow * g.ColStep, subW, g.ColStep);
     }
 
     /// <summary>线稿整层的位置：映射页缩小上移，别的分类原位。弹簧，打断时从当前值接着走。</summary>
@@ -197,13 +208,14 @@ public sealed partial class WallStage
 
     // ---------------- 绘制 ----------------
 
-    /// <summary>栏标题（映射页底部四栏）。</summary>
-    private void PaintGpMapHeads(CanvasDrawingSession ds)
+    /// <summary>栏标题（映射页底部四栏），和映射行一起放大。</summary>
+    private void PaintGpMapHeads(CanvasDrawingSession ds, GpMapGeo? geo = null)
     {
+        var g = geo ?? GpMapPage;
         var f = TextKit.Ui(600);
-        var cols = GpCatId == "dkmap" ? GpDeskCols : GpMapCols;
+        var cols = GpCatId == "dkmap" && geo == null ? GpDeskCols : GpMapCols;
         for (int c = 0; c < cols.Length; c++)
-            PText(ds, GpMapColTitles[c], f, 13, Gfx.WithAlpha(CcText, 0.42f), GpMapColX + c * GpMapColW, GpMapColHeadY, GpMapColW);
+            PText(ds, GpMapColTitles[c], f, 13 * GpMapInk, Gfx.WithAlpha(CcText, 0.45f), g.ColX + c * g.ColW, g.ColHeadY, g.ColW);
     }
 
     /// <summary>
@@ -218,14 +230,19 @@ public sealed partial class WallStage
         var glyphCol = Gfx.WithAlpha(CcText, focused ? 1f : it.Disabled ? 0.38f : 0.7f);
         var toks = it.Tokens ?? new List<GpTok>();
         if (editing && it.Choices != null) toks = new List<GpTok> { new(GpTokKind.Text, it.Choices[it.Choice]) };
-        toks = GpFitTokens(ds, toks, it.Col >= 0 ? GpMapSubTargetW : GpMapTargetW);
 
         // 摇杆那格（Key 为空，点亮 LS / RS）画摇杆图标
         string glyph = it.Key.Length > 0 ? it.Key : it.Lights?[0] == "RS" ? "RStick" : "LStick";
         float gw = GpGlyphWidth(glyph);
-        float tw = GpTokensWidth(ds, toks), chev = editing ? 16 : 0;
+        float chev = editing ? 16 : 0;
         const float gap = 10;
+        // 这一行放大前能用的宽：映射值放不下就截掉、加「…」
+        toks = GpFitTokens(ds, toks, Math.Max(24, (it.MapW - 8) / GpMapInk - gw - gap - chev * 2));
+        float tw = GpTokensWidth(ds, toks);
         float y = it.Y;
+        // 以锚点为中心整体放大（图标、键帽、字一起）
+        var old = ds.Transform;
+        ds.Transform = Matrix3x2.CreateTranslation(-it.X, -y) * Matrix3x2.CreateScale(GpMapInk) * Matrix3x2.CreateTranslation(it.X, y) * old;
         if (it.Col == -1)
         {
             // 左侧：…值 图标| （图标右边缘贴着锚点）
@@ -241,6 +258,7 @@ public sealed partial class WallStage
             GpDrawTokens(ds, toks, tx, y, col, focused);
             if (editing) { DrawChevron(ds, tx - chev + 6, y, true, col); DrawChevron(ds, tx + tw + 10, y, false, col); }
         }
+        ds.Transform = old;
     }
 
     private static readonly FontSpec GpCapFont = new("Segoe UI Variable Text", 600);

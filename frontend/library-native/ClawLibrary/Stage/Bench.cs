@@ -437,12 +437,19 @@ public static class Bench
                     if (state == "add9") { await Task.Delay(8000); s.Activate(); await Task.Delay(6000); s.Move(Direction.Right); await Task.Delay(300); s.Move(Direction.Up); await Task.Delay(300); s.Activate(); await Task.Delay(2500); }
                     break;
                 }
-                case "gs0" or "gs1" or "gs2" or "gs3" or "gs4" or "gsk" or "gsc" or "gsb":
+                case "gpm":
+                    // 手柄页按键映射，焦点在右侧 RB
+                    s.ToggleControlCenter(); await Task.Delay(1500);
+                    for (int i = 0; i < 2; i++) { s.Move(Direction.Right); await Task.Delay(300); }
+                    await Task.Delay(800); s.Activate(); await Task.Delay(2500);
+                    s.Move(Direction.Right); await Task.Delay(400); s.Move(Direction.Right); await Task.Delay(400); s.Move(Direction.Down); await Task.Delay(800);
+                    break;
+                case "gs0" or "gs1" or "gs2" or "gs3" or "gs4" or "gsk" or "gsc" or "gsb" or "gsm":
                 {
                     // 游戏设置：gs0–gs4 各分类，gsk 手柄里某个键的按键页，gsc 选择指令（键盘页），gsb 通用里浏览启动程序
                     s.ToggleControlCenter();
                     await Task.Delay(1500);
-                    int cat = state is "gsk" or "gsc" ? 2 : state == "gsb" ? 0 : state[2] - '0';
+                    int cat = state is "gsk" or "gsc" or "gsm" ? 2 : state == "gsb" ? 0 : state[2] - '0';
                     s.GameSettingsTestState(Program.Args.FirstOrDefault(a => a.StartsWith("--game="))?[7..] ?? "", cat);
                     await Task.Delay(6000);
                     s.Move(Direction.Right);
@@ -453,6 +460,7 @@ public static class Bench
                         s.Activate(); await Task.Delay(1000);
                         if (state == "gsc") { s.Move(Direction.Down); await Task.Delay(250); s.Activate(); await Task.Delay(600); s.SwitchTab(1); await Task.Delay(300); s.SwitchTab(1); await Task.Delay(800); }
                     }
+                    if (state == "gsm") { for (int i = 0; i < 4; i++) { s.Move(Direction.Down); await Task.Delay(300); } await Task.Delay(600); }
                     if (state == "gsb") { s.Activate(); await Task.Delay(1200); }
                     break;
                 }

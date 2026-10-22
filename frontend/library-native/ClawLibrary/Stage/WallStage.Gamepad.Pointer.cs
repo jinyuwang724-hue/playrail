@@ -102,10 +102,7 @@ public sealed partial class WallStage
     {
         if (item.Map)
         {
-            float left = item.Col == -1 ? item.X - 148 : item.X;
-            float width = item.Col >= 0 ? GpMapSubW : item.Col == -1 ? 148 : 138;
-            float height = item.Col >= 0 ? GpMapColStep : GpMapSideStep;
-            _gpTargets.Add(new(index, SettingsTargetKind.Item, left, item.Y - height / 2, width, height));
+            _gpTargets.Add(new(index, SettingsTargetKind.Item, item.Col == -1 ? item.X - item.MapW : item.X, item.Y - item.MapH / 2, item.MapW, item.MapH));
             return;
         }
         float x = item.Side < 0 ? item.X - 140 : item.Side > 0 ? item.X - 10 : item.X - 190;

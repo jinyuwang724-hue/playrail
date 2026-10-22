@@ -104,6 +104,7 @@ public sealed partial class WallStage
         /// <summary>按键映射页的格子（WallStage.GamepadMap.cs）：Col -1 = 左侧、-2 = 右侧、0…3 = 底部四栏；Cx / Cy 是找焦点用的中心；Tokens = 映射值的图标块。</summary>
         public bool Map;
         public int Col;
+        public float MapW, MapH;
         public float Cx, Cy;
         public List<GpTok>? Tokens;
         public bool Adjustable => !Disabled && (Choices != null || Number != null);
