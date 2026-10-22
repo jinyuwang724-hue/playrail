@@ -65,7 +65,8 @@ public sealed partial class WallStage
                 else if (hit.Row == 2) GpPadButton(true);
                 return;
             case SettingsTargetKind.Tab:
-                if (_gpPicker is { } tab) { GpSwitchTab(hit.Row - tab.Tab); tab.InTabs = false; PaintGpBody(); }
+                if (_gpPicker is { Level: GpSubLevel.Group } gp) GpGroupSwitch(gp, hit.Row - gp.Group);
+                else if (_gpPicker is { } tab) { GpSwitchTab(hit.Row - tab.Tab); tab.InTabs = false; PaintGpBody(); }
                 return;
             case SettingsTargetKind.Cell:
                 if (_gpPicker is { } picker) { picker.Cell = hit.Row; picker.InTabs = false; GpPickerActivate(); }

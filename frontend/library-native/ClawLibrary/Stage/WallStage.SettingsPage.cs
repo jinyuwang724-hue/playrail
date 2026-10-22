@@ -911,6 +911,7 @@ public sealed partial class WallStage
     /// <summary>Y：焦点这一项恢复默认。</summary>
     private void StResetFocused()
     {
+        if (GsPadPicking && GpGroupY()) return;   // 游戏设置 › 手柄的分组页：Y 进这个键的触发设置
         if (_stZone != 1 || _stFocus < 0 || _stFocus >= _stRows.Count || GsOverlay) return;
         var r = _stRows[_stFocus];
         if (r.Reset == null || r.Disabled) { Toast("这一项没有默认值"); return; }

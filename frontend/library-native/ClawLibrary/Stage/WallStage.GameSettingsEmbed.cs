@@ -27,7 +27,7 @@ public sealed partial class WallStage
     /// <summary>游戏设置 › 手柄（游戏配置档）：设置行下面画按键映射图。</summary>
     private bool GsPadMapMode => _stOpen && _gsItem != null && _stCat == 2 && _gpPicker == null && !_gpOpen && _gsPadFor != null && _gpLayout != null && _stBrowse == null;
 
-    /// <summary>手柄页的按键选择按它自己的位置画（行从 GpPickX 起、选择指令以 GpCx 居中），挪到设置页右栏。</summary>
+    /// <summary>手柄页的按键选择按它自己的位置画（行从 GpPickX 起、选择指令以 GpCx 居中），挪到设置页右栏（分组页没有左边的分组列，一张列表）。</summary>
     /// <summary>封面概览整体往上挪（没有页签了）：第一行小字和左栏的「分类」在同一条线上。</summary>
     private const float GsArtDy = -36;
 
@@ -61,7 +61,7 @@ public sealed partial class WallStage
     {
         SettingsResetPointer();
         _gpPickScroll = 0;
-        _gpPicker = new GpPickerState { Source = source };
+        _gpPicker = GpGroupState(source, false);
         _stZone = 1;
         PaintSt();
     }
@@ -149,12 +149,13 @@ public sealed partial class WallStage
     /// </summary>
     private float _gsMapScroll;
 
+    /// <summary>右栏（428…1240）里：线稿 0.58（441 宽）居中，两侧各一列贴着它，下面四栏每栏 203。</summary>
     private GpMapGeo GsMapGeo
     {
         get
         {
-            float t = _gsMapFocus >= 0 ? PerfTop - _gsMapScroll : GsMapTop, cx = PerfRightX + PerfRightW / 2;
-            return new(GpMapScale, cx, t + GpH * GpMapScale / 2, PerfRightX, t + GpH * GpMapScale + 14, PerfRightW, 2, 40, 28, 6);
+            float t = GsMapTop - _gsMapScroll, cx = PerfRightX + PerfRightW / 2, half = GpW * 0.58f / 2;
+            return new(0.58f, cx, t + 104, cx - half - 14, cx + half + 14, t + 30, 42, 160, t + 238, t + 272, 34, PerfRightX, PerfRightW / 4f);
         }
     }
 
@@ -168,7 +169,7 @@ public sealed partial class WallStage
         if (_gsMapFocus >= 0 && _gsMapFocus < _gpItems.Count)
         {
             var f = _gpItems[_gsMapFocus];
-            float want = Math.Max(0, f.Y + _gsMapScroll + f.MapH / 2 + 6 - 790);
+            float want = Math.Max(0, f.Y + _gsMapScroll + f.MapH / 2 + 6 - 780);
             if (Math.Abs(want - _gsMapScroll) > 0.5f)
             {
                 _gsMapScroll = want;
@@ -258,7 +259,7 @@ public sealed partial class WallStage
         if (!GsPadMapMode) return false;
         float x = (float)sx / _ccK, y = (float)sy / _ccK;
         GsBuildMapItems();
-        int best = _gsMapItems.FindIndex(it => new Rect(it.X, it.Y - it.MapH / 2, it.MapW, it.MapH).Contains(new Point(x, y)));
+        int best = _gsMapItems.FindIndex(it => new Rect(it.Col == -1 ? it.X - it.MapW : it.X, it.Y - it.MapH / 2, it.MapW, it.MapH).Contains(new Point(x, y)));
         if (best < 0) return false;
         _stZone = 1;
         _gsMapFocus = best;
@@ -451,7 +452,7 @@ public sealed partial class WallStage
             {
                 var t = _settingsTargets[i];
                 if (!t.Contains(lx, ly)) continue;
-                if (p.Level == GpSubLevel.Key) p.KeyFocus = t.Row; else p.SettingsFocus = t.Row;
+                if (p.Level == GpSubLevel.Key) p.KeyFocus = t.Row; else if (p.Level == GpSubLevel.Group) p.GroupFocus = t.Row; else p.SettingsFocus = t.Row;
                 GpPickerActivate();
                 PaintSt();
                 return true;

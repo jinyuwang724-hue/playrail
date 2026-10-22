@@ -27,6 +27,8 @@ public sealed partial class WallStage
         public bool Section, Disabled, Numeric;
         /// <summary>这个模式下用不上的行：照样占位（高度不变），焦点跳过。</summary>
         public bool Skip;
+        /// <summary>行首画这个手柄键的图标（分组页），代替行号。</summary>
+        public string? Glyph;
         public Action<int>? Step;
         public Action? Press;
         public Action<int>? Select, SetNumber;
@@ -548,9 +550,10 @@ public sealed partial class WallStage
                 using var g = CanvasGeometry.CreatePath(pb);
                 ds.FillGeometry(g, Gfx.WithAlpha(CcText, a));
             }
-            else if (numbers) PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(CcText, 0.32f * a), 0, cy, 40);
+            else if (numbers && r.Glyph == null) PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(CcText, 0.32f * a), 0, cy, 40);
+            if (r.Glyph != null) GpPaintGlyph(ds, r.Glyph, 14, cy, 26, Gfx.WithAlpha(CcText, (f ? 1f : 0.85f) * a), false);
             if (r.Changed) ds.FillCircle(27, cy, 3, PerfAccent);
-            PText(ds, r.Title, ui, 17, Gfx.WithAlpha(CcText, (f ? 1f : 0.88f) * a), 36, cy, 400);
+            PText(ds, r.Title, ui, 17, Gfx.WithAlpha(CcText, (f ? 1f : 0.88f) * a), r.Glyph != null ? 50 : 36, cy, 400);
             if (targets != null && r.SetNumber != null && !r.Disabled)
             {
                 const float sliderWidth = 200;
