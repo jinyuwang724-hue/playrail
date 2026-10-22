@@ -14,7 +14,7 @@ public sealed partial class WallStage
     private bool SettingsPageOpen => _ccOpen && (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen);
     private bool SettingsHasList => _dsOpen || _syOpen || _stOpen || _perfOpen || _gpPicker?.Level is GpSubLevel.Key or GpSubLevel.Settings or GpSubLevel.Group;
     private List<PerfRow> SettingsRows => _dsOpen ? _dsRows : _syOpen ? _syRows : _stOpen ? _stRows : _perfOpen ? _perfRows : _gpPickRows;
-    private float SettingsListX => _gpOpen ? GpPickX : PerfRightX;
+    private float SettingsListX => _gpOpen ? GpPickX : _stOpen ? StRightX : PerfRightX;
     private float SettingsListY => _gpOpen ? 196 : PerfTop;
     private float SettingsListH => _gpOpen ? 520 : PerfViewH;
     private float SettingsScroll
@@ -52,7 +52,7 @@ public sealed partial class WallStage
     }
 
     private bool SettingsListHit(double x, double y) => SettingsHasList
-        && x / _ccK >= SettingsListX && x / _ccK < SettingsListX + PerfRightW
+        && x / _ccK >= SettingsListX && x / _ccK < SettingsListX + (_stOpen && !_gpOpen ? StRightW : PerfRightW)
         && y / _ccK >= SettingsListY && y / _ccK < SettingsListY + SettingsListH;
 
     private SettingsPointerTarget? SettingsTargetAt(double x, double y)

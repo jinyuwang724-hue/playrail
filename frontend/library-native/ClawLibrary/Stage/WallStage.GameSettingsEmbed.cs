@@ -28,10 +28,14 @@ public sealed partial class WallStage
     private bool GsPadMapMode => _stOpen && _gsItem != null && _stCat == 2 && _gpPicker == null && !_gpOpen && _gsPadFor != null && _gpLayout != null && _stBrowse == null;
 
     /// <summary>手柄页的按键选择按它自己的位置画（行从 GpPickX 起、选择指令以 GpCx 居中），挪到设置页右栏（分组页没有左边的分组列，一张列表）。</summary>
-    /// <summary>封面概览整体往上挪（没有页签了）：第一行小字和左栏的「分类」在同一条线上。</summary>
-    private const float GsArtDy = -36;
+    /// <summary>
+    /// 封面概览（封面页右栏 428 起、812 宽的排法）挪进游戏设置的右栏并放大 1.15 倍：
+    /// 第一行小字（封面页里 y 160）和左栏的「分类」在同一条线上（124），左边对齐右栏。
+    /// </summary>
+    private const float GsArtScale = 1.15f;
+    private Matrix3x2 GsArtMatrix => Matrix3x2.CreateTranslation(-AgRightX, -160) * Matrix3x2.CreateScale(GsArtScale) * Matrix3x2.CreateTranslation(StRightX, 124);
 
-    private float GsPadDx => _gpPicker?.Level == GpSubLevel.Chooser ? PerfRightX + PerfRightW / 2 - GpCx : PerfRightX - GpPickX;
+    private float GsPadDx => _gpPicker?.Level == GpSubLevel.Chooser ? StRightX + StRightW / 2 - GpCx : StRightX - GpPickX;
 
     // ---------------- 手柄 ----------------
 
@@ -153,8 +157,8 @@ public sealed partial class WallStage
     {
         get
         {
-            float t = GsMapTop - _gsMapScroll, cx = PerfRightX + PerfRightW / 2, half = GpW * 0.58f / 2;
-            return new(0.58f, cx, t + 104, cx - half - 14, cx + half + 14, t + 30, 42, 160, t + 238, t + 272, 34, PerfRightX, PerfRightW / 4f);
+            float t = GsMapTop - _gsMapScroll, cx = StRightX + StRightW / 2, half = GpW * 0.66f / 2;
+            return new(0.66f, cx, t + 116, cx - half - 14, cx + half + 14, t + 30, 44, 180, t + 262, t + 296, 34, StRightX, StRightW / 4f);
         }
     }
 
@@ -346,7 +350,7 @@ public sealed partial class WallStage
             var d = _agDraft!;
             CcSet(_stOver, CcDraw(1280, 800, raster, ds =>
             {
-                ds.Transform = Matrix3x2.CreateTranslation(0, GsArtDy) * ds.Transform;
+                ds.Transform = GsArtMatrix * ds.Transform;
                 GsPaintArt(ds, d);
                 if (_agOffKind == null) return;
                 ds.FillRectangle(0, 0, 1280, 800, Gfx.Rgba(0, 0, 0, 0.55));
@@ -429,7 +433,7 @@ public sealed partial class WallStage
         if (GsMapClick(sx, sy)) return true;
         if (!GsOverlay) return false;
         float x = (float)sx / _ccK, y = (float)sy / _ccK;
-        if (x < PerfRightX - 16) return false;   // 左栏照常
+        if (x < StRightX - 16) return false;   // 左栏照常
         if (GsPadPicking)
         {
             var p = _gpPicker!;
@@ -459,7 +463,9 @@ public sealed partial class WallStage
             return true;
         }
         var d = _agDraft!;
-        var pt = new Point(x, y - GsArtDy);
+        Matrix3x2.Invert(GsArtMatrix, out var inv);
+        var pv = Vector2.Transform(new Vector2(x, y), inv);
+        var pt = new Point(pv.X, pv.Y);
         if (_agOffKind != null)
         {
             if (_agOffUse.Contains(pt)) AgUseOfficial(d, _agOffKind);

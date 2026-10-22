@@ -778,17 +778,22 @@ public sealed partial class WallStage
         float k = _ccK, raster = k * Chrome.Dpi, pad = 8;
         var hits = _agHits.ToList();
         var tabHits = _agTabHits.ToList();
-        var area = new Rect(r.X - pad, r.Y - pad, r.Width + pad * 2, r.Height + pad * 2);
+        bool embed = _agEmbed && !_agOpen;
+        // 嵌在游戏设置里：封面概览按 GsArtMatrix 挪过去、放大了，弹的那块也照它算
+        var m = embed ? GsArtMatrix : Matrix3x2.Identity;
+        var tl = Vector2.Transform(new Vector2((float)r.X, (float)r.Y), m);
+        var br = Vector2.Transform(new Vector2((float)(r.X + r.Width), (float)(r.Y + r.Height)), m);
+        var area = new Rect(tl.X - pad, tl.Y - pad, br.X - tl.X + pad * 2, br.Y - tl.Y + pad * 2);
         CcSet(_agBounce, CcDraw((float)area.Width, (float)area.Height, raster, ds =>
         {
-            ds.Transform = Matrix3x2.CreateTranslation(-(float)area.X, -(float)area.Y) * ds.Transform;
-            using (ds.CreateLayer(1, area)) { if (_agEmbed && !_agOpen) GsPaintArt(ds, d); else AgPaintArt(ds, d); }
+            ds.Transform = m * Matrix3x2.CreateTranslation(-(float)area.X, -(float)area.Y) * ds.Transform;
+            if (embed) GsPaintArt(ds, d);
+            else using (ds.CreateLayer(1, new Rect(r.X - pad, r.Y - pad, r.Width + pad * 2, r.Height + pad * 2))) AgPaintArt(ds, d);
         }));
         _agHits.Clear(); _agHits.AddRange(hits);
         _agTabHits.Clear(); _agTabHits.AddRange(tabHits);
         _agBounce.Size = new Vector2((float)area.Width * k, (float)area.Height * k);
-        float oy = _agEmbed && !_agOpen ? GsArtDy : 0;
-        _agBounce.Offset = new Vector3((float)area.X * k, ((float)area.Y + oy) * k, 0);
+        _agBounce.Offset = new Vector3((float)area.X * k, (float)area.Y * k, 0);
         _agBounce.CenterPoint = new Vector3((float)area.Width * k / 2, (float)area.Height * k / 2, 0);
         _agBounce.IsVisible = true;
         var a = G.C.CreateVector3KeyFrameAnimation();

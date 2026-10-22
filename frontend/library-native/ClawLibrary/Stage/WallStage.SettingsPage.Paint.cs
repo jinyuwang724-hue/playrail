@@ -28,8 +28,8 @@ public sealed partial class WallStage
                 using var g = CanvasGeometry.CreatePath(pb);
                 ds.FillGeometry(g, CcText);
             }
-            PText(ds, StCats[i], TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, cur ? 1f : 0.45f), x, cy, PerfLeftW - 10);
+            PText(ds, StCats[i], TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, cur ? 1f : 0.45f), x, cy, StLeftW - 10);
         }
-        if (_stAgentDown) PText(ds, "连不上工具箱后台", TextKit.Ui(400), 13, Gfx.WithAlpha(CcText, 0.5), x, h - 12, PerfLeftW);
+        if (_stAgentDown) PText(ds, "连不上工具箱后台", TextKit.Ui(400), 13, Gfx.WithAlpha(CcText, 0.5), x, h - 12, StLeftW);
     }
 }

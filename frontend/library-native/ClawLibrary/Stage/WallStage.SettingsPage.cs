@@ -22,6 +22,13 @@ public sealed partial class WallStage
     /// <summary>左栏的分类：游戏设置时换成游戏的那几类（WallStage.GameSettings.cs）。</summary>
     private string[] StCats => _gsItem != null ? GsCats : StCatsMain;
     private const float StCatH = PerfRowH;
+    /// <summary>
+    /// 两栏的位置：设置页和性能页一样（左栏 40–388、右栏 428–1240）；游戏设置照手柄页的比例 ——
+    /// 左栏只放分类（40–230），右栏从 250 起到 1240。
+    /// </summary>
+    private float StLeftW => _gsItem != null ? 190 : PerfLeftW;
+    private float StRightX => _gsItem != null ? 250 : PerfRightX;
+    private float StRightW => _gsItem != null ? 990 : PerfRightW;
     /// <summary>首页：游戏库打开后先到哪（控制中心，或它下面的六个页面之一）。顺序和 BootTarget 一致。</summary>
     private static readonly string[] BootNames = { "游戏库", "控制中心", "性能", "手柄", "显示与声音", "系统", "设置" };
 
@@ -939,7 +946,7 @@ public sealed partial class WallStage
     private bool StCategoryClick(double sx, double sy)
     {
         double x = sx / _ccK - PerfLeftX + StGutter, y = sy / _ccK - PerfTop;
-        if (x < 0 || x > PerfLeftW + StGutter || y < PerfSecH) return false;
+        if (x < 0 || x > StLeftW + StGutter || y < PerfSecH) return false;
         int i = (int)Math.Floor((y - PerfSecH) / StCatH);
         if (i < 0 || i >= StCats.Length) return false;
         MarkInput();
@@ -968,14 +975,16 @@ public sealed partial class WallStage
             _stTitle.Offset = new Vector3(40 * k, 32 * k, 0);
         }
         _settingsTargets.Clear();
-        CcSet(_stRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _stRows, _stZone == 1 && _gsMapFocus < 0 ? _stFocus : -1, _settingsTargets)));
-        _stRight.Size = new Vector2(PerfRightW * k, h * k);
-        _stRightView.Size = new Vector2(PerfRightW * k, vh * k);
-        _stRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
+        float rw = StRightW;
+        CcSet(_stRight, CcDraw(rw, h, raster, ds => PaintRowList(ds, _stRows, _stZone == 1 && _gsMapFocus < 0 ? _stFocus : -1, _settingsTargets, true, rw)));
+        _stRight.Size = new Vector2(rw * k, h * k);
+        _stRightView.Size = new Vector2(rw * k, vh * k);
+        _stRightView.Offset = new Vector3(StRightX * k, PerfTop * k, 0);
         RowScrollTo(_stRight, _stRows, _settingsManualScroll || _stZone == 0 ? -1 : _stFocus, ref _stScroll, ref _stScrollY, h + _stKbLift, vh, false);
         // 左栏往左多出 StGutter：焦点三角画在页边距里，分类名的左边和标题「设置」对齐
-        CcSet(_stLeft, CcDraw(PerfLeftW + StGutter, vh, raster, ds => PaintStNav(ds, vh)));
-        _stLeft.Size = new Vector2((PerfLeftW + StGutter) * k, vh * k);
+        float lw = StLeftW;
+        CcSet(_stLeft, CcDraw(lw + StGutter, vh, raster, ds => PaintStNav(ds, vh)));
+        _stLeft.Size = new Vector2((lw + StGutter) * k, vh * k);
         _stLeft.Offset = new Vector3((PerfLeftX - StGutter) * k, PerfTop * k, 0);
         PaintGsOverlay(k, raster);
     }

@@ -262,10 +262,10 @@ public sealed partial class WallStage
         Repaint();
         _stEditBox.Text = text;
         _stEditBox.FontSize = 17 * k;
-        _stEditBox.Width = (PerfRightW - 320) * k;
+        _stEditBox.Width = (StRightW - 320) * k;
         _stEditBox.Height = PerfRowH * k;
         _stEditBox.Padding = new Thickness(0);
-        Canvas.SetLeft(_stEditBox, (PerfRightX + 320) * k);
+        Canvas.SetLeft(_stEditBox, (StRightX + 320) * k);
         Canvas.SetTop(_stEditBox, (PerfTop + top - _stScroll) * k);
         _stEditBox.Visibility = Visibility.Visible;
         FocusTextBox(_stEditBox, () => StEditing);
