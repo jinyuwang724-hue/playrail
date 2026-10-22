@@ -137,6 +137,19 @@ class ControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.engine.apply.await_args.args[0]["target"], 123)
         self.assertEqual(self.engine.apply.await_args.args[0]["strength"], .9)  # the game's own settings
 
+    async def test_library_preset_runs_without_becoming_the_defaults(self):
+        preset = next(p["name"] for p in m.CATALOG["presets"] if p["effects"])
+        self.engine.set_game("game.exe", enabled=True, preset=preset)
+        chain = self.engine.games[m.Magpie.game_key("game.exe")]["pipeline"]
+        self.windows.foreground_root = lambda: 123
+        self.engine.stop_runtime = AsyncMock(); self.engine.watch = AsyncMock()
+        await self.engine.auto_start()
+        await m.asyncio.wait_for(self.engine.auto_task, 3)
+        self.assertTrue(self.engine.state["enabled"])
+        self.assertEqual(self.engine.current["pipeline"], chain)  # runs the game's preset
+        self.assertEqual(self.engine.prefs["pipeline"], [])  # 设置 › Magpie defaults untouched
+        self.assertFalse(self.engine.prefs_path.exists())
+
     async def test_unknown_games_never_auto_apply(self):
         self.engine.apply = AsyncMock()
         await self.engine.auto_start()

@@ -1028,7 +1028,7 @@ class Service:
             if user:
                 for _, _, entry in lg.shortcut_entries(lg.read_shortcuts(user)):
                     if (lg.Vdf.get(entry, "appid") or 0) & 0xFFFFFFFF == appid:
-                        return lg.unquote(lg.Vdf.get(entry, "Exe") or "") or None
+                        return lg.launch_target(lg.Vdf.get(entry, "Exe") or "", lg.Vdf.get(entry, "LaunchOptions") or "") or None
             for g in self._local_games._load():
                 if g.get("id") == str(appid):
                     return g.get("exe")

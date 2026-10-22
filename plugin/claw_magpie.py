@@ -265,12 +265,13 @@ class Magpie:
         except (ValueError, OSError): logging.warning("Magpie game list could not be loaded")
         self.blockers = set(); self.closed = False; self.source = None; self.started_at = 0
         self.requested = False; self.output_seen = False; self.geometry = None; self.engine_pid = 0
-        self.prefs = dict(DEFAULTS)
+        self.prefs = dict(DEFAULTS)  # 设置页 › Magpie defaults; self.current = what the running scaling uses
         try:
             saved = validate({**DEFAULTS, **json.loads(self.prefs_path.read_text(encoding="utf-8")), "target": 0})
             self.prefs.update({k: saved[k] for k in DEFAULTS})
         except FileNotFoundError: pass
         except (ValueError, OSError, TypeError): logging.warning("Magpie preferences could not be loaded")
+        self.current = dict(self.prefs)
         self.state = {"enabled": False, "active": False, "target": 0, "phase": "尚未应用到游戏", "error": "",
                       "engineVersion": VERSION, "preferences": dict(self.prefs), "source": [], "dest": [], "crop": {}}
 
@@ -401,7 +402,8 @@ class Magpie:
                 root = self.windows.foreground_root() if hasattr(self.windows, "foreground_root") else hwnd
                 item = self.windows.describe(root) if root else None
                 if item and self.match_key(item["path"]) is not None and self.auto_for(item["path"]):
-                    await self.apply({**self.game_prefs(item["path"]), "target": item["hwnd"]})
+                    # The game's own settings (its 超分预设): not new defaults, and its entry stays as the library saved it
+                    await self.apply({**self.game_prefs(item["path"]), "target": item["hwnd"]}, persist=False)
                     return
         except asyncio.CancelledError: raise
         except Exception as error:
@@ -415,7 +417,7 @@ class Magpie:
         temp.write_text(json.dumps(self.prefs, ensure_ascii=False), encoding="utf-8")
         os.replace(temp, self.prefs_path)
 
-    async def apply(self, settings):
+    async def apply(self, settings, persist=True):
         settings = validate(settings)
         if not settings["fill"] and not settings["sharpen"] and not settings["pipeline"]: raise ValueError("请开启画面效果，或使用恢复原画面")
         async with self.lock:
@@ -423,7 +425,7 @@ class Magpie:
             source = self.windows.describe(settings["target"])
             if not source: raise ValueError("游戏窗口已关闭、最小化或不可用，请刷新后重新选择")
             crop = calculate_crop(source["width"], source["height"], source["screenWidth"], source["screenHeight"], settings)
-            if self.state["enabled"] and self.source and source["pid"] == self.source["pid"] and source["hwnd"] == self.source["hwnd"] and settings == {**self.prefs, "target": self.source["hwnd"]}:
+            if self.state["enabled"] and self.source and source["pid"] == self.source["pid"] and source["hwnd"] == self.source["hwnd"] and settings == {**self.current, "target": self.source["hwnd"]}:
                 return self.view()
             await self.stop_runtime()
             if self.windows.hotkey(): raise RuntimeError("另一个 Magpie 实例正在运行，请退出它后再应用")
@@ -434,16 +436,18 @@ class Magpie:
                    hashlib.sha256((self.runtime / name).read_bytes()).digest() != hashlib.sha256((self.bundle / name).read_bytes()).digest()) for name in files):
                 await asyncio.to_thread(shutil.copytree, self.bundle, self.runtime, dirs_exist_ok=True, ignore=shutil.ignore_patterns("magpie-source.zip"))
             self.source = source; self.geometry = self.signature(source); self.switched = 0
-            self.prefs = {k: settings[k] for k in DEFAULTS}; self.save()
-            # Remember the game so its next launch fills the screen without opening the panel.
-            self.remember(source["path"], True, self.prefs)
+            self.current = {k: settings[k] for k in DEFAULTS}
+            if persist:
+                self.prefs = dict(self.current); self.save()
+                # Remember the game so its next launch fills the screen without opening the panel.
+                self.remember(source["path"], True, self.prefs)
             # Minimal portable startup settings; rendering parameters travel over
             # the explicit pipe, never through a hotkey or a default game profile.
             self.write_config({"language": "zh-CN", "showNotifyIcon": False,
                 "autoCheckForUpdates": False, "alwaysRunAsAdmin": False,
                 "profiles": [{"scalingMode": -1}]})
             await self.publish(enabled=True, active=False, target=source["hwnd"], targetTitle=source["title"], error="",
-                               preferences=dict(self.prefs), crop=crop, source=[], dest=[], phase="已准备，关闭菜单并返回所选游戏后生效")
+                               preferences=dict(self.current), crop=crop, source=[], dest=[], phase="已准备，关闭菜单并返回所选游戏后生效")
             if not self.watcher or self.watcher.done(): self.watcher = asyncio.create_task(self.watch())
             return self.view()
 
@@ -572,7 +576,7 @@ class Magpie:
         return self.windows.foreground_root() if hasattr(self.windows, "foreground_root") else self.windows.u.GetForegroundWindow()
 
     def game_fullscreen(self, current):
-        return bool(self.prefs["fill"] and current["width"] >= current["screenWidth"] and current["height"] >= current["screenHeight"])
+        return bool(self.current["fill"] and current["width"] >= current["screenWidth"] and current["height"] >= current["screenHeight"])
 
     async def tick(self):
         hwnd = self.source["hwnd"]
@@ -588,15 +592,15 @@ class Magpie:
             await self.suspend(); await self.publish(active=False, phase="等待关闭菜单并返回所选游戏"); return
         if self.signature(current) != self.geometry:
             await self.suspend()
-            crop = calculate_crop(current["width"], current["height"], current["screenWidth"], current["screenHeight"], self.prefs)
+            crop = calculate_crop(current["width"], current["height"], current["screenWidth"], current["screenHeight"], self.current)
             self.geometry = self.signature(current); await self.publish(crop=crop)
         # Fill covers the screen at Magpie's output stage instead of cropping the
         # capture. Steam's side menus are drawn into the game frame; the frontend
         # lays them out inside the part of the frame that stays visible after the
         # cover crop, so the view never changes while they are open.
-        cover = self.prefs["fill"]
+        cover = self.current["fill"]
         crop = calculate_crop(current["width"], current["height"], current["screenWidth"], current["screenHeight"],
-                              {**self.prefs, "fill": False})
+                              {**self.current, "fill": False})
         if self.requested and self.running and self.running[0] != crop: await self.suspend()
         if self.requested and self.running and self.running[1] != cover:
             await self.command("view", cover=cover); self.running = (crop, cover)
@@ -623,13 +627,13 @@ class Magpie:
                     if hasattr(self.windows, "toggle_fullscreen") and await asyncio.to_thread(self.windows.toggle_fullscreen, hwnd):
                         await self.publish(active=False, phase="正在把游戏切换为窗口模式，以便铺满屏幕…"); return
                 elif time.monotonic() - self.switched_at < 3: return
-            effects = self.prefs["pipeline"] or [{"name": "Bicubic", "scalingType": 1,
+            effects = self.current["pipeline"] or [{"name": "Bicubic", "scalingType": 1,
                 "parameters": {"paramB": 0, "paramC": .5}}]
-            if self.prefs["sharpen"]:
-                effects = [*effects, {"name": "FSR\\FSR_RCAS", "parameters": {"sharpness": self.prefs["strength"]}}]
-            reply = await self.command("start", target=hwnd, capture=CAPTURES[self.prefs["capture"]],
-                effects=effects, fitOutput=bool(self.prefs["pipeline"]), cover=cover, maxFrameRate=self.prefs["maxFrameRate"],
-                game3D=self.prefs["game3D"], adjustCursor=self.prefs["adjustCursor"],
+            if self.current["sharpen"]:
+                effects = [*effects, {"name": "FSR\\FSR_RCAS", "parameters": {"sharpness": self.current["strength"]}}]
+            reply = await self.command("start", target=hwnd, capture=CAPTURES[self.current["capture"]],
+                effects=effects, fitOutput=bool(self.current["pipeline"]), cover=cover, maxFrameRate=self.current["maxFrameRate"],
+                game3D=self.current["game3D"], adjustCursor=self.current["adjustCursor"],
                 crop=[crop[k] for k in ("left", "top", "right", "bottom")])
             if not reply["ok"]:
                 if "pid" not in reply: raise RuntimeError("Magpie 启动失败：" + reply.get("error", "权限启动失败"))

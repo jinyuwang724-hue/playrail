@@ -165,6 +165,15 @@ def unquote(path):
     return (path or "").strip().strip('"')
 
 
+def launch_target(exe, args):
+    """The game a shortcut really starts: its own exe, or the one a launcher is handed (Playhub's
+    GameSession.exe --game "<exe>"), so per-game settings follow the game's window, not the launcher."""
+    exe = unquote(exe)
+    found = re.search(r'--game\s+(?:"([^"]+)"|(\S+))', args or "")
+    target = found and (found.group(1) or found.group(2))
+    return target if target and target.lower().endswith(".exe") else exe
+
+
 def exe_key(path):
     return unquote(path).replace("/", "\\").lower()
 
