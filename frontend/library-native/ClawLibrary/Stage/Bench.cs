@@ -342,6 +342,49 @@ public static class Bench
         Log.Info($"rec chrome: {n} frames");
     }
 
+    /// <summary>
+    /// 录墙面外观（叠色、关灯）和焦点切换的每一帧：关灯 → 走两步 → 快速左右来回（打断）→ 开灯 → 往下走；
+    /// recstack 换成 Steam 页签里的集合（叠页边的收放、叠色、熄灯）。
+    /// 灯光开关两次，结束时设置和开始时一样。
+    /// </summary>
+    private static async Task RecLookAsync(WallStage s, bool stacks)
+    {
+        await Task.Delay(1500);
+        var rec = new FrameRecorder();
+        if (!rec.Start(s.HostWindow)) return;
+        await Task.Delay(300);
+        long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+        async Task Step(int ms, string name, Action a)
+        {
+            a();
+            Log.Info($"reclook {name} @{FrameRecorder.QpcMs(System.Diagnostics.Stopwatch.GetTimestamp() - mark):F0}ms");
+            await Task.Delay(ms);
+        }
+        if (stacks)
+        {
+            // 集合的叠页边：Steam 页签里的分类
+            await Step(1600, "tab", () => s.SwitchTab(1));
+            await Step(900, "collection", () => s.FocusFirstCollection());
+            await Step(900, "lights", s.ToggleLights);
+            await Step(900, "right", () => s.Move(Direction.Right));
+            await Step(900, "lights", s.ToggleLights);
+            await Step(900, "left", () => s.Move(Direction.Left));
+        }
+        else
+        {
+            await Step(900, "lights", s.ToggleLights);
+            await Step(800, "right", () => s.Move(Direction.Right));
+            await Step(800, "right", () => s.Move(Direction.Right));
+            await Step(120, "left", () => s.Move(Direction.Left));
+            await Step(120, "right", () => s.Move(Direction.Right));
+            await Step(900, "left", () => s.Move(Direction.Left));
+            await Step(900, "lights", s.ToggleLights);
+            await Step(900, "down", () => s.Move(Direction.Down));
+        }
+        int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "look"), mark);
+        Log.Info($"rec look: {n} frames");
+    }
+
     /// <summary>录真实速度的每一帧：经手柄投递路径按 ≡（出场）/ A（进场），各录 1.6 s。</summary>
     private static async Task RecordAsync(WallStage s, string state)
     {
@@ -406,6 +449,8 @@ public static class Bench
                 }
                 case "perfsave": await PerfSaveTestAsync(s); break;
                 case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
+                case "reclook" or "recstack": await RecLookAsync(s, state == "recstack"); break;
+                case "stlook": s.LookTestState(); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
                 case "ccenter": s.ToggleControlCenter(); await Task.Delay(2500); Log.Info("state ccenter now"); s.Activate(); break;
                 case "control2": s.ToggleControlCenter(); await Task.Delay(900); s.Move(Direction.Right); await Task.Delay(260); s.Move(Direction.Right); break;

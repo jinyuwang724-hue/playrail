@@ -65,9 +65,16 @@ public sealed class Tile : IDisposable
         _persp.Children.InsertAtTop(_pivot);
         El.Children.InsertAtTop(_persp);
         _props = G.C.CreatePropertySet();
-        _props.InsertScalar("pop", 0);
+        _pop = new CssTransition(G, _props, "pop", v => _props.InsertScalar("pop", v), 0);
+        // 焦点放大：四边各外扩一个 gap（缩放量随卡尺寸，让位途中也对）
+        var popScale = G.C.CreateExpressionAnimation("Vector3(1 + p.pop * 16 / Max(1, el.Size.X), 1 + p.pop * 16 / Max(1, el.Size.Y), 1)");
+        popScale.SetReferenceParameter("p", _props);
+        popScale.SetReferenceParameter("el", El);
+        _persp.StartAnimation("Scale", popScale);
         Place(Rect);
     }
+
+    private readonly CssTransition _pop;
 
     public static Matrix4x4 Perspective(float d) => new(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -1 / d, 0, 0, 0, 1);
 
@@ -176,21 +183,11 @@ public sealed class Tile : IDisposable
         ApplyPop(!_s.Reduced);
     }
 
-    /// <summary>焦点放大：四边各外扩一个 gap（缩放量随卡尺寸，让位途中也对）。展开态不放大。</summary>
-    private void ApplyPop(bool animate)
-    {
-        float target = Focused && !Expanded ? 1 : 0;
-        var expr = G.C.CreateExpressionAnimation("Vector3(1 + p.pop * 16 / Max(1, el.Size.X), 1 + p.pop * 16 / Max(1, el.Size.Y), 1)");
-        expr.SetReferenceParameter("p", _props);
-        expr.SetReferenceParameter("el", El);
-        _persp.StartAnimation("Scale", expr);
-        if (animate) _props.StartAnimation("pop", G.Scalar(CurrentPop(), target, Motion.PopMs, Bezier.EaseOut));
-        else { _props.StopAnimation("pop"); _props.InsertScalar("pop", target); }
-        _popTarget = target;
-    }
+    /// <summary>焦点放大（.bravais-tile-face transform 300ms ease-out，从此刻的大小接着走）。展开态不放大。</summary>
+    private void ApplyPop(bool animate) => _pop.To(Focused && !Expanded ? 1 : 0, Motion.PopMs, Bezier.EaseOut, _s.NowMs, animate);
 
-    private float _popTarget;
-    private float CurrentPop() { _props.TryGetScalar("pop", out float v); return v; }
+    /// <summary>墙面外观（灯光、叠色）变了：按新的设置过渡（260 ms，和网页一样）。</summary>
+    public void ApplyLook() => _face?.ApplyFocus(Focused, Expanded, animate: !_s.Reduced);
 
     // ---------------- 控制中心的「移形换影」（folia 集合层的出入场）：都动内层，外层矩形不动 ----------------
 
@@ -536,13 +533,21 @@ public sealed class Tile : IDisposable
         /// <summary>这张卡用的那张图（按卡在墙上的本来尺寸挑的：竖封面 / 方裁 / 大背景）。</summary>
         public LoadedImageSurface? ArtSurface => _img?.Surface;
         public string? BaseArtPath => _item?.Art is { } a && _baseKind is char k ? a.File(k) : null;
-        private SpriteVisual? _ring1, _ring4, _ring5, _shadowCaster, _stack1, _stack2, _tint, _hilite;
+        private SpriteVisual? _ring1, _ring4, _ring5, _shadowCaster, _tint, _hilite, _lights;
         private ContainerVisual? _ring;
         private DropShadow? _shadow;
         private SpriteVisual? _copy, _actions, _badge, _glyph;
         private TextArt? _copyArt, _actionsArt, _badgeArt, _glyphArt;
         private readonly ContainerVisual? _inner;
         private CompositionLinearGradientBrush? _tintBrush;
+        /// <summary>叠色此刻用的颜色（null = 默认的主题渐变）。</summary>
+        private Color? _tintSolid;
+        private bool _tintBuilt;
+        private Engine.Rect _box;
+        // 卡面上各层的 CSS transition（焦点来回切从此刻的值接着走）
+        private CssTransition? _ringT, _shadowT, _tintT, _hiliteT, _lightsT, _stackOut;
+        private readonly List<CssTransition> _stackTint = new(), _stackDim = new();
+        private readonly List<CompositionColorBrush> _stackTintBrush = new();
 
         public Face(WallStage s, Tile tile, string? id, Engine.Rect r, bool expanded, ImageCarry? carry = null)
         {
@@ -576,18 +581,40 @@ public sealed class Tile : IDisposable
             // ---- 卡外的装饰：集合叠页边、投影、焦点环（卡面 overflow:hidden 不裁 box-shadow）----
             if (item.Kind == ItemKind.Collection)
             {
-                _stack2 = G.Sprite(G.Solid(Gfx.Mix(posterBg, 0.9, TextKit.Ink())));
-                _stack2.Offset = new Vector3(6, 6, 0);
-                _stack1 = G.Sprite(G.Solid(Gfx.Mix(posterBg, 0.8, TextKit.Ink())));
-                _stack1.Offset = new Vector3(3, 3, 0);
-                Root.Children.InsertAtTop(_stack2);
-                Root.Children.InsertAtTop(_stack1);
+                // 叠页边（bravaisTileKinds.css）：远 6 px、近 3 px 两层页，各带一道 1 px 发丝线；抬起（焦点）时收回卡下面。
+                // 页边在卡外，卡里的叠色层 / 熄灯层盖不到，所以按同一套规则把叠色、熄灯混进页色（上面各盖一层同色）。
+                var fx = G.C.CreatePropertySet();
+                _stackOut = new CssTransition(G, fx, "k", v => fx.InsertScalar("k", v), 1);
+                foreach (var (d, mix) in new[] { (6f, 0.80), (3f, 0.66) })
+                {
+                    var page = G.Container();
+                    var off = G.C.CreateExpressionAnimation($"Vector3({d} * p.k, {d} * p.k, 0)");
+                    off.SetReferenceParameter("p", fx);
+                    page.StartAnimation("Offset", off);
+                    SpriteVisual Layer(Color c, bool inflate)
+                    {
+                        var sp = G.Sprite(G.Solid(c));
+                        if (inflate) { sp.Size = new Vector2(2, 2); sp.Offset = new Vector3(-1, -1, 0); }
+                        page.Children.InsertAtTop(sp);
+                        return sp;
+                    }
+                    Layer(Gfx.Mix(Theme.Bg, 0.72, Colors.Black), true);
+                    Layer(Gfx.Mix(Theme.Bg, mix, TextKit.Ink()), false);
+                    var tint = Layer(Theme.TintB, true);
+                    var dim = Layer(Colors.Black, true);
+                    _stackTint.Add(new CssTransition(G, tint, "Opacity", v => tint.Opacity = v, 0));
+                    _stackTintBrush.Add((CompositionColorBrush)tint.Brush);
+                    _stackDim.Add(new CssTransition(G, dim, "Opacity", v => dim.Opacity = v, 0));
+                    Root.Children.InsertAtTop(page);
+                }
             }
             _shadowCaster = G.Sprite(G.Solid(Colors.Black));
-            _shadowCaster.Opacity = 0;
+            var caster = _shadowCaster;
+            _shadowT = new CssTransition(G, caster, "Opacity", v => caster.Opacity = v, 0);
             Root.Children.InsertAtTop(_shadowCaster);
             _ring = G.Container();
-            _ring.Opacity = 0;
+            var ringV = _ring;
+            _ringT = new CssTransition(G, ringV, "Opacity", v => ringV.Opacity = v, 0);
             SpriteVisual Ring(float inflate, Color c)
             {
                 var sp = G.Sprite(G.Solid(c));
@@ -638,19 +665,31 @@ public sealed class Tile : IDisposable
                 _inner.Children.InsertAtTop(_glyph);
             }
             foreach (var sh in ShadeSprites(r)) _inner.Children.InsertAtTop(sh);
-            // 焦点顶部 10% 高光
-            _hilite = G.Sprite(G.LinearGradient(180, r.Width, r.Height, (0, Gfx.Rgba(255, 255, 255, 0.10)), (0.6, Gfx.Rgba(255, 255, 255, 0))));
-            _hilite.Opacity = 0;
-            _inner.Children.InsertAtTop(_hilite);
-            // 主题染色压住背景卡，焦点 / 展开时褪掉
-            _tintBrush = G.LinearGradient(145, r.Width, r.Height, (0, Theme.TintA), (1, Theme.TintB));
-            _tint = G.Sprite(_tintBrush);
-            _tint.Opacity = (float)Theme.TintOpacity;
-            _inner.Children.InsertAtTop(_tint);
             _badgeArt = s.Text.Badge(item.Badge, item.Kind == ItemKind.Collection);
             _badge = TextSprite(_badgeArt, r, anchorBottom: false);
             _inner.Children.InsertAtTop(_badge);
             BuildCopy(r, null);
+            // 层级照 wall.css：底部压暗、角标、标题 < 焦点高光（::after）< 叠色（z 3，连标题和角标一起染）< 熄灯（z 5，整张盖住）
+            _hilite = G.Sprite(G.LinearGradient(180, r.Width, r.Height, (0, Gfx.Rgba(255, 255, 255, 0.10)), (0.6, Gfx.Rgba(255, 255, 255, 0))));
+            var hilite = _hilite;
+            _hiliteT = new CssTransition(G, hilite, "Opacity", v => hilite.Opacity = v, 0);
+            _inner.Children.InsertAtTop(_hilite);
+            _tint = G.Sprite(null);
+            var tintV = _tint;
+            _tintT = new CssTransition(G, tintV, "Opacity", v => tintV.Opacity = v, 0);
+            _inner.Children.InsertAtTop(_tint);
+            _lights = G.Sprite(G.Solid(Colors.Black));
+            var lightsV = _lights;
+            _lightsT = new CssTransition(G, lightsV, "Opacity", v => lightsV.Opacity = v, 0);
+            _inner.Children.InsertAtTop(_lights);
+            _box = r;
+        }
+
+        /// <summary>标题、按钮排放进卡面时排在高光 / 叠色 / 熄灯之下。</summary>
+        private void InsertContent(Visual v)
+        {
+            if (_hilite != null) _inner!.Children.InsertBelow(v, _hilite);
+            else _inner!.Children.InsertAtTop(v);
         }
 
         private IEnumerable<SpriteVisual> ShadeSprites(Engine.Rect r)
@@ -702,7 +741,7 @@ public sealed class Tile : IDisposable
             if (_item == null || _inner == null) return;
             var oldCopy = _copyArt; var oldActions = _actionsArt;
             _copyArt = _s.Text.Copy(_item, r.Width, r.Height, _expanded, _s.Style);
-            if (_copy == null) { _copy = TextSprite(_copyArt, r, anchorBottom: true); _inner.Children.InsertAtTop(_copy); }
+            if (_copy == null) { _copy = TextSprite(_copyArt, r, anchorBottom: true); InsertContent(_copy); }
             else { ((CompositionSurfaceBrush)_copy.Brush).Surface = _copyArt.Surface; PositionText(_copy, _copyArt, r, true); }
             if (_expanded)
             {
@@ -710,7 +749,7 @@ public sealed class Tile : IDisposable
                 if (_actions == null)
                 {
                     _actions = TextSprite(_actionsArt, r, anchorBottom: true);
-                    _inner.Children.InsertAtTop(_actions);
+                    InsertContent(_actions);
                     // .focus-actions：卡起步后 140ms 从下方 12px 淡入（240ms）
                     if (!_s.Reduced)
                     {
@@ -758,6 +797,7 @@ public sealed class Tile : IDisposable
         {
             if (_item == null) return;
             BuildCopy(r, scaleWith);
+            _box = r;
             if (_tintBrush != null) Gfx.SetLinear(_tintBrush, 145, r.Width, r.Height);
             if (_badgeArt != null && _badge != null) { var nb = _s.Text.Badge(_item.Badge, _item.Kind == ItemKind.Collection); _s.Text.Release(_badgeArt); _badgeArt = nb; ((CompositionSurfaceBrush)_badge.Brush).Surface = nb.Surface; }
         }
@@ -922,11 +962,24 @@ public sealed class Tile : IDisposable
         public void ApplyFocus(bool focused, bool expanded, bool animate)
         {
             if (_item == null) return;
-            // 焦点环 + 投影：box-shadow 600ms ease；集合的叠页边同时褪掉
-            float ring = focused ? 1 : 0;
-            SetOpacity(_ring, ring, Motion.ShadowMs, Bezier.Ease_, animate);
-            SetOpacity(_stack1, 1 - ring, Motion.ShadowMs, Bezier.Ease_, animate);
-            SetOpacity(_stack2, 1 - ring, Motion.ShadowMs, Bezier.Ease_, animate);
+            long now = _s.NowMs;
+            var look = _s.Look;
+            // 焦点环 + 投影：box-shadow 600ms ease（环的三道颜色从透明补间过去，等于整体淡入淡出）
+            _ringT!.To(focused ? 1 : 0, Motion.ShadowMs, Bezier.Ease_, now, animate);
+            // 叠页边：抬起时收回卡下面（box-shadow 300ms ease）
+            _stackOut?.To(focused ? 0 : 1, Motion.StackMs, Bezier.Ease_, now, animate);
+            // 叠色：焦点 / 展开的那张不染，关灯时全部归零（两层不叠加）；熄灯：焦点 / 展开的那张不熄
+            bool lit = focused || expanded;
+            float tint = !lit && look.Tint && look.LightsOn ? (float)look.TintOpacity : 0;
+            float dark = !lit && !look.LightsOn ? (float)Motion.LightsOutOpacity : 0;
+            SetTintColor(look);
+            _tintT!.To(tint, Motion.TintMs, Bezier.Ease_, now, animate);
+            _lightsT!.To(dark, Motion.TintMs, Bezier.Ease_, now, animate);
+            float stackTint = !focused && look.Tint && look.LightsOn ? (float)look.TintOpacity : 0;
+            float stackDim = !focused && !look.LightsOn ? (float)Motion.LightsOutOpacity : 0;
+            foreach (var b in _stackTintBrush) b.Color = look.TintCustom ? look.TintColor : Theme.TintB;
+            foreach (var t in _stackTint) t.To(stackTint, Motion.StackMs, Bezier.Ease_, now, animate);
+            foreach (var t in _stackDim) t.To(stackDim, Motion.StackMs, Bezier.Ease_, now, animate);
             if (focused || expanded)
             {
                 if (_shadow == null)
@@ -939,19 +992,24 @@ public sealed class Tile : IDisposable
                 _shadow.Offset = expanded ? new Vector3(0, 42, 0) : new Vector3(0, 12, 0);
                 _shadow.BlurRadius = expanded ? 110 : 32;
                 _shadow.Color = expanded ? Gfx.Rgba(0, 0, 0, 0.74) : Gfx.Rgba(0, 0, 0, 0.45);
-                SetOpacity(_shadowCaster, 1, Motion.ShadowMs, Bezier.Ease_, animate);
+                _shadowT!.To(1, Motion.ShadowMs, Bezier.Ease_, now, animate);
             }
-            else SetOpacity(_shadowCaster, 0, Motion.ShadowMs, Bezier.Ease_, animate);
-            SetOpacity(_tint, focused || expanded ? 0 : (float)Theme.TintOpacity, Motion.TintMs, Bezier.Ease_, animate);
-            SetOpacity(_hilite, focused ? 1 : 0, Motion.HighlightMs, Bezier.Ease_, animate);
+            else _shadowT!.To(0, Motion.ShadowMs, Bezier.Ease_, now, animate);
+            _hiliteT!.To(focused ? 1 : 0, Motion.HighlightMs, Bezier.Ease_, now, animate);
         }
 
-        private void SetOpacity(Visual? v, float to, double ms, Bezier ease, bool animate)
+        /// <summary>
+        /// 叠色的颜色：默认是主题渐变（145°，底色 78 % 混强调色 → 底色 84 % 混副色），选了自定义色就是那一种纯色。
+        /// 换颜色不过渡（网页里 background 不在 transition 里），只有不透明度过渡。
+        /// </summary>
+        private void SetTintColor(WallLook look)
         {
-            if (v == null) return;
-            if (!animate) { v.StopAnimation("Opacity"); v.Opacity = to; return; }
-            v.StartAnimation("Opacity", G.Scalar(v.Opacity, to, ms, ease));
-            v.Opacity = to;
+            Color? want = look.TintCustom ? look.TintColor : null;
+            if (_tintBuilt && want == _tintSolid) return;
+            _tintBuilt = true;
+            _tintSolid = want;
+            if (want is Color c) { _tintBrush = null; _tint!.Brush = G.Solid(c); }
+            else { _tintBrush = G.LinearGradient(145, _box.Width, _box.Height, (0, Theme.TintA), (1, Theme.TintB)); _tint!.Brush = _tintBrush; }
         }
 
         public void Dispose()

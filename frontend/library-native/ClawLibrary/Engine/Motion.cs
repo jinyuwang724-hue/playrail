@@ -80,6 +80,9 @@ public static class Motion
     public const double ShadowMs = 600;       // box-shadow 600ms ease
     public const double TintMs = 260;         // .tint opacity 260ms ease
     public const double HighlightMs = 200;    // ::after opacity 200ms ease
+    public const double StackMs = 300;        // 叠页边 box-shadow 300ms ease（收放、叠色、熄灯）
+    /// <summary>熄灯层（.lattice-poster-lights-out，260ms ease 和叠色同节奏）：82 % 黑；透明的缝只把内容压到 0.4。</summary>
+    public const double LightsOutOpacity = 0.82, LightsOutSeamFade = 0.4;
     public const double ToastFadeMs = 200, ToastHoldMs = 2200;
     public const double EdgeTabInMs = 240;
 

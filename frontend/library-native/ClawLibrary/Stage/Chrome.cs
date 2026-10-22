@@ -24,8 +24,10 @@ public static class Theme
     public static readonly Color SeamInkSoft = Gfx.WithAlpha(Ink, 0.55);
     public static readonly Color TintA = Gfx.Mix(Bg, 0.78, GlowA);
     public static readonly Color TintB = Gfx.Mix(Bg, 0.84, GlowB);
-    public const double TintOpacity = 0.5;
 }
+
+/// <summary>墙面外观（folia 的海报灯光与海报叠色，设置在 ui.ini）：TintOpacity 是叠色强度（默认 0.5）。</summary>
+public readonly record struct WallLook(bool LightsOn, bool Tint, bool TintCustom, Color TintColor, double TintOpacity);
 
 public sealed record ChromeArt(CompositionDrawingSurface Surface, Vector2 Size);
 

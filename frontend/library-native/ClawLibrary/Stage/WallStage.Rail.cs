@@ -104,6 +104,7 @@ public sealed partial class WallStage
         m.Home = true;
         m.Tabs = _lib.HomeTabs.Select(t => t.Label).ToList();
         m.ActiveTab = _tabIndex;
+        m.LightsOn = _prefs.LightsOn;
         m.Shortcuts = new();   // 竖条里只放平台页签；Steam 的分类铺在 Steam 页签的墙上
         m.Settings = new()
         {
@@ -259,6 +260,9 @@ public sealed partial class WallStage
                 break;
             case RailKind.Explorer:
                 SystemInfo.Open("explorer.exe");
+                break;
+            case RailKind.Lights:
+                ToggleLights();
                 break;
             case RailKind.Search:
                 OpenSearch();
