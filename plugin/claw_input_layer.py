@@ -88,8 +88,8 @@ def steam_screenshot_keys():
     except Exception as exc:
         logging.info("steam screenshot key: %s", exc)
     return ["F12"]
-STICK_MODES = ("stick", "none")
-SECOND_BATCH = {"mouse": "摇杆当鼠标", "scroll": "摇杆当滚轮", "dpad": "摇杆当十字键", "flick": "快速转向摇杆",
+STICK_MODES = ("stick", "mouse", "dpad", "none")
+SECOND_BATCH = {"scroll": "摇杆当滚轮", "flick": "快速转向摇杆",
                 "radial": "径向菜单", "mouseRegion": "鼠标区域", "touchMenu": "触摸菜单", "hotbar": "热键栏菜单"}
 DEFAULTS = {"longPressMs": 300, "doublePressMs": 250, "startDelayMs": 0, "endDelayMs": 0, "repeatHz": 0,
             "toggle": False, "interruptible": True}
@@ -225,7 +225,9 @@ def validate_layout(layout):
         output = value.get("output", side)
         if output not in ("left", "right"):
             raise ValueError("摇杆输出只能是 left / right")
-        out_sticks[side] = {"mode": mode, "output": output}
+        # 摇杆鼠标的灵敏度 1–100（50 ≈ 满推每秒 1500 像素）
+        sensitivity = _number(value.get("sensitivity", 50), 1, 100, "摇杆鼠标灵敏度")
+        out_sticks[side] = {"mode": mode, "output": output, "sensitivity": sensitivity}
     settings = layout.get("settings", {})
     if not isinstance(settings, dict):
         raise ValueError("settings 要是对象")
@@ -266,6 +268,9 @@ def compile_layout(layout):
            "rtThreshold": round(layout["triggers"]["RT"]["threshold"] * 255 / 100),
            "leftStick": sticks["left"]["output"] if sticks["left"]["mode"] == "stick" else "none",
            "rightStick": sticks["right"]["output"] if sticks["right"]["mode"] == "stick" else "none",
+           "leftMode": sticks["left"]["mode"] if sticks["left"]["mode"] in ("mouse", "dpad") else "stick",
+           "rightMode": sticks["right"]["mode"] if sticks["right"]["mode"] in ("mouse", "dpad") else "stick",
+           "leftSpeed": sticks["left"]["sensitivity"] * 30, "rightSpeed": sticks["right"]["sensitivity"] * 30,
            "buttons": {}}
     for source, items in layout["buttons"].items():
         out["buttons"][source] = [{
@@ -296,7 +301,7 @@ def catalog():
         "sticks": {"modes": list(STICK_MODES), "outputs": ["left", "right"], "secondBatch": SECOND_BATCH},
         "triggerThreshold": {"default": 50, "range": [1, 99]},
         "tapMs": {"default": 40, "range": [10, 500]},
-        "secondBatch": ["sticks.mouse", "sticks.scroll", "radial menus", "actionSets", "extraCommands",
+        "secondBatch": ["sticks.scroll", "radial menus", "actionSets", "extraCommands",
                         "haptic", "cycle", "invert"],
     }
 
@@ -490,8 +495,10 @@ class Layouts:
 # ---- the switch --------------------------------------------------------------------------------------
 
 def layouts_bind_buttons(layouts):
-    """The rule: the layer runs while any layout binds a button."""
-    return any(layout["buttons"] for layout in [layouts["global"]] + list(layouts["games"].values()))
+    """The rule: the layer runs while any layout binds a button or turns a stick into a mouse / d-pad."""
+    def uses(layout):
+        return bool(layout["buttons"]) or any(s.get("mode") in ("mouse", "dpad") for s in layout["sticks"].values())
+    return any(uses(layout) for layout in [layouts["global"]] + list(layouts["games"].values()))
 
 
 class InputLayer:

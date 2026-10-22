@@ -1,5 +1,6 @@
 // 手柄 → 按键映射的分组页（照 Steam 控制器设置的子页：左边一列分组，右边这一组每个键一行）。
-// 分组：按键（正面按键、肩键、功能键）、十字键、扳机键、摇杆、背键。每行 = 键的图标 + 名字 + 现在映射到什么；
+// 分组：按键（正面按键、肩键、功能键）、十字键、扳机键、摇杆、背键。摇杆那组每边是「行为」（摇杆 / 摇杆鼠标 / 十字键，
+// 软件输入层做）、摇杆鼠标的「灵敏度」、按下，和全局才有的左右互换（固件）。每行 = 键的图标 + 名字 + 现在映射到什么；
 // A 直接进「选择指令」（选完回到这页），Y 进这个键的按键页（触发方式、触发设置、恢复原键位），LB / RB 换分组。
 // 游戏设置 › 手柄里没有左边的分组列（那里左栏是游戏设置的分类）：几组连成一张列表，分组名当小标题。
 // 键的图标用 Steam 自带的那套（controller_base/images/api/knockout 里的单色版，复制到 Assets/Pad/Glyphs），
@@ -135,7 +136,7 @@ public sealed partial class WallStage
     private List<(string Title, (string Section, string[] Keys)[] Parts)> GpGroups(bool desktop)
     {
         bool inGame = _gpGame != null;
-        bool Keep(string k) => desktop ? GpFirmwareSource(k) && k is not ("M1" or "M2") : !(inGame && (GpIsSpecial(k) || k is "LStick" or "RStick"));
+        bool Keep(string k) => desktop ? GpFirmwareSource(k) && k is not ("M1" or "M2") : !(inGame && GpIsSpecial(k));
         return GpGroupDefs
             .Select(g => (g.Title, Parts: g.Parts.Select(p => (p.Section, Keys: p.Keys.Where(Keep).ToArray())).Where(p => p.Keys.Length > 0).ToArray()))
             .Where(g => g.Parts.Length > 0).ToList();
@@ -171,7 +172,67 @@ public sealed partial class WallStage
         foreach (var (section, keys) in parts)
         {
             rows.Add(new PerfRow { Section = true, Title = section });
-            foreach (var k in keys) rows.Add(GpGroupRow(p, k));
+            foreach (var k in keys)
+            {
+                if (k is "LStick" or "RStick" && !p.Desktop) rows.AddRange(GpStickRows(p, k));
+                else rows.Add(GpGroupRow(p, k));
+            }
+        }
+        return rows;
+    }
+
+    // ---------------- 摇杆行为（软件输入层的布局：全局，或游戏设置里这款游戏自己的） ----------------
+
+    private static readonly string[] GpStickModes = { "stick", "mouse", "dpad" };
+    private static string GpStickModeName(string mode) => mode switch { "mouse" => "摇杆鼠标", "dpad" => "十字键", "none" => "无", _ => "摇杆" };
+    private string GpStickMode(string side) => Str(_gpLayout?["sticks"]?[side]?["mode"]) ?? "stick";
+    private int GpStickSens(string side) => Int(_gpLayout?["sticks"]?[side]?["sensitivity"], 50);
+
+    private void GpSetStick(string side, string key, JsonNode value)
+    {
+        _gpLayout ??= new JsonObject();
+        if (_gpLayout["sticks"] is not JsonObject sticks) _gpLayout["sticks"] = sticks = new JsonObject();
+        if (sticks[side] is not JsonObject s) sticks[side] = s = new JsonObject { ["mode"] = "stick", ["output"] = side };
+        s[key] = value;
+        GpSaveLayout();
+    }
+
+    /// <summary>一边摇杆的几行：行为、摇杆鼠标时的灵敏度、（全局才有的）输出到哪个摇杆（左右互换）。</summary>
+    private List<PerfRow> GpStickRows(GpPickerState p, string src)
+    {
+        string side = src == "LStick" ? "left" : "right";
+        string mode = GpStickMode(side);
+        int mi = Math.Max(0, Array.IndexOf(GpStickModes, mode));
+        var names = GpStickModes.Select(GpStickModeName).ToArray();
+        var rows = new List<PerfRow>
+        {
+            new()
+            {
+                Title = "行为", Glyph = src, Choices = names, Choice = mi, Disabled = _gpLayout == null,
+                Select = i => { if (i != mi) GpSetStick(side, "mode", JsonValue.Create(GpStickModes[i])); },
+                Step = dd => { int ni = Math.Clamp(mi + dd, 0, names.Length - 1); if (ni != mi) GpSetStick(side, "mode", JsonValue.Create(GpStickModes[ni])); },
+            },
+        };
+        if (mode == "mouse")
+        {
+            int sens = GpStickSens(side);
+            rows.Add(new PerfRow
+            {
+                Title = "灵敏度", Glyph = "", Value = $"{sens} %", Numeric = true, Number = sens, Minimum = 1, Maximum = 100, Increment = 5,
+                SetNumber = n => GpSetStick(side, "sensitivity", JsonValue.Create(Math.Clamp(n, 1, 100))),
+                Step = dd => { int n = Math.Clamp(sens + dd * 5, 1, 100); if (n != sens) GpSetStick(side, "sensitivity", JsonValue.Create(n)); },
+            });
+        }
+        if (_gpGame == null)
+        {
+            var it = GpMapCell(src, false);
+            var choices = it.Choices!;
+            rows.Add(new PerfRow
+            {
+                Title = "输出到", Glyph = "", Choices = choices, Choice = it.Choice, Disabled = _gpFw == null,
+                Select = i => { if (i != it.Choice) it.SetChoice?.Invoke(i); PaintGpBody(); },
+                Step = dd => { int ni = Math.Clamp(it.Choice + dd, 0, choices.Length - 1); if (ni != it.Choice) { it.SetChoice?.Invoke(ni); PaintGpBody(); } },
+            });
         }
         return rows;
     }

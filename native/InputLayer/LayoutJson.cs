@@ -29,6 +29,14 @@ namespace ClawInput {
             throw new ArgumentException("摇杆输出只能是 left / right / none");
         }
 
+        static StickMode Mode(object v) {
+            string s = v as string;
+            if (s == null || s == "stick") return StickMode.Stick;
+            if (s == "mouse") return StickMode.Mouse;
+            if (s == "dpad") return StickMode.Dpad;
+            throw new ArgumentException("摇杆行为只能是 stick / mouse / dpad");
+        }
+
         public static Layout Parse(IDictionary d) {
             var layout = new Layout();
             layout.Name = Get(d, "name") as string ?? "";
@@ -37,6 +45,10 @@ namespace ClawInput {
             layout.RtThreshold = (byte)Number(d, "rtThreshold", 128, 1, 254);
             layout.LeftStick = Stick(Get(d, "leftStick"), StickOut.Left);
             layout.RightStick = Stick(Get(d, "rightStick"), StickOut.Right);
+            layout.LeftMode = Mode(Get(d, "leftMode"));
+            layout.RightMode = Mode(Get(d, "rightMode"));
+            layout.LeftSpeed = Number(d, "leftSpeed", 1500, 50, 10000);
+            layout.RightSpeed = Number(d, "rightSpeed", 1500, 50, 10000);
             var buttons = Get(d, "buttons") as IDictionary;
             if (buttons != null)
                 foreach (DictionaryEntry entry in buttons) {

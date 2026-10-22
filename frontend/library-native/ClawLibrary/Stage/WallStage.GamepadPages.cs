@@ -192,12 +192,14 @@ public sealed partial class WallStage
                 it.Lights = new[] { isLeft ? "LS" : "RS" };
                 it.Choices = isLeft ? new[] { "左摇杆", "右摇杆" } : new[] { "右摇杆", "左摇杆" };
                 it.Choice = swap ? 1 : 0;
-                it.Value = _gpFw == null ? "—" : it.Choices[it.Choice];
-                it.Stock = !swap;
-                it.Disabled = _gpFw == null;
+                // 映射页上写摇杆的行为（摇杆 / 摇杆鼠标 / 十字键），桌面模式和互换另说；A 进摇杆那组
+                string side = isLeft ? "left" : "right";
+                it.Value = desktop ? (_gpFw == null ? "—" : it.Choices[it.Choice]) : GpStickModeName(GpStickMode(side)) + (swap && _gpGame == null ? " · 左右互换" : "");
+                it.Stock = !swap && GpStickMode(side) == "stick";
                 it.Why = _gpFwError ?? "正在读取…";
                 // 固件只有「左右互换」一个开关：改任意一边，两边一起换
                 it.SetChoice = i => { if (_gpFw?["sticks"] is JsonObject s) s["swap"] = i == 1; _ = GpWrite("set_stick_swap", JsonValue.Create(i == 1)); };
+                it.Press = () => GpOpenGroup(src, desktop);
                 break;
             }
             case "QS" or "Claw":

@@ -55,20 +55,25 @@ namespace ClawInput {
     }
 
     public enum StickOut { Left, Right, None }
+    // What a physical stick does: stays a stick (to Output), moves the mouse (Steam's 摇杆鼠标), or presses the d-pad.
+    public enum StickMode { Stick, Mouse, Dpad }
 
     public sealed class Layout {
         public string Name = "";
         public readonly List<ActivatorDef>[] Buttons = new List<ActivatorDef>[Sources.Count]; // null: the button stays itself
         public byte LtThreshold = 128, RtThreshold = 128;
         public StickOut LeftStick = StickOut.Left, RightStick = StickOut.Right;
+        public StickMode LeftMode = StickMode.Stick, RightMode = StickMode.Stick;
+        // Mouse mode: pointer speed at full tilt, in pixels per second.
+        public double LeftSpeed = 1500, RightSpeed = 1500;
         public double TapMs = 40;
         public static Layout Passthrough() { return new Layout { Name = "passthrough" }; }
         public bool Uses(int source) { return Buttons[source] != null; }
     }
 
-    public enum OutputKind { KeyDown, KeyUp, MouseDown, MouseUp, Wheel, Action }
+    public enum OutputKind { KeyDown, KeyUp, MouseDown, MouseUp, Wheel, Action, MouseMove }
     public struct OutputEvent {
-        public OutputKind Kind; public ushort Key; public bool Extended; public int Value; public string Action;
+        public OutputKind Kind; public ushort Key; public bool Extended; public int Value, Dy; public string Action;
         public override string ToString() { return Kind + (Kind == OutputKind.Action ? ":" + Action : ":" + (Kind == OutputKind.KeyDown || Kind == OutputKind.KeyUp ? Key : Value)); }
     }
 
@@ -232,6 +237,10 @@ namespace ClawInput {
         readonly bool[] digital = new bool[Sources.Count];
         int mouseDown;
         bool ltDigital, rtDigital;
+        // Stick modes: sub-pixel mouse remainder per stick, d-pad directions held per stick (hysteresis), last update time.
+        readonly double[] moveX = new double[2], moveY = new double[2];
+        readonly int[] stickDpad = new int[2];
+        double lastT = -1;
         public Layout Current { get { return layout; } }
 
         public void SetLayout(Layout next, List<OutputEvent> events) {
@@ -240,6 +249,8 @@ namespace ClawInput {
             for (int i = 0; i < Sources.Count; i++)
                 processors[i] = layout.Buttons[i] == null ? null : new ButtonProcessor(layout.Buttons[i], layout.TapMs);
             ltDigital = rtDigital = false;
+            moveX[0] = moveX[1] = moveY[0] = moveY[1] = 0;
+            stickDpad[0] = stickDpad[1] = 0;
         }
 
         // Everything up: used on layout switches, pad loss and shutdown.
@@ -271,8 +282,12 @@ namespace ClawInput {
             }
             report.LT = layout.Uses(Sources.LT) ? (byte)0 : f.LT;
             report.RT = layout.Uses(Sources.RT) ? (byte)0 : f.RT;
-            Stick(layout.LeftStick, f.LX, f.LY, ref report);
-            Stick(layout.RightStick, f.RX, f.RY, ref report);
+            double dt = lastT < 0 ? 0 : Math.Min(50, Math.Max(0, t - lastT));
+            lastT = t;
+            int dx = 0, dy = 0;
+            StickBehaviour(0, layout.LeftMode, layout.LeftStick, layout.LeftSpeed, f.LX, f.LY, dt, ref report, ref dx, ref dy);
+            StickBehaviour(1, layout.RightMode, layout.RightStick, layout.RightSpeed, f.RX, f.RY, dt, ref report, ref dx, ref dy);
+            if (dx != 0 || dy != 0) events.Add(new OutputEvent { Kind = OutputKind.MouseMove, Value = dx, Dy = dy });
 
             var wantKeys = new List<ushort>();
             int wantMouse = 0;
@@ -314,6 +329,39 @@ namespace ClawInput {
             }
             mouseDown = wantMouse;
             return report;
+        }
+
+        // Mouse: 12 % dead zone, then speed grows with tilt^1.6 (fine aim near the centre); the
+        // fraction of a pixel carries over to the next update. D-pad: a direction is pressed past
+        // 50 % tilt on its axis and let go under 40 %.
+        const double MouseDead = 0.12, DpadOn = 0.5, DpadOff = 0.4;
+        void StickBehaviour(int i, StickMode mode, StickOut output, double speed, short x, short y, double dt, ref PadReport r, ref int dx, ref int dy) {
+            if (mode == StickMode.Stick) { moveX[i] = moveY[i] = 0; stickDpad[i] = 0; Stick(output, x, y, ref r); return; }
+            double nx = x / 32767.0, ny = y / 32767.0;
+            if (mode == StickMode.Mouse) {
+                stickDpad[i] = 0;
+                double m = Math.Sqrt(nx * nx + ny * ny);
+                if (m <= MouseDead || dt <= 0) { if (m <= MouseDead) moveX[i] = moveY[i] = 0; return; }
+                double tilt = Math.Min(1, (m - MouseDead) / (1 - MouseDead));
+                double v = speed * Math.Pow(tilt, 1.6) * dt / 1000 / m;
+                moveX[i] += nx * v; moveY[i] -= ny * v;   // stick up = screen up
+                int px = (int)moveX[i], py = (int)moveY[i];
+                moveX[i] -= px; moveY[i] -= py;
+                dx += px; dy += py;
+                return;
+            }
+            moveX[i] = moveY[i] = 0;
+            int bits = stickDpad[i];
+            bits = Edge(bits, 1, ny, true); bits = Edge(bits, 2, ny, false); bits = Edge(bits, 4, nx, false); bits = Edge(bits, 8, nx, true);
+            stickDpad[i] = bits;
+            // XUSB d-pad bits: up 0x1, down 0x2, left 0x4, right 0x8 (same order as ours)
+            r.Buttons |= (ushort)bits;
+        }
+
+        static int Edge(int bits, int bit, double value, bool positive) {
+            double v = positive ? value : -value;
+            bool held = (bits & bit) != 0;
+            return held ? (v >= DpadOff ? bits : bits & ~bit) : (v > DpadOn ? bits | bit : bits);
         }
 
         static void Stick(StickOut output, short x, short y, ref PadReport r) {

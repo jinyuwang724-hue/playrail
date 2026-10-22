@@ -167,7 +167,7 @@ public sealed partial class WallStage
     {
         var keep = _gpItems.ToList();
         _gpItems.Clear();
-        BuildGpMapItems(false, GsMapGeo, s => !GpIsSpecial(s) && s is not ("LStick" or "RStick"), _gsMapHeads);
+        BuildGpMapItems(false, GsMapGeo, s => !GpIsSpecial(s), _gsMapHeads);
         // 焦点格子在屏幕外：往上滚到刚好露出（滚动量按没滚时的位置算），再排一次
         if (_gsMapFocus >= 0 && _gsMapFocus < _gpItems.Count)
         {
@@ -177,7 +177,7 @@ public sealed partial class WallStage
             {
                 _gsMapScroll = want;
                 _gpItems.Clear();
-                BuildGpMapItems(false, GsMapGeo, s => !GpIsSpecial(s) && s is not ("LStick" or "RStick"), _gsMapHeads);
+                BuildGpMapItems(false, GsMapGeo, s => !GpIsSpecial(s), _gsMapHeads);
             }
         }
         else _gsMapScroll = 0;

@@ -298,6 +298,7 @@ namespace ClawInput {
                     case OutputKind.KeyDown: case OutputKind.KeyUp: inputs.Add(Key(e.Key, e.Extended, e.Kind == OutputKind.KeyUp)); break;
                     case OutputKind.MouseDown: case OutputKind.MouseUp: inputs.Add(MouseButton(e.Value, e.Kind == OutputKind.MouseDown)); break;
                     case OutputKind.Wheel: inputs.Add(Wheel(e.Value)); break;
+                    case OutputKind.MouseMove: inputs.Add(new Input { Type = 0, Mouse = new MouseInput { Dx = e.Value, Dy = e.Dy, Flags = 0x1, Extra = Tag } }); break;
                     case OutputKind.Action: Flush(inputs); RunAction(e.Action); break;
                 }
             }
