@@ -437,6 +437,25 @@ public static class Bench
                     if (state == "add9") { await Task.Delay(8000); s.Activate(); await Task.Delay(6000); s.Move(Direction.Right); await Task.Delay(300); s.Move(Direction.Up); await Task.Delay(300); s.Activate(); await Task.Delay(2500); }
                     break;
                 }
+                case "gs0" or "gs1" or "gs2" or "gs3" or "gs4" or "gsk" or "gsc" or "gsb":
+                {
+                    // 游戏设置：gs0–gs4 各分类，gsk 手柄里某个键的按键页，gsc 选择指令（键盘页），gsb 通用里浏览启动程序
+                    s.ToggleControlCenter();
+                    await Task.Delay(1500);
+                    int cat = state is "gsk" or "gsc" ? 2 : state == "gsb" ? 0 : state[2] - '0';
+                    s.GameSettingsTestState(Program.Args.FirstOrDefault(a => a.StartsWith("--game="))?[7..] ?? "", cat);
+                    await Task.Delay(6000);
+                    s.Move(Direction.Right);
+                    await Task.Delay(800);
+                    if (state is "gsk" or "gsc")
+                    {
+                        for (int i = 0; i < 6; i++) { s.Move(Direction.Down); await Task.Delay(250); }
+                        s.Activate(); await Task.Delay(1000);
+                        if (state == "gsc") { s.Move(Direction.Down); await Task.Delay(250); s.Activate(); await Task.Delay(600); s.SwitchTab(1); await Task.Delay(300); s.SwitchTab(1); await Task.Delay(800); }
+                    }
+                    if (state == "gsb") { s.Activate(); await Task.Delay(1200); }
+                    break;
+                }
                 case "shots0" or "shots1" or "shots2" or "shotsv" or "shotsnav" or "shotsf":
                 {
                     // 截图页：shots0 / 1 / 2 = 日历 / 放映 / 冲印（焦点往右挪一格），shotsv = 大图，shotsnav = 日历里走一圈，shotsf = Steam 页签 + 筛选面板

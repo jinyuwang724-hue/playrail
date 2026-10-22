@@ -1073,6 +1073,7 @@ public sealed partial class WallStage : IDisposable
         MarkInput();
         if (_ccOpen && _agOpen) { AgSwitchTab(delta); return; }   // 添加游戏页换图种
         if (_ccOpen && _gpOpen) { GpSwitchTab(delta); return; }   // 手柄页「选择指令」里 LB / RB 换页签
+        if (_ccOpen && _stOpen && GsOverlayTab(delta)) return;     // 游戏设置：按键选择换页签 / 封面换图种
         if (_ccOpen && _shOpen) { if (!MorphIntercept()) ShSwitchTab(delta); return; }   // 截图页换游戏
         if (_stack.Count > 1 || _ccOpen || MorphIntercept()) return;
         SoundFx.Play(Sfx.Switch);
@@ -1329,7 +1330,7 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         // 添加游戏页叠在设置页上面：它的点按、拖动走下面通用那条（AgClick），不能让设置页的手势接走
-        if (SettingsPageOpen && !_agOpen)
+        if (SettingsPageOpen && !_agOpen && !GsOverlay)
         {
             e.Handled = true;
             if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;

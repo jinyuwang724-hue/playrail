@@ -406,6 +406,7 @@ public sealed partial class WallStage
     {
         if (_agOpen) { AgClick(sx, sy); return; }
         if (_shOpen) { ShClick(sx, sy); return; }
+        if (_stOpen && GsOverlayClick(sx, sy)) return;
         if (_stOpen && StCategoryClick(sx, sy)) return;
         if (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen) { SettingsClick(sx, sy); return; }
         if (CcChromeClick(sx, sy)) return;

@@ -209,8 +209,12 @@ public sealed partial class WallStage
         if (!_stOpen || _st == null) return;
         if (_agOpen) { _agOpen = false; _agDraft = null; AgHideBox(); if (_ag != null) _ag.IsVisible = false; }
         _stOpen = false;
+        GsArtReset();
+        GsPadReset();
+        if (_stOver != null) _stOver.IsVisible = false;
         _gsItem = null;
         _gsState = null;
+        _stBrowsePick = null;
         _stBrowseFromLibrary = false;
         _stBrowse = null;
         _stBrowseExe = false;
@@ -370,7 +374,7 @@ public sealed partial class WallStage
         {
             int f = Math.Min(_stFocus, _stRows.Count - 1);
             while (f > 0 && (_stRows[f].Section || _stRows[f].Skip)) f--;
-            _stFocus = Math.Max(0, f);
+            _stFocus = f >= 0 && f < _stRows.Count && !_stRows[f].Section && !_stRows[f].Skip ? f : FirstStRow();
         }
     }
 
@@ -405,7 +409,7 @@ public sealed partial class WallStage
     private void StBrowseTo(string? path)
     {
         _stBrowse = path;
-        if (path == null) { _stBrowseExe = false; _stBrowseMusic = false; }
+        if (path == null) { _stBrowseExe = false; _stBrowseMusic = false; _stBrowsePick = null; }
         _stZone = 1;
         _stArmed = null;
         BuildStRows();
@@ -840,6 +844,8 @@ public sealed partial class WallStage
     {
         SettingsResumeKeyboard();
         if (StEditing) return;
+        if (_stZone == 1 && GsOverlayMove(dir)) return;
+        if (_stZone == 0 && dir == Direction.Right && GsOverlayEnter()) return;
         if (_stZone == 0)
         {
             if (dir is Direction.Up or Direction.Down)
@@ -851,6 +857,7 @@ public sealed partial class WallStage
                 _stBrowse = null;
                 _stBrowseExe = false;
                 _stBrowseMusic = false;
+                _stBrowsePick = null;
                 _lgPage = LgPage.None;
                 BuildStRows();
                 _stFocus = FirstStRow();
@@ -876,6 +883,7 @@ public sealed partial class WallStage
     {
         SettingsResumeKeyboard();
         if (StEditing) { StEditEnd(true); return; }
+        if (GsOverlayActivate()) return;
         if (_stZone == 0) { _stZone = 1; PaintSt(); return; }
         if (_stFocus < 0 || _stFocus >= _stRows.Count) return;
         var r = _stRows[_stFocus];
@@ -887,6 +895,7 @@ public sealed partial class WallStage
     private void StBack()
     {
         if (StEditing) { StEditEnd(false); return; }
+        if (GsOverlayBack()) return;
         if (_stBrowse != null)
         {
             if (_stBrowse.Length == 0 && _stBrowseFromLibrary) { _stBrowseFromLibrary = false; CloseSettingsToLibrary(); return; }
@@ -902,7 +911,7 @@ public sealed partial class WallStage
     /// <summary>Y：焦点这一项恢复默认。</summary>
     private void StResetFocused()
     {
-        if (_stZone != 1 || _stFocus < 0 || _stFocus >= _stRows.Count) return;
+        if (_stZone != 1 || _stFocus < 0 || _stFocus >= _stRows.Count || GsOverlay) return;
         var r = _stRows[_stFocus];
         if (r.Reset == null || r.Disabled) { Toast("这一项没有默认值"); return; }
         r.Reset();
@@ -917,7 +926,8 @@ public sealed partial class WallStage
         int i = (int)Math.Floor((y - PerfSecH) / StCatH);
         if (i < 0 || i >= StCats.Length) return false;
         MarkInput();
-        _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null; _stBrowseExe = false; _stBrowseMusic = false; _lgPage = LgPage.None;
+        _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null; _stBrowseExe = false; _stBrowseMusic = false; _stBrowsePick = null; _lgPage = LgPage.None;
+        if (_gsItem != null && !_gpOpen) _gpPicker = null;
         BuildStRows();
         _stFocus = FirstStRow();
         _stScroll = 0; _stScrollY = float.NaN;
@@ -950,5 +960,6 @@ public sealed partial class WallStage
         CcSet(_stLeft, CcDraw(PerfLeftW + StGutter, vh, raster, ds => PaintStNav(ds, vh)));
         _stLeft.Size = new Vector2((PerfLeftW + StGutter) * k, vh * k);
         _stLeft.Offset = new Vector3((PerfLeftX - StGutter) * k, PerfTop * k, 0);
+        PaintGsOverlay(k, raster);
     }
 }

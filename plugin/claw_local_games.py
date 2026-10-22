@@ -783,6 +783,17 @@ class LocalGames:
         self.log(f"local games: saved {old['id']}")
         return entry
 
+    def set_exe(self, ident, exe):
+        """Points one of our games at another program (游戏设置 › 通用 › 启动程序); False when it is not ours."""
+        with self._lock:
+            games = self._load()
+            entry = next((g for g in games if g["id"] == str(ident)), None)
+            if entry is None:
+                return False
+            entry.update(exe=exe, dir=os.path.dirname(exe))
+            self._save(games)
+        return True
+
     def remove(self, ident):
         with self._lock:
             games = [g for g in self._load() if g["id"] != str(ident)]

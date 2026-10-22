@@ -117,6 +117,18 @@ def validate(value):
             "osd": osd, "fan": _fan(value.get("fan"))}
 
 
+def validate_game_profile(value):
+    """A game's own power profile (游戏设置 › 通用 › TDP): a fixed limit, or Auto with its own target FPS."""
+    if not isinstance(value, dict) or value.get("mode") not in ("manual", "autotdp"):
+        raise ValueError("游戏功耗档格式错误")
+    if value["mode"] == "manual":
+        freq = value.get("freq", 0)
+        if freq not in FREQ_CHOICES:
+            raise ValueError("频率无效")
+        return {"mode": "manual", "tdp": _int(value.get("tdp"), TDP_MIN, TDP_MAX, "功耗"), "freq": freq}
+    return {"mode": "autotdp", "target": _int(value.get("target"), 20, 240, "目标帧率")}
+
+
 def _fan(value):
     fan = {**DEFAULTS["fan"], **(value or {})}
     if fan["mode"] in ("custom", "firmware"):  # old selections migrate to the balanced preset
@@ -569,6 +581,19 @@ class PowerControl:
         self.auto_governor = _auto_module.AutoTDPGovernor()
         self.auto_session = _auto_module.AutoTDPSession(self._call, self.data)
         self.auto_game = None
+        # Per-game profiles (power-games.json, exe name -> profile) override the mode while that game is in front
+        self.games_path = self.data / "power-games.json"
+        self.game_profiles = {}
+        try:
+            raw = json.loads(self.games_path.read_text(encoding="utf-8"))
+            for exe, profile in (raw.items() if isinstance(raw, dict) else ()):
+                try:
+                    self.game_profiles[str(exe).lower()] = validate_game_profile(profile)
+                except ValueError:
+                    pass
+        except (OSError, ValueError):
+            pass
+        self.fg_game = None
         self.auto_state = {}
         self.auto_logged = None
         self.auto_logged_at = 0.0
@@ -667,23 +692,61 @@ class PowerControl:
                 process.kill()
 
     # ---- policy -------------------------------------------------------------
+    def game_override(self):
+        """The profile of the game in front, when it has one of its own."""
+        return self.game_profiles.get(self.fg_game[1]) if self.fg_game else None
+
+    def _mode(self):
+        override = self.game_override()
+        return override["mode"] if override else self.settings["mode"]
+
     def target(self):
         s = self.settings
-        if s["mode"] == "autotdp":
+        override = self.game_override()
+        if self._mode() == "autotdp":
             cfg = s["autotdp"]
             ceiling = cfg["acMax" if self.charger else "dcMax"]
             limit = max(cfg["floor"], min(ceiling, self.auto_governor.limit or ceiling))
             return limit, limit + s["boost"]
+        if override:
+            return override["tdp"], override["tdp"] + s["boost"]
         limit = (s["manual"] if s["mode"] == "manual" else s["ac" if self.charger else "dc"])["tdp"]
         return limit, limit + s["boost"]
 
     def freq_target(self):
         s = self.settings
-        if s["mode"] == "autotdp":
+        override = self.game_override()
+        if self._mode() == "autotdp":
             return 0, 0
+        if override:
+            return override["freq"], override["freq"]
         if s["mode"] == "manual":
             return s["manual"]["freq"], s["manual"]["freq"]
         return s["ac"]["freq"], s["dc"]["freq"]
+
+    def game_profile(self, exe):
+        return self.game_profiles.get(os.path.basename(str(exe)).lower())
+
+    def set_game_profile(self, exe, profile):
+        name = os.path.basename(str(exe)).lower()
+        if not name.endswith(".exe"):
+            raise ValueError("找不到这款游戏的程序")
+        if profile is None:
+            self.game_profiles.pop(name, None)
+        else:
+            self.game_profiles[name] = validate_game_profile(profile)
+        temp = self.games_path.with_suffix(".tmp")
+        temp.write_text(json.dumps(self.game_profiles, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(temp, self.games_path)
+        return self.game_profiles.get(name)
+
+    async def _detect_game(self):
+        game = await asyncio.to_thread(foreground_game)
+        if game is None and self.fg_game:
+            names = await asyncio.to_thread(process_names)
+            if names.get(self.fg_game[0]) == self.fg_game[1]:
+                game = self.fg_game  # game stays tracked while its control center is open
+        self.fg_game = game
 
     async def _backup(self, power):
         if self.backup_path.exists():
@@ -698,10 +761,10 @@ class PowerControl:
         os.replace(temp, self.backup_path)
 
     async def _apply(self, force=False):
-        if self.settings["mode"] != "autotdp":
+        if self._mode() != "autotdp":
             await self._release_auto()
         await self.endurance.release()
-        if self.settings["mode"] == "autotdp":
+        if self._mode() == "autotdp":
             self._configure_auto()
             await self._backup(await self._call("read"))
             await self.auto_session.acquire()
@@ -715,7 +778,7 @@ class PowerControl:
         drift = abs(power.get("pl1", 0) - pl1) > .2 or abs(power.get("pl2", 0) - pl2) > .2 \
             or power.get("pl1Enabled") is False or power.get("pl2Enabled") is False
         if force or drift:
-            if self.settings["mode"] == "autotdp" and not force and self.written and (
+            if self._mode() == "autotdp" and not force and self.written and (
                     abs(power.get("pl1", 0) - self.written[0]) > .2 or abs(power.get("pl2", 0) - self.written[1]) > .2):
                 raise RuntimeError("功耗被其他软件或固件改写，Auto 已暂停；请排除冲突后重新选择模式")
             # Count only changes made by someone else, not our own new target.
@@ -732,15 +795,17 @@ class PowerControl:
         if abs(power.get("pl1", 0) - pl1) > .2 or abs(power.get("pl2", 0) - pl2) > .2:
             raise RuntimeError("功耗写入后回读不一致，可能被其他软件或固件改回")
         self.written = (pl1, pl2)
-        if self.settings["mode"] == "autotdp":
+        if self._mode() == "autotdp":
             self.auto_governor.applied(pl1, time.monotonic())
             self.auto_state = {**self.auto_governor.view(), "game": self.auto_game[1] if self.auto_game else None}
 
     def _configure_auto(self):
         cfg = self.settings["autotdp"]
-        key = (self.auto_game, self.charger, ((self.actual or {}).get("freq") or {}).get("scheme"))
+        override = self.game_override()
+        fps = override["target"] if override and override["mode"] == "autotdp" else cfg["target"]
+        key = (self.auto_game, self.charger, ((self.actual or {}).get("freq") or {}).get("scheme"), fps)
         self.auto_governor.configure(key, cfg["floor"], cfg["acMax" if self.charger else "dcMax"],
-                                     cfg["target"], time.monotonic())
+                                     fps, time.monotonic())
 
     async def _release_auto(self, restore_driver=False):
         await self.auto_session.release(restore_driver=restore_driver)
@@ -748,11 +813,7 @@ class PowerControl:
         self.auto_game, self.auto_state, self.auto_logged = None, {}, None
 
     async def _auto_tick(self):
-        game = await asyncio.to_thread(foreground_game)
-        if game is None and self.auto_game:
-            names = await asyncio.to_thread(process_names)
-            if names.get(self.auto_game[0]) == self.auto_game[1]:
-                game = self.auto_game  # game stays tracked while its control center is open
+        game = self.fg_game
         self.auto_game = game
         self._configure_auto()
         await self._apply()
@@ -807,11 +868,12 @@ class PowerControl:
                     self.other_tool = await asyncio.to_thread(motion_assistant_running)
                 # Telemetry and fan operation do not depend on Intel policy availability.
                 if osd_on:
-                    await self._osd_tick(tick, self.auto_state if self.settings["enabled"] and self.settings["mode"] == "autotdp" else None)
+                    await self._osd_tick(tick, self.auto_state if self.settings["enabled"] and self._mode() == "autotdp" else None)
                 async with self.policy_lock:
                     if self.settings["enabled"]:
+                        await self._detect_game()
                         await self._call("read")
-                        if self.settings["mode"] == "autotdp":
+                        if self._mode() == "autotdp":
                             await self._auto_tick()
                         elif tick % 3 == 0:
                             await self._apply()
@@ -886,7 +948,7 @@ class PowerControl:
                 "fps": chain.get("appFps"), "presented": chain.get("presentedFps"),
                 "fps01": frames.get("appFps01"), "package": (self.actual or {}).get("package"),
                 "limit": (self.actual or {}).get("pl1"),
-                "target": self.settings["autotdp"]["target"] if self.settings["enabled"] and self.settings["mode"] == "autotdp" else None,
+                "target": ((self.game_override() or {}).get("target") or self.settings["autotdp"]["target"]) if self.settings["enabled"] and self._mode() == "autotdp" else None,
                 "cpuUsage": s.get("cpuUsage"), "cpuMhz": s.get("cpuMhz"), "cpuTemp": self.temperature,
                 "gpuUsage": s.get("gpuUsage"), "gpuMhz": frames.get("gpuMhz"), "gpuTemp": frames.get("gpuTemp"),
                 "gpuPower": frames.get("gpuPower"), "ramUsed": s.get("ramUsedGB"), "gpuMem": s.get("gpuMemMB"),
@@ -1237,7 +1299,8 @@ class PowerControl:
         return {"settings": self.settings, "charger": self.charger, "target": {"pl1": pl1, "pl2": pl2},
                 "actual": {k: a.get(k) for k in ("pl1", "pl2", "package", "locked", "tdpBase", "freq")} if a else None,
                 "backup": self.backup_path.exists(), "otherTool": self.other_tool, "reapplied": self.reapplied,
-                "autotdp": self.auto_state if self.settings["mode"] == "autotdp" else None,
+                "autotdp": self.auto_state if self._mode() == "autotdp" else None,
+                "gameProfile": {"exe": self.fg_game[1], **self.game_override()} if self.game_override() else None,
                 "targets": [],
                 "fan": {**self.fan_state, "error": self.fan_error, "presets": FAN_PRESETS, "caps": FAN_CAPS,
                         "axis": list(FAN_TEMPS),

@@ -12,6 +12,7 @@ import math
 import ntpath
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import importlib.util
@@ -1020,9 +1021,37 @@ class Service:
             raise ValueError("游戏编号格式错误")
         return appid, str(item.get("platform") or ""), str(item.get("title") or "")[:200]
 
+    def _shortcut_entry(self, appid):
+        """A non-Steam shortcut's Exe / StartDir / LaunchOptions from shortcuts.vdf (None when it is not there)."""
+        lg = _local_games_module
+        user = lg.steam_user(lg.steam_root())
+        if not user:
+            return None
+        try:
+            for _, _, entry in lg.shortcut_entries(lg.read_shortcuts(user)):
+                if (lg.Vdf.get(entry, "appid") or 0) & 0xFFFFFFFF == appid:
+                    return {"exe": lg.unquote(lg.Vdf.get(entry, "Exe") or ""), "dir": lg.unquote(lg.Vdf.get(entry, "StartDir") or ""),
+                            "args": lg.Vdf.get(entry, "LaunchOptions") or ""}
+        except (OSError, ValueError):
+            pass
+        return None
+
+    def _exe_overrides(self):
+        """Steam games whose program the user picked (游戏设置 › 通用 › 启动程序): appid -> exe."""
+        try:
+            raw = json.loads((self._data / "game-exe.json").read_text(encoding="utf-8"))
+            return raw if isinstance(raw, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
     def _game_exe(self, appid, platform, folder):
-        """The game's exe: a non-Steam shortcut's own target; for a Steam game the likeliest exe in its folder."""
+        """The game's exe: a non-Steam shortcut's own target; for a Steam game the one picked in its settings,
+        else the likeliest exe in its folder."""
         gs, lg = _game_settings_module, _local_games_module
+        if appid < 0x80000000:
+            picked = self._exe_overrides().get(str(appid))
+            if isinstance(picked, str) and os.path.isfile(picked):
+                return picked
         if appid >= 0x80000000:
             user = lg.steam_user(lg.steam_root())
             if user:
@@ -1051,13 +1080,23 @@ class Service:
             # Magpie: a Steam game by its install folder (its exe may differ from our guess), others by exe
             magpie_key = ("dir:" + folder) if appid < 0x80000000 and folder else exe
             ls_exe = gs.lossless_exe()
-            return {"steam": props, "shortcut": appid >= 0x80000000, "exe": exe, "folder": folder,
+            shortcut = appid >= 0x80000000
+            entry = self._shortcut_entry(appid) if shortcut else None
+            start_dir = (entry or {}).get("dir") or (os.path.dirname(exe) if shortcut and exe else folder)
+            exe_name = os.path.basename(exe).lower() if exe else None
+            layout = self._input.layouts.get(exe_name) if exe_name else None
+            return {"steam": props, "shortcut": shortcut, "exe": exe, "folder": folder,
+                    "launch": {"exe": exe, "startDir": start_dir, "picked": not shortcut and str(appid) in self._exe_overrides()},
+                    "power": {"exe": exe_name, "profile": self._power.game_profile(exe) if exe else None,
+                              "enabled": self._power.settings["enabled"], "mode": self._power.settings["mode"],
+                              "autotdp": self._power.settings["autotdp"]},
                     "magpie": {"available": self._magpie.view().get("available", False), "key": magpie_key,
                                **(self._magpie.game_info(magpie_key) if magpie_key else
                                   {"enabled": False, "auto": True, "preset": "无", "presets": self._magpie.presets()})},
                     # 手柄档案: the input layer's per-game layout (by exe name; none = the global one)
                     "pad": {"exe": os.path.basename(exe) if exe else None,
-                            "custom": bool(exe) and os.path.basename(exe).lower() in self._input.layouts.games()},
+                            "custom": bool(exe) and exe_name in self._input.layouts.games(),
+                            "preset": (layout or {}).get("name") or "", "presets": self._input.layouts.presets()},
                     "lossless": {"installed": bool(ls_exe), "running": bool(gs.lossless_pids()),
                                  "enabled": gs.lossless_enabled(exe) if exe else False}}
         return await asyncio.to_thread(read)
@@ -1083,6 +1122,29 @@ class Service:
                 current = await self._input.get_layout(None)
                 return await self._input.save_layout(current["layout"], game)
             return await self._input.save_layout(None, game)
+        if key == "launchExe":
+            return await asyncio.to_thread(self._set_launch_exe, appid, value)
+        if key == "power":
+            exe = item.get("exe")
+            if not isinstance(exe, str) or not exe.lower().endswith(".exe"):
+                raise ValueError("找不到这款游戏的程序")
+            return {"profile": self._power.set_game_profile(exe, value)}
+        if key in ("padPreset", "padSavePreset", "padDeletePreset"):
+            exe = item.get("exe")
+            layouts = self._input.layouts
+            if key == "padDeletePreset":
+                layouts.delete_preset(value)
+                return {"presets": layouts.presets()}
+            if not isinstance(exe, str) or not exe.lower().endswith(".exe"):
+                raise ValueError("找不到这款游戏的程序")
+            game = os.path.basename(exe)
+            if key == "padPreset":
+                return await self._input.save_layout(layouts.get_preset(value), game)
+            # Save this game's layout as a preset; the game's layout takes the preset's name
+            current = (await self._input.get_layout(game))["layout"]
+            saved = layouts.save_preset(value, current)
+            await self._input.save_layout(saved, game)
+            return {"presets": layouts.presets()}
         if key == "lossless":
             exe = item.get("exe")
             if not isinstance(exe, str) or not exe.lower().endswith(".exe"):
@@ -1107,6 +1169,33 @@ class Service:
             raise RuntimeError("Steam 没开")
         await asyncio.to_thread(cdp.set_app_property, appid, key, value)
         return {"ok": True}
+
+    def _set_launch_exe(self, appid, exe):
+        """游戏设置 › 通用 › 启动程序: a non-Steam shortcut starts this exe (in its folder); a Steam game keeps
+        Steam's own launch, the picked exe is what the toolbox treats as the game (Magpie, 小黄鸭, 手柄, TDP)."""
+        if not isinstance(exe, str) or not exe.lower().endswith(".exe") or not os.path.isfile(exe):
+            raise ValueError("找不到这个程序")
+        exe = os.path.normpath(exe)
+        lg, cdp = _local_games_module, _local_games_module.cdp
+        if appid < 0x80000000:
+            picked = self._exe_overrides()
+            picked[str(appid)] = exe
+            path = self._data / "game-exe.json"
+            temp = path.with_suffix(".tmp")
+            temp.write_text(json.dumps(picked, ensure_ascii=False, indent=1), encoding="utf-8")
+            os.replace(temp, path)
+            return {"exe": exe}
+        if not cdp.available():
+            raise RuntimeError("Steam 没开")
+        entry = self._shortcut_entry(appid) or {}
+        args = entry.get("args") or ""
+        if re.search(r'--game\s+(?:"[^"]+"|\S+)', args):
+            # Started through a launcher (Playhub's GameSession.exe --game "<exe>"): point the launcher at the new exe
+            cdp.set_app_property(appid, "launchOptions", re.sub(r'--game\s+(?:"[^"]+"|\S+)', lambda m: f'--game "{exe}"', args, count=1))
+        else:
+            cdp.set_shortcut_target(appid, exe, os.path.dirname(exe))
+            self._local_games.set_exe(str(appid), exe)
+        return {"exe": exe}
 
     async def get_magpie_prefs(self):
         return await self._magpie.get_prefs()

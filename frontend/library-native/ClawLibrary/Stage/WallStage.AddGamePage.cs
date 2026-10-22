@@ -58,6 +58,8 @@ public sealed partial class WallStage
     private ContainerVisual? _ag;
     private SpriteVisual _agSprite = null!, _agFlash = null!;
     private bool _agOpen;
+    /// <summary>封面页的右栏嵌在游戏设置 › 封面里（WallStage.GameSettingsEmbed.cs）：同一份草稿和网格，换一张就马上存。</summary>
+    private bool _agEmbed;
     private AgPage _agPage;
     private AgDraft? _agDraft;
     private int _agZone, _agIndex, _agTab, _agKind, _agVersion;
@@ -82,6 +84,15 @@ public sealed partial class WallStage
 
     private void AgOpenEdit(JsonObject g)
     {
+        var d = AgDraftOf(g);
+        AgShow(d, AgPage.Art);
+        if (d.Sgdb != null) _ = AgLoadCandidates(d, new JsonObject { ["source"] = "sgdb", ["id"] = d.Sgdb });
+        if (d.SteamAppId != null) _ = AgLoadOfficial(d);
+    }
+
+    /// <summary>本地游戏（或 Steam 里的非 Steam 游戏）的草稿：现有的图是每种的第一张。</summary>
+    private static AgDraft AgDraftOf(JsonObject g)
+    {
         var d = new AgDraft
         {
             Id = Str(g["id"]), Name = Str(g["name"]) ?? "", Exe = Str(g["exe"]) ?? "", Steam = Bool(g["steam"]), Sgdb = Str(g["sgdb"]),
@@ -96,9 +107,7 @@ public sealed partial class WallStage
             d.Pick[kind] = -1;
             if (g["art"] is JsonObject a && Str(a[kind]) is { Length: > 0 } path) { d.Cands[kind].Add((null, path)); d.Pick[kind] = 0; }
         }
-        AgShow(d, AgPage.Art);
-        if (d.Sgdb != null) _ = AgLoadCandidates(d, new JsonObject { ["source"] = "sgdb", ["id"] = d.Sgdb });
-        if (d.SteamAppId != null) _ = AgLoadOfficial(d);
+        return d;
     }
 
     private void AgShow(AgDraft d, AgPage page)
@@ -342,7 +351,7 @@ public sealed partial class WallStage
 
     private void AgRepaint(AgDraft d)
     {
-        if (_agOpen && _agDraft == d) _dq.TryEnqueue(AgPaint);
+        if ((_agOpen || _agEmbed) && _agDraft == d) _dq.TryEnqueue(AgPaint);
     }
 
     private List<(string Id, string Name)> AgCollections() =>
@@ -351,14 +360,25 @@ public sealed partial class WallStage
     // ---------------- 行（和设置页同一套） ----------------
 
     /// <summary>
-    /// 游戏设置 › 封面：打开我们的封面页（封面概览那一页）。本地游戏和 Steam 里的非 Steam 游戏走本地游戏的编辑；
-    /// Steam 游戏只换图：现有的图从 Steam 的缓存 / 自定义图读，按游戏名到 SteamGridDB 找候选，完成时设成 Steam 的自定义封面。
+    /// 游戏设置 › 封面的草稿（嵌在设置页里，不开封面页）。本地游戏和 Steam 里的非 Steam 游戏用本地游戏的那份；
+    /// Steam 游戏只换图：现有的图从 Steam 的缓存 / 自定义图读，按游戏名到 SteamGridDB 找候选，换一张就设成 Steam 的自定义封面。
     /// </summary>
-    private async void AgOpenArtFor(LibraryItem item)
+    private async void GsArtLoad(LibraryItem item)
     {
+        _agEmbed = true;
+        _agDraft = null;
         await LgRefresh();
+        if (_gsItem != item || !_agEmbed) return;
         var local = LgGames().FirstOrDefault(g => Str(g["id"]) == item.Id);
-        if (local != null) { AgOpenEdit(local); AgGo(AgPage.Art, AgTabOverview); return; }
+        if (local != null)
+        {
+            var ld = AgDraftOf(local);
+            GsArtShow(ld);
+            if (ld.Sgdb != null) _ = AgLoadCandidates(ld, new JsonObject { ["source"] = "sgdb", ["id"] = ld.Sgdb });
+            else await GsArtMatch(ld);
+            if (ld.SteamAppId != null) _ = AgLoadOfficial(ld);
+            return;
+        }
         var d = new AgDraft { Id = item.Id, Name = item.Title, Exe = "", Query = item.Title, SteamArt = true, Steam = true };
         foreach (var (kind, _) in AgKinds) { d.Cands[kind] = new(); d.Pick[kind] = -1; }
         try
@@ -370,19 +390,61 @@ public sealed partial class WallStage
                     if (Str(a[kind]) is { Length: > 0 } path) { d.Cands[kind].Add((null, path)); d.Pick[kind] = 0; }
         }
         catch (Exception ex) { Log.Warn($"game art: {ex.Message}"); }
-        AgShow(d, AgPage.Art);
-        AgGo(AgPage.Art, AgTabOverview);
-        // 按游戏名先找一次 SteamGridDB，找到就把第一款的候选图拿来（不换页）
+        if (_gsItem != item || !_agEmbed) return;
+        GsArtShow(d);
+        await GsArtMatch(d);
+    }
+
+    /// <summary>按游戏名找一次 SteamGridDB，找到就把第一款的候选图拿来。</summary>
+    private async Task GsArtMatch(AgDraft d)
+    {
         await AgSearch(d);
         if (_agDraft == d && d.Matches.Count > 0 && d.Match < 0)
         {
             d.Match = 0;
             var m = d.Matches[0];
             d.Sgdb = Str(m["source"]) == "sgdb" ? Str(m["id"]) : null;
-            d.SteamAppId = Str(m["steamAppId"]);
+            d.SteamAppId ??= Str(m["steamAppId"]);
             _ = AgLoadCandidates(d, m);
             if (d.SteamAppId != null) _ = AgLoadOfficial(d);
         }
+    }
+
+    /// <summary>嵌在游戏设置里换了一张：只存这一种图（Steam 游戏设成 Steam 的自定义图，本地游戏存进本地游戏再同步到 Steam）。</summary>
+    private void AgEmbedSave(AgDraft d, string kind)
+    {
+        var list = d.Cands[kind];
+        int pick = d.Pick[kind];
+        string? url = pick >= 0 && pick < list.Count ? list[pick].Url : "";
+        if (url == null) return;   // 换回了本来那张
+        var art = new JsonObject { [kind] = url };
+        string title = d.Name;
+        if (d.SteamArt)
+        {
+            var req = new JsonObject { ["id"] = d.Id, ["platform"] = "steam", ["title"] = d.Name };
+            _ = Task.Run(async () =>
+            {
+                try { _agent ??= new AgentClient(); await _agent.CallLong("game_art_save", 180, req, art); }
+                catch (Exception ex) { _dq.TryEnqueue(() => Toast($"「{title}」的{AgKindTitle(kind)}没有换上：{ex.Message}")); }
+            });
+            return;
+        }
+        var game = new JsonObject
+        {
+            ["id"] = d.Id, ["name"] = d.Name.Trim(), ["exe"] = d.Exe, ["steam"] = d.Steam, ["sgdb"] = d.Sgdb, ["steamAppId"] = d.SteamAppId, ["art"] = art,
+            ["collections"] = new JsonArray(d.Collections.Select(c => (JsonNode?)JsonValue.Create(c)).ToArray()),
+            ["newCollections"] = new JsonArray(d.NewCollections.Select(c => (JsonNode?)JsonValue.Create(c)).ToArray()),
+        };
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                _agent ??= new AgentClient();
+                await _agent.CallLong("local_games_save", 180, game);
+                _dq.TryEnqueue(() => { _stNeedsReload = true; _ = LgRefresh(); });
+            }
+            catch (Exception ex) { _dq.TryEnqueue(() => Toast($"「{title}」的{AgKindTitle(kind)}没有存上：{ex.Message}")); }
+        });
     }
 
     private List<PerfRow> AgArtRows(AgDraft d)
@@ -657,6 +719,7 @@ public sealed partial class WallStage
         Toast(to < 0 ? $"不用{AgKindTitle(kind)}了" : $"已换{AgKindTitle(kind)}");
         AgPaint();
         AgBounce(AgGridTile(kind, index));
+        if (_agEmbed) AgEmbedSave(d, kind);
     }
 
     /// <summary>「Steam 官方封面」弹窗：这一种图在 Steam 商店里的官方版本，A 用它，B 关。</summary>
@@ -686,6 +749,7 @@ public sealed partial class WallStage
         AgPaint();
         AgBounce(AgGridTile(kind, at));
         Toast($"已换成 Steam 官方的{AgKindTitle(kind)}");
+        if (_agEmbed) AgEmbedSave(d, kind);
     }
 
     /// <summary>从本地选一张（系统的选文件窗口，触屏、鼠标都能用），选好就用上。</summary>
@@ -705,6 +769,7 @@ public sealed partial class WallStage
             d.Pick[kind] = at;
             Toast($"已换{AgKindTitle(kind)}");
             AgPaint();
+            if (_agEmbed) AgEmbedSave(d, kind);
             if (_agTab == AgTabOverview && AgOverviewSlots().TryGetValue(kind, out var slot)) AgBounce(slot);
             else if (_agTab < AgTabOverview && AgTabKinds[_agTab] == kind) AgBounce(AgGridTile(kind, at));
         }
@@ -712,6 +777,7 @@ public sealed partial class WallStage
     }
 
     private SpriteVisual? _agBounce;
+    private ContainerVisual? _agBounceHost;
 
     /// <summary>
     /// 换图时那张图 Q 弹一下：把页面上这一块（图、勾、焦点框）单独画到一层上，从中心放大到 1.1 倍再弹回、
@@ -720,11 +786,14 @@ public sealed partial class WallStage
     private void AgBounce(Rect r)
     {
         var d = _agDraft;
-        if (_ag == null || d == null || Reduced || r.Width <= 0) return;
-        if (_agBounce == null)
+        ContainerVisual? host = _agEmbed && !_agOpen ? _st : _ag;
+        if (host == null || d == null || Reduced || r.Width <= 0) return;
+        if (_agBounce == null || _agBounceHost != host)
         {
+            if (_agBounce != null) { _agBounceHost?.Children.Remove(_agBounce); _agBounce.Dispose(); }
             _agBounce = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
-            _ag.Children.InsertAbove(_agBounce, _agSprite);
+            _agBounceHost = host;
+            host.Children.InsertAtTop(_agBounce);
         }
         float k = _ccK, raster = k * Chrome.Dpi, pad = 8;
         var hits = _agHits.ToList();
@@ -733,12 +802,13 @@ public sealed partial class WallStage
         CcSet(_agBounce, CcDraw((float)area.Width, (float)area.Height, raster, ds =>
         {
             ds.Transform = Matrix3x2.CreateTranslation(-(float)area.X, -(float)area.Y) * ds.Transform;
-            using (ds.CreateLayer(1, area)) AgPaintArt(ds, d);
+            using (ds.CreateLayer(1, area)) { if (_agEmbed && !_agOpen) GsPaintArt(ds, d); else AgPaintArt(ds, d); }
         }));
         _agHits.Clear(); _agHits.AddRange(hits);
         _agTabHits.Clear(); _agTabHits.AddRange(tabHits);
         _agBounce.Size = new Vector2((float)area.Width * k, (float)area.Height * k);
-        _agBounce.Offset = new Vector3((float)area.X * k, (float)area.Y * k, 0);
+        float oy = _agEmbed && !_agOpen ? GsArtDy : 0;
+        _agBounce.Offset = new Vector3((float)area.X * k, ((float)area.Y + oy) * k, 0);
         _agBounce.CenterPoint = new Vector3((float)area.Width * k / 2, (float)area.Height * k / 2, 0);
         _agBounce.IsVisible = true;
         var a = G.C.CreateVector3KeyFrameAnimation();
@@ -953,6 +1023,7 @@ public sealed partial class WallStage
 
     private void AgPaint()
     {
+        if (_agEmbed && !_agOpen) { if (_stOpen) PaintSt(); return; }
         if (!_agOpen || _ag == null || _agDraft == null) return;
         float k = _ccK, raster = k * Chrome.Dpi;
         _agHits.Clear();

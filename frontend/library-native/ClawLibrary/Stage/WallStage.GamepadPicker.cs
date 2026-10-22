@@ -244,7 +244,7 @@ public sealed partial class WallStage
     private void GpSaveLayout()
     {
         int v = ++_gpLayoutEdits;
-        BuildGpItems();
+        if (_gpOpen) BuildGpItems();
         PaintGpBody();
         After(400, async () =>
         {
@@ -273,7 +273,7 @@ public sealed partial class WallStage
         var p = _gpPicker!;
         if (p.Level != GpSubLevel.Key) { p.Level = GpSubLevel.Key; p.Chord.Clear(); p.InTabs = false; PaintGpBody(); return; }
         _gpPicker = null;
-        BuildGpItems();
+        if (_gpOpen) BuildGpItems();
         PaintGpBody();
     }
 

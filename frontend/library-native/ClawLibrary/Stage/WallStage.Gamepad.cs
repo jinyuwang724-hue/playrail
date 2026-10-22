@@ -146,6 +146,7 @@ public sealed partial class WallStage
         SettingsResetPointer();
         _gpEditing = false;
         _gpPicker = null;
+        if (_gpGame != null) { _gpGame = null; _gpLayout = null; }   // 游戏设置里编辑过某款游戏的布局：这一页是全局的
         ++_gpVersion;
         _gpInSide = true;
         _gpFocus = 0;
@@ -167,37 +168,14 @@ public sealed partial class WallStage
     }
 
     /// <summary>
-    /// 只编辑某款游戏的按键（游戏设置 › 手柄 › 编辑本游戏按键）：读写软件输入层这款游戏自己的布局（按 exe 名），
-    /// 所有改动都进输入层、不写固件（固件只有一份，是全局的），关掉后回到那款游戏的设置。
+    /// 游戏设置 › 手柄（WallStage.GameSettingsEmbed.cs）编辑的是哪款游戏自己的布局（exe 名）；null = 全局。
+    /// 那里直接用这一页的按键选择（GpPicker*），画在游戏设置页里，不打开这一页。
     /// </summary>
-    private string? _gpGame, _gpGameTitle;
-    private LibraryItem? _gpReturn;
-
-    private void OpenGamepadForGame(LibraryItem item, string exe)
-    {
-        _gpGame = exe;
-        _gpGameTitle = item.Title;
-        _gpReturn = item;
-        _gpLayout = null;
-        CloseSettingsPage(instant: true);
-        OpenGamepad();
-    }
+    private string? _gpGame;
 
     private void CloseGamepad(bool instant = false)
     {
         if (!_gpOpen || _gp == null) return;
-        if (_gpReturn is { } back && !instant)
-        {
-            // 回到这款游戏的设置（手柄分类）
-            _gpReturn = null; _gpGame = null; _gpGameTitle = null; _gpLayout = null;
-            CloseGamepad(instant: true);
-            _gsItem = back; _gsState = null; _stCat = 2;
-            OpenSettingsPage();
-            _stFromLibrary = true;
-            _ = GsLoad();
-            return;
-        }
-        _gpReturn = null; _gpGame = null; _gpGameTitle = null;
         _gpOpen = false;
         SettingsResetPointer();
         _gpEditing = false;
@@ -354,7 +332,7 @@ public sealed partial class WallStage
             _gpError = "连不上工具箱后台";
         }
         finally { _gpBusy = false; }
-        if (!_gpOpen) return;
+        if (!_gpOpen) { if (_stOpen && _gsItem != null) Repaint(); return; }
         BuildGpItems();
         PaintGpBody();
     }
@@ -750,6 +728,8 @@ public sealed partial class WallStage
     /// </summary>
     private void PaintGpBody()
     {
+        // 游戏设置里的按键选择：画在设置页上
+        if (!_gpOpen) { if (_stOpen && _gsItem != null) Repaint(); return; }
         if (_gp == null) return;
         float k = _ccK, raster = k * Chrome.Dpi;
         _gpTargets.Clear();
@@ -780,7 +760,7 @@ public sealed partial class WallStage
         bool connected = _pad?.Connected ?? false;
 
         // 标题：和控制中心的「控制中心」同一个位置、同一个字；下面一行小字是机型、连接状态和模式
-        PText(ds, _gpGameTitle != null ? $"手柄 · {_gpGameTitle}" : "手柄", TextKit.Ui(700), 24, CcText, 40, 48, 900);
+        PText(ds, "手柄", TextKit.Ui(700), 24, CcText, 40, 48, 900);
         string mode = _gpDesktopHeld ? "桌面模式（游戏库里先用手柄模式）"
             : Str(_gpFw?["mode"]) switch { "desktop" => "桌面模式", "xinput" => "手柄模式", "dinput" => "DInput 模式", _ => "" };
         string sub = !connected ? "Claw 8 EX · 没有检测到手柄" : $"Claw 8 EX · 已连接{(mode.Length > 0 ? " · " + mode : "")}";
@@ -833,6 +813,7 @@ public sealed partial class WallStage
     /// </summary>
     private void GpHints(CanvasDrawingSession ds, params (string Key, string Text)[] hints)
     {
+        if (!_gpOpen) return;   // 游戏设置里不画按键提示
         var ui = TextKit.Ui(400);
         var keyFont = TextKit.Ui(600);
         const float y = 732, h = 22, gap = 28;

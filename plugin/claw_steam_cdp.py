@@ -124,6 +124,13 @@ def update_shortcut(appid, name):
     return evaluate(f"(async()=>{{SteamClient.Apps.SetShortcutName({int(appid)},{json.dumps(name)});return true;}})()")
 
 
+def set_shortcut_target(appid, exe, start_dir):
+    """A non-Steam shortcut's program and its start folder (Steam keeps both quoted)."""
+    j, q = json.dumps, chr(34)
+    return evaluate(f"(async()=>{{SteamClient.Apps.SetShortcutExe({int(appid)},{j(q + exe + q)});"
+                    f"SteamClient.Apps.SetShortcutStartDir({int(appid)},{j(q + start_dir + q)});return true;}})()")
+
+
 def exists(appid):
     return bool(evaluate(f"!!appStore.GetAppOverviewByAppID({int(appid)})"))
 

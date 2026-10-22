@@ -12,6 +12,7 @@ for the hook, keys the layout uses go back to themselves in the firmware, all pu
 """
 import asyncio
 import ctypes
+import hashlib
 from ctypes import wintypes
 import json
 import logging
@@ -394,11 +395,12 @@ def conflicts(engine_status, processes=None, xbox_support=None):
 # ---- storage -----------------------------------------------------------------------------------------
 
 class Layouts:
-    """layouts/global.json and layouts/games/<exe>.json."""
+    """layouts/global.json, layouts/games/<exe>.json and named presets in layouts/presets."""
 
     def __init__(self, folder):
         self.folder = Path(folder)
         self.games_folder = self.folder / "games"
+        self.presets_folder = self.folder / "presets"
 
     @staticmethod
     def game_name(game):
@@ -434,6 +436,47 @@ class Layouts:
 
     def games(self):
         return sorted(p.stem for p in self.games_folder.glob("*.exe.json")) if self.games_folder.is_dir() else []
+
+    # ---- presets: a game's layout saved under a name, to load into other games ----
+    @staticmethod
+    def preset_name(name):
+        name = name.strip() if isinstance(name, str) else ""
+        if not name or len(name) > 60 or re.search(r"[\x00-\x1f]", name):
+            raise ValueError("预设名称不对（最多 60 个字）")
+        return name
+
+    def _preset_path(self, name):
+        return self.presets_folder / (hashlib.sha1(self.preset_name(name).encode("utf-8")).hexdigest()[:16] + ".json")
+
+    def presets(self):
+        names = []
+        for path in self.presets_folder.glob("*.json") if self.presets_folder.is_dir() else ():
+            try:
+                name = json.loads(path.read_text(encoding="utf-8")).get("name")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if isinstance(name, str) and name:
+                names.append(name)
+        return sorted(names, key=str.casefold)
+
+    def get_preset(self, name):
+        try:
+            return validate_layout(json.loads(self._preset_path(name).read_text(encoding="utf-8")))
+        except FileNotFoundError:
+            raise ValueError("没有这个预设")
+
+    def save_preset(self, name, layout):
+        name = self.preset_name(name)
+        layout = validate_layout({**(layout or {}), "name": name})
+        path = self._preset_path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix(".tmp")
+        temp.write_text(json.dumps(layout, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(temp, path)
+        return layout
+
+    def delete_preset(self, name):
+        self._preset_path(name).unlink(missing_ok=True)
 
     def all(self):
         result = {"global": self.get() or default_layout(), "games": {}}
