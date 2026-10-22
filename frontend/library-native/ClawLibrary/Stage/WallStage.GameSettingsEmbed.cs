@@ -1,7 +1,8 @@
 // 游戏设置里那两块不是设置行的内容，都直接画在游戏设置页上（同一张页、同一个标题和左栏，不开别的页）：
-//   手柄：每个键一行，A 打开手柄页同一套按键选择（触发方式 / 选择指令 / 触发设置，WallStage.GamepadPicker.cs），
-//         画在右栏的位置上；改的是这款游戏自己的那份布局（软件输入层，按 exe 名），不碰固件。
-//   封面：封面页右栏（四种图的候选网格 + 封面概览，WallStage.AddGamePage.cs）原样画在右栏，换一张就马上存。
+//   手柄：设置行（全局 / 游戏配置档、预设）下面是手柄页按键映射那张图（C8EX 线稿 + 两侧和底部每个键映射到什么，
+//         WallStage.GamepadMap.cs 的布局，缩小放进右栏）；焦点在图上走，A 打开手柄页同一套按键选择（WallStage.GamepadPicker.cs），
+//         改的是这款游戏自己的那份布局（软件输入层，按 exe 名），不碰固件。
+//   封面：只显示现在用着的五种图（封面页的「封面概览」，WallStage.AddGamePage.cs），A 从本地换一张，马上存。
 // 右栏这时盖一层 _stOver（整页 1280×800 设计 px，只在右栏里画），设置行那层先藏起来。
 using System.Numerics;
 using System.Text.Json.Nodes;
@@ -23,10 +24,12 @@ public sealed partial class WallStage
     /// <summary>游戏设置 › 封面：右栏是封面网格。</summary>
     private bool GsArtMode => _stOpen && _gsItem != null && _stCat == 3 && _agEmbed && _agDraft != null && !_agOpen;
     private bool GsOverlay => GsPadPicking || GsArtMode;
+    /// <summary>游戏设置 › 手柄（游戏配置档）：设置行下面画按键映射图。</summary>
+    private bool GsPadMapMode => _stOpen && _gsItem != null && _stCat == 2 && _gpPicker == null && !_gpOpen && _gsPadFor != null && _gpLayout != null && _stBrowse == null;
 
     /// <summary>手柄页的按键选择按它自己的位置画（行从 GpPickX 起、选择指令以 GpCx 居中），挪到设置页右栏。</summary>
-    /// <summary>封面网格整体往下挪一点：页签和左栏的「分类」在同一条线上。</summary>
-    private const float GsArtDy = 12;
+    /// <summary>封面概览整体往上挪（没有页签了）：第一行小字和左栏的「分类」在同一条线上。</summary>
+    private const float GsArtDy = -36;
 
     private float GsPadDx => _gpPicker?.Level == GpSubLevel.Chooser ? PerfRightX + PerfRightW / 2 - GpCx : PerfRightX - GpPickX;
 
@@ -47,6 +50,7 @@ public sealed partial class WallStage
     private void GsPadReset()
     {
         _gsPadFor = null;
+        _gsMapFocus = -1;
         if (_gpOpen) return;
         _gpPicker = null;
         _gpGame = null;
@@ -118,14 +122,135 @@ public sealed partial class WallStage
                 _ = GsSet("padDeletePreset", JsonValue.Create(cur), $"已删除预设「{cur}」");
             }));
 
-        // 按键：这款游戏自己的布局里每个键做什么，A 进按键选择
-        _stRows.Add(new PerfRow { Section = true, Title = "按键" });
-        if (_gpLayout == null) { _stRows.Add(StInfo("按键", "正在读取…")); return; }
-        foreach (var src in GpLayoutSources.Where(x => x != "Guide"))
+        // 按键：下面画映射图（GsPaintPadMap），这里只在还没读到时占一行
+        if (_gpLayout == null) { _stRows.Add(new PerfRow { Section = true, Title = "按键" }); _stRows.Add(StInfo("按键", "正在读取…")); }
+        else if (!_gpArtLoaded) _ = GsPadArt();
+    }
+
+    private async Task GsPadArt()
+    {
+        await GpLoadArt();
+        if (_stOpen && _gsItem != null && _stCat == 2) PaintSt();
+    }
+
+    // ---------------- 手柄：按键映射图 ----------------
+
+    /// <summary>图上焦点：-1 = 焦点在上面的设置行。</summary>
+    private int _gsMapFocus = -1;
+    private readonly List<GpItem> _gsMapItems = new();
+    /// <summary>映射图（手柄页映射页的设计坐标，内容约 200…1180 × 180…620）缩进右栏：比例、内容中线和上边。</summary>
+    private const float GsMapScale = 0.83f, GsMapSrcCx = 690, GsMapSrcY = 180;
+
+    /// <summary>手柄页映射页的那些格子（去掉快速设置键、Claw 键、摇杆方向这种不归游戏布局管的），两侧重新排紧。</summary>
+    private void GsBuildMapItems()
+    {
+        var keep = _gpItems.ToList();
+        _gpItems.Clear();
+        BuildGpMapItems(false);
+        var items = _gpItems.Where(it => it.Key.Length > 0 && !GpIsSpecial(it.Key) && it.Choices == null).ToList();
+        _gpItems.Clear();
+        _gpItems.AddRange(keep);
+        foreach (int col in new[] { -1, -2 })
         {
-            string source = src;
-            _stRows.Add(new PerfRow { Title = GpSourceName(src), Value = GpKeySummary(src) + "  ›", Press = () => GsPadOpen(source) });
+            int i = 0;
+            foreach (var it in items.Where(x => x.Col == col)) { it.Y = GpMapSideY + i++ * GpMapSideStep; it.Cy = it.Y; }
         }
+        _gsMapItems.Clear();
+        _gsMapItems.AddRange(items);
+    }
+
+    private float GsMapTop => PerfTop + RowsHeight(_stRows) + 8;
+    private Matrix3x2 GsMapTransform => Matrix3x2.CreateTranslation(-GsMapSrcCx, -GsMapSrcY) * Matrix3x2.CreateScale(GsMapScale)
+        * Matrix3x2.CreateTranslation(PerfRightX + PerfRightW / 2, GsMapTop);
+
+    private void GsPaintPadMap(CanvasDrawingSession ds)
+    {
+        GsBuildMapItems();
+        var accent = PerfAccent;
+        var old = ds.Transform;
+        ds.Transform = GsMapTransform * old;
+        PaintGpMapHeads(ds);
+        // 线稿：和映射页一样整层 0.99、中心挪到 (GpMapCx, GpMapCy)
+        var art = Matrix3x2.CreateScale(GpMapScale) * Matrix3x2.CreateTranslation(GpMapCx - GpCx * GpMapScale, GpMapCy - GpCy * GpMapScale);
+        var focus = _gsMapFocus >= 0 && _gsMapFocus < _gsMapItems.Count ? _gsMapItems[_gsMapFocus] : null;
+        if (_gpBitmaps.TryGetValue("front", out var bmp))
+        {
+            var mid = ds.Transform;
+            ds.Transform = art * mid;
+            ds.DrawImage(bmp, new Rect(GpX, GpY, GpW, GpH), bmp.Bounds, 1f, CanvasImageInterpolation.HighQualityCubic);
+            if (focus != null && GpKeys.TryGetValue(focus.Key, out var fk) && fk.Face == "front")
+            {
+                _gpFacesShown.Add("front");
+                GpFill(ds, focus.Key, 0.42f, accent);
+            }
+            ds.Transform = mid;
+        }
+        foreach (var it in _gsMapItems) PaintGpMapRow(ds, it, it == focus);
+        ds.Transform = old;
+    }
+
+    private bool GsMapMove(Direction dir)
+    {
+        if (!GsPadMapMode || _stZone != 1) return false;
+        if (_gsMapFocus < 0)
+        {
+            // 设置行最后一行再往下：进图
+            if (dir != Direction.Down) return false;
+            int last = _stRows.FindLastIndex(r => !r.Section && !r.Skip);
+            if (_stFocus != last) return false;
+            GsBuildMapItems();
+            if (_gsMapItems.Count == 0) return false;
+            _gsMapFocus = Math.Max(0, _gsMapItems.FindIndex(it => it.Key == "LB"));
+            NavHaptic("move");
+            PaintSt();
+            return true;
+        }
+        int dx = dir == Direction.Left ? -1 : dir == Direction.Right ? 1 : 0, dy = dir == Direction.Up ? -1 : dir == Direction.Down ? 1 : 0;
+        var rects = _gsMapItems.Select(it => new Rect(it.Cx - 1, it.Cy - 1, 2, 2)).ToList();
+        int next = AgSpatial(rects, _gsMapFocus, dx, dy);
+        if (next >= 0) _gsMapFocus = next;
+        else if (dy < 0) { _gsMapFocus = -1; _stFocus = _stRows.FindLastIndex(r => !r.Section && !r.Skip); }   // 图最上面再往上：回设置行
+        else if (dx < 0) { _gsMapFocus = -1; _stZone = 0; }
+        NavHaptic("move");
+        PaintSt();
+        return true;
+    }
+
+    private bool GsMapActivate()
+    {
+        if (!GsPadMapMode || _stZone != 1 || _gsMapFocus < 0 || _gsMapFocus >= _gsMapItems.Count) return false;
+        GsPadOpen(_gsMapItems[_gsMapFocus].Key);
+        return true;
+    }
+
+    private bool GsMapBack()
+    {
+        if (_gsMapFocus < 0) return false;
+        _gsMapFocus = -1;
+        _stZone = 0;
+        PaintSt();
+        return true;
+    }
+
+    /// <summary>点图上的一行：焦点过去并打开按键选择。</summary>
+    private bool GsMapClick(double sx, double sy)
+    {
+        if (!GsPadMapMode) return false;
+        if (!Matrix3x2.Invert(GsMapTransform, out var inv)) return false;
+        var p = Vector2.Transform(new Vector2((float)sx / _ccK, (float)sy / _ccK), inv);
+        if (p.Y < GpMapSideY - 30) return false;
+        GsBuildMapItems();
+        int best = -1; float bestD = 90;
+        for (int i = 0; i < _gsMapItems.Count; i++)
+        {
+            float dd = Vector2.Distance(p, new Vector2(_gsMapItems[i].Cx, _gsMapItems[i].Cy));
+            if (dd < bestD) { bestD = dd; best = i; }
+        }
+        if (best < 0) return false;
+        _stZone = 1;
+        _gsMapFocus = best;
+        GsPadOpen(_gsMapItems[best].Key);
+        return true;
     }
 
     // ---------------- 封面 ----------------
@@ -158,25 +283,9 @@ public sealed partial class WallStage
         if (_stZone != 1) _agZone = 0;   // 焦点在左栏：右栏不画焦点框
         try
         {
-            var counts = AgTabNames.Select((t, i) => (t, i < AgTabOverview
-                ? d.Pending.Contains(AgTabKinds[i]) ? (string?)"…" : d.Cands[AgTabKinds[i]].Count(c => c.Url != null && !c.Url.StartsWith("file:")).ToString()
-                : null)).ToList();
-            AgTabsAt(ds, counts, _agTab, AgRightX - 12, AgBandY);
-            if (_agTab < AgTabOverview && AgHasOfficial(d))
-            {
-                var f = TextKit.Ui(500);
-                float tw = PWidth(ds, "Steam 官方封面", f, 14), bw = tw + 32;
-                var b = new Rect(AgRightX + AgRightW - bw, AgBandY - 16, bw, 32);
-                bool bf = _agZone == 1 && _agIndex == AgOffBtn;
-                ds.FillRoundedRectangle(b, 10, 10, bf ? Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.96) : Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.12));
-                PText(ds, "Steam 官方封面", f, 14, bf ? Gfx.Rgba(9, 9, 11) : CcText, (float)b.X, AgBandY, (float)bw, Microsoft.Graphics.Canvas.Text.CanvasHorizontalAlignment.Center);
-                _agHits.Add((b, 1, AgOffBtn, () => AgOpenOfficial(AgTabKinds[_agTab])));
-            }
-            using (ds.CreateLayer(1, new Rect(AgRightX - 8, AgContentTop - 8, AgRightW + 16, AgContentBottom - AgContentTop + 16)))
-            {
-                if (_agTab < AgTabOverview) AgPaintGrid(ds, d, AgTabKinds[_agTab]);
-                else AgPaintOverview(ds, d);
-            }
+            // 只有现在用着的那几张（封面概览），没有候选网格的页签
+            _agTab = AgTabOverview;
+            AgPaintOverview(ds, d);
         }
         finally { _agZone = zone; }
     }
@@ -195,16 +304,18 @@ public sealed partial class WallStage
     /// <summary>PaintSt 里：右栏换成按键选择 / 封面网格。</summary>
     private void PaintGsOverlay(float k, float raster)
     {
-        bool over = GsOverlay;
+        bool over = GsOverlay, map = GsPadMapMode;
         _stRightView.IsVisible = !over;
-        if (!over) { if (_stOver != null) _stOver.IsVisible = false; return; }
+        if (!over && !map) { if (_stOver != null) _stOver.IsVisible = false; return; }
         if (_stOver == null)
         {
             _stOver = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
             _st!.Children.InsertAtTop(_stOver);
         }
         _stOver.IsVisible = true;
-        if (GsPadPicking)
+        if (map && !over)
+            CcSet(_stOver, CcDraw(1280, 800, raster, GsPaintPadMap));
+        else if (GsPadPicking)
         {
             _gpTargets.Clear();
             float dx = GsPadDx;
@@ -240,6 +351,7 @@ public sealed partial class WallStage
     private bool GsOverlayMove(Direction dir)
     {
         if (GsPadPicking) { GpPickerMove(dir); return true; }
+        if (GsMapMove(dir)) return true;
         if (!GsArtMode || _stZone != 1) return false;
         var d = _agDraft!;
         if (_agOffKind != null) return true;
@@ -270,6 +382,7 @@ public sealed partial class WallStage
     private bool GsOverlayActivate()
     {
         if (GsPadPicking) { GpPickerActivate(); return true; }
+        if (GsMapActivate()) return true;
         if (!GsArtMode) return false;
         if (_stZone != 1) return GsOverlayEnter();
         var d = _agDraft!;
@@ -282,6 +395,7 @@ public sealed partial class WallStage
     private bool GsOverlayBack()
     {
         if (GsPadPicking) { GpPickerBack(); return true; }
+        if (GsMapBack()) return true;
         if (!GsArtMode || _stZone != 1) return false;
         if (_agOffKind != null) { AgCloseOfficial(); return true; }
         _stZone = 0;
@@ -292,17 +406,13 @@ public sealed partial class WallStage
     private bool GsOverlayTab(int delta)
     {
         if (GsPadPicking) { GpSwitchTab(delta); return true; }
-        if (!GsArtMode) return false;
-        bool inGrid = _stZone == 1;
-        AgSwitchTab(delta);
-        if (_agZone == 0) { _agZone = 1; _agIndex = 0; if (!inGrid) _stZone = 0; }
-        PaintSt();
-        return true;
+        return GsArtMode;   // 封面没有页签
     }
 
     /// <summary>点按：按键选择的页签 / 键格 / 行，封面的页签 / 图。</summary>
     private bool GsOverlayClick(double sx, double sy)
     {
+        if (GsMapClick(sx, sy)) return true;
         if (!GsOverlay) return false;
         float x = (float)sx / _ccK, y = (float)sy / _ccK;
         if (x < PerfRightX - 16) return false;   // 左栏照常
@@ -342,8 +452,6 @@ public sealed partial class WallStage
             else if (!_agOffPanel.Contains(pt)) AgCloseOfficial();
             return true;
         }
-        foreach (var (r, i) in _agTabHits)
-            if (r.Contains(pt)) { _stZone = 1; GsOverlayTab(i - _agTab); return true; }
         foreach (var h in _agHits)
             if (h.R.Contains(pt))
             {

@@ -372,11 +372,7 @@ public sealed partial class WallStage
         var local = LgGames().FirstOrDefault(g => Str(g["id"]) == item.Id);
         if (local != null)
         {
-            var ld = AgDraftOf(local);
-            GsArtShow(ld);
-            if (ld.Sgdb != null) _ = AgLoadCandidates(ld, new JsonObject { ["source"] = "sgdb", ["id"] = ld.Sgdb });
-            else await GsArtMatch(ld);
-            if (ld.SteamAppId != null) _ = AgLoadOfficial(ld);
+            GsArtShow(AgDraftOf(local));
             return;
         }
         var d = new AgDraft { Id = item.Id, Name = item.Title, Exe = "", Query = item.Title, SteamArt = true, Steam = true };
@@ -392,22 +388,6 @@ public sealed partial class WallStage
         catch (Exception ex) { Log.Warn($"game art: {ex.Message}"); }
         if (_gsItem != item || !_agEmbed) return;
         GsArtShow(d);
-        await GsArtMatch(d);
-    }
-
-    /// <summary>按游戏名找一次 SteamGridDB，找到就把第一款的候选图拿来。</summary>
-    private async Task GsArtMatch(AgDraft d)
-    {
-        await AgSearch(d);
-        if (_agDraft == d && d.Matches.Count > 0 && d.Match < 0)
-        {
-            d.Match = 0;
-            var m = d.Matches[0];
-            d.Sgdb = Str(m["source"]) == "sgdb" ? Str(m["id"]) : null;
-            d.SteamAppId ??= Str(m["steamAppId"]);
-            _ = AgLoadCandidates(d, m);
-            if (d.SteamAppId != null) _ = AgLoadOfficial(d);
-        }
     }
 
     /// <summary>嵌在游戏设置里换了一张：只存这一种图（Steam 游戏设成 Steam 的自定义图，本地游戏存进本地游戏再同步到 Steam）。</summary>
@@ -699,7 +679,7 @@ public sealed partial class WallStage
         var targets = AgOverviewTargets(d);
         if (index < 0 || index >= targets.Count) return;
         var t = targets[index];
-        if (t.Local) { _ = AgPickLocal(d, t.Kind); return; }
+        if (t.Local || _agEmbed) { _ = AgPickLocal(d, t.Kind); return; }   // 游戏设置里没有候选页签：图本身也是从本地换
         int tab = Array.IndexOf(AgTabKinds, t.Kind);
         if (tab < 0) { _ = AgPickLocal(d, t.Kind); return; }   // 图标只有本地这一种来源
         _agTab = tab;
@@ -1501,7 +1481,7 @@ public sealed partial class WallStage
     /// <summary>缩略图一张张到：攒一下再重画，不要每张都整页重画。</summary>
     private void AgPaintSoon()
     {
-        if (_agPaintQueued || !_agOpen) return;
+        if (_agPaintQueued || !(_agOpen || _agEmbed)) return;
         _agPaintQueued = true;
         After(60, () => { _agPaintQueued = false; AgPaint(); });
     }

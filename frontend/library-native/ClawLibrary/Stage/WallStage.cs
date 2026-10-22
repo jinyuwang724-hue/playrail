@@ -1330,7 +1330,7 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         // 添加游戏页叠在设置页上面：它的点按、拖动走下面通用那条（AgClick），不能让设置页的手势接走
-        if (SettingsPageOpen && !_agOpen && !GsOverlay)
+        if (SettingsPageOpen && !_agOpen && !GsOverlay && !GsPadMapMode)
         {
             e.Handled = true;
             if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;

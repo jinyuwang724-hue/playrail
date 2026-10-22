@@ -927,7 +927,7 @@ public sealed partial class WallStage
         if (i < 0 || i >= StCats.Length) return false;
         MarkInput();
         _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null; _stBrowseExe = false; _stBrowseMusic = false; _stBrowsePick = null; _lgPage = LgPage.None;
-        if (_gsItem != null && !_gpOpen) _gpPicker = null;
+        if (_gsItem != null && !_gpOpen) { _gpPicker = null; _gsMapFocus = -1; }
         BuildStRows();
         _stFocus = FirstStRow();
         _stScroll = 0; _stScrollY = float.NaN;
@@ -951,7 +951,7 @@ public sealed partial class WallStage
             _stTitle.Offset = new Vector3(40 * k, 32 * k, 0);
         }
         _settingsTargets.Clear();
-        CcSet(_stRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _stRows, _stZone == 1 ? _stFocus : -1, _settingsTargets)));
+        CcSet(_stRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _stRows, _stZone == 1 && _gsMapFocus < 0 ? _stFocus : -1, _settingsTargets)));
         _stRight.Size = new Vector2(PerfRightW * k, h * k);
         _stRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _stRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
