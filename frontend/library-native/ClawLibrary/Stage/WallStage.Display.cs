@@ -66,6 +66,7 @@ public sealed partial class WallStage
     private void CloseDisplay(bool instant = false)
     {
         if (!_dsOpen || _ds == null) return;
+        if (!instant) Cue(Sfx.ModalHide);
         _dsOpen = false;
         SettingsResetPointer();
         _dsTimer?.Stop();
@@ -337,7 +338,7 @@ public sealed partial class WallStage
                 if (!_dsRows[i].Section && !_dsRows[i].Skip) { _dsFocus = i; PaintDs(); return; }
             return;
         }
-        if (_dsFocus >= 0 && _dsFocus < _dsRows.Count && !_dsRows[_dsFocus].Disabled) _dsRows[_dsFocus].Step?.Invoke(dir == Direction.Left ? -1 : 1);
+        if (_dsFocus >= 0 && _dsFocus < _dsRows.Count && !_dsRows[_dsFocus].Disabled) RowStep(_dsRows[_dsFocus], dir == Direction.Left ? -1 : 1);
     }
 
     private void DsActivate()
@@ -346,7 +347,7 @@ public sealed partial class WallStage
         if (_dsFocus < 0 || _dsFocus >= _dsRows.Count) return;
         var r = _dsRows[_dsFocus];
         if (r.Disabled) { if (r.Value == DsLater) Toast($"这一项{DsLater}"); return; }
-        r.Press?.Invoke();
+        RowPress(r);
     }
 
     private void DsBack() => CloseDisplay();

@@ -97,7 +97,7 @@ public sealed partial class WallStage
     /// <summary>启动游戏后：设置成「隐藏游戏库」时，游戏起来前把窗口收到任务栏，渲染随之停下。</summary>
     private void AfterGameLaunch()
     {
-        SoundFx.Play(Sfx.Launch);
+        Cue(Sfx.Launch);
         _homeMusic?.HoldForLaunch();
         // 游戏设置里开了 Magpie 自动铺满的游戏：后台等它的窗口到前台（最多 90 秒）就套上这款游戏的画面效果
         _ = Task.Run(async () => { try { _agent ??= new AgentClient(); await _agent.Call("magpie_auto_start"); } catch (Exception ex) { Log.Warn($"magpie auto start: {ex.Message}"); } });
@@ -214,6 +214,7 @@ public sealed partial class WallStage
     private void CloseSettingsPage(bool instant = false)
     {
         if (!_stOpen || _st == null) return;
+        if (!instant) Cue(Sfx.ModalHide);
         if (_agOpen) { _agOpen = false; _agDraft = null; AgHideBox(); if (_ag != null) _ag.IsVisible = false; }
         _stOpen = false;
         GsArtReset();
@@ -674,7 +675,7 @@ public sealed partial class WallStage
         _stRows.Add(StToggle("动态背景", _backdropOn, on => { _backdropOn = on; UpdateBackdropRunning(); SaveUi(_prefs with { Backdrop = on }); Repaint(); }, true));
 
         // 墙面（folia 的海报灯光、海报叠色）
-        void SetLook(UiPrefs next) { SaveUi(next); ApplyWallLook(); RepaintRail(); Repaint(); }
+        void SetLook(UiPrefs next) { SaveUi(next); ApplyWallLook(); Repaint(); }
         _stRows.Add(new PerfRow { Section = true, Title = "墙面" });
         _stRows.Add(StPick("海报灯光", new[] { "开灯", "关灯" }, _prefs.LightsOn ? 0 : 1, i => SetLook(_prefs with { LightsOn = i == 0 }), 0));
         _stRows.Add(StToggle("海报叠色", _prefs.PosterTint, on => SetLook(_prefs with { PosterTint = on }), true));
@@ -898,7 +899,7 @@ public sealed partial class WallStage
             return;
         }
         var r = _stFocus >= 0 && _stFocus < _stRows.Count ? _stRows[_stFocus] : null;
-        if (r != null && !r.Disabled && r.Step != null) { SoundFx.Play(r.Choices?.Length == 2 ? Sfx.Toggle : Sfx.Switch); r.Step(dir == Direction.Left ? -1 : 1); return; }
+        if (r != null && !r.Disabled && r.Step != null) { RowStep(r, dir == Direction.Left ? -1 : 1); return; }
         if (dir == Direction.Left) { _stZone = 0; PaintSt(); }
     }
 
@@ -911,8 +912,7 @@ public sealed partial class WallStage
         if (_stFocus < 0 || _stFocus >= _stRows.Count) return;
         var r = _stRows[_stFocus];
         if (r.Disabled) return;
-        SoundFx.Play(r.Choices?.Length == 2 ? Sfx.Toggle : r.Choices != null || r.Numeric ? Sfx.Switch : Sfx.Confirm);
-        r.Press?.Invoke();
+        RowPress(r);
     }
 
     private void StBack()

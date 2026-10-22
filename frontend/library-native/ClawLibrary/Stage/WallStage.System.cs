@@ -75,6 +75,7 @@ public sealed partial class WallStage
     private void CloseSystem(bool instant = false)
     {
         if (!_syOpen || _sy == null) return;
+        if (!instant) Cue(Sfx.ModalHide);
         _syOpen = false;
         _syUpdatesOpen = false;
         SettingsResetPointer();
@@ -518,7 +519,7 @@ public sealed partial class WallStage
                 }
             return;
         }
-        if (_syFocus >= 0 && _syFocus < _syRows.Count && !_syRows[_syFocus].Disabled) _syRows[_syFocus].Step?.Invoke(dir == Direction.Left ? -1 : 1);
+        if (_syFocus >= 0 && _syFocus < _syRows.Count && !_syRows[_syFocus].Disabled) RowStep(_syRows[_syFocus], dir == Direction.Left ? -1 : 1);
     }
 
     private void SyActivate()
@@ -527,7 +528,7 @@ public sealed partial class WallStage
         if (_syFocus < 0 || _syFocus >= _syRows.Count) return;
         var r = _syRows[_syFocus];
         if (r.Disabled) { if (r.Value == DsLater) Toast($"这一项{DsLater}"); return; }
-        r.Press?.Invoke();
+        RowPress(r);
     }
 
     private void SyBack() { if (_syUpdatesOpen) SyOpenUpdates(false); else CloseSystem(); }

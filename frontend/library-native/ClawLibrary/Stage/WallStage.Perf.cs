@@ -97,6 +97,7 @@ public sealed partial class WallStage
     private void ClosePerf(bool instant = false)
     {
         if (!_perfOpen || _perf == null) return;
+        if (!instant) Cue(Sfx.ModalHide);
         _perfOpen = false;
         SettingsResetPointer();
         _perfCurveEdit = false;
@@ -428,14 +429,14 @@ public sealed partial class WallStage
                 if (!_perfRows[i].Section && !_perfRows[i].Skip) { _perfFocus = i; PaintPerf(); return; }
             return;
         }
-        if (_perfFocus >= 0 && _perfFocus < _perfRows.Count) _perfRows[_perfFocus].Step?.Invoke(dir == Direction.Left ? -1 : 1);
+        if (_perfFocus >= 0 && _perfFocus < _perfRows.Count) RowStep(_perfRows[_perfFocus], dir == Direction.Left ? -1 : 1);
     }
 
     private void PerfActivate()
     {
         SettingsResumeKeyboard();
         if (_perfCurveEdit) { PerfFinishCurveEdit(); return; }
-        if (_perfFocus >= 0 && _perfFocus < _perfRows.Count) _perfRows[_perfFocus].Press?.Invoke();
+        if (_perfFocus >= 0 && _perfFocus < _perfRows.Count) RowPress(_perfRows[_perfFocus]);
     }
 
     private void PerfBack()

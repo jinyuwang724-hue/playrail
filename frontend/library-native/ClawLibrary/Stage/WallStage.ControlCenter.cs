@@ -152,13 +152,13 @@ public sealed partial class WallStage
     }
 
     /// <summary>≡：墙上 = 打开控制中心（出场形变），控制中心里 = 关掉。</summary>
-    public void ToggleControlCenter()
+    public void ToggleControlCenter() => WithCue(Sfx.None, () =>
     {
         if (_backgroundSettingsOpen) CloseBackgroundSettings();
         MarkInput();
         if (MorphIntercept()) return;
         if (_ccOpen) CloseControlCenter(); else OpenControlCenter();
-    }
+    });
 
     /// <summary>测试用：游戏库卡封面此刻的状态（有没有图、解码好没有、可见不可见）。</summary>
     internal (bool ok, string info) CcCoverState()
@@ -190,7 +190,7 @@ public sealed partial class WallStage
     private void OpenControlCenter(bool quiet = false)
     {
         if (_stack.Count == 0) return;
-        SoundFx.Play(Sfx.Open);
+        Cue(quiet ? Sfx.ModalShow : Sfx.MenuIn);
         long t0 = NowMs;
         if (_searchOpen) CloseSearch();
         if (_expandedKey != null) Collapse(false);
@@ -248,6 +248,7 @@ public sealed partial class WallStage
     private void CloseControlCenter()
     {
         if (!_ccOpen || _cc == null) return;
+        Cue(Sfx.MenuOut);
         ClosePerf(instant: true);
         CloseGamepad(instant: true);
         CloseDisplay(instant: true);
@@ -309,7 +310,7 @@ public sealed partial class WallStage
         if (dir is not (Direction.Left or Direction.Right)) return;
         // 不再限制「200 ms 一步」：滚动是弹簧，连按就直接换终点接着滚（可打断）
         int next = Math.Clamp(_ccFocus + (dir == Direction.Left ? -1 : 1), 0, _ccBlocks.Count - 1);
-        if (next == _ccFocus) return;
+        if (next == _ccFocus) { Cue(Sfx.Bump); return; }
         CcFocus(next);
     }
 
@@ -332,6 +333,7 @@ public sealed partial class WallStage
         if (_shOpen) { ShActivate(); return; }
         if (CcChromeActivate()) return;
         var b = _ccBlocks[_ccFocus];
+        if (_ccFocus > 0) Cue(Sfx.ModalShow);   // 进性能 / 手柄 / 显示与声音 / 系统 / 设置 / 截图页
         switch (_ccFocus)
         {
             case 0:   // 游戏库：进集合层（进场形变）

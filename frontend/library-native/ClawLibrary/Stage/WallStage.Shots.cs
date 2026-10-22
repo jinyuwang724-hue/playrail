@@ -109,6 +109,7 @@ public sealed partial class WallStage
     private void CloseShots(bool instant = false)
     {
         if (!_shOpen || _sh == null) return;
+        if (!instant) Cue(Sfx.ModalHide);
         _shOpen = false;
         _shViewer = false;
         int v = ++_shVersion;

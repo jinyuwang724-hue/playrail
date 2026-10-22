@@ -1,0 +1,266 @@
+{
+ "soft/nav": {
+  "seconds": 0.05,
+  "peak": 0.16
+ },
+ "soft/bump": {
+  "seconds": 0.13,
+  "peak": 0.26
+ },
+ "soft/activate": {
+  "seconds": 0.2,
+  "peak": 0.3
+ },
+ "soft/back": {
+  "seconds": 0.18,
+  "peak": 0.26
+ },
+ "soft/detail_in": {
+  "seconds": 0.32,
+  "peak": 0.28
+ },
+ "soft/detail_out": {
+  "seconds": 0.28,
+  "peak": 0.25
+ },
+ "soft/launch": {
+  "seconds": 1.5,
+  "peak": 0.42
+ },
+ "soft/tab": {
+  "seconds": 0.09,
+  "peak": 0.22
+ },
+ "soft/menu_in": {
+  "seconds": 0.36,
+  "peak": 0.27
+ },
+ "soft/menu_out": {
+  "seconds": 0.32,
+  "peak": 0.24
+ },
+ "soft/modal_show": {
+  "seconds": 0.22,
+  "peak": 0.27
+ },
+ "soft/modal_hide": {
+  "seconds": 0.2,
+  "peak": 0.23
+ },
+ "soft/toggle_on": {
+  "seconds": 0.12,
+  "peak": 0.25
+ },
+ "soft/toggle_off": {
+  "seconds": 0.12,
+  "peak": 0.22
+ },
+ "soft/slider_up": {
+  "seconds": 0.05,
+  "peak": 0.17
+ },
+ "soft/slider_down": {
+  "seconds": 0.05,
+  "peak": 0.16
+ },
+ "soft/toast": {
+  "seconds": 0.65,
+  "peak": 0.27
+ },
+ "soft/positive": {
+  "seconds": 0.5,
+  "peak": 0.3
+ },
+ "soft/error": {
+  "seconds": 0.32,
+  "peak": 0.27
+ },
+ "soft/typing": {
+  "seconds": 0.03,
+  "peak": 0.12
+ },
+ "soft/startup": {
+  "seconds": 2.2,
+  "peak": 0.38
+ },
+ "soft/shutter": {
+  "seconds": 0.16,
+  "peak": 0.28
+ },
+ "crystal/nav": {
+  "seconds": 0.05,
+  "peak": 0.16
+ },
+ "crystal/bump": {
+  "seconds": 0.13,
+  "peak": 0.26
+ },
+ "crystal/activate": {
+  "seconds": 0.2,
+  "peak": 0.3
+ },
+ "crystal/back": {
+  "seconds": 0.18,
+  "peak": 0.26
+ },
+ "crystal/detail_in": {
+  "seconds": 0.32,
+  "peak": 0.28
+ },
+ "crystal/detail_out": {
+  "seconds": 0.28,
+  "peak": 0.25
+ },
+ "crystal/launch": {
+  "seconds": 1.5,
+  "peak": 0.42
+ },
+ "crystal/tab": {
+  "seconds": 0.09,
+  "peak": 0.22
+ },
+ "crystal/menu_in": {
+  "seconds": 0.36,
+  "peak": 0.27
+ },
+ "crystal/menu_out": {
+  "seconds": 0.32,
+  "peak": 0.24
+ },
+ "crystal/modal_show": {
+  "seconds": 0.22,
+  "peak": 0.27
+ },
+ "crystal/modal_hide": {
+  "seconds": 0.2,
+  "peak": 0.23
+ },
+ "crystal/toggle_on": {
+  "seconds": 0.12,
+  "peak": 0.25
+ },
+ "crystal/toggle_off": {
+  "seconds": 0.12,
+  "peak": 0.22
+ },
+ "crystal/slider_up": {
+  "seconds": 0.05,
+  "peak": 0.17
+ },
+ "crystal/slider_down": {
+  "seconds": 0.05,
+  "peak": 0.16
+ },
+ "crystal/toast": {
+  "seconds": 0.65,
+  "peak": 0.27
+ },
+ "crystal/positive": {
+  "seconds": 0.5,
+  "peak": 0.3
+ },
+ "crystal/error": {
+  "seconds": 0.32,
+  "peak": 0.27
+ },
+ "crystal/typing": {
+  "seconds": 0.03,
+  "peak": 0.12
+ },
+ "crystal/startup": {
+  "seconds": 2.2,
+  "peak": 0.38
+ },
+ "crystal/shutter": {
+  "seconds": 0.16,
+  "peak": 0.28
+ },
+ "digital/nav": {
+  "seconds": 0.05,
+  "peak": 0.16
+ },
+ "digital/bump": {
+  "seconds": 0.13,
+  "peak": 0.26
+ },
+ "digital/activate": {
+  "seconds": 0.2,
+  "peak": 0.3
+ },
+ "digital/back": {
+  "seconds": 0.18,
+  "peak": 0.26
+ },
+ "digital/detail_in": {
+  "seconds": 0.32,
+  "peak": 0.28
+ },
+ "digital/detail_out": {
+  "seconds": 0.28,
+  "peak": 0.25
+ },
+ "digital/launch": {
+  "seconds": 1.5,
+  "peak": 0.42
+ },
+ "digital/tab": {
+  "seconds": 0.09,
+  "peak": 0.22
+ },
+ "digital/menu_in": {
+  "seconds": 0.36,
+  "peak": 0.27
+ },
+ "digital/menu_out": {
+  "seconds": 0.32,
+  "peak": 0.24
+ },
+ "digital/modal_show": {
+  "seconds": 0.22,
+  "peak": 0.27
+ },
+ "digital/modal_hide": {
+  "seconds": 0.2,
+  "peak": 0.23
+ },
+ "digital/toggle_on": {
+  "seconds": 0.12,
+  "peak": 0.25
+ },
+ "digital/toggle_off": {
+  "seconds": 0.12,
+  "peak": 0.22
+ },
+ "digital/slider_up": {
+  "seconds": 0.05,
+  "peak": 0.17
+ },
+ "digital/slider_down": {
+  "seconds": 0.05,
+  "peak": 0.16
+ },
+ "digital/toast": {
+  "seconds": 0.65,
+  "peak": 0.27
+ },
+ "digital/positive": {
+  "seconds": 0.5,
+  "peak": 0.3
+ },
+ "digital/error": {
+  "seconds": 0.32,
+  "peak": 0.27
+ },
+ "digital/typing": {
+  "seconds": 0.03,
+  "peak": 0.12
+ },
+ "digital/startup": {
+  "seconds": 2.2,
+  "peak": 0.38
+ },
+ "digital/shutter": {
+  "seconds": 0.16,
+  "peak": 0.28
+ }
+}

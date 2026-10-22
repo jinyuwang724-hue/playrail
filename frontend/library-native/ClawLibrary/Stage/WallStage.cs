@@ -208,7 +208,7 @@ public sealed partial class WallStage : IDisposable
         first = (_, _) =>
         {
             CompositionTarget.Rendering -= first;
-            FirstFrameLogged = true;
+            FirstFrameLogged = true; PlayStartupSound();
             _dq.TryEnqueue(DispatcherQueuePriority.Low, RenderEdgeTabs);
             After(1500, () => { try { PrewarmControlCenter(); } catch (Exception ex) { Log.Error("prewarm", ex); } });
             _dq.TryEnqueue(DispatcherQueuePriority.Low, () => { var t = NowMs; Recull(true); Log.Info($"overscan tiles built: {_tiles.Count} ({NowMs - t}ms)"); });
@@ -775,10 +775,9 @@ public sealed partial class WallStage : IDisposable
         return true;
     }
 
-    public void Move(Direction dir)
+    public void Move(Direction dir) => WithCue(Sfx.Nav, () =>
     {
         MarkInput();
-        SoundFx.Play(Sfx.Move);
         NavHaptic(dir switch { Direction.Up => "moveUp", Direction.Down => "moveDown", Direction.Left => "moveLeft", _ => "moveRight" });
         if (MorphIntercept()) return;
         if (_ccOpen) { CcMove(dir); return; }
@@ -788,16 +787,15 @@ public sealed partial class WallStage : IDisposable
         if (from == null) return;
         var next = Nav.FindAdjacentSlot(from, dir, HasContent, Drawn);
         if (TryEnterRailFrom(from, next, dir)) return;
-        if (next == null) return;
+        if (next == null) { Cue(Sfx.Bump); return; }
         if (_expandedKey is { } ek && next.Key != ek) Collapse(false);
         Focus(next.Key);
-    }
+    });
 
     /// <summary>A：游戏卡展开聚焦卡；聚焦卡上再按 = 启动；集合卡 = 进入。</summary>
-    public void Activate()
+    public void Activate() => WithCue(Sfx.Activate, () =>
     {
         MarkInput();
-        SoundFx.Play(Sfx.Confirm);
         NavHaptic("confirm");
         if (MorphIntercept()) return;
         if (_ccOpen) { CcActivate(); return; }
@@ -807,10 +805,11 @@ public sealed partial class WallStage : IDisposable
         var id = slot != null ? ItemFor(slot) : null;
         var item = id != null ? Lookup(id) : null;
         if (slot == null || item == null) return;
-        if (item.Kind == ItemKind.Collection) { Push(slot, item); return; }
+        if (item.Kind == ItemKind.Collection) { Cue(Sfx.DetailIn); Push(slot, item); return; }
         if (_expandedKey == slot.Key) { LaunchOrInstall(item); return; }
+        Cue(Sfx.DetailIn);
         Expand(slot);
-    }
+    });
 
     /// <summary>
     /// 交给 Steam：装好的 Steam 游戏 steam://rungameid/&lt;appid&gt;；没装的 steam://install/&lt;appid&gt;（Steam 弹出安装窗口，
@@ -827,7 +826,7 @@ public sealed partial class WallStage : IDisposable
                 Toast($"正在启动「{item.Title}」");
                 AfterGameLaunch();
             }
-            catch (Exception ex) { SoundFx.Play(Sfx.Error); Toast($"「{item.Title}」没能启动：{ex.Message}"); }
+            catch (Exception ex) { Cue(Sfx.Error); Toast($"「{item.Title}」没能启动：{ex.Message}"); }
             Log.Info($"launch folder game {item.Id} {exe}");
             return;
         }
@@ -854,17 +853,17 @@ public sealed partial class WallStage : IDisposable
     }
 
     /// <summary>B：收起聚焦卡 → 返回上一层。</summary>
-    public void Back()
+    public void Back() => WithCue(Sfx.Back, () =>
     {
         MarkInput();
-        SoundFx.Play(Sfx.Back);
         NavHaptic("back");
         if (MorphIntercept()) return;
         if (_ccOpen) { if (!CcChromeBack()) CloseControlCenter(); return; }
         if (RailBack()) return;
-        if (_expandedKey != null) { Collapse(true); return; }
-        if (_stack.Count > 1) Pop();
-    }
+        if (_expandedKey != null) { Cue(Sfx.DetailOut); Collapse(true); return; }
+        if (_stack.Count > 1) { Cue(Sfx.DetailOut); Pop(); return; }
+        Cue(Sfx.Bump);
+    });
 
     // ---------------- 聚焦卡（块内让位） ----------------
 
@@ -1070,7 +1069,9 @@ public sealed partial class WallStage : IDisposable
     }
 
     /// <summary>LB / RB：首页换页签，整墙出场 → 入场。</summary>
-    public void SwitchTab(int delta)
+    public void SwitchTab(int delta) => WithCue(Sfx.Tab, () => SwitchTabCore(delta));
+
+    private void SwitchTabCore(int delta)
     {
         if (_backgroundSettingsOpen) return;
         MarkInput();
@@ -1078,8 +1079,7 @@ public sealed partial class WallStage : IDisposable
         if (_ccOpen && _gpOpen) { GpSwitchTab(delta); return; }   // 手柄页「选择指令」里 LB / RB 换页签
         if (_ccOpen && _stOpen && GsOverlayTab(delta)) return;     // 游戏设置：按键选择换页签 / 封面换图种
         if (_ccOpen && _shOpen) { if (!MorphIntercept()) ShSwitchTab(delta); return; }   // 截图页换游戏
-        if (_stack.Count > 1 || _ccOpen || MorphIntercept()) return;
-        SoundFx.Play(Sfx.Switch);
+        if (_stack.Count > 1 || _ccOpen || MorphIntercept()) { Cue(Sfx.Bump); return; }
         if (_expandedKey != null) Collapse(false);
         if (_searchOpen) CloseSearch();
         _tabIndex = (_tabIndex + delta + _lib.HomeTabs.Count) % _lib.HomeTabs.Count;
@@ -1152,6 +1152,7 @@ public sealed partial class WallStage : IDisposable
 
     public void Toast(string text)
     {
+        if (_cueDepth == 0) SoundFx.Play(Sfx.Toast);   // 输入引起的提示已经有那次输入的声音
         var art = Chrome.Toast(text);
         var brush = (CompositionSurfaceBrush)_toast.Brush;
         (brush.Surface as IDisposable)?.Dispose();

@@ -133,17 +133,24 @@ public sealed partial class WallStage
         var row = rows[hit.Row];
         if (!row.Disabled && !row.Skip)
         {
-            SoundFx.Play(row.Choices?.Length == 2 ? Sfx.Toggle : hit.Kind is SettingsTargetKind.Choice or SettingsTargetKind.Increase or SettingsTargetKind.Decrease ? Sfx.Switch : Sfx.Confirm);
-            switch (hit.Kind)
+            WithCue(Sfx.Activate, () =>
             {
-                case SettingsTargetKind.Row: row.Press?.Invoke(); break;
-                case SettingsTargetKind.Choice:
-                    if (hit.Choice != row.Choice) row.Select?.Invoke(hit.Choice);
-                    break;
-                case SettingsTargetKind.Decrease: row.Step?.Invoke(-1); break;
-                case SettingsTargetKind.Increase: row.Step?.Invoke(1); break;
-                case SettingsTargetKind.Slider: SettingsSliderAt(hit, x); break;
-            }
+                switch (hit.Kind)
+                {
+                    case SettingsTargetKind.Row: RowPress(row); break;
+                    case SettingsTargetKind.Choice:
+                        if (hit.Choice == row.Choice) Cue(Sfx.None);
+                        else
+                        {
+                            Cue(row.Choices?.Length == 2 ? (hit.Choice == 1 ? Sfx.ToggleOn : Sfx.ToggleOff) : hit.Choice > row.Choice ? Sfx.SliderUp : Sfx.SliderDown);
+                            row.Select?.Invoke(hit.Choice);
+                        }
+                        break;
+                    case SettingsTargetKind.Decrease: RowStep(row, -1); break;
+                    case SettingsTargetKind.Increase: RowStep(row, 1); break;
+                    case SettingsTargetKind.Slider: Cue(Sfx.SliderUp); SettingsSliderAt(hit, x); break;
+                }
+            });
         }
         SettingsPaint();
     }

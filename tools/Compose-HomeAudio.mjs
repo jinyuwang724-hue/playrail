@@ -1,4 +1,4 @@
-// Original Claw menu sounds and circular ambient compositions; no external samples.
+// Original Claw home ambient compositions; no external samples. UI sound effects: tools/Compose-UiSounds.mjs.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,39 +28,6 @@ function wav(file, channels, rate, samples, peakTarget) {
   report.push({ file, seconds: samples / rate, channels: count, rate, peak: peakTarget,
     rms: Math.sqrt(energy / (samples * count)), boundaryStep: Math.max(...channels.map(c => Math.abs(c[0] - c[samples - 1]) * gain)) });
 }
-const cues = {
-  move: [[0, 78, .038, .52]], confirm: [[0, 69, .13, .7], [.045, 76, .13, .55]],
-  back: [[0, 74, .11, .65], [.04, 67, .1, .5]], switch: [[0, 72, .075, .6], [.022, 79, .08, .28]],
-  open: [[0, 62, .18, .5], [.055, 69, .17, .52], [.095, 76, .18, .42]],
-  toggle: [[0, 76, .065, .6], [.028, 79, .07, .3]],
-  launch: [[0, 57, .32, .48], [.065, 64, .3, .42], [.13, 69, .3, .4], [.19, 76, .3, .32]],
-  error: [[0, 62, .1, .45], [.085, 60, .12, .4]]
-};
-for (const [theme, trans] of [['soft', -5], ['crystal', 2], ['digital', -2]]) {
-  fs.mkdirSync(path.join(out, 'Sfx', theme), { recursive: true });
-  for (const [kind, notes] of Object.entries(cues)) {
-    const rate = 44100, seconds = Math.max(...notes.map(n => n[0] + n[2])) + .045;
-    const count = Math.ceil(rate * seconds), sound = new Float64Array(count);
-    for (const [start, midi, length, amplitude] of notes) {
-      const f = hz(midi + trans), offset = Math.round(start * rate), n = Math.ceil(length * rate);
-      let previous = 0;
-      for (let i = 0; i < n && i + offset < count; i++) {
-        const t = i / rate, phase = tau * f * t;
-        const env = (1 - Math.exp(-t / .0025)) * Math.exp(-t / (length / 4)) * Math.min(1, (length - t) / .008);
-        const noise = random(), tap = (noise - previous) * Math.exp(-t / .004); previous = noise;
-        let wave = Math.sin(phase);
-        if (theme === 'soft') wave = .88 * wave + .1 * Math.sin(phase * 2.003) + .025 * tap;
-        if (theme === 'crystal') wave = .8 * Math.sin(phase + .35 * Math.sin(phase * 2.001) * Math.exp(-t / .025)) + .13 * Math.sin(phase * 3.01);
-        if (theme === 'digital') wave = .84 * wave + .1 * Math.sin(phase * 3) / 3 + .06 * Math.sin(phase * 5) / 5;
-        sound[offset + i] += wave * env * amplitude;
-      }
-    }
-    // A short, quiet reflection adds space without making navigation ring out.
-    for (let i = count - 1; i >= 0; i--) if (i >= 573) sound[i] += .07 * sound[i - 573];
-    wav(`Sfx/${theme}/${kind}.wav`, [sound], rate, count, kind === 'move' ? .19 : kind === 'launch' ? .42 : .32);
-  }
-}
-
 // Sixteen bars with extended voicings, sparse motifs and tails wrapped onto the start.
 const pieces = [
   { id: 'daylight', name: '浮光', bpm: 72, chords: [[50,57,61,64,69],[47,54,57,62,66],[43,50,57,59,66],[45,52,57,59,64]], melody: [81,78,76,73,76,78,85,81], brightness: .28 },

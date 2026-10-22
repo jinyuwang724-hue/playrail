@@ -61,29 +61,29 @@ public sealed partial class WallStage
     private void PreviewSounds()
     {
         int version = ++_soundPreviewVersion;
-        var sequence = new[] { Sfx.Move, Sfx.Move, Sfx.Confirm, Sfx.Back, Sfx.Switch, Sfx.Toggle, Sfx.Open, Sfx.Launch };
+        var sequence = new[] { Sfx.Nav, Sfx.Nav, Sfx.Bump, Sfx.Activate, Sfx.DetailIn, Sfx.DetailOut, Sfx.Back, Sfx.Tab, Sfx.ToggleOn, Sfx.ToggleOff, Sfx.SliderUp, Sfx.SliderDown, Sfx.MenuIn, Sfx.MenuOut, Sfx.ModalShow, Sfx.ModalHide, Sfx.Toast, Sfx.Positive, Sfx.Error, Sfx.Shutter, Sfx.Launch };
         for (int i = 0; i < sequence.Length; i++)
         {
             Sfx cue = sequence[i];
-            After(i * 350, () => { if (!_audioDisposed && version == _soundPreviewVersion && IsForeground()) { SoundFx.SetActive(true); SoundFx.Play(cue, preview: true); } });
+            After(i * 420, () => { if (!_audioDisposed && version == _soundPreviewVersion && IsForeground()) { SoundFx.SetActive(true); SoundFx.Play(cue, preview: true); } });
         }
     }
 
     private void BuildAudioRows()
     {
         _stRows.Add(new PerfRow { Section = true, Title = "界面音效" });
-        _stRows.Add(StToggle("界面音效", _prefs.Sounds, on => { SaveAudio(_prefs with { Sounds = on }); SoundFx.Play(Sfx.Toggle); }, false));
+        _stRows.Add(StToggle("界面音效", _prefs.Sounds, on => { SaveAudio(_prefs with { Sounds = on }); }, false));
         _stRows.Add(StPick("音效风格", SoundFx.ThemeNames, _prefs.SoundTheme, n =>
         {
             ++_soundPreviewVersion;
-            SaveAudio(_prefs with { SoundTheme = n }); SoundFx.Play(Sfx.Confirm, preview: true);
+            SaveAudio(_prefs with { SoundTheme = n }); Cue(Sfx.None); SoundFx.Play(Sfx.Activate, preview: true);
         }, 0));
         var volume = StNumber("音效音量", _prefs.SoundVolume, 0, 100, 5, n => $"{n} %", n =>
         {
-            SaveAudio(_prefs with { SoundVolume = n }); SoundFx.Play(Sfx.Move, preview: true);
+            SaveAudio(_prefs with { SoundVolume = n }); Cue(Sfx.None); SoundFx.Play(Sfx.Nav, preview: true);
         }, 40);
         _stRows.Add(volume);
-        _stRows.Add(new PerfRow { Title = "试听音效", Value = "移动 · 确认 · 返回 · 切换 · 启动", Press = PreviewSounds });
+        _stRows.Add(new PerfRow { Title = "试听整套音效", Value = "导航 · 确认 · 详情 · 开关 · 菜单 · 提示 · 启动", Press = () => { Cue(Sfx.None); PreviewSounds(); } });
 
         _stRows.Add(new PerfRow { Section = true, Title = "背景音乐" });
         _stRows.Add(StToggle("主页背景音乐", _prefs.MusicEnabled, on => SaveAudio(_prefs with { MusicEnabled = on }), false));
@@ -152,7 +152,7 @@ public sealed partial class WallStage
             SaveUi(_prefs with { MusicTrack = imported.Id });
             _musicError = null; ApplyHomeAudio();
             if (_stOpen && _stBrowseMusic) StBrowseTo(null);
-            Toast($"已导入「{imported.Name}」"); SoundFx.Play(Sfx.Confirm);
+            Toast($"已导入「{imported.Name}」"); SoundFx.Play(Sfx.Positive);
         }
         catch (Exception ex)
         {

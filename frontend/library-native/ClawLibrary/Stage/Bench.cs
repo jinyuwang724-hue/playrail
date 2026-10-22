@@ -451,6 +451,7 @@ public static class Bench
                 case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
                 case "reclook" or "recstack": await RecLookAsync(s, state == "recstack"); break;
                 case "stlook": s.LookTestState(); break;
+                case "sfx": s.SoundTestState(); await Task.Delay(11000); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
                 case "ccenter": s.ToggleControlCenter(); await Task.Delay(2500); Log.Info("state ccenter now"); s.Activate(); break;
                 case "control2": s.ToggleControlCenter(); await Task.Delay(900); s.Move(Direction.Right); await Task.Delay(260); s.Move(Direction.Right); break;

@@ -486,7 +486,7 @@ public sealed partial class WallStage
                     for (int i = focus + d; i >= 0 && i < rows.Count; i += d)
                         if (!rows[i].Section) { focus = i; break; }
                 }
-                else if (focus >= 0 && focus < rows.Count) rows[focus].Step?.Invoke(dir == Direction.Left ? -1 : 1);
+                else if (focus >= 0 && focus < rows.Count) RowStep(rows[focus], dir == Direction.Left ? -1 : 1);
                 if (p.Level == GpSubLevel.Key) p.KeyFocus = focus; else p.SettingsFocus = focus;
                 break;
             }
@@ -529,14 +529,14 @@ public sealed partial class WallStage
         if (p.Level == GpSubLevel.Group)
         {
             var grows = GpGroupRows(p);
-            if (p.GroupFocus >= 0 && p.GroupFocus < grows.Count && !grows[p.GroupFocus].Disabled) grows[p.GroupFocus].Press?.Invoke();
+            if (p.GroupFocus >= 0 && p.GroupFocus < grows.Count && !grows[p.GroupFocus].Disabled) RowPress(grows[p.GroupFocus]);
             return;
         }
         if (p.Level is GpSubLevel.Key or GpSubLevel.Settings)
         {
             var rows = p.Level == GpSubLevel.Key ? GpKeyRows(p) : GpSettingsRows(p);
             int focus = p.Level == GpSubLevel.Key ? p.KeyFocus : p.SettingsFocus;
-            if (focus >= 0 && focus < rows.Count) rows[focus].Press?.Invoke();
+            if (focus >= 0 && focus < rows.Count) RowPress(rows[focus]);
             return;
         }
         if (p.InTabs) { p.InTabs = false; PaintGpBody(); return; }

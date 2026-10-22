@@ -2,7 +2,7 @@
 // - 叠色：每张卡上一层主题渐变（或自定义纯色），强度默认 50 %；焦点 / 展开的那张不染；关灯时归零。
 // - 关灯：每张卡上一层 82 % 黑（连标题、角标一起盖住），焦点 / 展开的那张不熄；集合的叠页边同样混进去。
 //   我们的缝是「始终透明」的那种：不往上涂黑，只把里面的内容和边缘标签压到 0.4；焦点在缝里（含搜索、设置）时整条亮着。
-// 开关在竖条的工具列（灯泡）和 设置 › 外观 › 墙面；键盘 L。
+// 开关在 设置 › 外观 › 墙面（海报灯光）；键盘 L。
 namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
@@ -29,8 +29,8 @@ public sealed partial class WallStage
     public void ToggleLights()
     {
         SaveUi(_prefs with { LightsOn = !_prefs.LightsOn });
+        Cue(_prefs.LightsOn ? Sfx.ToggleOn : Sfx.ToggleOff);
         ApplyWallLook();
-        RepaintRail();
     }
 
     /// <summary>Bench：设置 › 外观，焦点放在「海报灯光」上（对齐检查用）。</summary>

@@ -1,4 +1,4 @@
-// 中间的竖条（首页窄缝，120 px）：参照 folia 首页窄缝的排法（自己实现），并按需求加了系统信息与快捷入口。
+﻿// 中间的竖条（首页窄缝，120 px）：参照 folia 首页窄缝的排法（自己实现），并按需求加了系统信息与快捷入口。
 // 从上到下：导航区（竖排页签、分隔线、合集直达入口）→ 账户（头像在上、用户名在下）
 // → 工具列（搜索、设置、文件管理器竖着排）→ 时间、电池各一行。搜索打开时整条缝换成搜索面板（Chrome.SeamSearch）。导航区是唯一可伸缩的一段：放不下全名时页签缩成一个字，再放不下就在里面滚，
 // 保证焦点那一项露出来。设置打开时导航区换成设置列表。
@@ -18,7 +18,7 @@ using Colors = Microsoft.UI.Colors;
 
 namespace ClawLibrary.Stage;
 
-public enum RailKind { Tab, Shortcut, Account, Search, AddGame, Settings, Explorer, Setting, Back, Lights }
+public enum RailKind { Tab, Shortcut, Account, Search, AddGame, Settings, Explorer, Setting, Back }
 
 public sealed class RailItem
 {
@@ -43,8 +43,6 @@ public sealed class RailModel
     public string User = "";
     public CanvasBitmap? Avatar;
     public bool SettingsOpen;
-    /// <summary>墙上开着灯（工具列的灯泡：关灯时灯泡暗下去）。</summary>
-    public bool LightsOn = true;
     public string SettingsTitle = "设置";
     public List<(string Label, string Value)> Settings = new();
 }
@@ -142,9 +140,9 @@ public sealed class Rail
         float nameH = (float)name.LayoutBounds.Height;
         float accH = av + 8 + nameH;
         float accY = statusY - groupGap - accH;
-        // 工具：竖着一列（搜索、添加游戏、设置、开关灯、文件管理器），照 folia 缝里的工具格：40 × 40 方格、圆角 12、静止时无底无框，间隔 8
+        // 工具：竖着一列（搜索、添加游戏、设置、文件管理器），照 folia 缝里的工具格：40 × 40 方格、圆角 12、静止时无底无框，间隔 8
         const float toolW = 40, toolH = 40, toolGap = 8;
-        var tools = new[] { (RailKind.Search, ""), (RailKind.AddGame, ""), (RailKind.Settings, ""), (RailKind.Lights, ""), (RailKind.Explorer, "") };
+        var tools = new[] { (RailKind.Search, ""), (RailKind.AddGame, ""), (RailKind.Settings, ""), (RailKind.Explorer, "") };
         float toolsH = tools.Length * toolH + (tools.Length - 1) * toolGap;
         float ruleY = accY - groupGap / 2 - 0.5f;   // 工具与账户之间一道短分隔线
         float toolsY = accY - groupGap - toolsH;
@@ -170,9 +168,7 @@ public sealed class Rail
                 ds.DrawRoundedRectangle(new Rect(r.X + 0.5, r.Y + 0.5, r.Width - 1, r.Height - 1), 11.5f, 11.5f, Gfx.WithAlpha(Theme.Ink, 0.26), 1);
             }
             var icon = this.H(tools[i].Item2, new FontSpec(IconFont, 400), 18);
-            // 灯泡：关灯时暗下去（folia 工具面板里「开灯 | 关灯」那一格的状态）
-            float alpha = tools[i].Item1 == RailKind.Lights && !m.LightsOn ? 0.32f : focused ? 1 : 0.8f;
-            DrawCentered(ds, icon, (float)(r.X + toolW / 2), (float)(r.Y + toolH / 2), pressed ? Theme.Accent : Gfx.WithAlpha(Theme.Ink, alpha));
+            DrawCentered(ds, icon, (float)(r.X + toolW / 2), (float)(r.Y + toolH / 2), pressed ? Theme.Accent : focused ? Theme.Ink : Gfx.WithAlpha(Theme.Ink, 0.8));
             Add(tools[i].Item1, 0, r);
         }
         ds.FillRectangle(cx - 12, ruleY, 24, 1, Gfx.WithAlpha(Theme.Ink, 0.16));
@@ -202,7 +198,7 @@ public sealed class Rail
         if (focus >= 0 && focus < Items.Count)
         {
             var it = Items[focus];
-            if (it.Kind is RailKind.Search or RailKind.AddGame or RailKind.Settings or RailKind.Lights or RailKind.Explorer)
+            if (it.Kind is RailKind.Search or RailKind.AddGame or RailKind.Settings or RailKind.Explorer)
             {
                 // 工具格：方形焦点环（folia focus-visible：2 px 描边，离按钮 2 px），底色上面已经画了
                 var b = it.Bounds;

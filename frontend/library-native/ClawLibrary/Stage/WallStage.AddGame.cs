@@ -361,10 +361,11 @@ public sealed partial class WallStage
         });
     }
 
-    /// <summary>每个输入框建好时挂上：拿到焦点叫键盘，失去焦点收键盘。</summary>
+    /// <summary>每个输入框建好时挂上：拿到焦点叫键盘，失去焦点收键盘；打字时一下一下的按键声（只在有焦点时，程序改字不响）。</summary>
     private void HookTouchKeyboard(TextBox box)
     {
         box.GotFocus += (_, _) => ShowTouchKeyboard();
         box.LostFocus += (_, _) => HideTouchKeyboardSoon();
+        box.TextChanging += (s, e) => { if (e.IsContentChanging && s.FocusState != Microsoft.UI.Xaml.FocusState.Unfocused) SoundFx.Play(Sfx.Typing); };
     }
 }
