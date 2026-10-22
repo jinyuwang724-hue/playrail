@@ -1,10 +1,10 @@
-// 控制中心 → 手柄 → 按键映射的布局（照 Steam 的控制器布局页）：C8EX 线稿放在上面当主角，
-// 肩键 / 扳机 / View / Menu / 快速设置 / Claw / 背键挂在线稿左右两侧，底下压紧的四栏：左摇杆、十字键、右摇杆、正面按键。
-// 每行 = 这个键的小图标 + 它现在映射到什么（键盘画键帽、鼠标画鼠标、手柄键画手柄键的图标），尽量不用字；没改过的写一个淡淡的「原键」。
-// 焦点到 M1 / M2 时线稿翻到背面（GpPageFaces）。焦点那行白字，线稿上它管的那块染强调色。
-// 掌机上要看得清：映射行（键的图标、键帽、字）整体放大 GpMapInk 倍，线稿整层（_gpArtPage）在映射页缩到 0.70 给它们让位
-// （合成层弹簧），换回别的分类再回到原位。焦点的样子不变：白字 + 线稿上那块染色，不加框。
-// 底部四栏各两行，整页内容竖向居中。游戏设置 › 手柄用同一套画法，按右栏宽度单独排（GpMapGeo）。
+// 控制中心 → 手柄 → 按键映射的布局：C8EX 线稿放在上面当主角（和其他分类一样大，不缩小），
+// 每个键映射到什么排在线稿下面，按组分好：肩键与扳机、功能键、背键、左摇杆、十字键、右摇杆、正面按键，每组两格一行。
+// 一屏放不下：焦点往下走到屏幕外的格子时，线稿和格子一起往上滚（_gpMapScroll，线稿整层走弹簧），回到上面再滚回来。
+// 每格 = 这个键的小图标 + 它现在映射到什么（键盘画键帽、鼠标画鼠标、手柄键画手柄键的图标），尽量不用字；没改过的写一个淡淡的「原键」。
+// 掌机上要看得清：格子里的图标、键帽、字整体放大 GpMapInk 倍，组标题也一样放大。
+// 焦点到 M1 / M2 时线稿翻到背面（GpPageFaces）。焦点那格白字，线稿上它管的那块染强调色（这就是键在哪的提示），不加框。
+// 游戏设置 › 手柄用同一套排法，按右栏宽度排（GpMapGeo）。
 using System.Numerics;
 using System.Text.Json.Nodes;
 using Microsoft.Graphics.Canvas;
@@ -16,33 +16,55 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     // ---- 几何（设计 px） ----
-    /// <summary>映射行的图标、键帽、字放大多少（以行的锚点为中心整体放大；选择指令页用它自己的尺寸）。</summary>
+
+    /// <summary>映射格里的图标、键帽、字放大多少（以格子的锚点为中心整体放大；选择指令页用它自己的尺寸）。</summary>
     private const float GpMapInk = 1.35f;
 
     /// <summary>
-    /// 映射图的排法（设计 px）：线稿整层的比例和中心；两侧一列（左边图标右缘贴 LeftX，右边图标从 RightX 起，第一行 SideY，
-    /// 行距 SideStep，一行宽 SideW）；底部四栏（标题 ColHeadY，第一行 ColY，行距 ColStep，从 ColX 起每栏 ColW，一行放 PerRow 格）。
+    /// 映射图的排法（设计 px）：线稿整层的比例和中心；线稿下面的分组从 GridTop 起、在 GridX…GridX+GridW 里每行放 Groups 组
+    /// （一行不满就居中），每组两格一行，格子行距 Step，组标题占 HeadH，两行组之间空 RowGap。
     /// </summary>
-    private sealed record GpMapGeo(float ArtScale, float ArtCx, float ArtCy, float LeftX, float RightX, float SideY, float SideStep, float SideW,
-        float ColHeadY, float ColY, float ColStep, float ColX, float ColW, int PerRow);
+    private sealed record GpMapGeo(float ArtScale, float ArtCx, float ArtCy, float GridX, float GridTop, float GridW, int Groups,
+        float Step, float HeadH, float RowGap);
 
     /// <summary>
-    /// 手柄页（分类右边 220…1240）：线稿 0.70（532 宽），中心 (730, 320)，464…996 × 198…442；
-    /// 两侧行距 48、一行 220 宽，贴着线稿；底部四栏铺满 230…1230，每栏两格一行，行距 44。
+    /// 手柄页（分类右边 220…1240）：线稿和原来一样 0.99（752 宽），中心 (730, 332)，354…1106 × 160…504；
+    /// 分组从 512 起铺满 230…1230，一行三组（每组 333、每格 166，映射值放得下），三行到 850，靠滚动看到下面。
     /// </summary>
-    private const float GpMapScale = 0.70f, GpMapCx = 730, GpMapCy = 320;
-    private static readonly GpMapGeo GpMapPage = new(GpMapScale, GpMapCx, GpMapCy, 452, 1008, 214, 48, 220, 490, 532, 44, 230, 250, 2);
+    private const float GpMapScale = 0.99f, GpMapCx = 730, GpMapCy = 332;
+    private static readonly GpMapGeo GpMapPage = new(GpMapScale, GpMapCx, GpMapCy, 230, 512, 1000, 3, 40, 28, 6);
+    /// <summary>映射页往上滚了多少（设计 px）；焦点格子的下沿不低于 GpMapViewBottom（底下是按键提示）。</summary>
+    private float _gpMapScroll;
+    private const float GpMapViewBottom = 712;
 
-    private static readonly string[] GpMapColTitles = { "左摇杆", "十字键", "右摇杆", "正面按键" };
+    /// <summary>按焦点算滚动：焦点在格子上且格子在可视范围下面 → 往上滚到刚好露出；焦点在上面（模式）→ 回到顶。</summary>
+    private void GpUpdateMapScroll()
+    {
+        float want = 0;
+        if (GpIsMapPage && !_gpInSide && GpFocusItem is { Map: true } f)
+            want = Math.Max(0, f.Y + f.MapH / 2 + 6 - GpMapViewBottom);
+        else if (GpIsMapPage && _gpInSide) want = _gpMapScroll;   // 回到分类：页面停在原处
+        if (!GpIsMapPage) want = 0;
+        if (Math.Abs(want - _gpMapScroll) < 0.5f) return;
+        _gpMapScroll = want;
+        GpPlaceArt();
+    }
 
-    /// <summary>手柄模式：两侧（从上到下）和底部四栏。</summary>
-    private static readonly string[] GpMapSideL = { "LT", "LB", "Back", "QS", "M1" };
-    private static readonly string[] GpMapSideR = { "RT", "RB", "Start", "Claw", "M2" };
-    private static readonly string[][] GpMapCols = { new[] { "LStick", "LS" }, new[] { "Up", "Down", "Left", "Right" }, new[] { "RStick", "RS" }, new[] { "A", "B", "X", "Y" } };
+    /// <summary>手柄模式的分组（每组两格一行，按手柄上的位置：左边的在左格）。</summary>
+    private static readonly (string Title, string[] Keys)[] GpMapGroups =
+    {
+        ("肩键与扳机", new[] { "LT", "RT", "LB", "RB" }), ("功能键", new[] { "Back", "Start", "QS", "Claw" }), ("背键", new[] { "M1", "M2" }),
+        ("左摇杆", new[] { "LStick", "LS" }), ("十字键", new[] { "Up", "Down", "Left", "Right" }), ("右摇杆", new[] { "RStick", "RS" }),
+        ("正面按键", new[] { "A", "B", "X", "Y" }),
+    };
     /// <summary>桌面模式：只有固件管得到的键。</summary>
-    private static readonly string[] GpDeskSideL = { "LT", "LB" };
-    private static readonly string[] GpDeskSideR = { "RT", "RB" };
-    private static readonly string[][] GpDeskCols = { new[] { "LS" }, new[] { "Up", "Down", "Left", "Right" }, new[] { "RS" }, new[] { "A", "B", "X", "Y" } };
+    private static readonly (string Title, string[] Keys)[] GpDeskGroups =
+    {
+        ("肩键与扳机", new[] { "LT", "RT", "LB", "RB" }), ("左摇杆", new[] { "LS" }), ("十字键", new[] { "Up", "Down", "Left", "Right" }),
+        ("右摇杆", new[] { "RS" }), ("正面按键", new[] { "A", "B", "X", "Y" }),
+    };
+    /// <summary>手柄页映射图的组标题（标题、左边、中线 y、宽）。</summary>
+    private readonly List<(string Title, float X, float Y, float W)> _gpMapHeads = new();
 
     /// <summary>映射值里的一块：Cap = 键帽，Mouse = 鼠标图标 + 字，Pad = 手柄键图标，Plus = 组合键之间的「+」，Trig = 触发方式小字，Text = 字。</summary>
     private enum GpTokKind { Cap, Mouse, Pad, Plus, Trig, Text }
@@ -51,46 +73,55 @@ public sealed partial class WallStage
     // ---------------- 布局 ----------------
 
     /// <summary>
-    /// 按键映射页的格子：两侧 + 底部四栏，位置写进 GpItem（X / Y 是这一行的锚点，MapW / MapH 是这一行占的宽高，
-    /// Cx / Cy 是按方位找焦点用的中心）。keep 筛掉不要的键（游戏设置里没有快速设置键、Claw 键、摇杆互换），剩下的排紧。
+    /// 按键映射页的格子：线稿下面按组排，位置写进 GpItem（X / Y 是这一格图标的左边和中线，MapW / MapH 是这一格占的宽高，
+    /// Cx / Cy 是按方位找焦点用的中心），组标题写进 heads。keep 筛掉不要的键（游戏设置里没有快速设置键、Claw 键、摇杆互换），剩下的排紧。
     /// </summary>
-    private void BuildGpMapItems(bool desktop, GpMapGeo? geo = null, Func<string, bool>? keep = null)
+    private void BuildGpMapItems(bool desktop, GpMapGeo? geo = null, Func<string, bool>? keep = null, List<(string Title, float X, float Y, float W)>? heads = null)
     {
         var g = geo ?? GpMapPage;
-        bool Keep(string s) => keep == null || keep(s);
-        var sideL = (desktop ? GpDeskSideL : GpMapSideL).Where(Keep).ToArray();
-        var sideR = (desktop ? GpDeskSideR : GpMapSideR).Where(Keep).ToArray();
-        var cols = (desktop ? GpDeskCols : GpMapCols).Select(c => c.Where(Keep).ToArray()).ToArray();
-        float subW = g.ColW / g.PerRow;
-        void Add(string src, int col, float x, float y, float w, float h)
+        heads ??= _gpMapHeads;
+        heads.Clear();
+        var groups = (desktop ? GpDeskGroups : GpMapGroups)
+            .Select(gr => (gr.Title, Keys: gr.Keys.Where(k => keep == null || keep(k)).ToArray())).Where(gr => gr.Keys.Length > 0).ToList();
+        float gw = g.GridW / g.Groups, cw = gw / 2;
+        float y = g.GridTop;
+        int index = 0;
+        for (int i = 0; i < groups.Count; i += g.Groups)
         {
-            var it = GpMapCell(src, desktop);
-            it.Map = true;
-            it.Col = col;
-            it.Compact = true;
-            it.Side = col == -1 ? -1 : 1;
-            it.X = x;
-            it.Y = y;
-            it.MapW = w;
-            it.MapH = h;
-            it.Cx = col == -1 ? x - w / 2 : x + w / 2;
-            it.Cy = y;
-            it.Tokens = GpMapTokens(src, desktop, it);
-            _gpItems.Add(it);
+            var row = groups.Skip(i).Take(g.Groups).ToList();
+            int lines = row.Max(gr => (gr.Keys.Length + 1) / 2);
+            float x0 = g.GridX + (g.Groups - row.Count) * gw / 2;   // 一行不满：居中
+            for (int j = 0; j < row.Count; j++)
+            {
+                float gx = x0 + j * gw;
+                heads.Add((row[j].Title, gx, y + g.HeadH / 2 - 4, gw));
+                for (int k = 0; k < row[j].Keys.Length; k++)
+                {
+                    var it = GpMapCell(row[j].Keys[k], desktop);
+                    it.Map = true;
+                    it.Col = index;
+                    it.Compact = true;
+                    it.Side = 1;
+                    it.X = gx + k % 2 * cw;
+                    it.Y = y + g.HeadH + k / 2 * g.Step + g.Step / 2;
+                    it.MapW = cw;
+                    it.MapH = g.Step;
+                    it.Cx = it.X + cw / 2;
+                    it.Cy = it.Y;
+                    it.Tokens = GpMapTokens(row[j].Keys[k], desktop, it);
+                    _gpItems.Add(it);
+                }
+                index++;
+            }
+            y += g.HeadH + lines * g.Step + g.RowGap;
         }
-        for (int i = 0; i < sideL.Length; i++) Add(sideL[i], -1, g.LeftX, g.SideY + i * g.SideStep, g.SideW, g.SideStep);
-        for (int i = 0; i < sideR.Length; i++) Add(sideR[i], -2, g.RightX, g.SideY + i * g.SideStep, g.SideW, g.SideStep);
-        // 手柄页每栏两个小格一行：摇杆（方向、按下）一行；十字键 ↑ ↓ / ← →、正面按键 A B / X Y 各两行
-        for (int c = 0; c < cols.Length; c++)
-            for (int r = 0; r < cols[c].Length; r++)
-                Add(cols[c][r], c, g.ColX + c * g.ColW + r % g.PerRow * subW, g.ColY + r / g.PerRow * g.ColStep, subW, g.ColStep);
     }
 
     /// <summary>线稿整层的位置：映射页缩小上移，别的分类原位。弹簧，打断时从当前值接着走。</summary>
     private void GpPlaceArt(bool instant = false)
     {
         if (_gp == null) return;
-        float k = _ccK, m = GpIsMapPage ? GpMapScale : 1, cx = GpIsMapPage ? GpMapCx : GpCx, cy = GpIsMapPage ? GpMapCy : GpCy;
+        float k = _ccK, m = GpIsMapPage ? GpMapScale : 1, cx = GpIsMapPage ? GpMapCx : GpCx, cy = GpIsMapPage ? GpMapCy - _gpMapScroll : GpCy;
         var scale = new Vector3(m, m, 1);
         var off = new Vector3((cx - GpCx * m) * k, (cy - GpCy * m) * k, 0);
         if (instant || Reduced)
@@ -208,14 +239,12 @@ public sealed partial class WallStage
 
     // ---------------- 绘制 ----------------
 
-    /// <summary>栏标题（映射页底部四栏），和映射行一起放大。</summary>
-    private void PaintGpMapHeads(CanvasDrawingSession ds, GpMapGeo? geo = null)
+    /// <summary>组标题，和映射格一起放大。</summary>
+    private void PaintGpMapHeads(CanvasDrawingSession ds, List<(string Title, float X, float Y, float W)>? heads = null)
     {
-        var g = geo ?? GpMapPage;
         var f = TextKit.Ui(600);
-        var cols = GpCatId == "dkmap" && geo == null ? GpDeskCols : GpMapCols;
-        for (int c = 0; c < cols.Length; c++)
-            PText(ds, GpMapColTitles[c], f, 13 * GpMapInk, Gfx.WithAlpha(CcText, 0.45f), g.ColX + c * g.ColW, g.ColHeadY, g.ColW);
+        foreach (var (title, x, y, w) in heads ?? _gpMapHeads)
+            PText(ds, title, f, 13 * GpMapInk, Gfx.WithAlpha(CcText, 0.45f), x, y, w);
     }
 
     /// <summary>

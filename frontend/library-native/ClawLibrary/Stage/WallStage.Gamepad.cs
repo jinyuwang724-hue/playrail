@@ -732,6 +732,7 @@ public sealed partial class WallStage
         // 游戏设置里的按键选择：画在设置页上
         if (!_gpOpen) { if (_stOpen && _gsItem != null) Repaint(); return; }
         if (_gp == null) return;
+        GpUpdateMapScroll();
         float k = _ccK, raster = k * Chrome.Dpi;
         _gpTargets.Clear();
         CcSet(_gpBody, CcDraw(1280, 800, raster, PaintGpUi));
@@ -770,6 +771,11 @@ public sealed partial class WallStage
         PaintGpSidebar(ds);
         if (_gpPicker != null) { PaintGpPicker(ds, accent); return; }
         if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpIsMapPage ? GpMapCy : GpCy, 300);
+        // 映射页滚动：设置和格子跟线稿一起往上走，裁在标题下面、按键提示上面
+        float scroll = GpIsMapPage ? _gpMapScroll : 0;
+        var unscrolled = ds.Transform;
+        var scrollClip = GpIsMapPage ? ds.CreateLayer(1, new Windows.Foundation.Rect(0, 96, 1280, 626)) : null;
+        ds.Transform = Matrix3x2.CreateTranslation(0, -scroll) * unscrolled;
         if (GpIsMapPage) PaintGpMapHeads(ds);
 
         var focus = GpFocusItem;
@@ -796,6 +802,8 @@ public sealed partial class WallStage
             else PaintGpItem(ds, it, it == focus);
             GpAddItemTargets(ds, it, i);
         }
+        ds.Transform = unscrolled;
+        scrollClip?.Dispose();
 
         // 底部的按键提示（按键图标 + 字）
         if (focus != null && focus.Title == "模式" && focus.Side == 0) GpHints(ds, ("A", GpWantDesktop ? "切到手柄模式" : "切到桌面模式"));

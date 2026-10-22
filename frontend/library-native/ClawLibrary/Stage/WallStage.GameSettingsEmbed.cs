@@ -140,16 +140,21 @@ public sealed partial class WallStage
     private readonly List<GpItem> _gsMapItems = new();
     private float GsMapTop => PerfTop + RowsHeight(_stRows) + 8;
 
+    private readonly List<(string Title, float X, float Y, float W)> _gsMapHeads = new();
+
     /// <summary>
-    /// 右栏（428…1240）里的排法：字和图标和手柄页一样大（不整体缩小），线稿缩到 0.48（365 宽）居中，两侧各一列贴着它；
-    /// 底部四栏每栏一格一行（右栏窄，两格一行放不下映射值）。
+    /// 右栏（428…1240）里的排法：线稿和手柄页一样大（0.99，752 宽）居中，字和图标也一样大；分组一行两组（每格 203）。
+    /// 焦点不在图上时图接在设置行下面（下半截在屏幕外）；焦点进图后设置行藏起来，图挪到右栏顶上，
+    /// 焦点再往下走到屏幕外的格子时整张图往上滚（_gsMapScroll）。
     /// </summary>
+    private float _gsMapScroll;
+
     private GpMapGeo GsMapGeo
     {
         get
         {
-            float t = GsMapTop, cx = PerfRightX + PerfRightW / 2, half = GpW * 0.48f / 2;
-            return new(0.48f, cx, t + 96, cx - half - 12, cx + half + 12, t + 30, 46, 196, t + 222, t + 260, 40, PerfRightX + 4, PerfRightW / 4f, 1);
+            float t = _gsMapFocus >= 0 ? PerfTop - _gsMapScroll : GsMapTop, cx = PerfRightX + PerfRightW / 2;
+            return new(GpMapScale, cx, t + GpH * GpMapScale / 2, PerfRightX, t + GpH * GpMapScale + 14, PerfRightW, 2, 40, 28, 6);
         }
     }
 
@@ -158,7 +163,20 @@ public sealed partial class WallStage
     {
         var keep = _gpItems.ToList();
         _gpItems.Clear();
-        BuildGpMapItems(false, GsMapGeo, s => !GpIsSpecial(s) && s is not ("LStick" or "RStick"));
+        BuildGpMapItems(false, GsMapGeo, s => !GpIsSpecial(s) && s is not ("LStick" or "RStick"), _gsMapHeads);
+        // 焦点格子在屏幕外：往上滚到刚好露出（滚动量按没滚时的位置算），再排一次
+        if (_gsMapFocus >= 0 && _gsMapFocus < _gpItems.Count)
+        {
+            var f = _gpItems[_gsMapFocus];
+            float want = Math.Max(0, f.Y + _gsMapScroll + f.MapH / 2 + 6 - 790);
+            if (Math.Abs(want - _gsMapScroll) > 0.5f)
+            {
+                _gsMapScroll = want;
+                _gpItems.Clear();
+                BuildGpMapItems(false, GsMapGeo, s => !GpIsSpecial(s) && s is not ("LStick" or "RStick"), _gsMapHeads);
+            }
+        }
+        else _gsMapScroll = 0;
         _gsMapItems.Clear();
         _gsMapItems.AddRange(_gpItems);
         _gpItems.Clear();
@@ -171,7 +189,7 @@ public sealed partial class WallStage
         var accent = PerfAccent;
         var g = GsMapGeo;
         var old = ds.Transform;
-        PaintGpMapHeads(ds, g);
+        PaintGpMapHeads(ds, _gsMapHeads);
         // 线稿：和映射页一样按整层画（缩放、挪到 ArtCx / ArtCy），这样线稿上的区域染色也对得上
         var art = Matrix3x2.CreateScale(g.ArtScale) * Matrix3x2.CreateTranslation(g.ArtCx - GpCx * g.ArtScale, g.ArtCy - GpCy * g.ArtScale);
         var focus = _gsMapFocus >= 0 && _gsMapFocus < _gsMapItems.Count ? _gsMapItems[_gsMapFocus] : null;
@@ -240,7 +258,7 @@ public sealed partial class WallStage
         if (!GsPadMapMode) return false;
         float x = (float)sx / _ccK, y = (float)sy / _ccK;
         GsBuildMapItems();
-        int best = _gsMapItems.FindIndex(it => new Rect(it.Col == -1 ? it.X - it.MapW : it.X, it.Y - it.MapH / 2, it.MapW, it.MapH).Contains(new Point(x, y)));
+        int best = _gsMapItems.FindIndex(it => new Rect(it.X, it.Y - it.MapH / 2, it.MapW, it.MapH).Contains(new Point(x, y)));
         if (best < 0) return false;
         _stZone = 1;
         _gsMapFocus = best;
@@ -301,6 +319,7 @@ public sealed partial class WallStage
     {
         bool over = GsOverlay, map = GsPadMapMode;
         _stRightView.IsVisible = !over;
+        _stRightView.Opacity = map && !over && _gsMapFocus >= 0 ? 0 : 1;   // 焦点在图上：图占满右栏
         if (!over && !map) { if (_stOver != null) _stOver.IsVisible = false; return; }
         if (_stOver == null)
         {
