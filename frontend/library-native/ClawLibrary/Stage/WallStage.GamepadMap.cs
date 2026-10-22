@@ -28,8 +28,27 @@ public sealed partial class WallStage
     /// </summary>
     private const float GpMapScale = 0.80f, GpMapCx = 730, GpMapCy = 300;
     private static readonly GpMapGeo GpMapPage = new(GpMapScale, GpMapCx, GpMapCy, 402, 1058, 196, 44, 182, 478, 512, 34, 250, 245);
-    /// <summary>映射行的图标框（Steam 图标画在 28×28 里）和字号。</summary>
-    private const float GpMapGlyph = 28, GpMapFont = 17;
+    /// <summary>映射行的图标框（Steam 图标画在 28×28 里）和字号（照 Steam 控制器页：映射 16、栏标题 15，都按 1280 宽的设计 px）。</summary>
+    private const float GpMapGlyph = 28, GpMapFont = 16;
+    /// <summary>下面四栏每栏的内容（栏标题 + 这一栏最宽的一行）在栏里居中：栏左边 x → 往右挪多少。画之前按字宽算一次。</summary>
+    private readonly Dictionary<float, float> _gpMapColDx = new();
+
+    private void GpMapCenterColumns(CanvasDrawingSession ds, IEnumerable<GpItem> items, List<(string Title, float X, float Y, float W)> heads)
+    {
+        _gpMapColDx.Clear();
+        var head = TextKit.Ui(600);
+        foreach (var (title, x, _, w) in heads)
+        {
+            float widest = PWidth(ds, title, head, 15);
+            foreach (var it in items)
+            {
+                if (it.Col < 0 || it.X != x) continue;
+                string text = GpFit(ds, it.Value, TextKit.Ui(600), GpMapFont, Math.Max(30, it.MapW - GpMapGlyph - 10));
+                widest = Math.Max(widest, GpMapGlyph + 10 + PWidth(ds, text, TextKit.Ui(600), GpMapFont));
+            }
+            _gpMapColDx[x] = Math.Max(0, (w - widest) / 2);
+        }
+    }
     /// <summary>映射页往上滚了多少（设计 px）：现在一屏放得下，保持 0；焦点格子的下沿不低于 GpMapViewBottom。</summary>
     private float _gpMapScroll;
     private const float GpMapViewBottom = 712;
@@ -233,7 +252,7 @@ public sealed partial class WallStage
     {
         var f = TextKit.Ui(600);
         foreach (var (title, x, y, w) in heads ?? _gpMapHeads)
-            PText(ds, title, f, 15, Gfx.WithAlpha(CcText, 0.5f), x, y, w);
+            PText(ds, title, f, 15, Gfx.WithAlpha(CcText, 0.5f), x + (_gpMapColDx.TryGetValue(x, out var dx) ? dx : 0), y, w);
     }
 
     /// <summary>
@@ -263,8 +282,9 @@ public sealed partial class WallStage
         }
         else
         {
-            GpPaintGlyph(ds, glyph, it.X, y, GpMapGlyph, glyphCol, focused);
-            float tx = it.X + GpMapGlyph + gap + chev;
+            float x = it.X + (it.Col >= 0 && _gpMapColDx.TryGetValue(it.X, out var cdx) ? cdx : 0);   // 下面四栏：在栏里居中
+            GpPaintGlyph(ds, glyph, x, y, GpMapGlyph, glyphCol, focused);
+            float tx = x + GpMapGlyph + gap + chev;
             PText(ds, text, ui, GpMapFont, col, tx, y, tw + 4);
             if (editing) { DrawChevron(ds, tx - 12, y, true, col); DrawChevron(ds, tx + tw + 4, y, false, col); }
         }

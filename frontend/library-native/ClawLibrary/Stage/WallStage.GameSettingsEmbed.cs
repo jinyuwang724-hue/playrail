@@ -157,8 +157,10 @@ public sealed partial class WallStage
     {
         get
         {
-            float t = GsMapTop - _gsMapScroll, cx = StRightX + StRightW / 2, half = GpW * 0.66f / 2;
-            return new(0.66f, cx, t + 116, cx - half - 14, cx + half + 14, t + 30, 44, 180, t + 262, t + 296, 34, StRightX, StRightW / 4f);
+            // 线稿尽量大：两侧各留 194（图标 28 + 字 150 + 间距），剩下的给线稿 → 0.765（582 宽、266 高）
+            const float art = 0.765f;
+            float t = GsMapTop - _gsMapScroll, cx = StRightX + StRightW / 2, half = GpW * art / 2;
+            return new(art, cx, t + 4 + GpH * art / 2, cx - half - 12, cx + half + 12, t + 34, 44, 180, t + 296, t + 330, 34, StRightX, StRightW / 4f);
         }
     }
 
@@ -193,6 +195,7 @@ public sealed partial class WallStage
         var accent = PerfAccent;
         var g = GsMapGeo;
         var old = ds.Transform;
+        GpMapCenterColumns(ds, _gsMapItems, _gsMapHeads);
         PaintGpMapHeads(ds, _gsMapHeads);
         // 线稿：和映射页一样按整层画（缩放、挪到 ArtCx / ArtCy），这样线稿上的区域染色也对得上
         var art = Matrix3x2.CreateScale(g.ArtScale) * Matrix3x2.CreateTranslation(g.ArtCx - GpCx * g.ArtScale, g.ArtCy - GpCy * g.ArtScale);

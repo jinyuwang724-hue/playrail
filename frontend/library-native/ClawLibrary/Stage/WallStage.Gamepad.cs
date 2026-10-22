@@ -778,7 +778,7 @@ public sealed partial class WallStage
         var unscrolled = ds.Transform;
         var scrollClip = GpIsMapPage ? ds.CreateLayer(1, new Windows.Foundation.Rect(0, 96, 1280, 626)) : null;
         ds.Transform = Matrix3x2.CreateTranslation(0, -scroll) * unscrolled;
-        if (GpIsMapPage) PaintGpMapHeads(ds);
+        if (GpIsMapPage) { GpMapCenterColumns(ds, _gpItems, _gpMapHeads); PaintGpMapHeads(ds); }
 
         var focus = GpFocusItem;
         // 两侧的设置：焦点那项拉一根细线到它管的键（摇杆映射那种没有 Key 的，连到它点亮的那块）
