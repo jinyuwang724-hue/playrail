@@ -437,13 +437,14 @@ public static class Bench
                     if (state == "add9") { await Task.Delay(8000); s.Activate(); await Task.Delay(6000); s.Move(Direction.Right); await Task.Delay(300); s.Move(Direction.Up); await Task.Delay(300); s.Activate(); await Task.Delay(2500); }
                     break;
                 }
-                case "gpm" or "gpmd":
+                case "gpm" or "gpmd" or "gpg":
                     // 手柄页按键映射，焦点在右侧 RB
                     s.ToggleControlCenter(); await Task.Delay(1500);
                     for (int i = 0; i < 2; i++) { s.Move(Direction.Right); await Task.Delay(300); }
                     await Task.Delay(800); s.Activate(); await Task.Delay(2500);
                     s.Move(Direction.Right); await Task.Delay(400); s.Move(Direction.Right); await Task.Delay(400); s.Move(Direction.Down); await Task.Delay(800);
                     if (state == "gpmd") for (int i = 0; i < 5; i++) { s.Move(Direction.Down); await Task.Delay(400); }
+                    if (state == "gpg") { s.Activate(); await Task.Delay(800); }
                     await Task.Delay(800);
                     break;
                 case "gs0" or "gs1" or "gs2" or "gs3" or "gs4" or "gsk" or "gsc" or "gsb" or "gsm" or "gsmd":
