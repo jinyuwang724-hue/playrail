@@ -255,7 +255,11 @@ public sealed class Tile : IDisposable
         _animUntil = _s.NowMs + (long)(delayMs + durMs) + 50;
     }
 
-    /// <summary>入场：从径向推开的位置（世界坐标）就位，透明度 0 → 1、尺度 0.94 → 1，0.5 s cubic-bezier(0.32,0.72,0,1)。</summary>
+    /// <summary>
+    /// 入场：从径向推开的位置（世界坐标）就位，尺度 0.94 → 1，0.5 s cubic-bezier(0.32,0.72,0,1)；
+    /// 透明度 0 → 1 用柔和得多的曲线、位移 85 % 的时长 —— 之前和位移同一条强 ease-out，头 0.1 s 就几乎全实，
+    /// 看着是卡先在远处冒出来再滑过来；现在边飞边显，和出场的边散边淡对称。
+    /// </summary>
     public void MorphFlyIn(Vector2 from, double delayMs)
     {
         Cancel();
@@ -268,10 +272,10 @@ public sealed class Tile : IDisposable
         sc.InsertKeyFrame(1, Vector3.One, G.Ease(ease));
         var op = G.C.CreateScalarKeyFrameAnimation();
         op.InsertKeyFrame(0, 0, G.Linear);
-        op.InsertKeyFrame(1, 1, G.Ease(ease));
+        op.InsertKeyFrame(1, 1, G.Ease(new Bezier(0.25f, 0.4f, 0.45f, 1f)));
         foreach (var a in new KeyFrameAnimation[] { off, sc, op })
         {
-            a.Duration = Gfx.Ms(500);
+            a.Duration = Gfx.Ms(a == op ? 425 : 500);
             a.DelayTime = Gfx.Ms(delayMs);
             a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
         }
@@ -281,7 +285,10 @@ public sealed class Tile : IDisposable
         _animUntil = _s.NowMs + (long)(delayMs + 500) + 50;
     }
 
-    /// <summary>出场四散：沿径向挪开（世界坐标）、转一点、缩到 0.9，透明度 1 → 0.72 → 0。</summary>
+    /// <summary>
+    /// 出场四散：沿径向挪开（世界坐标）、转一点、缩到 0.9；透明度跟着位移一起走（起飞就开始淡，和位移同一种先快后慢的曲线，
+    /// 用位移 85 % 的时长淡完），边散边消失，不是散完了才一起没掉。
+    /// </summary>
     public void MorphScatter(Vector2 to, float rotateDeg, double durMs, double delayMs)
     {
         Cancel();
@@ -295,14 +302,12 @@ public sealed class Tile : IDisposable
         var rot = G.C.CreateScalarKeyFrameAnimation();
         rot.InsertKeyFrame(0, 0, G.Linear);
         rot.InsertKeyFrame(1, rotateDeg, ease);
-        var inOut = G.Ease(new Bezier(0.42f, 0f, 0.58f, 1f));
         var op = G.C.CreateScalarKeyFrameAnimation();
         op.InsertKeyFrame(0, 1, G.Linear);
-        op.InsertKeyFrame(0.5f, 0.72f, inOut);
-        op.InsertKeyFrame(1, 0, inOut);
+        op.InsertKeyFrame(1, 0, G.Ease(new Bezier(0.33f, 0.7f, 0.45f, 1f)));
         foreach (var a in new KeyFrameAnimation[] { off, sc, rot, op })
         {
-            a.Duration = Gfx.Ms(durMs);
+            a.Duration = Gfx.Ms(a == op ? durMs * 0.85 : durMs);
             a.DelayTime = Gfx.Ms(delayMs);
             a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
         }

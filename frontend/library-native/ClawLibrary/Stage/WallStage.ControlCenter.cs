@@ -1273,7 +1273,8 @@ public sealed partial class WallStage
             uint seed = (uint)(((int)MathF.Round(b.X) * 73856093) ^ ((int)MathF.Round(b.Y) * 19349663));
             double jitter = ((seed % 1000) / 1000.0 - 0.5) * 0.08;
             double n = Math.Min(dist / maxDist, 1);
-            double dur = (0.46 + n * 0.3) * 1000, delay = Math.Max(0, (0.04 + n * 0.26 + jitter) * 1000);
+            // 远处的卡晚一点、慢一点，但都在背景板淡完（0.62 s）前后淡完 —— 之前最远的要到 1 s 才没，看着像散完了才一起消失
+            double dur = (0.40 + n * 0.18) * 1000, delay = Math.Max(0, (0.02 + n * 0.16 + jitter * 0.5) * 1000);
             float rot = (seed % 2 == 0 ? 1 : -1) * (1.8f + (seed % 3) * 0.8f);
             // 实测：每张幽灵卡用一份墙卡的实时画面（VisualSurface）时，十几张一起在起飞那一帧渲染，每次都掉一帧；
             // 改成墙卡自己散开（只动卡的内层：位移、缩放、转角、透明度），不多画任何东西
@@ -1386,7 +1387,8 @@ public sealed partial class WallStage
             double nn = Math.Min(dist / (spacing * 14), 1);
             double eased = nn * nn * (3 - 2 * nn);
             double seed = Seed(ItemFor(t.Slot) ?? t.Slot.Key.ToString());
-            double delay = Math.Min(0.04 + eased * 0.34 + seed * 0.04, 0.32) * 1000;
+            // 远处的卡不再干等 0.32 s 才出发（等的这段是空的），最多 0.22 s
+            double delay = Math.Min(0.03 + eased * 0.2 + seed * 0.03, 0.22) * 1000;
             if (!Program.Args.Contains("--no-flyin")) t.MorphFlyIn(dir * reach / s, delay);
         }
 
