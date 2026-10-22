@@ -73,17 +73,22 @@ class FanTests(unittest.IsolatedAsyncioTestCase):
         await self.control._fan_tick(9)
         self.assertEqual(self.control.fan_write_count, 2)
 
-    async def test_hysteresis_delays_noise_changes_and_heat_bypasses_delay(self):
+    async def test_smoothing_delays_noise_changes_and_real_heat_bypasses_delay(self):
         governor = power.FanGovernor()
         points = power.fan_points(self.control.settings["fan"])
         self.assertEqual(governor.update(points, 60, 0), 30)
-        for second in range(1, 6):
+        for second in range(1, 4):
             self.assertEqual(governor.update(points, 70, second), 30)
-        self.assertEqual(governor.update(points, 70, 6), 50)
-        for second in range(7, 16):
-            self.assertEqual(governor.update(points, 60, second), 50)
-        self.assertEqual(governor.update(points, 60, 16), 30)
-        self.assertEqual(governor.update(points, 95, 17), 76)
+        for second in range(4, 41):
+            duty = governor.update(points, 70, second)
+        self.assertGreater(duty, 30)
+        self.assertLessEqual(duty, 50)
+        previous = duty
+        for second in range(41, 81):
+            duty = governor.update(points, 60, second)
+        self.assertLess(duty, previous)
+        self.assertGreaterEqual(duty, 30)
+        self.assertEqual(governor.update(points, 95, 81), 76)
 
     async def test_invalid_or_unavailable_sensor_releases_fixed_duty(self):
         await self.control._fan_tick(0)
