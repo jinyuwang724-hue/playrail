@@ -666,6 +666,22 @@ public sealed partial class WallStage
         }
         _stRows.Add(StToggle("动态背景", _backdropOn, on => { _backdropOn = on; UpdateBackdropRunning(); SaveUi(_prefs with { Backdrop = on }); Repaint(); }, true));
 
+        // 墙面（folia 的海报灯光、海报叠色）
+        void SetLook(UiPrefs next) { SaveUi(next); ApplyWallLook(); RepaintRail(); Repaint(); }
+        _stRows.Add(new PerfRow { Section = true, Title = "墙面" });
+        _stRows.Add(StPick("海报灯光", new[] { "开灯", "关灯" }, _prefs.LightsOn ? 0 : 1, i => SetLook(_prefs with { LightsOn = i == 0 }), 0));
+        _stRows.Add(StToggle("海报叠色", _prefs.PosterTint, on => SetLook(_prefs with { PosterTint = on }), true));
+        if (_prefs.PosterTint)
+        {
+            _stRows.Add(StToggle("自定义叠色", _prefs.PosterTintCustom, on => SetLook(_prefs with { PosterTintCustom = on }), false));
+            if (_prefs.PosterTintCustom)
+            {
+                int sw = Math.Max(0, Array.FindIndex(TintSwatches, s => s.Hex == _prefs.PosterTintColor));
+                _stRows.Add(StPick("叠色颜色", TintSwatches.Select(s => s.Name).ToArray(), sw, i => SetLook(_prefs with { PosterTintColor = TintSwatches[i].Hex }), 0));
+            }
+            _stRows.Add(StNumber("叠色强度", _prefs.PosterTintIntensity, 0, 100, 5, n => $"{n} %", n => SetLook(_prefs with { PosterTintIntensity = n }), 50));
+        }
+
         _stRows.Add(new PerfRow { Section = true, Title = "界面" });
         _stRows.Add(StPick("控制中心卡片", new[] { "拍立得", "卡片" }, _ccCards ? 1 : 0, i => { SetCcCardStyle(i == 1); Repaint(); }, 0));
         _stRows.Add(StPick("截图页排版", ShStyleNames, _prefs.ShotsStyle, i => { ShSetStyle((ShStyle)i); Repaint(); }, 0));

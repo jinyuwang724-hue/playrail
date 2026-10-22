@@ -132,6 +132,8 @@ public sealed partial class WallStage : IDisposable
         foreach (var n in new[] { "cx", "cy", "open", "anchor", "scale", "lineX", "vw", "vh", "cw", "sx", "sw", "pad", "bhome", "bsw" }) _cam.InsertScalar(n, 0);
         // fade：墙的底（底色、光、动态背景、暗角、缝）整体的不透明度；控制中心的出入场（folia 集合层的背景板）只动它，卡片另算
         _cam.InsertScalar("fade", 1);
+        // lfade：关灯时缝里的内容与边缘标签压到 0.4（透明的缝不涂黑，见 WallStage.WallLook.cs）
+        _seamLightsT = new CssTransition(G, _cam, "lfade", v => _cam.InsertScalar("lfade", v), 1);
         G.DeviceReplaced += () => _dq.TryEnqueue(() => { Text.Clear(); foreach (var t in _tiles.Values) t.Redraw(); RenderSeamContent(); });
     }
 
@@ -145,6 +147,7 @@ public sealed partial class WallStage : IDisposable
         if (Program.Args.Contains("--style=b")) Style = TitleStyle.B;
         Measure();
         ApplyUiPrefsBeforeLoad();
+        UpdateSeamLights(animate: false);
         LoadLibrary();
         ApplyTabPrefs();
         if (Program.Args.FirstOrDefault(a => a.StartsWith("--export-web=")) is { } exp)
@@ -439,7 +442,7 @@ public sealed partial class WallStage : IDisposable
         _seamInner = G.C.CreateContainerVisual();
         Expr(_seamInner, "Offset", "Vector3(p.sw / 2 - p.cw / 2, 0, 0)");
         Expr(_seamInner, "Size", "Vector2(p.cw, p.vh)");
-        Expr(_seamInner, "Opacity", "Min(1, p.sw / Max(1, p.cw)) < 0.6 ? 0 : (Min(1, p.sw / Max(1, p.cw)) - 0.6) / 0.4");
+        Expr(_seamInner, "Opacity", "(Min(1, p.sw / Max(1, p.cw)) < 0.6 ? 0 : (Min(1, p.sw / Max(1, p.cw)) - 0.6) / 0.4) * p.lfade");
         clip.Children.InsertAtTop(_seamInner);
         var persp = G.Container();
         persp.RelativeOffsetAdjustment = new Vector3(0.5f, 0.5f, 0);
@@ -465,8 +468,8 @@ public sealed partial class WallStage : IDisposable
             e.Shadow = sh;
             _root.Children.InsertAtTop(e);
         }
-        Expr(_edgeLeft, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx < p.lineX) ? p.fade : 0");
-        Expr(_edgeRight, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx >= p.lineX) ? p.fade : 0");
+        Expr(_edgeLeft, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx < p.lineX) ? p.fade * p.lfade : 0");
+        Expr(_edgeRight, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx >= p.lineX) ? p.fade * p.lfade : 0");
 
         _toast = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _toast.Opacity = 0;
@@ -1113,6 +1116,7 @@ public sealed partial class WallStage : IDisposable
         target.Size = art.Size;
         // 内容在缝里水平居中（left: 50%; translate: -50%），以转轴（缝内容中心）为原点
         target.Offset = new Vector3(-art.Size.X / 2, -art.Size.Y / 2, 0);
+        UpdateSeamLights();
     }
 
     private void RenderSeamContent()
@@ -1304,6 +1308,7 @@ public sealed partial class WallStage : IDisposable
                     case VirtualKey.V: PadView(); break;
                     case VirtualKey.T: ToggleTitleStyle(); break;
                     case VirtualKey.R: ToggleReducedMotion(); break;
+            case VirtualKey.L: ToggleLights(); break;
                     default: return;
                 }
                 break;

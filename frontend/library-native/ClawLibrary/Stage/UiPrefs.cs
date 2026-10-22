@@ -39,7 +39,14 @@ public sealed record UiPrefs
     public bool LibraryCover { get; init; }
     /// <summary>截图页的排版：0 日历、1 放映、2 冲印。</summary>
     public int ShotsStyle { get; init; }
-    /// <summary>添加游戏 › 匹配弹窗的搜索栏样子：0 胶囊 / 1 大字 / 2 顶栏。</summary>
+    /// <summary>墙上的灯光（folia「海报灯光」）：关灯时除焦点 / 展开的卡外每张压 82 % 黑，竖条压 60 %。</summary>
+    public bool LightsOn { get; init; } = true;
+    /// <summary>海报叠色（folia latticePosterTint*）：开关、用自定义色、自定义色、强度 0–100 %。</summary>
+    public bool PosterTint { get; init; } = true;
+    public bool PosterTintCustom { get; init; }
+    public string PosterTintColor { get; init; } = DefaultTintColor;
+    public int PosterTintIntensity { get; init; } = 50;
+    public const string DefaultTintColor = "#161419";
 
     public static readonly (string Name, uint Rgb)[] Accents =
     {
@@ -85,6 +92,11 @@ public sealed record UiPrefs
                     "navHaptics" when bool.TryParse(v, out var b) => p with { NavHaptics = b },
                     "libraryCover" when bool.TryParse(v, out var b) => p with { LibraryCover = b },
                     "shotsStyle" when int.TryParse(v, out var i) => p with { ShotsStyle = Math.Clamp(i, 0, 2) },
+                    "lightsOn" when bool.TryParse(v, out var b) => p with { LightsOn = b },
+                    "posterTint" when bool.TryParse(v, out var b) => p with { PosterTint = b },
+                    "posterTintCustom" when bool.TryParse(v, out var b) => p with { PosterTintCustom = b },
+                    "posterTintColor" when v.Length == 7 && v[0] == '#' && v.Skip(1).All(Uri.IsHexDigit) => p with { PosterTintColor = v.ToLowerInvariant() },
+                    "posterTintIntensity" when int.TryParse(v, out var i) => p with { PosterTintIntensity = Math.Clamp(i, 0, 100) },
                     "folders" => p with { Folders = v.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) },
                     _ => p,
                 };
@@ -106,6 +118,7 @@ public sealed record UiPrefs
                 $"sourceSteam={SourceSteam}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}",
                 $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
                 $"soundTheme={SoundTheme}", $"musicEnabled={MusicEnabled}", $"musicVolume={MusicVolume}", $"musicTrack={MusicTrack}", $"musicLoop={MusicLoop}",
+                $"lightsOn={LightsOn}", $"posterTint={PosterTint}", $"posterTintCustom={PosterTintCustom}", $"posterTintColor={PosterTintColor}", $"posterTintIntensity={PosterTintIntensity}",
             });
             File.Move(FilePath + ".tmp", FilePath, true);
         }
