@@ -254,6 +254,7 @@ public sealed partial class WallStage
             foreach (var (face, file) in new[] { ("front", "claw8ex-front-hd"), ("back", "claw8ex-back"), ("tl", "claw8ex-trigger-l"), ("tr", "claw8ex-trigger-r") })
                 _gpBitmaps[face] = await CanvasBitmap.LoadAsync(G.Device, Path.Combine(dir, file + ".png"));
             GpLoadRegions(Path.Combine(dir, "regions.txt"));
+            await GpLoadGlyphs(Path.Combine(dir, "Glyphs"));
             _gpArtLoaded = true;
             _gpArtK = 0;
             if (_gpOpen) PaintGp();
@@ -499,6 +500,7 @@ public sealed partial class WallStage
     /// <summary>手柄页里的 X / Y：震动页 X 测试震动、Y 恢复原来的强度；别的页不做事。</summary>
     private void GpPadButton(bool isY)
     {
+        if (isY && GpGroupY()) return;
         if (_gpPicker != null || _gpEditing || GpCatId != "rumble") return;
         if (isY) _ = GpWrite("restore_rumble");
         else _ = GpTestRumble();
@@ -732,6 +734,7 @@ public sealed partial class WallStage
         // 游戏设置里的按键选择：画在设置页上
         if (!_gpOpen) { if (_stOpen && _gsItem != null) Repaint(); return; }
         if (_gp == null) return;
+        GpUpdateMapScroll();
         float k = _ccK, raster = k * Chrome.Dpi;
         _gpTargets.Clear();
         CcSet(_gpBody, CcDraw(1280, 800, raster, PaintGpUi));
@@ -767,9 +770,14 @@ public sealed partial class WallStage
         string sub = !connected ? "Claw 8 EX · 没有检测到手柄" : $"Claw 8 EX · 已连接{(mode.Length > 0 ? " · " + mode : "")}";
         PText(ds, sub, ui, 13, muted, 40, 82, 900);
 
-        PaintGpSidebar(ds);
+        if (_gpPicker?.Level == GpSubLevel.Group) PaintGpGroupList(ds, _gpPicker); else PaintGpSidebar(ds);
         if (_gpPicker != null) { PaintGpPicker(ds, accent); return; }
         if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpIsMapPage ? GpMapCy : GpCy, 300);
+        // 映射页滚动：设置和格子跟线稿一起往上走，裁在标题下面、按键提示上面
+        float scroll = GpIsMapPage ? _gpMapScroll : 0;
+        var unscrolled = ds.Transform;
+        var scrollClip = GpIsMapPage ? ds.CreateLayer(1, new Windows.Foundation.Rect(0, 96, 1280, 626)) : null;
+        ds.Transform = Matrix3x2.CreateTranslation(0, -scroll) * unscrolled;
         if (GpIsMapPage) PaintGpMapHeads(ds);
 
         var focus = GpFocusItem;
@@ -796,6 +804,8 @@ public sealed partial class WallStage
             else PaintGpItem(ds, it, it == focus);
             GpAddItemTargets(ds, it, i);
         }
+        ds.Transform = unscrolled;
+        scrollClip?.Dispose();
 
         // 底部的按键提示（按键图标 + 字）
         if (focus != null && focus.Title == "模式" && focus.Side == 0) GpHints(ds, ("A", GpWantDesktop ? "切到手柄模式" : "切到桌面模式"));

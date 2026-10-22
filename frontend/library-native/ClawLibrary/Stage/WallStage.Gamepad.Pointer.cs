@@ -65,7 +65,8 @@ public sealed partial class WallStage
                 else if (hit.Row == 2) GpPadButton(true);
                 return;
             case SettingsTargetKind.Tab:
-                if (_gpPicker is { } tab) { GpSwitchTab(hit.Row - tab.Tab); tab.InTabs = false; PaintGpBody(); }
+                if (_gpPicker is { Level: GpSubLevel.Group } gp) GpGroupSwitch(gp, hit.Row - gp.Group);
+                else if (_gpPicker is { } tab) { GpSwitchTab(hit.Row - tab.Tab); tab.InTabs = false; PaintGpBody(); }
                 return;
             case SettingsTargetKind.Cell:
                 if (_gpPicker is { } picker) { picker.Cell = hit.Row; picker.InTabs = false; GpPickerActivate(); }
@@ -102,11 +103,11 @@ public sealed partial class WallStage
     {
         if (item.Map)
         {
-            _gpTargets.Add(new(index, SettingsTargetKind.Item, item.Col == -1 ? item.X - item.MapW : item.X, item.Y - item.MapH / 2, item.MapW, item.MapH));
+            _gpTargets.Add(new(index, SettingsTargetKind.Item, item.Col == -1 ? item.X - item.MapW : item.X, item.Y - item.MapH / 2 - _gpMapScroll, item.MapW, item.MapH));
             return;
         }
         float x = item.Side < 0 ? item.X - 140 : item.Side > 0 ? item.X - 10 : item.X - 190;
-        _gpTargets.Add(new(index, SettingsTargetKind.Item, x, item.Y - 18, item.Side == 0 ? 380 : 150, 88));
+        _gpTargets.Add(new(index, SettingsTargetKind.Item, x, item.Y - 18 - (GpIsMapPage ? _gpMapScroll : 0), item.Side == 0 ? 380 : 150, 88));
         if (item.Disabled || item.Number is not int value || item.SetNumber == null) return;
         const float widthSlider = 110;
         float leftSlider = item.Side < 0 ? item.X - widthSlider : item.X;

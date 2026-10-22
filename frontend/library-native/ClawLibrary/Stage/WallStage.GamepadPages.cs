@@ -206,13 +206,13 @@ public sealed partial class WallStage
                 it.Stock = _gpSettings?["buttonMappings"]?[src] == null;
                 it.Disabled = _gpSettings == null;
                 it.Why = _gpError ?? "正在读取…";
-                it.Press = () => GpOpenPicker(src, false);
+                it.Press = () => GpOpenGroup(src, false);
                 break;
             }
             default:
                 it.Value = desktop ? GpDesktopSummary(src) : GpKeySummary(src);
                 it.Stock = desktop ? GpDesktopStock(src) : GpActs(src) == null && GpFirmwareCodes(src) is var c && (c.Length == 0 || c.Length == 1 && c[0] == GpNativeCode(src));
-                it.Press = () => GpOpenPicker(src, desktop);
+                it.Press = () => GpOpenGroup(src, desktop);
                 break;
         }
         return it;
