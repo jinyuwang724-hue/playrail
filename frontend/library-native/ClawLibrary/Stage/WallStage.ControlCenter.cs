@@ -1385,7 +1385,8 @@ public sealed partial class WallStage
             double nn = Math.Min(dist / (spacing * 14), 1);
             double eased = nn * nn * (3 - 2 * nn);
             double seed = Seed(ItemFor(t.Slot) ?? t.Slot.Key.ToString());
-            double delay = Math.Min(0.04 + eased * 0.34 + seed * 0.04, 0.32) * 1000;
+            // 远处的卡不再干等 0.32 s 才出发（等的这段是空的），最多 0.22 s
+            double delay = Math.Min(0.03 + eased * 0.2 + seed * 0.03, 0.22) * 1000;
             if (!Program.Args.Contains("--no-flyin")) t.MorphFlyIn(dir * reach / s, delay);
         }
 

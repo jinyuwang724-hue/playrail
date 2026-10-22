@@ -255,7 +255,11 @@ public sealed class Tile : IDisposable
         _animUntil = _s.NowMs + (long)(delayMs + durMs) + 50;
     }
 
-    /// <summary>入场：从径向推开的位置（世界坐标）就位，透明度 0 → 1、尺度 0.94 → 1，0.5 s cubic-bezier(0.32,0.72,0,1)。</summary>
+    /// <summary>
+    /// 入场：从径向推开的位置（世界坐标）就位，尺度 0.94 → 1，0.5 s cubic-bezier(0.32,0.72,0,1)；
+    /// 透明度 0 → 1 用柔和得多的曲线、位移 85 % 的时长 —— 之前和位移同一条强 ease-out，头 0.1 s 就几乎全实，
+    /// 看着是卡先在远处冒出来再滑过来；现在边飞边显，和出场的边散边淡对称。
+    /// </summary>
     public void MorphFlyIn(Vector2 from, double delayMs)
     {
         Cancel();
@@ -268,10 +272,10 @@ public sealed class Tile : IDisposable
         sc.InsertKeyFrame(1, Vector3.One, G.Ease(ease));
         var op = G.C.CreateScalarKeyFrameAnimation();
         op.InsertKeyFrame(0, 0, G.Linear);
-        op.InsertKeyFrame(1, 1, G.Ease(ease));
+        op.InsertKeyFrame(1, 1, G.Ease(new Bezier(0.25f, 0.4f, 0.45f, 1f)));
         foreach (var a in new KeyFrameAnimation[] { off, sc, op })
         {
-            a.Duration = Gfx.Ms(500);
+            a.Duration = Gfx.Ms(a == op ? 425 : 500);
             a.DelayTime = Gfx.Ms(delayMs);
             a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
         }
