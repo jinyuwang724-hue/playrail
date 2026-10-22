@@ -143,9 +143,8 @@ public sealed partial class WallStage
     private readonly List<(string Title, float X, float Y, float W)> _gsMapHeads = new();
 
     /// <summary>
-    /// 右栏（428…1240）里的排法：线稿和手柄页一样大（0.99，752 宽）居中，字和图标也一样大；分组一行两组（每格 203）。
-    /// 焦点不在图上时图接在设置行下面（下半截在屏幕外）；焦点进图后设置行藏起来，图挪到右栏顶上，
-    /// 焦点再往下走到屏幕外的格子时整张图往上滚（_gsMapScroll）。
+    /// 映射图接在设置行下面，焦点进图后设置行（全局 / 游戏配置档、预设）照常显示；
+    /// 万一焦点格子在屏幕外，整张图往上滚（_gsMapScroll，现在的排法放得下，一般是 0）。
     /// </summary>
     private float _gsMapScroll;
 
@@ -320,7 +319,7 @@ public sealed partial class WallStage
     {
         bool over = GsOverlay, map = GsPadMapMode;
         _stRightView.IsVisible = !over;
-        _stRightView.Opacity = map && !over && _gsMapFocus >= 0 ? 0 : 1;   // 焦点在图上：图占满右栏
+        _stRightView.Opacity = 1;
         if (!over && !map) { if (_stOver != null) _stOver.IsVisible = false; return; }
         if (_stOver == null)
         {
