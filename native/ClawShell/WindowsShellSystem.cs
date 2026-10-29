@@ -155,7 +155,7 @@ namespace ClawShell
         public bool LibraryRunning()
         {
             foreach (Process p in Process.GetProcessesByName("ClawLibrary"))
-                using (p) { try { if (p.SessionId == _session && !p.HasExited) return true; } catch { } }
+                using (p) { try { if (p.SessionId == _session) return true; } catch { } }
             return false;
         }
 
@@ -190,7 +190,7 @@ namespace ClawShell
         public bool SteamRunning()
         {
             foreach (Process p in Process.GetProcessesByName("steam"))
-                using (p) { try { if (p.SessionId == _session && !p.HasExited) return true; } catch { } }
+                using (p) { try { if (p.SessionId == _session) return true; } catch { } } // 不查 HasExited：Steam 以管理员运行时拿不到它的句柄，会抛拒绝访问
             return false;
         }
 
