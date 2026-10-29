@@ -33,19 +33,29 @@ namespace ClawShell
                 _sys.Log("unhandled: " + e.ExceptionObject);
                 if (_verb == "shell" || _verb == "watch") EmergencyDesktop("unhandled");
             };
-            try { return Run(args); }
+            int code = 1;
+            try { code = Run(args); }
             catch (Exception ex)
             {
                 _sys.Log(_verb + " failed: " + ex);
                 if (_verb == "shell" || _verb == "to-game") EmergencyDesktop("exception");
                 if (_verb == "shell" || _verb == "watch") IdleForever();
-                return 1;
             }
+            ReportDone(args, code);
+            return code;
+        }
+
+        /// <summary>经计划任务跑的那一份：把退出码写到 shell\req-&lt;id&gt;.txt，包里等着的那一份读它。</summary>
+        private static void ReportDone(string[] args, int code)
+        {
+            int i = Array.IndexOf(args, "--req");
+            if (i < 0 || i + 1 >= args.Length) return;
+            try { System.IO.File.WriteAllText(System.IO.Path.Combine(WindowsShellSystem.ShellDir, "req-" + args[i + 1] + ".txt"), code.ToString()); }
+            catch (Exception ex) { _sys.Log("report done: " + ex.Message); }
         }
 
         private static int Run(string[] args)
         {
-            // 跳过一次后子进程仍带着应用包身份，但已经在包的虚拟化环境外（注册表、文件写到真实位置，见 probe）
             // 游戏库总是带 --task 调用：经计划任务跑一份完全在包外的（应用包身份检测不可靠，见 Hop）
             if ((args.Contains("--task") || WindowsShellSystem.InPackage()) && !args.Contains("--hop")) return Hop(args.Where(a => a != "--task").ToArray());
             if (_verb != "shell" && _verb != "watch")
@@ -86,7 +96,7 @@ namespace ClawShell
                 }
                 case "probe":
                     // 诊断：写一个 HKCU 值，在包外看得到说明这一份没有被应用包虚拟化
-                    using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"SoftwareClawToolboxClawShell"))
+                    using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\ClawToolbox\ClawShell"))
                         key.SetValue("probe", DateTime.Now.ToString("s") + (WindowsShellSystem.InPackage() ? " packaged" : ""));
                     return 0;
                 case "status":
@@ -111,41 +121,59 @@ namespace ClawShell
 
         /// <summary>
         /// 在应用包里：经计划任务 \ClawToolbox\Shell 再跑一次自己，等它结束，返回它的退出码。
-        /// 只靠「子进程脱离应用包」不够：实测孙进程仍带包身份，HKCU 写入照样被虚拟化；计划任务起的进程完全在包外。
+        /// 「子进程脱离应用包」起的进程仍带着包身份，是否还被虚拟化不好判断；计划任务起的进程确定完全在包外（实测 HKCU 写到真实位置）。
         /// </summary>
         private static int Hop(string[] args)
         {
             string self = Process.GetCurrentProcess().MainModule.FileName;
-            string verb = args.Length > 0 ? args[0] : "";
-            string arg = args.Length > 1 ? args[1] : "";
-            dynamic service = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));
-            service.Connect();
-            dynamic folder;
-            try { folder = service.GetFolder(@"\ClawToolbox"); }
-            catch { folder = service.GetFolder(@"\").CreateFolder("ClawToolbox"); }
-            dynamic def = service.NewTask(0);
-            def.RegistrationInfo.Description = "Claw 工具箱：游戏模式 / 桌面模式切换（ClawShell）";
-            def.Settings.DisallowStartIfOnBatteries = false;
-            def.Settings.StopIfGoingOnBatteries = false;
-            def.Settings.ExecutionTimeLimit = "PT2M";
-            def.Settings.MultipleInstances = 0;   // 并行
-            def.Principal.LogonType = 3;           // 交互式令牌：在当前登录会话里跑
-            dynamic action = def.Actions.Create(0);
-            action.Path = self;
-            action.Arguments = "$(Arg0) $(Arg1) --hop";
-            dynamic task = folder.RegisterTaskDefinition("Shell", def, 6 /* 创建或更新 */, null, null, 3);
-            DateTime started = DateTime.Now;
-            dynamic running = task.Run(new object[] { verb, arg });
-            // 等这一次跑完：LastRunTime 是这次的、并且不再有运行中的实例
+            string id = Guid.NewGuid().ToString("N").Substring(0, 12);
+            string line = string.Join(" ", args.Select(a => a.Replace("\"", "").Replace("<", "").Replace("&", ""))) + " --hop --req " + id;
+            // 改名的副本：ClawShell.exe 可能正被监视进程占着；这一份跑起来后 InstallSelf 再把自己装成 ClawShell.exe
+            string hopExe = System.IO.Path.Combine(WindowsShellSystem.ShellDir, "ClawShell-hop.exe");
+            string xml = "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n"
+                + "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">"
+                + "<RegistrationInfo><Description>Claw toolbox game/desktop mode switch (ClawShell)</Description></RegistrationInfo>"
+                + "<Principals><Principal id=\"Author\"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>"
+                + "<Settings><MultipleInstancesPolicy>Parallel</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
+                + "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT2M</ExecutionTimeLimit><Enabled>true</Enabled></Settings>"
+                // 计划任务不让直接运行应用包目录（WindowsApps）里的 exe（拒绝访问）：先复制到 %LOCALAPPDATA%\ClawToolbox\shell 再跑那一份。
+                // conhost --headless：不弹控制台窗口。
+                + "<Actions Context=\"Author\"><Exec><Command>conhost.exe</Command><Arguments>"
+                + System.Security.SecurityElement.Escape("--headless cmd.exe /d /c (if not exist \"" + WindowsShellSystem.ShellDir + "\" mkdir \"" + WindowsShellSystem.ShellDir + "\")"
+                    + " & copy /y \"" + self + "\" \"" + hopExe + "\" >nul"
+                    + " & \"" + hopExe + "\" " + line)
+                + "</Arguments></Exec></Actions></Task>";
+            string file = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ClawShell-" + id + ".xml");
+            System.IO.File.WriteAllText(file, xml, System.Text.Encoding.Unicode);
+            try
+            {
+                if (Schtasks("/create /tn \"\\ClawToolbox\\Shell\" /xml \"" + file + "\" /f") != 0) { _sys.Log("hop: create task failed"); return 1; }
+                if (Schtasks("/run /tn \"\\ClawToolbox\\Shell\"") != 0) { _sys.Log("hop: run task failed"); return 1; }
+            }
+            finally { try { System.IO.File.Delete(file); } catch { } }
+            string done = System.IO.Path.Combine(WindowsShellSystem.ShellDir, "req-" + id + ".txt");
             for (int i = 0; i < 1200; i++)
             {
                 Thread.Sleep(100);
-                dynamic t = folder.GetTask("Shell");
-                if (t.State != 4 /* running */ && ((DateTime)t.LastRunTime) >= started.AddSeconds(-2) && i > 2)
-                    return (int)t.LastTaskResult;
+                if (!System.IO.File.Exists(done)) continue;
+                int code;
+                string text = "";
+                try { text = System.IO.File.ReadAllText(done).Trim(); System.IO.File.Delete(done); } catch { }
+                return int.TryParse(text, out code) ? code : 1;
             }
-            _sys.Log("hop task timed out: " + verb);
+            _sys.Log("hop task timed out: " + line);
             return 1;
+        }
+
+        private static int Schtasks(string arguments)
+        {
+            using (var p = Process.Start(new ProcessStartInfo("schtasks.exe", arguments) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true }))
+            {
+                string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+                p.WaitForExit();
+                if (p.ExitCode != 0) _sys.Log("schtasks " + arguments + " -> " + p.ExitCode + " " + output.Trim());
+                return p.ExitCode;
+            }
         }
 
         private static void EmergencyDesktop(string why)
