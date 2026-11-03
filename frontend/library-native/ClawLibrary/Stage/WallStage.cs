@@ -1278,8 +1278,8 @@ public sealed partial class WallStage : IDisposable
         if (ConsumeScreensaverWake()) return;
         MarkInput();
         if (_wsOpen) { WsClick(sx, sy); return; }
+        if (_qsOpen) { QsClick(sx, sy); return; }   // 快设面板开着：只有面板能点，左上角的触摸导航和墙都点不到
         if (TouchNavigationClick(sx, sy)) return;
-        if (_qsOpen) { QsClick(sx, sy); return; }
         if (_ob != null) { ObClick(sx, sy); return; }
         // 启动 / 正在游戏画面开着：点它自己的按钮，别的地方吞掉（以前会点穿到下面的墙，点到这款游戏的卡就反复「继续游戏」）
         if (_lm is { Leaving: false }) { LaunchMotionClick(sx, sy); return; }
@@ -1372,6 +1372,7 @@ public sealed partial class WallStage : IDisposable
             if (ConsumeScreensaverWake()) { e.Handled = true; return; }
             MarkInput();
             var p = e.GetCurrentPoint(_rootEl).Properties;
+            if (_qsOpen) { e.Handled = true; return; }   // 快设面板开着：滚轮不滚下面的墙
             if (SettingsPageOpen && !_agOpen && !_shOpen && !_wsOpen && !GsArtMode)
             {
                 if (!p.IsHorizontalMouseWheel) SettingsWheel(p.MouseWheelDelta);

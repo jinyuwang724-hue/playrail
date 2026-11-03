@@ -33,7 +33,7 @@ public sealed partial class WallStage
     private SpriteVisual _wsTitle = null!, _wsEmpty = null!;
     private SpriteVisual? _wsBackdrop;
     private readonly List<WsCard> _wsCards = new();
-    private bool _wsOpen, _wsTicking, _wsStandalone, _wsFromShortcut;
+    private bool _wsOpen, _wsTicking, _wsStandalone, _wsFromShortcut, _wsPending;
     private int _wsFocus, _wsVersion;
     /// <summary>横向滚动（设计 px）与进出场进度（0 = 没出来，1 = 到位）：当前值 → 目标值逐帧趋近。</summary>
     private float _wsScroll, _wsScrollTo, _wsShow, _wsShowTo;
@@ -50,11 +50,13 @@ public sealed partial class WallStage
     {
         if (_ccOpen) { if (!_wsOpen) OpenSwitcher(); return; }
         _wsFromShortcut = true;   // 不是从控制中心「窗口」点进来的：B 直接回到唤出前的地方
+        _wsPending = true;
         OpenControlCenter();
         void Enter(int tries)
         {
-            if (!_ccOpen) return;
+            if (!_ccOpen || !_wsPending) { _wsPending = false; return; }
             if (MorphBusy && tries > 0) { After(50, () => Enter(tries - 1)); return; }
+            _wsPending = false;
             OpenSwitcher();
         }
         Enter(60);
@@ -69,7 +71,7 @@ public sealed partial class WallStage
         _wsOpen = true;
         ++_wsVersion;
         WsReleaseAll();
-        var list = OpenWindows.List();
+        var list = WsList();
         // 正在玩的游戏排第一
         if (_game is { Pid: > 0 } g)
         {
@@ -164,7 +166,7 @@ public sealed partial class WallStage
         c.El.Children.InsertAtTop(c.Label);
         c.El.Opacity = 0;
         _ws!.Children.InsertAtTop(c.El);
-        if (!w.Minimized) c.Thumb = DwmThumb.Register(WinRT.Interop.WindowNative.GetWindowHandle(_window), w.Hwnd);
+        if (!w.Minimized && !WsIsSelf(w)) c.Thumb = DwmThumb.Register(WinRT.Interop.WindowNative.GetWindowHandle(_window), w.Hwnd);
         WsPaintCard(c);
         return c;
     }
@@ -213,7 +215,7 @@ public sealed partial class WallStage
         {
             float x = 0;
             if (icon != null) { ds.DrawImage(icon, new Windows.Foundation.Rect(0, (LabelH - WsIcon) / 2, WsIcon, WsIcon), icon.Bounds, 1, CanvasImageInterpolation.HighQualityCubic); x = WsIcon + 10; }
-            LineIcons.Draw(ds, "", WsBoxW - 18, LabelH / 2, 14, CcText);
+            if (!WsIsSelf(c.Win)) LineIcons.Draw(ds, "", WsBoxW - 18, LabelH / 2, 14, CcText);
             using var tl = TextKit.Layout(ds, c.Win.Title, TextKit.Ui(500), 17, WsBoxW - x - 48, CanvasHorizontalAlignment.Left);
             tl.Options = CanvasDrawTextOptions.Clip;
             tl.TrimmingSign = CanvasTrimmingSign.Ellipsis;
@@ -327,7 +329,7 @@ public sealed partial class WallStage
     private void WsPollTick(DispatcherQueueTimer sender, object e)
     {
         if (!_wsOpen) { sender.Stop(); return; }
-        var now = OpenWindows.List();
+        var now = WsList();
         var alive = new HashSet<nint>(now.Select(w => w.Hwnd));
         nint focused = _wsFocus < _wsCards.Count ? _wsCards[_wsFocus].Win.Hwnd : 0;
         bool changed = false;
@@ -347,7 +349,7 @@ public sealed partial class WallStage
                 // 最小化 / 还原、改了标题：重做这张（最小化的没有画面，换成大图标）
                 have.Win = w;
                 have.Thumb?.Dispose();
-                have.Thumb = w.Minimized ? null : DwmThumb.Register(WinRT.Interop.WindowNative.GetWindowHandle(_window), w.Hwnd);
+                have.Thumb = w.Minimized || WsIsSelf(w) ? null : DwmThumb.Register(WinRT.Interop.WindowNative.GetWindowHandle(_window), w.Hwnd);
                 WsPaintCard(have);
                 changed = true;
             }
@@ -386,6 +388,7 @@ public sealed partial class WallStage
     {
         if (_wsFocus >= _wsCards.Count) return;
         var w = _wsCards[_wsFocus].Win;
+        if (WsIsSelf(w)) { WsToLibrary(); return; }
         if (!OpenWindows.Matches(w)) { WsPollTick(_wsPoll!, EventArgs.Empty); return; }
         _wsFromShortcut = false;
         // 卡片沉下去的同时，选中的窗口按原位淡进来，淡满了再真的切过去；控制中心在游戏库里悄悄收起
@@ -404,11 +407,52 @@ public sealed partial class WallStage
     {
         if (_wsFocus >= _wsCards.Count) return;
         var c = _wsCards[_wsFocus];
+        if (WsIsSelf(c.Win)) { Cue(Sfx.Error); return; }   // 游戏库常驻，不能关
         if (!OpenWindows.Close(c.Win.Hwnd)) { Cue(Sfx.Error); Toast("这个窗口以管理员身份运行，关不掉"); return; }
         Log.Info($"close window {c.Win.Process} hwnd={c.Win.Hwnd}");
         Cue(Sfx.Activate);
         c.Closing = true;   // 变淡，等它真的关了，下一次刷新拿走
         WsStartTicking();
+    }
+
+    // ---------------- 游戏库自己这张卡 ----------------
+
+    private nint WsSelf => WinRT.Interop.WindowNative.GetWindowHandle(_window);
+    private bool WsIsSelf(OpenWindow w) => w.Hwnd == WsSelf;
+
+    /// <summary>
+    /// 可切换的窗口 + 游戏库自己（游戏模式下它也是一个常驻窗口：能切回来，不能关）。
+    /// 按 Z 序放：在游戏库上唤出的排第一，盖在别的程序上唤出的排在那个程序后面。
+    /// </summary>
+    private List<OpenWindow> WsList()
+    {
+        var list = OpenWindows.List();
+        var self = new OpenWindow(WsSelf, (uint)Environment.ProcessId, "游戏库", "ClawLibrary", true);
+        nint over = (_window as MainWindow)?.SurfaceTarget ?? 0;
+        int at = over == 0 ? 0 : Math.Min(1, list.Count);
+        list.Insert(at, self);
+        return list;
+    }
+
+    /// <summary>选了游戏库：卡片沉下去，控制中心形变回墙，游戏库留在前台（盖在程序上唤出的也不再回那个程序）。</summary>
+    private void WsToLibrary()
+    {
+        _wsFromShortcut = _wsStandalone = false;
+        CloseSwitcher();
+        (_window as MainWindow)?.KeepLibraryAfterSurface();
+        if (_ccOpen) CloseControlCenter();
+        Log.Info("switch to library");
+    }
+
+    internal bool SwitcherBusy => _wsOpen || _wsPending;
+
+    /// <summary>切换器开着（或正要开）时再短按快设：当作 B，收起切换器，不开快设面板。</summary>
+    internal void SwitcherBackFromQuickKey()
+    {
+        _wsPending = false;
+        if (!_wsOpen) { _wsFromShortcut = true; }
+        WsBack();
+        Log.Info("quick key closed the window switcher");
     }
 
     /// <summary>

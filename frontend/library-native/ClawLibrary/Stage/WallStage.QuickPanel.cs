@@ -140,7 +140,8 @@ public sealed partial class WallStage
         // 有游戏画面时：游戏模式下游戏库本来就垫在它后面，所以底下照样是游戏库（压暗），窗口画面按原位原尺寸盖在上面 ——
         // 以前铺纯黑，窗口不满屏时整屏变黑、游戏库像是没了。桌面模式没有游戏库垫底，仍铺黑
         _qsUnderLibrary = ShellMode.GameMode;
-        _qsScrim.Brush = G.C.CreateColorBrush(_qsThumb != null && !_qsUnderLibrary ? Gfx.Rgba(0, 0, 0) : Gfx.Rgba(0, 0, 0, 0.45));
+        // 游戏模式：底下的游戏库和窗口一点不变（不压暗），只多一块面板
+        _qsScrim.Brush = G.C.CreateColorBrush(_qsUnderLibrary ? Gfx.Rgba(0, 0, 0, 0) : _qsThumb != null ? Gfx.Rgba(0, 0, 0) : Gfx.Rgba(0, 0, 0, 0.45));
         _qs!.IsVisible = true;
         _top.Children.Remove(_qs); _top.Children.InsertAtTop(_qs);
         QsBuild();

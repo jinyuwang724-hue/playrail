@@ -63,3 +63,25 @@ public sealed partial class WallStage
         SetSpecialInput(false);
     }
 }
+
+public sealed partial class WallStage
+{
+    private long _quickKeyAt = -10_000, _menuCcAt = -10_000;
+    private bool _ccInstantClose;
+
+    /// <summary>
+    /// 每次快设键到达时调用。日志里快设键按下后，控制中心先被一个「菜单」打开、0.75 s 后快设才到：
+    /// 那一次控制中心不该出现 —— 直接撤掉（不走形变），快设面板开在原来的墙上。
+    /// </summary>
+    internal void NoteQuickKey()
+    {
+        long now = NowMs;
+        if (_ccOpen && !_wsOpen && !_wsPending && now - _menuCcAt < 1200)
+        {
+            Log.Info($"control center undone: opened {now - _menuCcAt} ms before the quick key");
+            _ccInstantClose = true;
+            CloseControlCenter();
+        }
+        _quickKeyAt = now;
+    }
+}

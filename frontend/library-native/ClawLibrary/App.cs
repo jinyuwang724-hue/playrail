@@ -222,7 +222,10 @@ public sealed partial class MainWindow : Window
             ShowShortcutWindow(route);
             return;
         }
-        if (quick) { if (_stage?.SwitcherOpen == true) _stage.CloseSwitcherForRoute(); _stage?.SetSpecialInput(true); }
+        // 长按开的切换器还开着（或正在进场）时再短按快设：是想关掉它，不是要开快设面板
+        if (quick) _stage?.NoteQuickKey();
+        if (quick && _stage?.SwitcherBusy == true) { _stage.SwitcherBackFromQuickKey(); return; }
+        if (quick) _stage?.SetSpecialInput(true);
         else if (_stage?.SwitcherOpen == true) _stage.CloseSwitcherForRoute();
         if (quick && _stage?.QuickPanelOpen == true) { _stage.CloseQuickPanel(); return; }
         if (!quick && _stage?.QuickPanelOpen == true) _stage.CloseQuickPanel(hideWindow: false, instant: true);

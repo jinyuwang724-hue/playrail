@@ -160,7 +160,11 @@ public sealed partial class WallStage
         if (_backgroundSettingsOpen) CloseBackgroundSettings();
         MarkInput();
         if (MorphIntercept()) return;
-        if (_ccOpen) CloseControlCenter(); else OpenControlCenter();
+        if (_ccOpen) { CloseControlCenter(); return; }
+        // 快设键按下时偶尔还带一个「菜单」：紧跟在快设后面的那个不开控制中心
+        if (NowMs - _quickKeyAt < 1000) { Log.Info("menu ignored: right after the quick key"); return; }
+        _menuCcAt = NowMs;
+        OpenControlCenter();
     });
 
     /// <summary>测试用：游戏库卡封面此刻的状态（有没有图、解码好没有、可见不可见）。</summary>
@@ -267,8 +271,9 @@ public sealed partial class WallStage
         _ccTimer?.Stop();
         _root.StopAnimation("Opacity");
         _root.IsVisible = true;
-        if (_ccFocus == 0 && _ccZone == CcZone.Row && !Reduced && MorphEnter()) { Log.Info("control center close (morph)"); return; }
-        double ms = Reduced ? 1 : CcCloseMs;
+        bool instant = _ccInstantClose; _ccInstantClose = false;
+        if (_ccFocus == 0 && _ccZone == CcZone.Row && !Reduced && !instant && MorphEnter()) { Log.Info("control center close (morph)"); return; }
+        double ms = Reduced || instant ? 1 : CcCloseMs;
         _root.Opacity = 0;
         _root.StartAnimation("Opacity", G.Scalar(0, 1, ms, CcCloseEase));   // 不再写 Opacity：动画进行中写这个属性会把动画停掉
         After(ms + 10, () => { if (v == _ccVersion) HideControlCenter(); });

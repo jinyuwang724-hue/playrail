@@ -157,6 +157,15 @@ public sealed partial class MainWindow
         _surfaceSession = false;
     }
 
+    /// <summary>切换器里选了游戏库自己：收起这次唤出，但游戏库留在前台（不回唤出前的程序）。</summary>
+    internal void KeepLibraryAfterSurface()
+    {
+        _stage?.SetSpecialInput(false);
+        _surfaceSession = _surfaceHideWindow = false;
+        ReleaseOverlay();
+        if (Stage.ShellMode.GameMode) RestoreGameShell(true);
+    }
+
     internal bool SwitchToWindow(OpenWindow target)
     {
         if (!OpenWindows.Matches(target)) return false;
