@@ -21,6 +21,13 @@ import subprocess
 import time
 import winreg
 
+_close_spec = importlib.util.spec_from_file_location("claw_close_target", Path(__file__).with_name("claw_close_target.py"))
+_close_module = importlib.util.module_from_spec(_close_spec)
+_close_spec.loader.exec_module(_close_module)
+_sleep_spec = importlib.util.spec_from_file_location("claw_power_sleep", Path(__file__).with_name("claw_sleep_animation.py"))
+_sleep_module = importlib.util.module_from_spec(_sleep_spec)
+_sleep_spec.loader.exec_module(_sleep_module)
+
 # Intel rates the Arc G3 Extreme for 8-35 W.
 TDP_MIN, TDP_MAX = 8, 35
 BOOST_MAX = 15
@@ -195,19 +202,46 @@ def on_charger():
 SMALL_CORES_KEY = r"SYSTEM\CurrentControlSet\Control\Session Manager\kernel\Kgroups\00"
 
 
-def small_cores_enabled():
-    """体感助手's 模拟全核心E核: SmallProcessorMask present means every core is scheduled as an E-core."""
+def small_cores_topology():
+    kernel = ctypes.windll.kernel32
+    kernel.GetActiveProcessorGroupCount.restype = W.WORD
+    kernel.GetActiveProcessorCount.argtypes = [W.WORD]
+    kernel.GetActiveProcessorCount.restype = W.DWORD
+    groups, threads = kernel.GetActiveProcessorGroupCount(), kernel.GetActiveProcessorCount(0)
+    return {"groups": groups, "threads": threads, "supported": groups == 1 and 1 <= threads <= 64}
+
+
+def small_cores_snapshot():
+    """The saved mask, not proof of the running scheduler's classification."""
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, SMALL_CORES_KEY, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
-            winreg.QueryValueEx(key, "SmallProcessorMask")
-            return True
+            value, kind = winreg.QueryValueEx(key, "SmallProcessorMask")
+        name = {winreg.REG_DWORD: "dword", winreg.REG_QWORD: "qword"}.get(kind, "unsupported")
+        return {"present": True, "kind": name, "mask": format(value, "x") if name != "unsupported" else None}
     except FileNotFoundError:
-        return False
+        return {"present": False, "kind": None, "mask": None}
 
 
-def boot_time():
-    ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_uint64
-    return time.time() - ctypes.windll.kernel32.GetTickCount64() / 1000
+def small_cores_enabled():
+    snapshot, topology = small_cores_snapshot(), small_cores_topology()
+    return topology["supported"] and snapshot["mask"] == format((1 << topology["threads"]) - 1, "x")
+
+
+def boot_session_id():
+    # Read-only native query; unlike wall-clock minus uptime this survives clock corrections.
+    # Layout: phnt ntexapi.h SYSTEM_BOOT_ENVIRONMENT_INFORMATION (class 90).
+    try:
+        buffer = ctypes.create_string_buffer(32)
+        returned = W.ULONG()
+        query = ctypes.windll.ntdll.NtQuerySystemInformation
+        query.argtypes = [W.ULONG, ctypes.c_void_p, W.ULONG, ctypes.POINTER(W.ULONG)]
+        query.restype = W.LONG
+        if query(90, buffer, len(buffer), ctypes.byref(returned)) == 0 and returned.value >= 16:
+            identifier = buffer.raw[:16]
+            return identifier.hex() if any(identifier) else None
+    except (OSError, AttributeError):
+        pass
+    return None
 
 
 def window_title(pid):
@@ -551,10 +585,14 @@ class PowerControl:
         self.fan_backup_path = self.data / "fan-backup.json"
         self.fan_service = _fan_service_module.FanServiceClient()
         self.ecore_path = self.data / "ecore.json"
+        self.ecore_backup_path = self.data / "ecore-backup.json"
+        self.ecore_lock = asyncio.Lock()
         self.cpu_max = None  # MHz, read once from the CPU
         self.sys_cache = None  # widget readings (brightness, volume, refresh, frame limit, game)
         self.sys_at = 0.0
         self.sys_task = None
+        self.close_target = _close_module.CloseTarget()
+        self.close_target_task = None
         self.stats = {}
         self.cpu = LightStats()
         self.last_frames = None
@@ -618,6 +656,8 @@ class PowerControl:
             if command in ("sys_read", "brightness_set", "volume_set", "mute_set", "refresh_set", "fps_limit_set",
                            "kill", "power_action", "keyboard", "screenshot", "mapped_input"):
                 return reply.get("sys") or {}
+            if command.startswith("driver_game_"):
+                return reply.get("fpsProfile") or {}
             if command in ("display_read", "resolution_set", "vrr_set", "hdr_set", "audio_output_set", "mic_mute_set",
                            "scale_set", "auto_brightness_set", "gpu_set"):
                 return reply.get("display") or {}
@@ -633,7 +673,7 @@ class PowerControl:
                 return reply.get("endurance") or {}
             if command == "cpu_info":
                 return reply.get("cpu") or {}
-            if command == "ecore_set":
+            if command in ("ecore_set", "ecore_restore"):
                 return reply.get("ecore") or {}
             if command == "frames":
                 frames = reply.get("frames") or {}
@@ -799,7 +839,12 @@ class PowerControl:
         while not self.closing:
             try:
                 await asyncio.sleep(TICK)
+                if _sleep_module.is_sleeping():
+                    await _sleep_module.wait_awake()
+                    continue
                 tick += 1
+                if tick % 5 == 1 and _sleep_module.enhanced_enabled():
+                    await self._sleep_game_tick()
                 osd_on = self.settings["osd"]["enabled"]
                 await self._fan_tick(tick)
                 self.charger = on_charger()
@@ -829,6 +874,32 @@ class PowerControl:
                 if str(e) != self.error:
                     self.error = str(e)
                     await self.publish()
+
+    async def _sleep_game_tick(self):
+        """Only publish a game after graphics telemetry confirms rendering.
+
+        Keep that verified process while a menu covers it. The native host also
+        validates user/session, creation time and protected/anti-cheat processes.
+        """
+        candidate = await asyncio.to_thread(foreground_game)
+        previous = getattr(self, "sleep_game", None)
+        if previous:
+            names = await asyncio.to_thread(process_names)
+            if names.get(previous[0]) != previous[1]:
+                previous = None
+        if candidate and candidate != previous:
+            rtss = await self._call("rtss_app", pid=candidate[0])
+            rendering = (rtss.get("fps") or 0) > 0
+            if not rendering:
+                frames = await self._call("frames", pid=candidate[0])
+                rendering = frames.get("pid") == candidate[0] and any((c.get("presentedFps") or 0) > 0 for c in frames.get("swapChains") or [])
+            if rendering:
+                previous = candidate
+        self.sleep_game = previous
+        try:
+            await _sleep_module.set_game(previous[0] if previous else 0)
+        except (OSError, RuntimeError):
+            pass  # Game exit or a stopped sleep host must not pause fan control.
 
     async def _osd_tick(self, tick, smart):
         """Writes the OSD; reuses the smart tick's frame data when it ran."""
@@ -1154,6 +1225,7 @@ class PowerControl:
 
     def start(self):
         if self.task is None:
+            self.close_target_task = asyncio.create_task(self._close_target_loop())
             self.task = asyncio.create_task(self._loop())
 
     def _live_fps(self):
@@ -1163,31 +1235,71 @@ class PowerControl:
         return max(chains, key=lambda c: c.get("presentedFps", 0)).get("appFps") if chains else None
 
     def ecore_view(self):
-        """Registry state and whether it differs from what Windows booted with (applies after restart)."""
-        enabled = small_cores_enabled()
-        boot = boot_time()
+        """Track saved values and observed restarts; first observation has unknown boot state."""
         try:
-            record = json.loads(self.ecore_path.read_text(encoding="utf-8"))
-            if abs(record["boot"] - boot) > 120:
-                raise ValueError("new boot")
-        except (OSError, ValueError, KeyError, TypeError):
-            record = {"boot": boot, "atBoot": enabled}
+            snapshot, topology, boot = small_cores_snapshot(), small_cores_topology(), boot_session_id()
+            expected = format((1 << topology["threads"]) - 1, "x") if topology["supported"] else None
             try:
-                self.ecore_path.write_text(json.dumps(record), encoding="utf-8")
-            except OSError:
-                pass
-        return {"enabled": enabled, "pending": enabled != record["atBoot"]}
+                record = json.loads(self.ecore_path.read_text(encoding="utf-8"))
+                if (record.get("version") != 2 or not isinstance(record["baseline"], dict) or
+                        not isinstance(record["observed"], dict) or type(record["restartObserved"]) is not bool):
+                    raise ValueError("legacy or invalid state")
+                if boot and record.get("bootId") and boot != record["bootId"]:
+                    record = {"version": 2, "bootId": boot, "baseline": snapshot, "observed": snapshot,
+                              "restartObserved": snapshot == record["observed"]}
+                elif boot != record.get("bootId"):
+                    raise ValueError("boot identity unavailable")
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                record = {"version": 2, "bootId": boot, "baseline": snapshot, "observed": snapshot, "restartObserved": False}
+            record["observed"] = snapshot
+            pending = True if snapshot != record["baseline"] else (False if record["restartObserved"] else None)
+            self._save_ecore_record(record)
+            supported = topology["supported"] and snapshot["kind"] != "unsupported"
+            message = "重启后生效" if pending else ("已观察到重启" if pending is False else "")
+            error = "此功能仅支持单个处理器分组" if not topology["supported"] else ("核心设置类型不受支持" if not supported else "")
+            return {**topology, **snapshot, "enabled": bool(expected and snapshot["mask"] == expected),
+                    "supported": supported, "pending": pending, "status": error or message, "error": error,
+                    "partial": snapshot["present"] and snapshot["mask"] != expected,
+                    "backup": self.ecore_backup_path.is_file(), "restartRequired": True}
+        except (OSError, ValueError) as error:
+            return {"enabled": False, "supported": False, "pending": None, "status": "无法读取核心设置",
+                    "error": str(error), "backup": self.ecore_backup_path.is_file()}
+
+    def _save_ecore_record(self, record):
+        encoded = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        try:
+            if self.ecore_path.read_text(encoding="utf-8") == encoded:
+                return
+        except OSError:
+            pass
+        temp = self.ecore_path.with_suffix(".tmp")
+        temp.write_text(encoded, encoding="utf-8")
+        temp.replace(self.ecore_path)
 
     # ---- system controls for the Game Bar widget --------------------------------
+    async def _close_target_loop(self):
+        # Sample independently of sensors, OSD and game classification. Capture
+        # the app before a controller menu or task switcher takes foreground.
+        while not self.closing:
+            try:
+                if _sleep_module.is_sleeping():
+                    await _sleep_module.wait_awake()
+                    continue
+                await asyncio.to_thread(self.close_target.sample)
+            except Exception:
+                logging.exception("Close target sampling failed")
+                with self.close_target.lock:
+                    self.close_target.target = None
+                await asyncio.sleep(1)
+            await asyncio.sleep(0.1)
+
     async def system(self):
         """Brightness, volume, refresh rates, frame limit and the foreground game."""
         try:
             view = await self._call("sys_read")
         except RuntimeError as e:
             view = {"error": str(e)}
-        game = await asyncio.to_thread(foreground_game)
-        view["game"] = {"pid": game[0], "exe": game[1],
-                        "title": await asyncio.to_thread(window_title, game[0]) or game[1].rsplit(".", 1)[0]} if game else None
+        view["game"] = await asyncio.to_thread(self.close_target.sample)
         view["charging"] = battery_charging()
         self.sys_cache, self.sys_at = view, time.monotonic()
         return view
@@ -1198,13 +1310,14 @@ class PowerControl:
             return await self.system()
         if time.monotonic() - self.sys_at > 1.0 and (self.sys_task is None or self.sys_task.done()):
             self.sys_task = asyncio.create_task(self.system())
+        self.sys_cache = {**self.sys_cache, "game": await asyncio.to_thread(self.close_target.sample)}
         return self.sys_cache
 
     async def system_set(self, command, **args):
         # The helper answers setters with its fresh readings; the game and charging state are unchanged.
         result = await self._call(command, **args)
         self.sys_cache = {**(self.sys_cache or {}), **{k: v for k, v in result.items() if k in
-                          ("brightness", "volume", "muted", "refresh", "refreshRates", "fpsLimit")}}
+                          ("brightness", "volume", "muted", "refresh", "refreshRates", "fpsLimit", "fpsLimitProvider", "fpsLimitMin", "fpsLimitMax", "fpsLimitStep", "fpsLimitLiveChange", "fpsLimitApiFlags", "fpsLimitEnabled", "fpsLimitValue", "fpsLimitError")}}
         self.sys_at = time.monotonic()
         return self.sys_cache
 
@@ -1213,23 +1326,60 @@ class PowerControl:
         Setters answer with the whole fresh reading, so the page shows what Windows actually took."""
         result = await self._call(command, **args)
         self.sys_cache = {**(self.sys_cache or {}), **{k: v for k, v in result.items() if k in
-                          ("brightness", "volume", "muted", "refresh", "refreshRates", "fpsLimit")}}
+                          ("brightness", "volume", "muted", "refresh", "refreshRates", "fpsLimit", "fpsLimitProvider", "fpsLimitMin", "fpsLimitMax", "fpsLimitStep", "fpsLimitLiveChange", "fpsLimitApiFlags", "fpsLimitEnabled", "fpsLimitValue", "fpsLimitError")}}
         self.sys_at = time.monotonic()
         return result
 
     async def close_game(self, pid):
-        game = await asyncio.to_thread(foreground_game)
-        if type(pid) is not int or not game or game[0] != pid:
-            raise RuntimeError("要关闭的游戏已不在前台，请重新确认")
-        await self._call("kill", pid=pid)
+        with self.close_target.hold(pid):
+            await self._call("kill", pid=pid)
         return await self.system()
 
     async def set_ecore(self, enabled):
         if type(enabled) is not bool:
             raise ValueError("开关格式错误")
-        self.ecore_view()  # records the boot state before the first change
-        await self._call("ecore_set", enabled=enabled)
-        return self.view()
+        async with self.ecore_lock:
+            view = self.ecore_view()
+            if not view["supported"]:
+                raise RuntimeError(view["error"] or view["status"])
+            original = small_cores_snapshot()
+            if not self.ecore_backup_path.exists():
+                # Exclusive create, persisted before any elevated registry write.
+                with self.ecore_backup_path.open("x", encoding="utf-8") as backup:
+                    json.dump({"version": 1, "original": original}, backup)
+                    backup.flush()
+                    os.fsync(backup.fileno())
+            else:
+                self._ecore_original()  # a corrupt backup must not be silently overwritten
+            result = await self._call("ecore_set", enabled=enabled)
+            if result != {**small_cores_snapshot(), "restartRequired": True}:
+                raise RuntimeError("核心设置回读不一致，请重新读取状态")
+            return self.view()
+
+    def _ecore_original(self):
+        try:
+            record = json.loads(self.ecore_backup_path.read_text(encoding="utf-8"))
+            original = record["original"]
+            if record["version"] != 1 or type(original["present"]) is not bool:
+                raise ValueError("invalid backup")
+            if original["present"]:
+                limit = {"dword": 32, "qword": 64}[original["kind"]]
+                if not isinstance(original["mask"], str) or not 0 <= int(original["mask"], 16) < 1 << limit:
+                    raise ValueError("invalid mask")
+            return original
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise RuntimeError("原始核心设置备份无法读取，未修改核心设置") from error
+
+    async def restore_ecore(self):
+        async with self.ecore_lock:
+            original = self._ecore_original()
+            view = self.ecore_view()
+            if not view["supported"]:
+                raise RuntimeError(view["error"] or view["status"])
+            result = await self._call("ecore_restore", original=original)
+            if result != {**small_cores_snapshot(), "restartRequired": True}:
+                raise RuntimeError("核心设置回读不一致，请重新读取状态")
+            return self.view()
 
     def view(self):
         pl1, pl2 = self.target()
@@ -1373,6 +1523,9 @@ class PowerControl:
 
     async def close(self):
         self.closing = True
+        if self.close_target_task:
+            self.close_target_task.cancel()
+            await asyncio.gather(self.close_target_task, return_exceptions=True)
         if self.task:
             self.task.cancel()
             try:

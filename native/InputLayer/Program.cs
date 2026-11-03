@@ -454,9 +454,11 @@ namespace ClawInput {
             uint lastPacket = 0;
             double nextScan = 0, nextForeground = 0;
             Layout active = null;
+            using (var sleep = new EnhancedSleepGate())
             using (var ticker = new Ticker(pollHz)) {
                 highRes = ticker.HighResolution;
                 while (running) {
+                    if (sleep.Sleeping) { ticker.Pause(); sleep.Wait(500); continue; }
                     ticker.Wait();
                     if (!running) break;
                     double now = Now();
@@ -596,22 +598,25 @@ namespace ClawInput {
             MemoryMappedFile file = null; MemoryMappedViewAccessor view = null;
             try {
                 for (int i = 0; i < 50 && stop == null; i++) { try { stop = EventWaitHandle.OpenExisting("Local\\ClawInputGuardStop-" + pid); } catch { Thread.Sleep(100); } }
-                long lastBeat = -1, lastChange = Win.UnbiasedMs();
+                long lastBeat = -1, lastChange = Win.UnbiasedMs(), wakeGraceUntil = 0;
+                using (var sleep = new EnhancedSleepGate()) {
                 while (true) {
                     if (WaitForSingleObject(process, 200) == 0) { Program.RestoreIfStale(dataDir, pid, true, "guard"); return 0; }
                     if (stop != null && stop.WaitOne(0)) return 0;
                     if (view == null) { try { file = MemoryMappedFile.OpenExisting("Local\\ClawInputHeartbeat-" + pid); view = file.CreateViewAccessor(0, 8); } catch { } }
                     long now = Win.UnbiasedMs();
+                    if (sleep.Sleeping) { lastChange = now; wakeGraceUntil = now + 30000; }
                     if (view != null) {
                         long beat = view.ReadInt64(0);
                         if (beat != lastBeat) { lastBeat = beat; lastChange = now; }
                     }
                     var j = HideJournal.Load(Program.JournalPath(dataDir));
-                    if (j != null && j.Active && j.Pid == pid && view != null && now - lastChange > StaleMs) {
+                    if (j != null && j.Active && j.Pid == pid && view != null && now > wakeGraceUntil && now - lastChange > StaleMs) {
                         Program.RestoreIfStale(dataDir, pid, true, "guard-hung");
                         TerminateProcess(process, 3);
                         return 0;
                     }
+                }
                 }
             } finally {
                 if (view != null) view.Dispose(); if (file != null) file.Dispose(); if (stop != null) stop.Dispose();

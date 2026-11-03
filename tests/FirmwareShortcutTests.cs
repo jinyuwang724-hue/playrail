@@ -34,6 +34,24 @@ class FirmwareShortcutTests {
         s=new FirmwareShortcutState();s.Key(K(91),true);
         var mapped=K(71);mapped.Extra=0x434C4157;
         Check(!s.Key(mapped,true).Swallow,"an explicitly mapped Win+G bypasses the firmware filter");
+        var pair=new GameBarShortcutCorrelation();
+        int epoch=pair.Generation;
+        Check(!pair.ShouldReplay(1000,1160,epoch),"keyboard fallback waits for the delayed firmware event");
+        pair.QuickSettings(1300);
+        Check(!pair.ShouldReplay(1000,1700,epoch),"QS arriving 300 ms after Win+G cannot toggle Game Bar twice");
+        pair=new GameBarShortcutCorrelation();epoch=pair.Generation;pair.QuickSettings(1600);
+        Check(!pair.ShouldReplay(1000,1700,epoch),"slow 600 ms firmware notification cancels keyboard fallback");
+        pair=new GameBarShortcutCorrelation();epoch=pair.Generation;pair.QuickSettings(900);
+        Check(!pair.ShouldReplay(1000,1700,epoch),"firmware notification preceding the keyboard report is correlated");
+        pair=new GameBarShortcutCorrelation();epoch=pair.Generation;
+        Check(pair.ShouldReplay(1000,1700,epoch),"real keyboard Win+G still opens Game Bar without a QS notification");
+        pair.QuickSettings(1000);
+        Check(pair.ShouldReplay(1800,2500,epoch),"an earlier physical press does not swallow a later keyboard shortcut");
+        pair.QuickSettings(2000);pair.QuickSettings(2400);
+        Check(!pair.ShouldReplay(1700,2400,epoch) && !pair.ShouldReplay(2100,2800,epoch),"two physical presses cancel both firmware shortcut copies");
+        pair.Reset();
+        Check(!pair.ShouldReplay(3000,3700,epoch),"context changes cancel a delayed keyboard fallback");
+        Check(pair.ShouldReplay(3000,3700,pair.Generation),"a new context can handle a fresh keyboard shortcut");
         return 0;
     }
 }

@@ -123,9 +123,9 @@ test('power page: only the switch while not managed, no explanatory text when ma
   const view = { settings, charger: true, limits, actual: { pl1: 12, package: 11.6 }, ecore: { enabled: true, pending: false }, backup: true };
   const off = render({ view, draft: settings });
   assert.deepEqual(off.filter(n => n.type === 'SliderField' || n.type === 'DropdownItem'), []);
-  assert.ok(off.some(n => n.props.label === '全部核心按 E 核调度'));
+  assert.ok(off.some(n => n.props.label === '模拟全核心 E 核'));
   const on = render({ view, draft: { ...settings, enabled: true } });
   assert.ok(on.some(n => n.type === 'SliderField'));
-  assert.deepEqual(on.filter(n => n.props.description), [], 'no row carries an explanation');
+  assert.deepEqual(on.filter(n => n.props.description).map(n => n.props.label), ['模拟全核心 E 核'], 'core settings retain the restart status');
   assert.ok(!on.some(n => n.type === 'SectionLabel'), 'no lone section headers');
 });

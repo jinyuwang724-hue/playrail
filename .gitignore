@@ -43,3 +43,23 @@ desktop.ini
 /native/GameBarWidget/Generated Files/
 /tests/LibraryAudio/bin/
 /tests/LibraryAudio/obj/
+/tests/LibraryServices/bin/
+/tests/LibraryServices/obj/
+/tests/LibraryShortcutInput/bin/
+/tests/LibraryShortcutInput/obj/
+/native/SleepAnimation/bin/
+/native/SleepAnimation/obj/
+/tests/SleepAnimation/bin/
+/tests/SleepAnimation/obj/
+/tests/EnhancedSleep/bin/
+/tests/EnhancedSleep/obj/
+/tests/ToolboxActivation/bin/
+/tests/ToolboxActivation/obj/
+
+# Local-only material: third-party installers, font packs, design exports, patched Decky copies
+/MotionAssistant_Setup_*.msi
+/Font-Collection/
+/MotivaVFCyrillic.ttf
+/.workbuddy/
+/UI design/
+/repairs/decky-20261018/

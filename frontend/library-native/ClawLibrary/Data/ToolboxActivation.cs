@@ -11,8 +11,15 @@ internal static class ToolboxActivation
     public static string Target(string route) => route.StartsWith("restore-", StringComparison.Ordinal) ? route[8..]
         : route.StartsWith("minimize-", StringComparison.Ordinal) ? route[9..] : route;
     public static bool ShouldMinimize(string route, bool? xboxFse, bool? steamBigPicture) =>
-        route.StartsWith("minimize-", StringComparison.Ordinal) && xboxFse == false && steamBigPicture == false;
+        route is "minimize-library" or "minimize-control-center";
     public static bool PreservePage(string route) => route.StartsWith("restore-", StringComparison.Ordinal);
+    public static nint ReturnWindow(string query)
+    {
+        foreach (var part in query.TrimStart('?').Split('&'))
+            if (part.StartsWith("returnWindow=", StringComparison.Ordinal) &&
+                long.TryParse(part[13..], out long value) && value > 0) return (nint)value;
+        return 0;
+    }
 }
 
 internal static class ToolboxWindow

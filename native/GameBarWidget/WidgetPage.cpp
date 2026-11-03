@@ -184,6 +184,7 @@ namespace winrt::ClawWidget::implementation
         });
         m_pollTimer.Interval(std::chrono::milliseconds(1500));
         m_pollTimer.Tick([this](auto&&, auto&&) {
+            PublishPowerVisibility();
             if (m_agent->Ready()) { if (!m_saveTimer.IsEnabled()) Refresh(); }
             else m_agent->Connect();
             Update();
@@ -207,8 +208,9 @@ namespace winrt::ClawWidget::implementation
             return [this, action](IInspectable const&, RoutedEventArgs const&) { Send(L"power_action", L"power_action", Args({ S(action) })); };
         };
         SleepItem().Click(power(L"sleep"));
-        ShutdownItem().Click(power(L"shutdown"));
-        RestartItem().Click(power(L"restart"));
+        ShutdownItem().Click([this](auto&&, auto&&) { RequestAnimatedPower(L"shutdown"); });
+        RestartItem().Click([this](auto&&, auto&&) { RequestAnimatedPower(L"restart"); });
+        PowerPreviewItem().Click([this](auto&&, auto&&) { RequestAnimatedPower(L"restart", true); });
         LockItem().Click(power(L"lock"));
         for (auto const& [slider, label, key] : { std::tuple{ BrightnessSlider(), BrightnessValue(), std::wstring(L"brightness") },
                                                   std::tuple{ VolumeSlider(), VolumeValue(), std::wstring(L"volume") } })
@@ -270,10 +272,73 @@ namespace winrt::ClawWidget::implementation
         m_pollTimer.Start();
     }
 
+    // No protocol activation or foreground change: the native renderer dismisses Game Bar
+    // immediately before its frames, including physical power-button and wake paths.
+    fire_and_forget WidgetPage::RequestAnimatedPower(hstring action, bool preview)
+    {
+        auto lifetime = get_strong();
+        if (m_powerTransition) co_return;
+        m_powerTransition = true;
+        PowerMenu().Hide();
+        PublishPowerVisibility();
+        if (preview) Send(L"power-preview", L"preview_power_animation");
+        else Send(L"power_action", L"power_action", Args({ S(action.c_str()) }));
+        auto ui = apartment_context();
+        co_await resume_after(std::chrono::seconds(2));
+        co_await ui;
+        m_powerTransition = false;
+        Update();
+    }
+
+    fire_and_forget WidgetPage::PublishPowerVisibility()
+    {
+        auto lifetime = get_strong();
+        m_powerVisibilityDirty = true;
+        if (m_powerVisibilityWriting) co_return;
+        m_powerVisibilityWriting = true;
+        try
+        {
+            while (m_powerVisibilityDirty)
+            {
+                m_powerVisibilityDirty = false;
+                JsonObject report;
+                report.Insert(L"version", N(1));
+                report.Insert(L"pid", N(GetCurrentProcessId()));
+                bool foreground = false, visible = false;
+                if (m_widget)
+                {
+                    foreground = m_widget.GameBarDisplayMode() == XboxGameBarDisplayMode::Foreground;
+                    visible = m_widget.Visible();
+                }
+                report.Insert(L"foreground", B(foreground));
+                report.Insert(L"visible", B(visible));
+                auto snapshot = report.Stringify();
+                if (snapshot == m_lastPowerVisibility) continue;
+                report.Insert(L"atUnixMs", N(static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count())));
+                auto file = co_await ApplicationData::Current().LocalFolder().CreateFileAsync(
+                    L"power-visibility.next", CreationCollisionOption::ReplaceExisting);
+                co_await FileIO::WriteTextAsync(file, report.Stringify());
+                co_await file.RenameAsync(L"power-visibility.json", NameCollisionOption::ReplaceExisting);
+                m_lastPowerVisibility = snapshot;
+            }
+        }
+        catch (...) {}
+        m_powerVisibilityWriting = false;
+    }
+
     void WidgetPage::OnNavigatedTo(Navigation::NavigationEventArgs const& e)
     {
         m_widget = e.Parameter().try_as<XboxGameBarWidget>();
         if (!m_widget) return;
+        PublishPowerVisibility();
+        auto visibilityChanged = [weak = get_weak()](auto&&, auto&&) {
+            if (auto self = weak.get()) self->Dispatcher().RunAsync(Core::CoreDispatcherPriority::Normal,
+                [self]() { self->PublishPowerVisibility(); });
+        };
+        m_widget.GameBarDisplayModeChanged(visibilityChanged);
+        m_widget.VisibleChanged(visibilityChanged);
+        m_widget.WindowStateChanged(visibilityChanged);
         m_widget.GameBarDisplayModeChanged([weak = get_weak()](auto&&, auto&&) {
             if (auto self = weak.get())
                 self->Dispatcher().RunAsync(Core::CoreDispatcherPriority::Normal, [self]() {
@@ -648,7 +713,9 @@ namespace winrt::ClawWidget::implementation
         {
             bool on = Bool(m_data, L"power.ecore.enabled");
             level.count = 2; level.index = on;
-            level.value = hstring(on ? L"开" : L"关") + (Bool(m_data, L"power.ecore.pending") ? L" · 重启后生效" : L"");
+            auto status = Str(m_data, L"power.ecore.status");
+            level.value = hstring(on ? L"开 · " : L"关 · ") + (status.empty() ? L"修改后需重启" : status);
+            level.disabled = Has(m_data, L"power.ecore.supported") && !Bool(m_data, L"power.ecore.supported");
         }
         else if (id == L"sharpen")
         {

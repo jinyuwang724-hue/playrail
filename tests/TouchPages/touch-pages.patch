@@ -1,0 +1,1039 @@
+--- a/ClawLibrary/Engine/SettingsPointer.cs
++++ b/ClawLibrary/Engine/SettingsPointer.cs
+@@ -1,7 +1,7 @@
+ namespace ClawLibrary.Engine;
+ 
+ internal enum SettingsPointerMode { None, Pending, Scroll, Slider }
+-internal enum SettingsTargetKind { Row, Choice, Decrease, Increase, Slider, Category, Item, Tab, Cell, Action }
++internal enum SettingsTargetKind { Row, Choice, Decrease, Increase, Slider, Category, Item, Tab, Cell, Action, Secondary }
+ 
+ internal readonly record struct SettingsPointerTarget(int Row, SettingsTargetKind Kind, double X, double Y, double Width, double Height, int Choice = -1)
+ {
+--- /dev/null
++++ b/ClawLibrary/Engine/TouchPointer.cs
+@@ -0,0 +1,44 @@
++namespace ClawLibrary.Engine;
++
++internal readonly record struct TouchSurface(int Page, int Detail = 0, int Version = 0, string? Item = null);
++internal enum TouchResult { None, Tap, Horizontal, Vertical, Canceled }
++
++/// <summary>A release belongs to one pointer and one unchanged page. Movement intent locks once.</summary>
++internal sealed class TouchPointerGesture
++{
++    private uint? _owner;
++    private TouchSurface _surface;
++    private TouchResult _intent;
++    public bool Active => _owner != null;
++    public double StartX { get; private set; }
++    public double StartY { get; private set; }
++    public bool Owns(uint id) => _owner == id;
++    public bool Matches(TouchSurface surface) => Active && _surface == surface;
++
++    public bool Begin(uint id, double x, double y, TouchSurface surface)
++    {
++        if (Active) return false;
++        _owner = id; _surface = surface; StartX = x; StartY = y; _intent = TouchResult.Tap;
++        return true;
++    }
++
++    public TouchResult Move(uint id, double x, double y, TouchSurface surface)
++    {
++        if (!Owns(id)) return TouchResult.None;
++        if (_surface != surface) _intent = TouchResult.Canceled;
++        if (_intent == TouchResult.Tap && Math.Max(Math.Abs(x - StartX), Math.Abs(y - StartY)) >= 8)
++            _intent = Math.Abs(x - StartX) > Math.Abs(y - StartY) ? TouchResult.Horizontal : TouchResult.Vertical;
++        return _intent;
++    }
++
++    public TouchResult End(uint id, double x, double y, TouchSurface surface)
++    {
++        if (!Owns(id)) return TouchResult.None;
++        var result = Move(id, x, y, surface);
++        _owner = null;
++        return result;
++    }
++
++    public void Cancel(uint id) { if (Owns(id)) Reset(); }
++    public void Reset() { _owner = null; _intent = TouchResult.None; }
++}
+--- a/ClawLibrary/Package.appxmanifest
++++ b/ClawLibrary/Package.appxmanifest
+@@ -8,7 +8,7 @@
+   IgnorableNamespaces="uap uap3 uap4 rescap">
+ 
+   <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。主页能力由包根目录的 SCCD 配套声明。 -->
+-  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.177.0" />
++  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.179.0" />
+ 
+   <Properties>
+     <DisplayName>Claw 游戏库</DisplayName>
+--- a/ClawLibrary/Stage/LineIcons.cs
++++ b/ClawLibrary/Stage/LineIcons.cs
+@@ -16,6 +16,10 @@
+         [""] = "M6.5 6.5l11 11M17.5 6.5l-11 11",                                                              // 关闭
+         [""] = "M12 5v14M5 12h14",                                                                            // 添加
+         [""] = "M4 7h9M17 7h3M4 17h3M11 17h9 M13,7 A2,2 0 1 0 17,7 A2,2 0 1 0 13,7 Z M7,17 A2,2 0 1 0 11,17 A2,2 0 1 0 7,17 Z", // 设置
++        [""] = "M4 5h16l-6 7v6l-4 2v-8z", // 筛选
++        [""] = "M5 5h14v15H5zM5 9h14M8 3v4M16 3v4M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01", // 日历
++        [""] = "M3 5h18v12H3zM12 17v4M8 21h8M10 8l5 3-5 3z", // 放映
++        [""] = "M5 3h14v18H5zM7 5h10v11H7zM7 13l3-3 4 4 3-2M8 19h8", // 相片
+         [""] = "M13 2.5 4.5 14H11l-1 7.5L18.5 10H12z",                                                        // 闪电（性能、充电）
+         [""] = "M12 3v8 M6.3 6.8a8 8 0 1 0 11.4 0",                                                           // 电源 / 关机
+         [""] = "M3.5 7a2 2 0 0 1 2-2h4l2 2.5h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z",           // 文件夹
+--- a/ClawLibrary/Stage/WallStage.AddGameMatch.cs
++++ b/ClawLibrary/Stage/WallStage.AddGameMatch.cs
+@@ -138,14 +138,25 @@
+             Changed = i == d.Match,
+         }).ToList();
+         var old = ds.Transform;
++        float viewH = AgMatchOy + (760 - AgMatchOy) / AgMatchS - AgMatchTop;
++        if (!_agManualScroll && _agZone == 1)
++            _agMatchScroll = RowScroll(rows, _agIndex, _agMatchScroll, viewH);
++        _agMatchScroll = Math.Clamp(_agMatchScroll, 0, Math.Max(0, RowsHeight(rows) - viewH));
+         // 和分类页一样的整宽设置行：行号 / 焦点三角在左头，名称缩进 36
+-        ds.Transform = Matrix3x2.CreateTranslation(AgMatchX, AgMatchTop) * old;
+-        PaintRowList(ds, rows, _agZone == 1 ? _agIndex : -1, null, false, AgMatchW);
++        using (ds.CreateLayer(1, new Rect(AgMatchX - 8, AgMatchTop, AgMatchW + 16, viewH)))
++        {
++            ds.Transform = Matrix3x2.CreateTranslation(AgMatchX, AgMatchTop - _agMatchScroll) * old;
++            PaintRowList(ds, rows, _agZone == 1 ? _agIndex : -1, null, false, AgMatchW);
++            ds.Transform = old;
++        }
+         ds.Transform = old;
+         for (int i = 0; i < n; i++)
+         {
+             int at = i;
+-            _agHits.Add((new Rect(AgMatchX, AgMatchTop + i * PerfRowH, AgMatchW, PerfRowH), 1, i, () => { if (!d.Searching) AgChooseMatch(d, at); }));
++            float y0 = AgMatchTop + i * PerfRowH - _agMatchScroll;
++            float y1 = Math.Min(AgMatchTop + viewH, y0 + PerfRowH);
++            y0 = Math.Max(AgMatchTop, y0);
++            if (y1 > y0) _agHits.Add((new Rect(AgMatchX, y0, AgMatchW, y1 - y0), 1, i, () => { if (!d.Searching) AgChooseMatch(d, at); }));
+         }
+         if (n == 0 && !d.Searching && d.Status.Length > 0)
+             PText(ds, d.Status, TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.45), AgMatchX + 36, AgMatchTop + PerfRowH / 2, AgMatchW);
+--- a/ClawLibrary/Stage/WallStage.AddGamePage.cs
++++ b/ClawLibrary/Stage/WallStage.AddGamePage.cs
+@@ -158,6 +158,7 @@
+         AgEndEdit(false);
+         _agPage = page;
+         _agScroll = 0;
++        _agListScroll = _agMatchScroll = 0;
+         _agManualScroll = false;
+         switch (page)
+         {
+@@ -188,6 +189,8 @@
+         d.Searching = true;
+         d.Status = "";
+         d.Matches.Clear();
++        _agMatchScroll = 0;
++        _agManualScroll = false;
+         AgRepaint(d);
+         try
+         {
+@@ -1355,18 +1358,28 @@
+ 
+     private void AgPaintRows(CanvasDrawingSession ds, List<PerfRow> rows, float top, int focus, int zone)
+     {
++        float viewH = 700 - top;
++        float contentH = RowsHeight(rows);
++        if (!_agManualScroll && focus >= 0)
++            _agListScroll = RowScroll(rows, focus, _agListScroll, viewH);
++        _agListScroll = Math.Clamp(_agListScroll, 0, Math.Max(0, contentH - viewH));
+         var old = ds.Transform;
+-        ds.Transform = Matrix3x2.CreateTranslation(40, top) * old;
+-        PaintRowList(ds, rows, focus, null, false, AgRowsW);
++        using (ds.CreateLayer(1, new Rect(32, top, AgRowsW + 16, viewH)))
++        {
++            ds.Transform = Matrix3x2.CreateTranslation(40, top - _agListScroll) * old;
++            PaintRowList(ds, rows, focus, null, false, AgRowsW);
++            ds.Transform = old;
++        }
+         ds.Transform = old;
+-        float y = top;
++        float y = top - _agListScroll;
+         for (int i = 0; i < rows.Count; i++)
+         {
+             float h = rows[i].Section ? PerfSecH : PerfRowH;
+             if (!rows[i].Section && !rows[i].Disabled)
+             {
+                 var row = rows[i];
+-                _agHits.Add((new Rect(40, y, AgRowsW, h), zone, i, () => row.Press?.Invoke()));
++                float y0 = Math.Max(top, y), y1 = Math.Min(700, y + h);
++                if (y1 > y0) _agHits.Add((new Rect(40, y0, AgRowsW, y1 - y0), zone, i, () => row.Press?.Invoke()));
+             }
+             y += h;
+         }
+--- a/ClawLibrary/Stage/WallStage.cs
++++ b/ClawLibrary/Stage/WallStage.cs
+@@ -240,6 +240,7 @@
+         if (Program.Args.Contains("--services-probe")) _ = ServicesProbeAsync();
+         if (Program.Args.Contains("--settings-edit-probe")) _ = SettingsEditProbeAsync();
+         if (Program.Args.Contains("--copy-review-probe")) _ = CopyReviewProbeAsync();
++        if (Program.Args.Contains("--touch-probe")) _ = TouchProbeAsync();
+         if (Program.Args.Contains("--osd-probe")) _ = OsdSettingsProbeAsync();
+         if (_prefs.SourceXbox) After(500, () => _ = RefreshPlatformLibrary("xbox", quiet: true));
+         if (Program.Args.Contains("--debug-backplate")) _root.IsVisible = false;
+@@ -1272,6 +1273,7 @@
+     {
+         if (ConsumeScreensaverWake()) return;
+         MarkInput();
++        if (TouchNavigationClick(sx, sy)) return;
+         if (_ob != null) { ObClick(sx, sy); return; }
+         if (_qsOpen) { QsClick(sx, sy); return; }
+         // 启动 / 正在游戏画面开着：点它自己的按钮，别的地方吞掉（以前会点穿到下面的墙，点到这款游戏的卡就反复「继续游戏」）
+@@ -1350,12 +1352,13 @@
+         _rootEl.PointerReleased += OnPointerReleased;
+         _rootEl.PointerCanceled += OnPointerCanceled;
+         _rootEl.PointerCaptureLost += OnPointerCanceled;
++        CompositionTarget.Rendering += TouchNavigationFrame;
+         _rootEl.PointerWheelChanged += (_, e) =>
+         {
+             if (ConsumeScreensaverWake()) { e.Handled = true; return; }
+             MarkInput();
+             var p = e.GetCurrentPoint(_rootEl).Properties;
+-            if (SettingsPageOpen && !_agOpen)
++            if (SettingsPageOpen && !_agOpen && !_shOpen && !_wsOpen && !GsArtMode)
+             {
+                 if (!p.IsHorizontalMouseWheel) SettingsWheel(p.MouseWheelDelta);
+                 e.Handled = true;
+@@ -1420,11 +1423,15 @@
+     private (double x, double y) _dragFrom;
+     /// <summary>手指从屏幕左边 64 DIP 以内往右划 = 返回（控制中心各页，和 B 一样）。贴着边框划会被 Windows 拿去开小组件，所以区域放宽一些。</summary>
+     private (double x, double y, uint id)? _edge;
++    private TouchSurface _edgeSurface;
+     private const double EdgeBackPx = 64, EdgeBackMin = 80;
+ 
+     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
+     {
+         var pt = e.GetCurrentPoint(_rootEl);
++        if (PointerEditor(e.OriginalSource)) return;
++        if (_pagePointer.Active || _settingsGesture.Active || _edge != null) { e.Handled = true; return; }
++        if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;
+         if (ConsumeScreensaverWake())
+         {
+             _screensaverWakePointers.Add(pt.PointerId);
+@@ -1433,19 +1440,17 @@
+             return;
+         }
+         MarkInput();
+-        if (_ob != null) { ObClick(pt.Position.X, pt.Position.Y); e.Handled = true; return; }
+-        if (_qsOpen) { QsClick(pt.Position.X, pt.Position.Y); e.Handled = true; return; }
+-        if (_lm is { Leaving: false }) { LaunchMotionClick(pt.Position.X, pt.Position.Y); e.Handled = true; return; }
+-        if (_ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx)
++        if (_ob == null && !_qsOpen && _ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx && !TouchNavigationHit(pt.Position.X, pt.Position.Y))
+         {
+             MarkInput();
+             _edge = (pt.Position.X, pt.Position.Y, pt.PointerId);
+-            _rootEl.CapturePointer(e.Pointer);
++            _edgeSurface = PointerSurface;
++            if (!_rootEl.CapturePointer(e.Pointer)) _edge = null;
+             e.Handled = true;
+             return;
+         }
+         // 添加游戏页叠在设置页上面：它的点按、拖动走下面通用那条（AgClick），不能让设置页的手势接走
+-        if (SettingsPageOpen && !_agOpen && !GsOverlay && !GsPadMapMode)
++        if (_ob == null && !_qsOpen && _lm is not { Leaving: false } && UseSettingsPointer(pt.Position.X, pt.Position.Y))
+         {
+             e.Handled = true;
+             if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;
+@@ -1457,11 +1462,15 @@
+             }
+             return;
+         }
++        if (!_pagePointer.Begin(pt.PointerId, pt.Position.X, pt.Position.Y, PointerSurface)) return;
++        _quickTouchId = _qsOpen ? QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id : null;
++        _shFilterDragRemainder = 0;
+         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, 0, 0, 0, pt.PointerId);
+         _dragFrom = (pt.Position.X, pt.Position.Y);
+         _glide = Vector2.Zero;
+-        _rootEl.CapturePointer(e.Pointer);
++        if (!_rootEl.CapturePointer(e.Pointer)) { _pagePointer.Reset(); _drag = null; return; }
+         _rootEl.Focus(FocusState.Pointer);
++        e.Handled = true;
+     }
+ 
+     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
+@@ -1480,8 +1489,8 @@
+             }
+             MarkInput();
+         }
+-        if (_ob != null) { ObHover(current.Position.X, current.Position.Y); e.Handled = true; return; }
+-        if (_lm is { Leaving: false }) { LaunchMotionHover(current.Position.X, current.Position.Y); e.Handled = true; return; }
++        if (_ob != null) ObHover(current.Position.X, current.Position.Y);
++        if (_lm is { Leaving: false }) LaunchMotionHover(current.Position.X, current.Position.Y);
+         if (_edge?.id == e.Pointer.PointerId) { e.Handled = true; return; }
+         if (_settingsGesture.Owns(e.Pointer.PointerId))
+         {
+@@ -1493,11 +1502,20 @@
+         if (_drag is not { } d) return;
+         var pt = e.GetCurrentPoint(_rootEl);
+         if (pt.PointerId != d.id) return;
++        var intent = _pagePointer.Move(pt.PointerId, pt.Position.X, pt.Position.Y, PointerSurface);
++        if (intent is TouchResult.Canceled or TouchResult.None) { e.Handled = true; return; }
+         double dx = pt.Position.X - d.x, dy = pt.Position.Y - d.y;
+         double dt = Math.Max(1, (pt.Timestamp - d.t) / 1000.0);
+-        double moved = d.moved + Math.Abs(dx) + Math.Abs(dy);
++        double moved = Math.Max(d.moved, Math.Max(Math.Abs(pt.Position.X - _dragFrom.x), Math.Abs(pt.Position.Y - _dragFrom.y)));
+         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, dx / dt * 1000, dy / dt * 1000, moved, d.id);
+-        if (moved > 4) { if (_ccOpen) CcDrag(dx, dy); else PanBy(dx, dy); }
++        if (intent != TouchResult.Tap)
++        {
++            if (_qsOpen) { if (intent == TouchResult.Horizontal && _quickTouchId != null) QsTouchDrag(_quickTouchId, pt.Position.X); }
++            else if (_ob != null || _lm is { Leaving: false } || _searchOpen || _backgroundSettingsOpen || TouchNavigationHit(_dragFrom.x, _dragFrom.y)) { }
++            else if (_ccOpen) { if (intent == TouchResult.Vertical) CcDrag(dx, dy); }
++            else PanBy(dx, dy);
++        }
++        e.Handled = true;
+     }
+ 
+     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
+@@ -1514,6 +1532,7 @@
+             _edge = null;
+             _rootEl.ReleasePointerCapture(e.Pointer);
+             e.Handled = true;
++            if (PointerSurface != _edgeSurface) return;
+             double ex = at.X - edge.x, ey = at.Y - edge.y;
+             if (ex >= EdgeBackMin && Math.Abs(ey) < ex) Back();
+             else if (Math.Abs(ex) + Math.Abs(ey) <= 8) ClickAt(at.X, at.Y);
+@@ -1530,10 +1549,19 @@
+         if (_drag is not { } d) return;
+         var pt = e.GetCurrentPoint(_rootEl);
+         if (pt.PointerId != d.id) return;
++        var result = _pagePointer.End(pt.PointerId, pt.Position.X, pt.Position.Y, PointerSurface);
+         _drag = null;
+         _rootEl.ReleasePointerCapture(e.Pointer);
+-        if (d.moved <= 4) { ClickAt(pt.Position.X, pt.Position.Y); return; }
+-        if (_ccOpen) { CcSwipe(pt.Position.X - _dragFrom.x, pt.Position.Y - _dragFrom.y); return; }
++        e.Handled = true;
++        if (result is TouchResult.None or TouchResult.Canceled) return;
++        if (_qsOpen)
++        {
++            if (result == TouchResult.Tap && _quickTouchId == QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id) ClickAt(pt.Position.X, pt.Position.Y);
++            return;
++        }
++        if (result == TouchResult.Tap) { ClickAt(pt.Position.X, pt.Position.Y); return; }
++        if (_ob != null || _lm is { Leaving: false } || _searchOpen || _backgroundSettingsOpen || TouchNavigationHit(_dragFrom.x, _dragFrom.y)) return;
++        if (_ccOpen) { if (result == TouchResult.Horizontal) CcSwipe(pt.Position.X - _dragFrom.x, pt.Position.Y - _dragFrom.y); return; }
+         if ((pt.Timestamp - d.t) / 1000.0 > 80) return;
+         // 惯性：滑行距离 = 松手速度 × 0.3（power），按时间常数 280ms 指数衰减；速度上限 4000 px/s
+         double speed = Math.Sqrt(d.vx * d.vx + d.vy * d.vy);
+@@ -1549,6 +1577,7 @@
+     private void OnPointerCanceled(object sender, PointerRoutedEventArgs e)
+     {
+         _screensaverWakePointers.Remove(e.Pointer.PointerId);
++        _pagePointer.Cancel(e.Pointer.PointerId);
+         SettingsPointerCancel(e.Pointer.PointerId);
+         if (_drag?.id == e.Pointer.PointerId) _drag = null;
+         if (_edge?.id == e.Pointer.PointerId) _edge = null;
+@@ -1575,6 +1604,8 @@
+ 
+     public void Dispose()
+     {
++        CompositionTarget.Rendering -= TouchNavigationFrame;
++        _pagePointer.Reset();
+         DisposeStartupReadiness();
+         DisposeShortcutMotion();
+         _servicesDisposed = true;
+--- a/ClawLibrary/Stage/WallStage.GamepadGroups.cs
++++ b/ClawLibrary/Stage/WallStage.GamepadGroups.cs
+@@ -274,6 +274,7 @@
+         return new PerfRow
+         {
+             Title = GpSourceName(src), Glyph = src, Value = GpMapText(it, src, p.Desktop) + "  ›", Disabled = it.Disabled,
++            Secondary = () => GpGroupKeySettings(p, src),
+             Press = () =>
+             {
+                 p.Source = src; p.Act = 0; p.Cell = 0; p.InTabs = false; p.Chord.Clear();
+@@ -319,9 +320,17 @@
+         if (_gpPicker is not { Level: GpSubLevel.Group } p) return false;
+         var rows = GpGroupRows(p);
+         if (p.GroupFocus < 0 || p.GroupFocus >= rows.Count || rows[p.GroupFocus] is not { Glyph: string src, Choices: null, Disabled: false }) return true;
++        GpGroupKeySettings(p, src);
++        return true;
++    }
++
++    private void GpGroupKeySettings(GpPickerState p, string src)
++    {
++        _settingsEdit.End();
+         p.Source = src; p.Act = 0; p.Level = GpSubLevel.Key; p.FromGroup = true; p.KeyFocus = 1; p.Tab = GpIsSpecial(src) ? 4 : 0;
++        _gpPickScroll = 0; _settingsManualScroll = false;
+         PaintGpBody();
+-        return true;
++        if (GsPadPicking) PaintSt();
+     }
+ 
+     // ---------------- 画 ----------------
+--- a/ClawLibrary/Stage/WallStage.Perf.cs
++++ b/ClawLibrary/Stage/WallStage.Perf.cs
+@@ -39,6 +39,7 @@
+         /// <summary>设置页：和默认不同（前面画一个小点），Y 用 Reset 恢复默认。</summary>
+         public bool Changed;
+         public Action? Reset;
++        public Action? Secondary;
+     }
+ 
+     // 设计 px（× _ccK），1280×800 舞台：左栏 348、右栏 812、中间 40
+@@ -656,7 +657,13 @@
+                 string v = r.Value;
+                 float vw = PWidth(ds, v, ui, 17);
+                 var col = Gfx.WithAlpha(CcText, leadingNotes && r.Disabled ? 0.65f : (f || r.BrightValue ? 1f : 0.6f) * a);
+-                if (editing)
++                if (r.Secondary != null)
++                {
++                    PText(ds, v, ui, 17, col, W - 56 - vw, cy, vw + 4);
++                    LineIcons.Draw(ds, "", W - 22, cy, 18, col);
++                    targets?.Add(new(i, SettingsTargetKind.Secondary, W - 44, y, 44, PerfRowH));
++                }
++                else if (editing)
+                 {
+                     // 确认进入调整后才显示 ‹ 值 › 并开放箭头命中。
+                     float right = W;
+--- a/ClawLibrary/Stage/WallStage.QuickPanel.cs
++++ b/ClawLibrary/Stage/WallStage.QuickPanel.cs
+@@ -153,10 +153,11 @@
+ 
+     private async Task QsRefresh(int v)
+     {
++        if (_pagePointer.Active || _qsTouchWrites?.IsBusy == true) return;
+         try
+         {
+             _agent ??= new AgentClient();
+-            if (await _agent.Call("widget_state") is JsonObject s && v == _qsVersion && _qsOpen)
++            if (await _agent.Call("widget_state") is JsonObject s && v == _qsVersion && _qsOpen && !_pagePointer.Active && _qsTouchWrites?.IsBusy != true)
+             {
+                 _qsState = s;
+                 if (_qsDraft == null || !_qsSaving) _qsDraft = s["power"]?["settings"]?.DeepClone() as JsonObject;
+@@ -347,13 +348,14 @@
+         {
+             ds.FillRectangle(0, 0, QsW, H, QsBg);
+             ds.FillRectangle(QsW - 1, 0, 1, H, Gfx.Rgba(255, 255, 255, 0.06));
+-            using (var tl = TextKit.Layout(ds, QsTitle(), TextKit.Ui(700), 22, QsW - 2 * QsPad, CanvasHorizontalAlignment.Left))
++            using (var tl = TextKit.Layout(ds, QsTitle(), TextKit.Ui(700), 22, QsW - 2 * QsPad - 40, CanvasHorizontalAlignment.Left))
+             {
+                 tl.Options = CanvasDrawTextOptions.Clip;
+                 tl.TrimmingSign = CanvasTrimmingSign.Ellipsis;
+                 tl.TrimmingGranularity = CanvasTextTrimmingGranularity.Character;
+                 ds.DrawTextLayout(tl, QsPad - (float)tl.LayoutBounds.X, 34 - (float)tl.LayoutBounds.Y, CcText);
+             }
++            LineIcons.Draw(ds, "", QsW - 24, 46, 16, CcText);
+             for (int i = 0; i < _qsItems.Count; i++) QsDrawItem(ds, _qsItems[i], i == _qsFocus);
+             if (_qsNote != null)
+             {
+@@ -674,13 +676,14 @@
+     {
+         float k = _ccK > 0 ? _ccK : (float)(View.Width / 1280);
+         double x = sx / k, y = sy / k;
+-        if (x > QsW) { CloseQuickPanel(); return; }   // 点到游戏那边 = 收起
++        if (x >= (QsRowsStyle ? QsRowsW : QsW) - 48 && y >= 24 && y < 68) { CloseQuickPanel(); return; }
++        if (x > (QsRowsStyle ? QsRowsW : QsW)) { CloseQuickPanel(); return; }   // 点到游戏那边 = 收起
+         for (int i = 0; i < _qsItems.Count; i++)
+         {
+             var it = _qsItems[i];
+             if (x < it.X || x > it.X + it.W || y < it.Y || y > it.Y + it.H) continue;
+             _qsFocus = i; _qsFocusId = it.Id;
+-            if (it.Kind == QsKind.Slider && !it.Disabled && it.Id != "volume")
++            if (it.Kind == QsKind.Slider && !it.Disabled && (it.Id != "volume" || x >= it.X + 48))
+             {
+                 // 点滑条：直接定到点的位置
+                 float x0 = it.X + 52, x1 = it.X + it.W - 70;
+@@ -695,20 +698,53 @@
+ 
+     private void QsSetLevel(QsItem it, float level)
+     {
+-        if (it.Id is "brightness")
++        level = Math.Clamp(level, 0, 1);
++        if (it.Disabled) return;
++        if (it.Id is "brightness" or "volume")
+         {
+             double v = Math.Round(level * 100);
+-            if (_qsState?["system"] is JsonObject sys) sys["brightness"] = v;
+-            _ = QsCall("", "set_brightness", JsonValue.Create(v));
++            if (_qsState?["system"] is JsonObject sys) { sys[it.Id] = v; if (it.Id == "volume") sys["muted"] = false; }
++            QsQueueTouchValue(it.Id == "volume" ? "set_volume" : "set_brightness", JsonValue.Create(v));
+         }
+         else if (it.Id == "tdp" && _qsDraft?["manual"] is JsonObject manual)
+         {
+             var (lo, hi) = QsTdpRange();
+             double v = Math.Round(lo + (hi - lo) * level);
+             manual["tdp"] = v;
+-            _ = QsSavePower($"功耗 {v:0} W");
++            if (_qsDraft != null) QsQueueTouchValue("save_power", _qsDraft.DeepClone());
+         }
+         QsBuild(); QsPaint();
++    }
++
++    private SettingsWriteQueue? _qsTouchWrites;
++    // In-memory transport is used only by the opt-in input probe.
++    private Func<string, JsonNode, Task>? _qsTouchTransport;
++    private Task _qsTouchPending = Task.CompletedTask;
++    private void QsQueueTouchValue(string method, JsonNode value)
++    {
++        _qsTouchWrites ??= new SettingsWriteQueue(ex => QsFlash(ex.Message), () => { if (_qsOpen) _ = QsRefresh(_qsVersion); });
++        var transport = _qsTouchTransport;
++        _qsTouchPending = _qsTouchWrites.Enqueue(method, 60, async () =>
++        {
++            if (transport != null) { await transport(method, value); return; }
++            _agent ??= new AgentClient();
++            await _agent.Call(method, value);
++        });
++    }
++
++    private QsItem? QsTouchItemAt(double sx, double sy)
++    {
++        float k = TouchScale;
++        double x = sx / k, y = sy / k;
++        return _qsItems.FirstOrDefault(it => x >= it.X && x < it.X + it.W && y >= it.Y && y < it.Y + it.H);
++    }
++
++    private void QsTouchDrag(string id, double sx)
++    {
++        var it = _qsItems.FirstOrDefault(item => item.Id == id);
++        if (it == null || it.Disabled || it.Kind != QsKind.Slider) return;
++        _qsFocus = _qsItems.IndexOf(it); _qsFocusId = id;
++        QsSetLevel(it, (float)((sx / TouchScale - it.X - 52) / Math.Max(1, it.W - 122)));
+     }
+ 
+     /// <summary>自测用（--state=qs）：在游戏库里打开快捷设置，挨个走一遍焦点。</summary>
+--- a/ClawLibrary/Stage/WallStage.Settings.Pointer.cs
++++ b/ClawLibrary/Stage/WallStage.Settings.Pointer.cs
+@@ -8,11 +8,12 @@
+     private readonly List<SettingsPointerTarget> _settingsTargets = new();
+     private SettingsPointerTarget? _settingsPressedTarget;
+     private bool _settingsManualScroll, _settingsCanDragScroll, _settingsWasList;
++    private bool _settingsTouchCanceled;
+     private float _settingsScrollAtPress, _gpPickScroll;
+     private List<PerfRow> _gpPickRows = new();
+ 
+     private bool SettingsPageOpen => _ccOpen && (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen);
+-    private bool SettingsHasList => _dsOpen || _syOpen || _stOpen || _perfOpen || _gpPicker?.Level is GpSubLevel.Key or GpSubLevel.Settings or GpSubLevel.Group;
++    private bool SettingsHasList => SettingsPickerRows || !GsOverlay && (_dsOpen || _syOpen || _stOpen || _perfOpen);
+     private List<PerfRow> SettingsRows => SettingsPickerRows ? _gpPickRows : _dsOpen ? _dsRows : _syOpen ? _syRows : _stOpen ? _stRows : _perfOpen ? _perfRows : _gpPickRows;
+     private float SettingsListX => GsPadPicking ? GpPickX + GsPadDx : _gpOpen ? GpPickX : _stOpen ? StRightX : PerfRightX;
+     private float SettingsListY => _gpOpen || GsPadPicking ? 196 : PerfTop;
+@@ -61,8 +62,8 @@
+ 
+     private SettingsPointerTarget? SettingsTargetAt(double x, double y)
+     {
+-        if (_gpOpen && GpTargetAt(x / _ccK, y / _ccK) is { Kind: SettingsTargetKind.Category or SettingsTargetKind.Action } chrome) return chrome;
+-        if (!SettingsHasList) return GpTargetAt(x / _ccK, y / _ccK);
++        if ((_gpOpen || GsPadPicking) && GpTargetAt(SettingsGpX(x), y / _ccK) is { Kind: SettingsTargetKind.Category or SettingsTargetKind.Action } chrome) return chrome;
++        if (!SettingsHasList) return GpTargetAt(SettingsGpX(x), y / _ccK);
+         if (!SettingsListHit(x, y)) return null;
+         double lx = x / _ccK - SettingsListX, ly = y / _ccK - SettingsListY + SettingsScroll;
+         for (int i = _settingsTargets.Count - 1; i >= 0; i--)
+@@ -75,6 +76,9 @@
+         var hit = SettingsTargetAt(x, y);
+         if (!_settingsGesture.Begin(id, x, y, hit?.Kind == SettingsTargetKind.Slider)) return false;
+         _settingsPressedTarget = hit;
++        _settingsTouchCanceled = false;
++        _settingsTouchSurface = PointerSurface;
++        _settingsTouchKey = SettingsTouchIdentity(hit);
+         _settingsWasList = SettingsHasList;
+         _settingsCanDragScroll = SettingsListHit(x, y);
+         _settingsScrollAtPress = SettingsScroll;
+@@ -83,13 +87,16 @@
+ 
+     private void SettingsPointerMove(uint id, double x, double y)
+     {
++        if (!_settingsGesture.Owns(id)) return;
++        if (PointerSurface != _settingsTouchSurface) _settingsTouchCanceled = true;
++        if (_settingsTouchCanceled) return;
+         var mode = _settingsGesture.Move(id, x, y);
+         if (mode == SettingsPointerMode.Scroll && _settingsCanDragScroll)
+             SettingsScrollTo(_settingsScrollAtPress - (y - _settingsGesture.StartY) / _ccK);
+         else if (mode == SettingsPointerMode.Slider && _settingsPressedTarget is { } hit)
+         {
+             if (_settingsWasList) SettingsSliderAt(hit, x);
+-            else GpSliderAt(hit, x / _ccK);
++            else GpSliderAt(hit, SettingsGpX(x));
+         }
+     }
+ 
+@@ -98,16 +105,22 @@
+         if (!_settingsGesture.Owns(id)) return;
+         SettingsPointerMove(id, x, y);
+         var mode = _settingsGesture.End(id);
++        if (_settingsTouchCanceled || PointerSurface != _settingsTouchSurface) { _settingsPressedTarget = null; return; }
+         if (mode == SettingsPointerMode.Pending && _settingsPressedTarget is { } down && SettingsTargetAt(x, y) is { } up
++            && _settingsTouchKey == SettingsTouchIdentity(up)
+             && down.Row == up.Row && down.Kind == up.Kind && down.Choice == up.Choice)
+         {
+             if (_settingsWasList && up.Kind != SettingsTargetKind.Category && up.Kind != SettingsTargetKind.Action) SettingsApplyTarget(up, x);
+-            else GpApplyPointerTarget(up, x / _ccK);
++            else GpApplyPointerTarget(up, SettingsGpX(x));
++            if (GsPadPicking) PaintSt();
+         }
+         else if (mode == SettingsPointerMode.Pending && _settingsPressedTarget == null && _stOpen)
+             StCategoryClick(x, y);   // 设置页左栏的分类：点一下切过去（和鼠标点同一个入口）
+         else if (mode == SettingsPointerMode.Scroll && !_settingsWasList && _settingsPressedTarget?.Kind != SettingsTargetKind.Slider)
++        {
+             GpPointerSwipe((x - _settingsGesture.StartX) / _ccK, (y - _settingsGesture.StartY) / _ccK);
++            if (GsPadPicking) PaintSt();
++        }
+         _settingsPressedTarget = null;
+         if (_dsOpen && _dsWrites?.IsBusy != true) _ = DsRefresh();
+     }
+@@ -125,7 +138,7 @@
+         MarkInput();
+         if (SettingsTargetAt(x, y) is not { } hit) return;
+         if (SettingsHasList && hit.Kind != SettingsTargetKind.Category && hit.Kind != SettingsTargetKind.Action) SettingsApplyTarget(hit, x);
+-        else GpApplyPointerTarget(hit, x / _ccK);
++        else GpApplyPointerTarget(hit, SettingsGpX(x));
+     }
+ 
+     private void SettingsApplyTarget(SettingsPointerTarget hit, double x)
+@@ -154,6 +167,7 @@
+                     case SettingsTargetKind.Decrease: RowStep(row, -1); break;
+                     case SettingsTargetKind.Increase: RowStep(row, 1); break;
+                     case SettingsTargetKind.Slider: Cue(Sfx.SliderUp); SettingsSliderAt(hit, x); break;
++                    case SettingsTargetKind.Secondary: row.Secondary?.Invoke(); break;
+                 }
+             });
+         }
+@@ -185,7 +199,7 @@
+         MarkInput();
+         if (_settingsGesture.Active) return;
+         if (SettingsHasList) SettingsScrollTo(SettingsScroll - delta / 120.0 * 84);
+-        else if (_gpOpen) GpPointerBrowse(delta < 0 ? 1 : -1);
++        else if (_gpOpen || GsPadPicking) { GpPointerBrowse(delta < 0 ? 1 : -1); if (GsPadPicking) PaintSt(); }
+     }
+ 
+     private void SettingsResumeKeyboard()
+--- a/ClawLibrary/Stage/WallStage.SettingsPage.cs
++++ b/ClawLibrary/Stage/WallStage.SettingsPage.cs
+@@ -814,6 +814,7 @@
+     private PerfRow StNumber(string title, int value, int min, int max, int step, Func<int, string> fmt, Action<int> set, int def) => new()
+     {
+         Title = title, Value = fmt(value), Numeric = true, Changed = value != def,
++        Number = value, Minimum = min, Maximum = max, Increment = step, SetNumber = set,
+         Reset = () => { if (value != def) set(def); },
+         Step = d => { int nv = Math.Clamp(value + d * step, min, max); if (nv != value) set(nv); },
+     };
+--- a/ClawLibrary/Stage/WallStage.Shots.Paint.cs
++++ b/ClawLibrary/Stage/WallStage.Shots.Paint.cs
+@@ -97,7 +97,7 @@
+     private void ShPaintTabs()
+     {
+         float k = _ccK, raster = ShRaster;
+-        const float X0 = 116, MaxW = 860, H = 44, Pad = 12, Gap = 6;
++        const float X0 = 204, MaxW = 772, H = 44, Pad = 12, Gap = 6;
+         _shTabHits.Clear();
+         if (_shTabs.Count == 0 || !_shLoaded) { ((CompositionSurfaceBrush)_shTabsSprite.Brush).Surface = null; return; }
+         var ui = TextKit.Ui(400);
+--- a/ClawLibrary/Stage/WallStage.Switcher.cs
++++ b/ClawLibrary/Stage/WallStage.Switcher.cs
+@@ -197,7 +197,8 @@
+         {
+             float x = 0;
+             if (icon != null) { ds.DrawImage(icon, new Windows.Foundation.Rect(0, (LabelH - WsIcon) / 2, WsIcon, WsIcon), icon.Bounds, 1, CanvasImageInterpolation.HighQualityCubic); x = WsIcon + 10; }
+-            using var tl = TextKit.Layout(ds, c.Win.Title, TextKit.Ui(500), 17, WsBoxW - x, CanvasHorizontalAlignment.Left);
++            LineIcons.Draw(ds, "", WsBoxW - 18, LabelH / 2, 14, CcText);
++            using var tl = TextKit.Layout(ds, c.Win.Title, TextKit.Ui(500), 17, WsBoxW - x - 48, CanvasHorizontalAlignment.Left);
+             tl.Options = CanvasDrawTextOptions.Clip;
+             tl.TrimmingSign = CanvasTrimmingSign.Ellipsis;
+             tl.TrimmingGranularity = CanvasTextTrimmingGranularity.Character;
+@@ -415,11 +416,15 @@
+     {
+         float k = _ccK;
+         double x = sx / k, y = sy / k;
+-        if (y < WsBoxY || y > WsBoxY + WsBoxH + WsLabelY + 32) return;
++        if (y < WsBoxY || y > WsBoxY + WsBoxH + WsLabelY + 44) return;
+         for (int i = 0; i < _wsCards.Count; i++)
+         {
+             float cx = 640 - WsBoxW / 2 + i * WsPitch - _wsScroll;
+             if (x < cx || x > cx + WsBoxW) continue;
++            if (x >= cx + WsBoxW - 44 && y >= WsBoxY + WsBoxH + WsLabelY)
++            {
++                _wsFocus = i; WsCloseFocused(); return;
++            }
+             if (i == _wsFocus) WsActivate(); else WsSetFocus(i);
+             return;
+         }
+--- a/ClawLibrary/Stage/WallStage.Touch.cs
++++ b/ClawLibrary/Stage/WallStage.Touch.cs
+@@ -19,6 +19,7 @@
+     {
+         MarkInput();
+         if (_agOpen) AgDrag((float)(dy / _ccK));
++        else if (_shOpen && _shFilterOpen) ShDragFilter((float)(dy / _ccK));
+         else if (_shOpen) ShDrag((float)(dy / _ccK));
+     }
+ 
+@@ -27,7 +28,8 @@
+     {
+         if (Math.Abs(tx) < SwipeMin || Math.Abs(tx) < Math.Abs(ty) * 1.2) return;
+         if (_agOpen) { AgSwipe(tx < 0 ? 1 : -1); return; }
+-        if (SettingsPageOpen) return;
++        if (SettingsPageOpen && !_shOpen && !_wsOpen) return;
++        if (_shOpen && !_shViewer && !_shFilterOpen && _dragFrom.y / _ccK <= 80) { ShSwitchTab(tx < 0 ? 1 : -1); return; }
+         if (_shOpen && ShDragScrolls) return;
+         // 划得远多走几格（每 260 设计 px 一格，最多 4 格）
+         int steps = Math.Clamp((int)Math.Round(Math.Abs(tx) / (_ccK * 260)), 1, 4);
+@@ -38,6 +40,7 @@
+     {
+         MarkInput();
+         float d = delta / 120f * 84;
++        if (_shOpen && _shFilterOpen) { if (!horizontal) ShDragFilter(d); return; }
+         if (_agOpen) { if (!horizontal) AgDrag(d); return; }
+         if (_shOpen && ShDragScrolls) { if (!horizontal) ShDrag(d); return; }
+         // 其余（卡片、放映、冲印）：滚一格走一格
+@@ -48,9 +51,29 @@
+ 
+     /// <summary>手动滚过图片网格：先不让焦点把它拽回去（手柄一动就恢复跟焦点）。</summary>
+     private bool _agManualScroll;
++    private float _agListScroll, _agMatchScroll;
++
++    private static float RowScroll(List<PerfRow> rows, int focus, float scroll, float viewH)
++    {
++        if (focus < 0 || focus >= rows.Count) return scroll;
++        float top = 0;
++        for (int i = 0; i < focus; i++) top += rows[i].Section ? PerfSecH : PerfRowH;
++        float bottom = top + (rows[focus].Section ? PerfSecH : PerfRowH);
++        if (top < scroll) scroll = top;
++        if (bottom > scroll + viewH) scroll = bottom - viewH;
++        return scroll;
++    }
+ 
+     private void AgDrag(float dy)
+     {
++        if (_agDraft != null && _agOffKind == null && _agPage is AgPage.Category or AgPage.Match)
++        {
++            _agManualScroll = true;
++            if (_agPage == AgPage.Match) _agMatchScroll -= dy / AgMatchS;
++            else _agListScroll -= dy;
++            AgPaint();
++            return;
++        }
+         if (_agDraft == null || _agPage != AgPage.Art || _agTab >= AgTabOverview || _agOffKind != null) return;
+         _agManualScroll = true;
+         _agScroll -= dy;
+@@ -76,4 +99,17 @@
+         _shGrid.Offset = new Vector3(0, -_shScroll * k, 0);
+         ShCalImages();
+     }
++
++    private float _shFilterDragRemainder;
++    private void ShDragFilter(float dy)
++    {
++        _shFilterDragRemainder += dy;
++        int steps = (int)(_shFilterDragRemainder / ShFltRow);
++        if (steps == 0) return;
++        _shFilterDragRemainder -= steps * ShFltRow;
++        int rows = (int)Math.Min(ShFltRows, _shFilterItems.Count);
++        _shFltFirst = Math.Clamp(_shFltFirst - steps, 0, Math.Max(0, _shFilterItems.Count - rows));
++        _shFilterFocus = Math.Clamp(_shFilterFocus, _shFltFirst, Math.Max(_shFltFirst, _shFltFirst + rows - 1));
++        ShPaintFilter();
++    }
+ }
+--- /dev/null
++++ b/ClawLibrary/Stage/WallStage.Touch.Navigation.cs
+@@ -0,0 +1,122 @@
++using System.Numerics;
++using ClawLibrary.Engine;
++using Microsoft.UI.Composition;
++using Microsoft.UI.Xaml;
++using Microsoft.UI.Xaml.Controls;
++using Microsoft.UI.Xaml.Media;
++
++namespace ClawLibrary.Stage;
++
++public sealed partial class WallStage
++{
++    private readonly TouchPointerGesture _pagePointer = new();
++    private TouchSurface _settingsTouchSurface;
++    private string? _settingsTouchKey;
++    private string? _quickTouchId;
++    private SpriteVisual? _touchNavigation;
++    private int _touchNavigationMode = -1;
++    private float _touchNavigationScale;
++    private bool _touchFilterVisible;
++    private int _touchShotStyle = -1;
++    private bool _touchFilterOpen;
++
++    private TouchSurface PointerSurface
++    {
++        get
++        {
++            if (_ob != null) return new(1, (int)_obStep, _obLang);
++            if (_qsOpen) return new(2, QsRowsStyle ? 1 : 0, _qsVersion);
++            if (_lm is { Leaving: false }) return new(3);
++            if (_agOpen) return new(4, (int)_agPage * 100 + _agTab, _agOffKind == null ? 0 : 1);
++            if (_shOpen) return new(5, _shTab * 4 + (_shViewer ? 1 : 0) + (_shFilterOpen ? 2 : 0), (int)_shStyle + _shVersion * 10, _shViewer ? ShViewerShot()?.Path : null);
++            if (_wsOpen) return new(6, _wsFocus, _wsCards.Count);
++            if (_gpOpen || GsPadPicking) return new(7, _gpCat, (int?)_gpPicker?.Level ?? -1,
++                $"{_gsItem?.Id}:{_gpPicker?.Source}:{_gpPicker?.Tab}:{_gpPicker?.Act}:{_gpPicker?.Group}");
++            if (_stOpen) return new(8, _stCat, _stVersion, _gsItem?.Id);
++            if (_syOpen) return new(9, _syUpdatesOpen ? 1 : 0, _syVersion);
++            if (_perfOpen) return new(10, _perfCurveEdit ? 1 : 0, _perfVersion);
++            if (_dsOpen) return new(11);
++            if (_ccOpen) return new(12, _ccFocus, (int)_ccZone);
++            return new(13, _stack.Count, (_expandedKey != null ? 1 : 0) + (_searchOpen ? 2 : 0) + (_backgroundSettingsOpen ? 4 : 0));
++        }
++    }
++
++    private static bool PointerEditor(object source)
++    {
++        for (var element = source as DependencyObject; element != null; element = VisualTreeHelper.GetParent(element))
++            if (element is TextBox or PasswordBox) return true;
++        return false;
++    }
++
++    private float TouchScale => Math.Min((float)View.Width / 1280, (float)View.Height / 800);
++    // 0 = hidden, 1 = back, 2 = control centre. No extra explanatory text.
++    private int TouchNavigationMode => _stack.Count == 0 || _startupShield?.IsVisible == true ? 0
++        : _ob != null ? (_obStep is ObStep.Account or ObStep.Home ? 1 : 0)
++        : _qsOpen || _lm is { Leaving: false } ? 0
++        : _ccOpen || _searchOpen || _backgroundSettingsOpen || _expandedKey != null || _stack.Count > 1 ? 1 : 2;
++
++    private bool TouchFilterHit(double x, double y) => _shOpen && !_shViewer
++        && x >= 96 * TouchScale && x < 140 * TouchScale && y >= 24 * TouchScale && y < 72 * TouchScale;
++
++    private bool TouchNavigationHit(double x, double y) => TouchFilterHit(x, y) || TouchNavigationMode != 0
++        && x >= 0 && (x < 40 * TouchScale || TouchShotStyleHit(x, y)) && y >= 24 * TouchScale && y < 72 * TouchScale;
++
++    private bool TouchShotStyleHit(double x, double y) => _shOpen && !_shViewer && !_shFilterOpen
++        && x >= 148 * TouchScale && x < 192 * TouchScale && y >= 24 * TouchScale && y < 72 * TouchScale;
++
++    private bool TouchNavigationClick(double x, double y)
++    {
++        if (!TouchNavigationHit(x, y)) return false;
++        if (TouchFilterHit(x, y)) { ShToggleFilter(); return true; }
++        if (TouchShotStyleHit(x, y)) { ShX(); return true; }
++        if (TouchNavigationMode == 1) Back(); else ToggleControlCenter();
++        return true;
++    }
++
++    private void TouchNavigationFrame(object? sender, object e)
++    {
++        int mode = TouchNavigationMode;
++        float k = TouchScale;
++        bool filter = _shOpen && !_shViewer;
++        if (mode == _touchNavigationMode && k == _touchNavigationScale && filter == _touchFilterVisible && _touchShotStyle == (int)_shStyle && _touchFilterOpen == _shFilterOpen) return;
++        _touchFilterOpen = _shFilterOpen;
++        _touchShotStyle = (int)_shStyle;
++        _touchFilterVisible = filter;
++        _touchNavigationMode = mode; _touchNavigationScale = k;
++        if (_touchNavigation == null)
++        {
++            _touchNavigation = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
++            _top.Children.InsertAtTop(_touchNavigation);
++        }
++        _touchNavigation.IsVisible = mode != 0;
++        if (mode == 0) return;
++        _top.Children.Remove(_touchNavigation); _top.Children.InsertAtTop(_touchNavigation);
++        CcSet(_touchNavigation, CcDraw(filter ? 192 : 40, 48, k * Chrome.Dpi, ds =>
++        {
++            if (mode == 1) DrawChevron(ds, 23, 24, true, CcText);
++            else for (int row = 0; row < 3; row++) ds.DrawLine(12, 18 + row * 6, 28, 18 + row * 6, CcText, 1.8f);
++            if (filter) LineIcons.Draw(ds, "", 118, 24, 20, CcText);
++            if (filter && !_shFilterOpen) LineIcons.Draw(ds, _shStyle == ShStyle.Calendar ? "" : _shStyle == ShStyle.Projector ? "" : "", 170, 24, 20, CcText);
++        }));
++        _touchNavigation.Size = new Vector2((filter ? 192 : 40) * k, 48 * k);
++        _touchNavigation.Offset = new Vector3(0, 24 * k, 0);
++    }
++
++    private bool UseSettingsPointer(double x, double y)
++    {
++        if (!SettingsPageOpen || _agOpen || _shOpen || _wsOpen || GsArtMode || TouchNavigationHit(x, y)) return false;
++        if (!GsPadMapMode) return true;
++        // Embedded controller diagram and the settings above it have separate hit maps.
++        return x / _ccK < StRightX || SettingsTargetAt(x, y) != null;
++    }
++
++    private string? SettingsTouchIdentity(SettingsPointerTarget? target)
++    {
++        if (target is not { } hit) return null;
++        if (SettingsHasList && hit.Kind is not (SettingsTargetKind.Category or SettingsTargetKind.Action))
++            return hit.Row >= 0 && hit.Row < SettingsRows.Count ? SettingsRows[hit.Row].EditId ?? SettingsRows[hit.Row].Title : null;
++        return $"{hit.Kind}:{hit.Row}:{hit.Choice}";
++    }
++
++    private double SettingsGpX(double screenX) => screenX / _ccK - (GsPadPicking ? GsPadDx : 0);
++}
+--- /dev/null
++++ b/ClawLibrary/Stage/WallStage.TouchProbe.cs
+@@ -0,0 +1,184 @@
++using System.Text.Json.Nodes;
++using ClawLibrary.Data;
++using ClawLibrary.Engine;
++
++namespace ClawLibrary.Stage;
++
++public sealed partial class WallStage
++{
++    // Opt-in probe: all actions use fixtures or a memory transport; no user or hardware settings are written.
++    internal async Task TouchProbeAsync()
++    {
++        var checks = new JsonArray();
++        string? error = null;
++        void Check(string name, bool passed)
++        {
++            checks.Add((JsonNode)new JsonObject { ["name"] = name, ["passed"] = passed });
++            if (!passed) throw new InvalidOperationException(name);
++        }
++        try
++        {
++            await Task.Delay(2000);
++            if (!_ccOpen) OpenControlCenter(quiet: true);
++            void Exercise(string page, Action open, Action close, List<PerfRow> rows)
++            {
++                open();
++                int pressed = 0, disabled = 0, secondary = 0, number = 50;
++                var slider = new PerfRow { Title = "测试滑条", Value = "50 %", Numeric = true, Number = 50, Minimum = 0, Maximum = 100,
++                    Increment = 5, Step = _ => { }, SetNumber = value => { number = value; } };
++                rows.Clear();
++                rows.Add(new() { Title = "测试操作", Press = () => pressed++ });
++                rows.Add(new() { Title = "不可用", Disabled = true, Press = () => disabled++ });
++                rows.Add(slider);
++                rows.Add(new() { Title = "测试次级操作", Secondary = () => secondary++ });
++                for (int i = 0; i < 36; i++) rows.Add(new() { Title = "列表 " + i, Press = () => pressed++ });
++                SettingsResetPointer(); SettingsFocus = 0; SettingsScroll = 0; SettingsPaint();
++                double x = (SettingsListX + 100) * _ccK, y = (SettingsListY + PerfRowH / 2) * _ccK;
++                Check(page + ": press starts without activation", SettingsPointerBegin(1, x, y) && pressed == 0);
++                SettingsPointerEnd(2, x, y);
++                Check(page + ": second finger release is ignored", pressed == 0 && _settingsGesture.Owns(1));
++                SettingsPointerEnd(1, x + 2, y + 2);
++                Check(page + ": release activates exactly once", pressed == 1);
++                SettingsPointerEnd(1, x, y);
++                Check(page + ": duplicate release is ignored", pressed == 1);
++                SettingsPointerBegin(3, x, y);
++                SettingsPointerMove(3, x, y - 160);
++                SettingsPointerEnd(3, x, y - 160);
++                Check(page + ": vertical drag scrolls without activation", SettingsScroll > 100 && pressed == 1);
++                SettingsScroll = 0; SettingsPaint();
++                SettingsPointerBegin(4, x, y);
++                rows[0].Title = "刷新后的另一项";
++                SettingsPointerEnd(4, x, y);
++                Check(page + ": changed row identity cancels a pending tap", pressed == 1);
++                SettingsPointerBegin(5, x, y);
++                SettingsPointerCancel(5); SettingsPointerEnd(5, x, y);
++                Check(page + ": canceled contact cannot activate", pressed == 1);
++                double disabledY = y + PerfRowH * _ccK;
++                SettingsPointerBegin(6, x, disabledY); SettingsPointerEnd(6, x, disabledY);
++                Check(page + ": disabled rows stay disabled", disabled == 0);
++                SettingsFocus = 2; RowPress(slider); SettingsPaint();
++                var target = _settingsTargets.First(t => t.Row == 2 && t.Kind == SettingsTargetKind.Slider);
++                double sliderX = (SettingsListX + target.X + target.Width / 2) * _ccK;
++                double sliderY = (SettingsListY + target.Y + target.Height / 2) * _ccK;
++                SettingsPointerBegin(7, sliderX, sliderY);
++                SettingsPointerMove(7, sliderX + 500 * _ccK, sliderY);
++                SettingsPointerEnd(7, sliderX + 500 * _ccK, sliderY);
++                Check(page + ": slider drag clamps to the allowed range", number == 100);
++                SettingsFocus = 3; SettingsPaint();
++                var gear = _settingsTargets.First(t => t.Row == 3 && t.Kind == SettingsTargetKind.Secondary);
++                double gx = (SettingsListX + gear.X + gear.Width / 2) * _ccK;
++                double gy = (SettingsListY + gear.Y + gear.Height / 2) * _ccK;
++                SettingsPointerBegin(8, gx, gy); SettingsPointerEnd(8, gx, gy);
++                Check(page + ": secondary action is reachable by touch", secondary == 1);
++                SettingsResetPointer(); close();
++            }
++            Exercise("display", OpenDisplay, () => CloseDisplay(true), _dsRows);
++            Exercise("system", OpenSystem, () => CloseSystem(true), _syRows);
++            Exercise("performance", OpenPerf, () => ClosePerf(true), _perfRows);
++            Exercise("software", OpenSettingsPage, () => CloseSettingsPage(true), _stRows);
++
++            OpenGamepad();
++            _gpPicker = new GpPickerState { Level = GpSubLevel.Chooser, Source = "A", Tab = 0 };
++            PaintGpBody();
++            var tab = _gpTargets.First(t => t.Kind == SettingsTargetKind.Tab && t.Row == 1);
++            double tx = (tab.X + tab.Width / 2) * _ccK, ty = (tab.Y + tab.Height / 2) * _ccK;
++            SettingsPointerBegin(10, tx, ty); SettingsPointerEnd(10, tx, ty);
++            Check("gamepad: chooser tabs accept touch", _gpPicker?.Tab == 1);
++            SettingsPointerBegin(11, 900 * _ccK, 400 * _ccK);
++            SettingsPointerMove(11, 750 * _ccK, 402 * _ccK);
++            SettingsPointerEnd(11, 750 * _ccK, 402 * _ccK);
++            Check("gamepad: horizontal swipe switches chooser tab", _gpPicker?.Tab == 2);
++            _gpPicker = null; CloseGamepad(true);
++
++            OpenSettingsPage();
++            _gsItem = new LibraryItem { Id = "touch-probe", Title = "触控测试", Platform = "local" };
++            _stCat = 2;
++            _gpPicker = new GpPickerState { Level = GpSubLevel.Chooser, Source = "A", Tab = 0 };
++            PaintSt();
++            var embeddedTab = _gpTargets.First(t => t.Kind == SettingsTargetKind.Tab && t.Row == 1);
++            tx = (embeddedTab.X + embeddedTab.Width / 2 + GsPadDx) * _ccK;
++            ty = (embeddedTab.Y + embeddedTab.Height / 2) * _ccK;
++            Check("per-game controller: translated chooser uses shared touch routing", UseSettingsPointer(tx, ty) && SettingsTargetAt(tx, ty)?.Kind == SettingsTargetKind.Tab);
++            SettingsPointerBegin(12, tx, ty); SettingsPointerEnd(12, tx, ty);
++            Check("per-game controller: translated chooser tab activates", _gpPicker?.Tab == 1);
++            _gpPicker = new GpPickerState { Level = GpSubLevel.Group, Source = "A" };
++            PaintSt();
++            Check("per-game controller: grouped mappings expose trigger settings gear", _gpPickRows.Any(r => r.Secondary != null));
++            Check("per-game controller: embedded subpage participates in list gestures", SettingsPickerRows && SettingsHasList);
++            double ex = (SettingsListX + 100) * _ccK, ey = (SettingsListY + 160) * _ccK;
++            SettingsPointerBegin(13, ex, ey);
++            SettingsPointerMove(13, ex, ey - 200 * _ccK);
++            SettingsPointerEnd(13, ex, ey - 200 * _ccK);
++            Check("per-game controller: long mapping list scrolls without changing a binding", _gpPickScroll > 0);
++            _gpPicker = null; _gsItem = null; CloseSettingsPage(true);
++
++            var draft = new AgDraft();
++            for (int i = 0; i < 40; i++) draft.Matches.Add(new JsonObject { ["name"] = "匹配结果 " + i });
++            AgShow(draft, AgPage.Match);
++            AgDrag(-500);
++            Check("add game: long match results scroll", _agMatchScroll > 0);
++            Check("add game: scrolled result hits stay below search and inside viewport", _agHits.Where(h => h.Zone == 1).All(h => h.R.Y >= AgMatchMap(new(0, AgMatchTop, 1, 1)).Y && h.R.Bottom <= 760.1));
++            Check("add game: results outside viewport have no active hit region", _agHits.Count(h => h.Zone == 1) < draft.Matches.Count);
++            AgDrag(-100000);
++            Check("add game: end of results remains reachable", _agHits.Any(h => h.Zone == 1 && h.Index == 39));
++            AgClose();
++
++            OpenSettingsPage();
++            OpenShots();
++            Check("overlays: screenshot input is not intercepted by underlying settings", !UseSettingsPointer(700 * _ccK, 400 * _ccK));
++            Check("screenshots: every new touch icon has a rendered path", new[] { "", "", "", "" }.All(LineIcons.Has));
++            Check("screenshots: filter has a visible touch entry", TouchFilterHit(118 * _ccK, 48 * _ccK));
++            Check("screenshots: layout has a touch entry", TouchShotStyleHit(170 * _ccK, 48 * _ccK));
++            ShToggleFilter();
++            _shFilterItems = Enumerable.Range(0, 40).Select(i => new ShFilterItem(i.ToString(), "游戏 " + i, i)).ToList();
++            _shFltFirst = _shFilterFocus = 0; _shFilterDragRemainder = 0;
++            ShDragFilter(-192);
++            Check("screenshots: filter list scrolls", _shFltFirst == 4);
++            Check("screenshots: filter hits follow the scrolled viewport", ShFilterHit(ShFltX + 80, ShFltTop + ShFltHead + 24) == 4);
++            ShDragFilter(-100000);
++            Check("screenshots: filter scroll clamps at last visible row", _shFltFirst == 29);
++            CloseShots(true);
++            CloseSettingsPage(true);
++
++            var sent = new List<(string Method, JsonNode Value)>();
++            _qsTouchTransport = (method, value) => { sent.Add((method, value.DeepClone())); return Task.CompletedTask; };
++            OpenQuickPanel(0);
++            _qsState = new JsonObject { ["system"] = new JsonObject { ["brightness"] = 50, ["volume"] = 50, ["muted"] = true } };
++            _qsDraft = new JsonObject { ["manual"] = new JsonObject { ["tdp"] = 15 } };
++            QsBuild();
++            _pagePointer.Begin(99, 0, 0, PointerSurface); // Prevent asynchronous readback from replacing the fixture.
++            var volume = _qsItems.First(i => i.Id == "volume");
++            QsTouchDrag("volume", (volume.X + volume.W + 300) * _ccK);
++            Check("quick settings: volume drag updates value and unmutes", Int(_qsState["system"]?["volume"]) == 100 && !Bool(_qsState["system"]?["muted"]));
++            var brightness = _qsItems.First(i => i.Id == "brightness");
++            QsSetLevel(brightness, .2f); QsSetLevel(brightness, .3f);
++            Check("quick settings: brightness tap updates optimistic value", Int(_qsState["system"]?["brightness"]) == 30);
++            QsSetLevel(new() { Id = "brightness", Kind = QsKind.Slider, Disabled = true }, .9f);
++            Check("quick settings: disabled slider ignores touch", Int(_qsState["system"]?["brightness"]) == 30);
++            QsSetLevel(new() { Id = "tdp", Kind = QsKind.Slider }, .5f);
++            CloseQuickPanel(hideWindow: false, instant: true);
++            await _qsTouchPending;
++            _pagePointer.Reset();
++            Check("quick settings: volume uses correct backend request", sent.Any(s => s.Method == "set_volume" && Int(s.Value) == 100));
++            Check("quick settings: repeated brightness changes coalesce", sent.Count(s => s.Method == "set_brightness") == 1 && Int(sent.First(s => s.Method == "set_brightness").Value) == 30);
++            Check("quick settings: TDP retains the save_power contract", sent.Any(s => s.Method == "save_power" && s.Value["manual"]?["tdp"] != null));
++            _qsTouchTransport = null;
++
++            OpenControlCenter(quiet: true);
++            Check("navigation: control centre exposes back", TouchNavigationMode == 1 && TouchNavigationHit(20 * _ccK, 48 * _ccK));
++        }
++        catch (Exception ex) { error = ex.Message; Log.Error("touch probe", ex); }
++        finally
++        {
++            _pagePointer.Reset(); SettingsResetPointer();
++            await _qsTouchPending;
++            _qsTouchTransport = null;
++            _gpPicker = null; _gsItem = null;
++            CloseQuickPanel(hideWindow: false, instant: true);
++            AgClose(); CloseShots(true); CloseGamepad(true);
++            CloseDisplay(true); CloseSystem(true); ClosePerf(true); CloseSettingsPage(true);
++            OpenSettingsPage(); _stCat = 0; _stZone = 0; Repaint();
++            File.WriteAllText(Path.Combine(App.CacheDir, "touch-probe.json"), new JsonObject { ["checks"] = checks, ["error"] = error }.ToJsonString());
++        }
++    }
++}

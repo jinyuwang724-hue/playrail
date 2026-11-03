@@ -38,7 +38,13 @@ export function createPowerController(api) {
     },
     async setEcore(enabled) {
       set({ busy: true });
-      try { accept(await api.call("set_ecore", enabled)); set({ message: "" }); }
+      try { accept(await api.call("set_ecore", enabled)); set({ message: "核心设置已保存，修改后需重启生效" }); }
+      catch (error) { set({ message: String(error) }); }
+      finally { set({ busy: false }); }
+    },
+    async restoreEcore() {
+      set({ busy: true });
+      try { accept(await api.call("restore_ecore")); set({ message: "已恢复首次修改前的核心设置，修改后需重启生效" }); }
       catch (error) { set({ message: String(error) }); }
       finally { set({ busy: false }); }
     },
@@ -195,9 +201,11 @@ export function createPowerPanel(React, ui, controller, StatusText, SectionLabel
       draft.enabled && row("boost", h(ui.SliderField, { label: "短时功耗加成",
         min: 0, max: limits.boostMax, step: 1, validValues: "steps", minimumDpadGranularity: 1, showValue: true, valueSuffix: " W",
         value: draft.boost, onChange: v => controller.edit({ boost: Math.round(v) }) })),
-      view.ecore && row("ecore", h(ui.ToggleField, { label: "全部核心按 E 核调度",
-        description: view.ecore.pending ? "重启后生效" : undefined,
-        checked: view.ecore.enabled, disabled: state.busy, onChange: enabled => controller.setEcore(enabled) })),
+      view.ecore && row("ecore", h(ui.ToggleField, { label: "模拟全核心 E 核",
+        description: view.ecore.error || (view.ecore.partial ? "已保存部分核心设置 · " : "") + (view.ecore.status || "修改后需重启生效"),
+        checked: view.ecore.enabled, disabled: state.busy || view.ecore.supported === false, onChange: enabled => controller.setEcore(enabled) })),
+      view.ecore?.backup && row("ecore-restore", h(ui.ButtonItem, { layout: "below", disabled: state.busy || view.ecore.supported === false,
+        onClick: () => controller.restoreEcore() }, "恢复原始核心设置")),
       view.backup && row("restore", h(ui.ButtonItem, { layout: "below", disabled: state.busy, onClick: () => controller.restore() },
         "恢复原始功耗")),
       state.message && row("message", h("div", { className: "claw-hint" }, state.message)));

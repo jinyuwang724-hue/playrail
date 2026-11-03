@@ -2,11 +2,13 @@
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap4="http://schemas.microsoft.com/appx/manifest/uap/windows10/4"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap rescap">
+  IgnorableNamespaces="uap uap3 uap4 rescap">
 
-  <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。暂不注册为 Xbox 全屏主页。 -->
-  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.48.0" />
+  <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。主页能力由包根目录的 SCCD 配套声明。 -->
+  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.84.0" />
 
   <Properties>
     <DisplayName>Claw 游戏库</DisplayName>
@@ -34,6 +36,10 @@
         <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#09090b" />
       </uap:VisualElements>
       <Extensions>
+        <uap3:Extension Category="windows.appExtension">
+          <uap3:AppExtension Name="windows.gamingApp" Id="App" DisplayName="Claw 游戏库"
+            Description="Claw 全屏游戏库" PublicFolder="Assets" />
+        </uap3:Extension>
         <uap:Extension Category="windows.protocol">
           <uap:Protocol Name="claw-library"><uap:DisplayName>Claw 游戏库</uap:DisplayName></uap:Protocol>
         </uap:Extension>
@@ -43,5 +49,6 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <uap4:CustomCapability Name="Microsoft.appCategory.gamingHome_8wekyb3d8bbwe" />
   </Capabilities>
 </Package>

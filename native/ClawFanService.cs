@@ -47,8 +47,13 @@ public sealed class FanConfig {
     public FanSettings fan { get; set; }
     public int[] factoryCpu { get; set; }
     public int[] factoryGpu { get; set; }
+    public int rpmLimit { get; set; }
+    public string outputStrategy { get; set; }
     public FanConfig Checked() {
         if (schema != 1 || revision < 0) throw new ArgumentException("风扇服务配置版本无效");
+        if (rpmLimit != 0 && rpmLimit != 4700) throw new ArgumentException("当前仅支持 4700 转上限");
+        if(outputStrategy==null) outputStrategy="direct";
+        if(outputStrategy!="direct" && outputStrategy!="table") throw new ArgumentException("风扇输出方式无效");
         new SecurityIdentifier(ownerSid);
         if (fan == null) throw new ArgumentException("风扇服务配置缺失");
         fan.Checked();
@@ -68,8 +73,11 @@ static class FanJson {
 interface IFanHardware {
     double Temperature();
     Dictionary<string, object> Read();
-    Dictionary<string, object> Apply(int duty, bool full);
+    Dictionary<string, object> Apply(int duty, bool full, int? outputLimit = null);
+    Dictionary<string, object> Recover(int duty);
     Dictionary<string, object> Auto(int[] cpu, int[] gpu);
+    void BeginDirect(int[] cpu, int[] gpu);
+    void PulseDirect(int duty, bool full);
 }
 interface IFanStore { void Save(FanConfig config); }
 sealed class FanFileStore : IFanStore {
@@ -137,9 +145,22 @@ sealed class FanEngine {
     double lastRecord = double.NegativeInfinity;
     long repairs, temperatureRetries;
     long thermalRecoveries;
+    long thermalRecoveryAttempts, thermalRecoveryFailures;
     bool thermalBoost;
     double? cooledSince;
-    double lastThermalRecovery = double.NegativeInfinity;
+    double? recoveryConfirmSince;
+    double nextThermalRecovery = double.NegativeInfinity;
+    string recoveryError = "", recoveryStatus = "normal";
+    int ceilingDuty = 74;
+    int? appliedCeiling;
+    double ceilingChangedAt = double.NegativeInfinity;
+    double? ceilingOverSince, ceilingCoolSince;
+    bool ceilingThermalOverride;
+    string ceilingStatus = "disabled";
+    bool directActive;
+    double directChangedAt, directRetryAfter;
+    double? directOverSince;
+    double? directHotSince;
     Dictionary<string, object> lastIncident;
     string error = "", lastWrite;
     public FanEngine(FanConfig initial, IFanHardware hardware, IFanStore store, Action<Dictionary<string, object>> record = null) {
@@ -161,10 +182,15 @@ sealed class FanEngine {
         var entry = new Dictionary<string, object>(state);
         entry["at"] = DateTime.UtcNow.ToString("o"); entry["reason"] = reason;
         entry["mode"] = config.fan.mode; entry["control"] = config.fan.control;
+        entry["controlStrategy"] = config.outputStrategy=="direct" ? "ec_output" : "ec_table";
         entry["requestedFull"] = config.fan.full; entry["target"] = written;
-        entry["temperature"] = temperature; entry["error"] = error;
+        entry["temperature"] = temperature; entry["error"] = error.Length > 0 ? error : recoveryError;
         entry["repairs"] = repairs; entry["temperatureRetries"] = temperatureRetries;
         entry["thermalBoost"] = thermalBoost; entry["thermalRecoveries"] = thermalRecoveries;
+        entry["thermalRecoveryAttempts"] = thermalRecoveryAttempts; entry["thermalRecoveryFailures"] = thermalRecoveryFailures;
+        entry["thermalRecoveryStatus"] = recoveryStatus;
+        entry["rpmLimit"] = config.rpmLimit; entry["rpmCeilingDuty"] = ceilingDuty;
+        entry["rpmCeilingStatus"] = ceilingStatus; entry["rpmCeilingThermalOverride"] = ceilingThermalOverride;
         if (reason != "sample") lastIncident = entry;
         try { if (record != null) record(entry); } catch { /* Diagnostics must never stop cooling. */ }
         lastRecord = now;
@@ -176,61 +202,199 @@ sealed class FanEngine {
     }
     void Apply(FanSettings fan, bool immediate, double now) {
         if (fan.control == "auto") { Release(); return; }
-        if (immediate) { governor.Reset(); cooledSince = null; }
-        int duty = fan.full ? 100 : governor.Update(fan.curves[fan.mode], FreshTemperature(), now);
-        if (immediate || written != duty || writtenFull != fan.full) {
-            var next = hardware.Apply(duty, fan.full);
-            Verify(next, duty, fan.full);
-            state = next; written = duty; writtenFull = fan.full;
+        if(config.outputStrategy=="direct") { ApplyDirect(fan,immediate,now); return; }
+        if (immediate) { governor.Reset(); cooledSince = null; recoveryConfirmSince = null; recoveryError = ""; recoveryStatus = "normal"; }
+        double temp = FreshTemperature();
+        bool limited = config.rpmLimit == 4700;
+        if (limited && !PrepareCeiling(temp, now)) return;
+        bool full = fan.full && !limited;
+        int duty = fan.full ? 100 : governor.Update(fan.curves[fan.mode], temp, now);
+        if (limited) duty = Math.Min(duty, ceilingDuty);
+        int? limit = limited ? (int?)ceilingDuty : null;
+        bool ceilingChanged = limited && appliedCeiling != limit;
+        bool ceilingMismatch = limited && !CeilingMatches(state, ceilingDuty);
+        if (immediate || written != duty || writtenFull != full || ceilingChanged || ceilingMismatch) {
+            var next = hardware.Apply(duty, full, limit);
+            Verify(next, duty, full);
+            if (limited && !CeilingMatches(next, ceilingDuty)) throw new InvalidOperationException("转速上限档回读不一致");
+            state = next; written = duty; writtenFull = full;
+            if (ceilingChanged) { appliedCeiling = limit; ceilingChangedAt = now; }
             writes++; lastWrite = DateTime.UtcNow.ToString("o");
         } else {
             var check = hardware.Read();
             state = check;
-            try { Verify(check, duty, fan.full); state = check; }
+            try { Verify(check, duty, full); state = check; }
             catch { repairs++; Record(now, "external_control_changed"); written = null; Apply(fan, false, now); }
+        }
+        if (limited) {
+            bool high = RpmAboveLimit(state);
+            thermalBoost = high || new[] { "duty1", "duty2" }.Any(k => state.ContainsKey(k) && Convert.ToInt32(state[k]) > ceilingDuty);
+            ceilingStatus = high ? "settling" : "active";
+            recoveryStatus = high ? "rpm_ceiling_settling" : "rpm_ceiling_active";
+            recoveryError = ""; return;
         }
         RecoverCooledBoost(fan, duty, now);
     }
+    void ApplyDirect(FanSettings fan, bool immediate, double now) {
+        if(immediate) governor.Reset();
+        double temp=FreshTemperature(); state=hardware.Read();
+        int ec=Convert.ToInt32(state["ecTemperature"]);
+        if(ec<=0 || ec>125) throw new InvalidOperationException("EC 温度读取异常");
+        if(temp>=95) { if(!directHotSince.HasValue) directHotSince=now; }
+        else directHotSince=null;
+        // Package spikes are brief on this platform. Sustained >=95 C (3 s),
+        // EC >=95 C, or a package reading >=100 C relinquish control. Firmware
+        // trip points remain untouched; a single spike must not restart governors.
+        if(ec>=95 || temp>=100 || (directHotSince.HasValue && now-directHotSince.Value>=3)) {
+            if(!ceilingThermalOverride) { Release(); ceilingThermalOverride=true; Record(now,"direct_thermal_override"); }
+            thermalBoost=true; ceilingCoolSince=null; ceilingStatus="thermal_override"; recoveryStatus="firmware_cooling"; return;
+        }
+        if(ceilingThermalOverride) {
+            if(temp>85 || ec>80) ceilingCoolSince=null;
+            else if(!ceilingCoolSince.HasValue) ceilingCoolSince=now;
+            if(!ceilingCoolSince.HasValue || now-ceilingCoolSince.Value<30) return;
+            ceilingThermalOverride=false; ceilingCoolSince=null;
+        }
+        if(!directActive) { hardware.BeginDirect(config.factoryCpu,config.factoryGpu); directActive=true; }
+        bool limited=config.rpmLimit==4700, full=fan.full && !limited;
+        int duty=fan.full ? 100 : governor.Update(fan.curves[fan.mode],temp,now);
+        if(limited) duty=Math.Min(duty,ceilingDuty);
+        if(written!=duty || writtenFull!=full) { directChangedAt=now; directOverSince=null; }
+        // Trimming is based on the real tachometers after mechanical settling.
+        // A live EC-byte mismatch never switches Auto or rewrites a curve table.
+        if(limited && written==duty && duty==ceilingDuty && now-directChangedAt>=15 && RpmAboveLimit(state)) {
+            if(!directOverSince.HasValue) directOverSince=now;
+            if(now-directOverSince.Value>=3 && ceilingDuty>65) { ceilingDuty--; duty=ceilingDuty; directChangedAt=now; directOverSince=null; Record(now,"direct_rpm_trim"); }
+        } else directOverSince=null;
+        hardware.PulseDirect(duty,full); written=duty; writtenFull=full;
+        writes++; lastWrite=DateTime.UtcNow.ToString("o");
+        thermalBoost=false; recoveryError="";
+        bool high=limited && RpmAboveLimit(state);
+        ceilingStatus=limited ? (high ? "settling" : "active") : "disabled";
+        recoveryStatus="direct_output_active";
+        if(high && now-directChangedAt>30 && ceilingDuty<=65) { recoveryError="实际转速仍高于设定上限，正在维持直接输出；请检查温度和风扇反馈"; ceilingStatus="unconfirmed"; }
+    }
+    public void Pulse(double now) {
+        lock(gate) {
+            if(paused || !directActive || !written.HasValue || config.outputStrategy!="direct") return;
+            try { hardware.PulseDirect(written.Value,writtenFull); }
+            catch(Exception failure) {
+                error=failure.Message; directRetryAfter=now+10; Record(now,"direct_transport_failure");
+                try { Release(); } catch(Exception recovery) { error+="；恢复自动控制失败："+recovery.Message; }
+            }
+        }
+    }
+    static bool CeilingMatches(Dictionary<string, object> sample, int duty) {
+        return new[] { "cpuTable", "gpuTable" }.All(k => sample.ContainsKey(k) &&
+            ((int[])sample[k]).Length >= 8 && ((int[])sample[k])[7] == duty);
+    }
+    bool RpmAboveLimit(Dictionary<string, object> sample) {
+        return new[] { "rpm1", "rpm2" }.Any(k => sample.ContainsKey(k) && Convert.ToInt32(sample[k]) > config.rpmLimit);
+    }
+    bool PrepareCeiling(double temp, double now) {
+        state = hardware.Read();
+        if (!state.ContainsKey("ecTemperature") || Convert.ToInt32(state["ecTemperature"]) <= 0)
+            throw new InvalidOperationException("转速上限需要有效的 EC 温度");
+        int ec = Convert.ToInt32(state["ecTemperature"]);
+        if (temp >= 95 || ec >= 95) {
+            if (!ceilingThermalOverride) { Release(); ceilingThermalOverride = true; ceilingStatus = "thermal_override"; Record(now, "rpm_ceiling_thermal_override"); }
+            ceilingCoolSince = null; ceilingStatus = "thermal_override"; return false;
+        }
+        if (ceilingThermalOverride) {
+            if (temp > 85 || ec > 80) ceilingCoolSince = null;
+            else if (!ceilingCoolSince.HasValue) ceilingCoolSince = now;
+            if (!ceilingCoolSince.HasValue || now - ceilingCoolSince.Value < 30) { ceilingStatus = "thermal_override"; return false; }
+            ceilingThermalOverride = false; ceilingCoolSince = null;
+        }
+        // 74% leaves margin below 4700 RPM. Trim further if real tachometer feedback
+        // remains above the limit after the mechanical settling period.
+        if (appliedCeiling.HasValue && now - ceilingChangedAt >= 15 && RpmAboveLimit(state)) {
+            if (!ceilingOverSince.HasValue) ceilingOverSince = now;
+            if (now - ceilingOverSince.Value >= 3) {
+                if (ceilingDuty <= 65) throw new InvalidOperationException("实际转速仍超出上限，无法确认限速");
+                ceilingDuty--; ceilingOverSince = null; Record(now, "rpm_ceiling_trim");
+            }
+        } else ceilingOverSince = null;
+        return true;
+    }
+    static bool OutputNear(Dictionary<string, object> sample, int duty) {
+        return new[] { "duty1", "duty2" }.All(k => sample.ContainsKey(k) && Math.Abs(Convert.ToInt32(sample[k]) - duty) <= 2);
+    }
+    bool BothCool() { return temperature.HasValue && temperature.Value <= 80 && MsiFan.CooledHardware(state); }
+    void RecoveryFailed(double now) {
+        recoveryConfirmSince = null; thermalRecoveryFailures++; recoveryStatus = "unconfirmed";
+        recoveryError = "风扇恢复未确认：实际输出未回到曲线目标，暂保留散热并稍后重试";
+        nextThermalRecovery = now + 60;
+        Record(now, "thermal_recovery_unconfirmed");
+    }
     void RecoverCooledBoost(FanSettings fan, int duty, double now) {
-        // The EC may drive its live output to 94% while leaving our six table points intact.
-        // Never change its ceiling/temperature thresholds or fight a hot machine. Refresh the
-        // saved curve only after BOTH sensors remain <=80 C for ten seconds.
+        // Preserve EC protection. Include its auxiliary cooling condition, then require
+        // three seconds of actual two-channel output feedback before reporting recovery.
         thermalBoost = !fan.full && fan.mode != "performance" && new[] { "duty1", "duty2" }
             .Any(k => state.ContainsKey(k) && Convert.ToInt32(state[k]) > 76);
-        if (!thermalBoost || !temperature.HasValue || temperature.Value > 80 ||
-            !state.ContainsKey("ecTemperature") || Convert.ToInt32(state["ecTemperature"]) > 80) {
-            cooledSince = null; return;
+        if (recoveryConfirmSince.HasValue) {
+            if (fan.full || fan.mode == "performance" || !BothCool()) {
+                recoveryConfirmSince = null; recoveryStatus = "temperature_rebounded";
+                cooledSince = null; Record(now, "thermal_recovery_interrupted"); return;
+            }
+            if (!OutputNear(state, duty)) { RecoveryFailed(now); return; }
+            if (now - recoveryConfirmSince.Value >= 3) {
+                recoveryConfirmSince = null; thermalRecoveries++; recoveryError = ""; recoveryStatus = "confirmed";
+                nextThermalRecovery = now + 15; Record(now, "thermal_recovery_confirmed");
+            }
+            return;
+        }
+        if (!thermalBoost) {
+            cooledSince = null;
+            if (OutputNear(state, duty)) { recoveryError = ""; recoveryStatus = "normal"; }
+            return;
+        }
+        if (!BothCool()) {
+            cooledSince = null; recoveryError = ""; recoveryStatus = "firmware_cooling"; return;
         }
         if (!cooledSince.HasValue) cooledSince = now;
-        if (now - cooledSince.Value < 10 || now - lastThermalRecovery < 15) return;
-        Record(now, "thermal_boost_cooldown");
-        var next = hardware.Apply(duty, false);
+        if (now - cooledSince.Value < 10 || now < nextThermalRecovery) return;
+        thermalRecoveryAttempts++; nextThermalRecovery = now + 60; cooledSince = null;
+        recoveryStatus = "reacquiring"; Record(now, "thermal_recovery_attempt");
+        var next = hardware.Recover(duty);
+        if (true.Equals(next.ContainsKey("recoveryDeferred") ? next["recoveryDeferred"] : null)) {
+            state = next; recoveryStatus = "temperature_rebounded";
+            Record(now, "thermal_recovery_deferred"); return;
+        }
         Verify(next, duty, false);
         state = next; written = duty; writtenFull = false;
-        thermalRecoveries++; writes++; lastWrite = DateTime.UtcNow.ToString("o");
-        lastThermalRecovery = now; cooledSince = null;
+        writes++; lastWrite = DateTime.UtcNow.ToString("o");
         thermalBoost = new[] { "duty1", "duty2" }.Any(k => state.ContainsKey(k) && Convert.ToInt32(state[k]) > 76);
+        if (!OutputNear(state, duty)) { RecoveryFailed(now); return; }
+        recoveryConfirmSince = now; recoveryError = ""; recoveryStatus = "verifying";
+        Record(now, "thermal_recovery_verifying");
     }
     void Release() {
+        directActive=false;
         state = hardware.Auto(config.factoryCpu, config.factoryGpu);
         if (true.Equals(state["software"]) || true.Equals(state["fullSpeed"]))
             throw new InvalidOperationException("恢复原厂自动控制后回读不一致");
-        written = null; governor.Reset(); thermalBoost = false; cooledSince = null;
+        written = null; governor.Reset(); thermalBoost = false; cooledSince = null; recoveryConfirmSince = null;
+        recoveryError = ""; recoveryStatus = "normal";
+        appliedCeiling = null; ceilingOverSince = null; ceilingStatus = "disabled";
     }
     public void Tick(double now) {
         lock (gate) {
             if (paused) return;
+            if(config.outputStrategy=="direct" && now<directRetryAfter) { Record(now,"sample"); return; }
             try {
                 if (config.fan.control == "auto") {
                     state = hardware.Read();
                     if (true.Equals(state["software"]) || true.Equals(state["fullSpeed"])) Release();
                 } else Apply(config.fan, false, now);
                 error = "";
-                bool overspeed = config.fan.control == "custom" && !config.fan.full && config.fan.mode != "performance"
-                    && new[] { "rpm1", "rpm2" }.Any(k => state.ContainsKey(k) && Convert.ToInt32(state[k]) > 5000);
+                int threshold = config.rpmLimit == 4700 ? 4700 : 5000;
+                bool overspeed = config.fan.control == "custom" && (config.rpmLimit == 4700 || (!config.fan.full && config.fan.mode != "performance"))
+                    && new[] { "rpm1", "rpm2" }.Any(k => state.ContainsKey(k) && Convert.ToInt32(state[k]) > threshold);
                 Record(now, overspeed ? "rpm_above_profile_expectation" : "sample");
             } catch (Exception failure) {
                 error = failure.Message;
+                if(config.outputStrategy=="direct") directRetryAfter=now+10;
                 Record(now, "factory_auto_fallback"); temperature = null;
                 try { Release(); } catch (Exception recovery) { error += "；恢复自动控制失败：" + recovery.Message; }
             }
@@ -266,14 +430,19 @@ sealed class FanEngine {
         lock (gate) {
             var result = new Dictionary<string, object>(state);
             result["settings"] = config.fan.Copy(); result["revision"] = config.revision;
-            result["execution"] = "service"; result["serviceVersion"] = "1.0.3";
+            result["execution"] = "service"; result["serviceVersion"] = "1.1.1";
+            result["controlStrategy"] = config.outputStrategy=="direct" ? "ec_output" : "ec_table";
             result["servicePid"] = Process.GetCurrentProcess().Id;
             result["target"] = written; result["temperature"] = temperature; result["smoothedTemperature"] = governor.Smoothed;
             result["writeCount"] = writes; result["lastWrite"] = lastWrite;
-            result["error"] = error; result["paused"] = paused;
+            result["error"] = error.Length > 0 ? error : recoveryError; result["paused"] = paused;
             result["repairCount"] = repairs; result["temperatureRetries"] = temperatureRetries;
             result["lastIncident"] = lastIncident;
             result["thermalBoost"] = thermalBoost; result["thermalRecoveryCount"] = thermalRecoveries;
+            result["thermalRecoveryAttempts"] = thermalRecoveryAttempts; result["thermalRecoveryFailures"] = thermalRecoveryFailures;
+            result["thermalRecoveryStatus"] = recoveryStatus;
+            result["rpmLimit"] = config.rpmLimit; result["rpmCeilingDuty"] = ceilingDuty;
+            result["rpmCeilingStatus"] = ceilingStatus; result["rpmCeilingThermalOverride"] = ceilingThermalOverride;
             return result;
         }
     }
@@ -287,6 +456,8 @@ sealed class FanHardware : IFanHardware, IDisposable {
     [DllImport("PawnIOLib.dll")] static extern int pawnio_execute(IntPtr handle, [MarshalAs(UnmanagedType.LPStr)] string name, ulong[] input, UIntPtr inSize, ulong[] output, UIntPtr outSize, out UIntPtr returned);
     [DllImport("PawnIOLib.dll")] static extern int pawnio_close(IntPtr handle);
     IntPtr handle;
+    AcpiFanOutput direct;
+    bool? directFull;
     ulong ReadMsr(uint register) {
         if (handle == IntPtr.Zero) {
             string library = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PawnIO", "PawnIOLib.dll");
@@ -307,9 +478,19 @@ sealed class FanHardware : IFanHardware, IDisposable {
         return (int)((target >> 16) & 0xFF) - (int)((status >> 16) & 0x7F);
     }
     public Dictionary<string, object> Read() { return MsiFan.Read(); }
-    public Dictionary<string, object> Apply(int duty, bool full) { return MsiFan.Apply(Enumerable.Repeat(duty, 6).ToArray(), Enumerable.Repeat(duty, 6).ToArray(), full); }
+    public Dictionary<string, object> Apply(int duty, bool full, int? outputLimit = null) { return MsiFan.Apply(Enumerable.Repeat(duty, 6).ToArray(), Enumerable.Repeat(duty, 6).ToArray(), full, outputLimit); }
+    public Dictionary<string, object> Recover(int duty) { return MsiFan.RecoverCustom(duty, Temperature); }
     public Dictionary<string, object> Auto(int[] cpu, int[] gpu) { return MsiFan.Restore(cpu, gpu); }
-    public void Dispose() { if (handle != IntPtr.Zero) { pawnio_close(handle); handle = IntPtr.Zero; } }
+    public void BeginDirect(int[] cpu, int[] gpu) {
+        if(direct==null) direct=new AcpiFanOutput();
+        MsiFan.BeginDirect(cpu,gpu); directFull=false;
+    }
+    public void PulseDirect(int duty, bool full) {
+        if(direct==null) throw new InvalidOperationException("直接风扇通道尚未初始化");
+        if(directFull!=full) { MsiFan.DirectFullSpeed(full); directFull=full; }
+        direct.Pulse(duty);
+    }
+    public void Dispose() { if(direct!=null){direct.Dispose();direct=null;} if (handle != IntPtr.Zero) { pawnio_close(handle); handle = IntPtr.Zero; } }
 }
 
 sealed class ClawFanService : ServiceBase {
@@ -333,7 +514,13 @@ sealed class ClawFanService : ServiceBase {
         stopping.Reset(); hardware = new FanHardware();
         engine = new FanEngine(config, hardware, new FanFileStore(MsiFan.ServiceConfigPath), LogSample);
         loop = Task.Run(() => {
-            while (!stopping.WaitOne(0)) { engine.Tick(Now()); WaitHandle.WaitAny(new WaitHandle[] { stopping, wake }, 1000); }
+            double next=0;
+            while (!stopping.WaitOne(0)) {
+                double now=Now();
+                if(now>=next) { engine.Tick(now); next=Now()+1; }
+                else engine.Pulse(now);
+                WaitHandle.WaitAny(new WaitHandle[] { stopping, wake }, 250);
+            }
         });
         listener = Task.Run(() => Listen(config.ownerSid));
     }

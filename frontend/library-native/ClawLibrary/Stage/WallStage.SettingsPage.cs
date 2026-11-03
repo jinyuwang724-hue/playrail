@@ -18,7 +18,7 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private static readonly string[] StCatsMain = { "通用", "游戏库", "外观", "Magpie", "声音与反馈", "Steam 插件", "开机自启", "禁用第三方软件", "维护", "关于" };
+    private static readonly string[] StCatsMain = { "通用", "游戏库", "外观", "Magpie", "小黄鸭", "声音与反馈", "账户与服务", "开机自启", "禁用第三方软件", "维护", "Steam 插件", "关于" };
     /// <summary>左栏的分类：游戏设置时换成游戏的那几类（WallStage.GameSettings.cs）。</summary>
     private string[] StCats => _gsItem != null ? GsCats : StCatsMain;
     private const float StCatH = PerfRowH;
@@ -49,6 +49,13 @@ public sealed partial class WallStage
         _prefs = UiPrefs.Load();
         Library.ShowHidden = _prefs.ShowHiddenGames;
         Library.IncludeSteam = _prefs.SourceSteam;
+        _steamAccount = Steam.LocalAccount();
+        if (_prefs.PreloadSteam && !Program.Args.Contains("--no-platform-startup"))
+            _ = Task.Run(() =>
+            {
+                try { Log.Info(PlatformClients.StartSteamInTray()); }
+                catch (Exception ex) { Log.Warn($"Steam preload: {ex.Message}"); }
+            });
         if (!Program.Args.Contains("--style=b")) Style = _prefs.StyleB ? TitleStyle.B : TitleStyle.D;
         _reducedLocal = _prefs.Reduced;
         SoundFx.Enabled = _prefs.Sounds;
@@ -62,7 +69,7 @@ public sealed partial class WallStage
         }
     }
 
-    /// <summary>游戏库载入后：集合的顺序和显示隐藏、开机落在的集合。</summary>
+    /// <summary>游戏库载入后：集合的顺序和显示隐藏、默认集合。</summary>
     private void ApplyTabPrefs(bool keepCurrent = false)
     {
         string? current = keepCurrent && _tabIndex < _lib.HomeTabs.Count ? _lib.HomeTabs[_tabIndex].Id : null;
@@ -96,7 +103,11 @@ public sealed partial class WallStage
         _ = Task.Run(async () => { try { _agent ??= new AgentClient(); await _agent.Call("magpie_auto_start"); } catch (Exception ex) { Log.Warn($"magpie auto start: {ex.Message}"); } });
         if (_prefs.AfterLaunch != AfterLaunch.Hide) return;
         nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
-        After(1500, () => ShowWindow(hwnd, 6));   // SW_MINIMIZE
+        After(1500, () =>
+        {
+            if (_prefs.BackgroundRun && _window is MainWindow main) main.RunInBackground();
+            else ShowWindow(hwnd, 6);
+        });
     }
 
     /// <summary>重新载入游戏库：整个前端重启一次（来源、隐藏的游戏、封面重新生成都要从头载入）。</summary>
@@ -213,8 +224,10 @@ public sealed partial class WallStage
         _gsState = null;
         _stBrowseFromLibrary = false;
         _stBrowse = null;
-        _stBrowseExe = false;
+        _stBrowseExe = false; _stBrowsePick = null;
         _stBrowseMusic = false;
+        _stBrowseLossless = false;
+        MgCloseEditor();
         _lgPage = LgPage.None;
         StEditEnd(false);
         SettingsResetPointer();
@@ -283,7 +296,8 @@ public sealed partial class WallStage
         BuildStRows();
         PaintSt();
         if (_gsItem == null && _stCat == 1 && !_lgPolling) await LgRefresh();
-        if (_gsItem == null && _stCat == 3 && _mgPrefs == null) await MgLoad();
+        if (_gsItem == null && _stCat == 3 && _mgPrefs == null && !_mgLoading) await MgLoad();
+        if (_gsItem == null && _stCat == 4 && !_lsBusy) await LsLoad();
     }
 
     /// <summary>交给后台的动作：等它做完，按结果给提示，再读一次。</summary>
@@ -356,11 +370,13 @@ public sealed partial class WallStage
             case 1: BuildStLibrary(); break;
             case 2: BuildStLook(); break;
             case 3: BuildStMagpie(); break;
-            case 4: BuildStSound(v, later); break;
-            case 5: BuildStSteam(v, later); break;
-            case 6: BuildStStartup(v, later); break;
-            case 7: BuildStVendors(v, later); break;
-            case 8: BuildStMaintenance(v, later); break;
+            case 4: BuildStLossless(); break;
+            case 5: BuildStSound(v, later); break;
+            case 6: BuildStServices(); break;
+            case 7: BuildStStartup(v, later); break;
+            case 8: BuildStVendors(v, later); break;
+            case 9: BuildStMaintenance(v, later); break;
+            case 10: BuildStSteam(v, later); break;
             default: BuildStAbout(v); break;
         }
         if (_stEditTitle != null)
@@ -405,7 +421,7 @@ public sealed partial class WallStage
     private void StBrowseTo(string? path)
     {
         _stBrowse = path;
-        if (path == null) { _stBrowseExe = false; _stBrowseMusic = false; }
+        if (path == null) { _stBrowseExe = false; _stBrowsePick = null; _stBrowseMusic = false; _stBrowseLossless = false; }
         _stZone = 1;
         _stArmed = null;
         BuildStRows();
@@ -429,7 +445,7 @@ public sealed partial class WallStage
             return;
         }
         if (_stBrowseMusic) { BuildMusicBrowse(path); return; }
-        if (_stBrowseExe)
+        if (_stBrowseExe || _stBrowseLossless)
         {
             // 添加游戏：子文件夹在前，下面是这一层的 exe，选中一个就进确认页
             string[] subs;
@@ -437,7 +453,7 @@ public sealed partial class WallStage
             catch (Exception ex) { _stRows.Add(StInfo("打不开这个文件夹", ex.Message)); return; }
             foreach (var d in subs) _stRows.Add(new PerfRow { Title = Path.GetFileName(d), Value = "›", Press = () => StBrowseTo(d) });
             int before = _stRows.Count;
-            BuildStBrowseExes(path);
+            if (_stBrowseLossless) BuildLsBrowseExes(path); else BuildStBrowseExes(path);
             if (subs.Length == 0 && _stRows.Count == before) _stRows.Add(StInfo("（空）", ""));
             return;
         }
@@ -475,37 +491,54 @@ public sealed partial class WallStage
         {
             // 关 / Claw 游戏库 / Steam 大屏幕 / Xbox（/ 现在装着的其他主页应用，比如 AnyFSE）
             const string own = "ClawToolbox.Library_ba3r68zr466za!App";
-            var ids = new List<string> { "off", own, "steam" };
-            var names = new List<string> { "关", "Claw 游戏库", "Steam 大屏幕" };
+            var ids = new List<string> { "off" };
+            var names = new List<string> { "关" };
+            if (choices.OfType<JsonObject>().Any(c => Str(c["id"]) == own))
+            {
+                ids.AddRange(new[] { own, "steam" });
+                names.AddRange(new[] { "Claw 游戏库", "Steam 大屏幕" });
+            }
             foreach (var c in choices.OfType<JsonObject>())
                 if (Str(c["id"]) is string id && id != own) { ids.Add(id); names.Add(Str(c["name"]) ?? id); }
             string current = Str(home["current"]) ?? "";
             string sel = home["startup"] is JsonValue sv && !Bool(sv) ? "off" : current == own ? (_prefs.FseSteam ? "steam" : own) : current;
+            if (sel != "off" && !ids.Contains(sel))
+            {
+                ids.Add("unavailable"); names.Add("未生效"); sel = "unavailable";
+            }
             int idx = Math.Max(0, ids.IndexOf(sel));
             _stRows.Add(StPick("全屏体验", names.ToArray(), idx, i =>
             {
                 string pick = ids[i];
+                if (pick == "unavailable") return;
                 string aumid = pick == "steam" ? own : pick;
-                SaveUi(_prefs with { FseSteam = pick == "steam" });
-                home["startup"] = pick != "off";
-                if (pick != "off") home["current"] = aumid;
-                Repaint();
-                _ = StRun("set_home_app", _ => pick == "off" ? "开机不再进入全屏体验" : $"全屏体验主页：{names[i]}", JsonValue.Create(aumid));
+                _ = StRun("set_home_app", r =>
+                {
+                    SaveUi(_prefs with { FseSteam = pick == "steam" });
+                    if (_stView != null && r is JsonObject updated) _stView["home"] = updated.DeepClone();
+                    return pick == "off" ? "开机不再进入全屏体验" : $"全屏体验主页：{names[i]}";
+                }, JsonValue.Create(aumid));
             }));
+            if (Str(home["error"]) is string error) _stRows.Add(StInfo("全屏体验状态", error));
         }
         else _stRows.Add(StInfo("全屏体验", later));
         _stRows.Add(StPick("首页", BootNames, (int)_prefs.Boot, i => { SaveUi(_prefs with { Boot = (BootTarget)i }); Repaint(); }, 0));
         if (v?["autostart"] is JsonValue)
         {
             bool on = Bool(v["autostart"]);
-            _stRows.Add(StToggle("开机自动运行工具箱后台", on, to =>
+            _stRows.Add(StToggle("工具箱后台自启动", on, to =>
             {
                 v["autostart"] = to;
                 Repaint();
                 _ = StRun("set_autostart", _ => to ? "工具箱后台开机会自动运行" : "工具箱后台开机不再自动运行", JsonValue.Create(to));
             }, true));
         }
-        else _stRows.Add(StInfo("开机自动运行工具箱后台", v == null ? later : "没有找到登录任务"));
+        else _stRows.Add(StInfo("工具箱后台自启动", v == null ? later : "没有找到登录任务"));
+        _stRows.Add(new PerfRow { Section = true, Title = "后台运行" });
+        _stRows.Add(StToggle("关闭窗口后留在托盘", _prefs.BackgroundRun,
+            on => { SaveUi(_prefs with { BackgroundRun = on }); Repaint(); }, true));
+        _stRows.Add(StAction("转入后台", "background", "", () => (_window as MainWindow)?.RunInBackground()));
+        _stRows.Add(StAction("退出游戏库", "exit-library", "", () => (_window as MainWindow)?.ExitLibrary()));
         _stRows.Add(new PerfRow { Section = true, Title = "语言" });
         _stRows.Add(StValue("界面语言", "简体中文"));
     }
@@ -517,7 +550,7 @@ public sealed partial class WallStage
         var tabs = _allTabs ?? _lib.HomeTabs;
         var visible = _lib.HomeTabs;
         int start = Math.Max(0, visible.FindIndex(t => t.Id == _prefs.StartTab));
-        _stRows.Add(StPick("开机落在的集合", visible.Select(t => t.Label).ToArray(), start, i => { SaveUi(_prefs with { StartTab = visible[i].Id }); Repaint(); }, 0));
+        _stRows.Add(StPick("默认集合", visible.Select(t => t.Label).ToArray(), start, i => { SaveUi(_prefs with { StartTab = visible[i].Id }); Repaint(); }, 0));
 
         _stRows.Add(new PerfRow { Section = true, Title = "集合" });
         var ordered = tabs.OrderBy(t => _prefs.TabOrder.ToList().IndexOf(t.Id) is int i && i >= 0 ? i : 99 + tabs.IndexOf(t)).ToList();
@@ -557,11 +590,12 @@ public sealed partial class WallStage
         }
 
         string reload = "";
-        _stRows.Add(new PerfRow { Section = true, Title = "游戏来源" });
-        _stRows.Add(StToggle("Steam 游戏", _prefs.SourceSteam, on =>
+        _stRows.Add(new PerfRow { Section = true, Title = "游戏来源 · 重新载入后生效" });
+        _stRows.Add(StAction("账户与服务", "services", "Steam · Xbox", () =>
         {
-            SaveUi(_prefs with { SourceSteam = on }); _stNeedsReload = true; Repaint();
-        }, true, reload));
+            _stCat = 6; _stFocus = 0; _stScroll = 0; _stScrollY = float.NaN;
+            BuildStRows(); _stFocus = FirstStRow(); PaintSt();
+        }));
         // 加进 Steam 的非 Steam 游戏就是本地游戏（和设置里添加的一样），一直显示，不再单独开关
         foreach (var folder in _prefs.Folders)
         {
@@ -583,7 +617,7 @@ public sealed partial class WallStage
 
         BuildLgEntryRows();
 
-        _stRows.Add(new PerfRow { Section = true, Title = "封面" });
+        _stRows.Add(new PerfRow { Section = true, Title = "封面 · 将重新载入游戏库" });
         long bytes = 0;
         try { if (Directory.Exists(ArtRoot)) bytes = new DirectoryInfo(ArtRoot).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length); } catch { }
         _stRows.Add(StAction("重新生成全部封面", "art", $"{bytes >> 20} MB", () =>
@@ -594,7 +628,7 @@ public sealed partial class WallStage
         }));
 
         _stRows.Add(new PerfRow { Section = true, Title = "启动游戏后" });
-        _stRows.Add(StPick("游戏库", new[] { "保持", "收到后台并暂停" }, (int)_prefs.AfterLaunch, i => { SaveUi(_prefs with { AfterLaunch = (AfterLaunch)i }); Repaint(); }, 0));
+        _stRows.Add(StPick("游戏库", new[] { "保持", "转入后台并暂停" }, (int)_prefs.AfterLaunch, i => { SaveUi(_prefs with { AfterLaunch = (AfterLaunch)i }); Repaint(); }, 0));
     }
 
     /// <summary>
@@ -728,7 +762,7 @@ public sealed partial class WallStage
                 en["steam"] = to;
                 Repaint();
                 _ = StRun("manage_compatibility", r => Str(r?["items"]?["steam"]) ?? "已更新", JsonValue.Create("set"), JsonValue.Create("steam"), JsonValue.Create(to));
-            }, false, note);
+            }, false, note.Length > 0 ? note : "重启 Steam 后生效");
             row.Disabled = busy;
             _stRows.Add(row);
             if (status.StartsWith("需要处理")) _stRows.Add(StInfo("没生效的原因", status.Replace("需要处理：", "")));
@@ -762,7 +796,7 @@ public sealed partial class WallStage
 
     private void BuildStVendors(JsonObject? v, string later)
     {
-        _stRows.Add(new PerfRow { Section = true, Title = "已被工具箱替代" });
+        _stRows.Add(new PerfRow { Section = true, Title = "第三方软件" });
         if (v?["vendors"] is not JsonArray apps) { _stRows.Add(StInfo("第三方软件", later)); return; }
         foreach (var app in apps.OfType<JsonObject>())
         {
@@ -787,7 +821,7 @@ public sealed partial class WallStage
     private void BuildStMaintenance(JsonObject? v, string later)
     {
         _stRows.Add(new PerfRow { Section = true, Title = "诊断" });
-        _stRows.Add(StToggle("性能读数（帧时间）", _hudOn, on => { if (on != _hudOn) ToggleHud(); Repaint(); }, false));
+        _stRows.Add(StToggle("帧时间读数", _hudOn, on => { if (on != _hudOn) ToggleHud(); Repaint(); }, false));
         _stRows.Add(StAction("导出日志", "logs", "", () => _ = StRun("export_logs", r => $"日志已存到桌面：{Str(r?["name"])}")));
         string version = Str(v?["version"]) ?? "—";
         _stRows.Add(StAction("重启工具箱后台", "restart", _stAgentDown ? "未连接" : "", () =>
@@ -849,8 +883,9 @@ public sealed partial class WallStage
                 _stCat = next;
                 _stArmed = null;
                 _stBrowse = null;
-                _stBrowseExe = false;
+                _stBrowseExe = false; _stBrowsePick = null;
                 _stBrowseMusic = false;
+                _stBrowseLossless = false;
                 _lgPage = LgPage.None;
                 BuildStRows();
                 _stFocus = FirstStRow();
@@ -895,6 +930,7 @@ public sealed partial class WallStage
             return;
         }
         if (LgBack()) return;
+        if (_gsItem == null && _stCat == 3 && MgBack()) return;
         if (_stZone == 1) { _stZone = 0; _stArmed = null; Repaint(); return; }
         if (_stFromLibrary) CloseSettingsToLibrary(); else CloseSettingsPage();
     }
@@ -917,7 +953,8 @@ public sealed partial class WallStage
         int i = (int)Math.Floor((y - PerfSecH) / StCatH);
         if (i < 0 || i >= StCats.Length) return false;
         MarkInput();
-        _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null; _stBrowseExe = false; _stBrowseMusic = false; _lgPage = LgPage.None;
+        _stCat = i; _stZone = 0; _stArmed = null; _stBrowse = null; _stBrowseExe = false; _stBrowsePick = null; _stBrowseMusic = false; _lgPage = LgPage.None;
+        _stBrowseLossless = false;
         BuildStRows();
         _stFocus = FirstStRow();
         _stScroll = 0; _stScrollY = float.NaN;

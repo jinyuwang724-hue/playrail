@@ -54,6 +54,7 @@
                             <MenuFlyoutItem x:Name="SleepItem" Text="睡眠" />
                             <MenuFlyoutItem x:Name="ShutdownItem" Text="关机" />
                             <MenuFlyoutItem x:Name="RestartItem" Text="重启" />
+                            <MenuFlyoutItem x:Name="PowerPreviewItem" Text="动画预览" />
                             <MenuFlyoutSeparator />
                             <MenuFlyoutItem x:Name="LockItem" Text="锁定" />
                         </MenuFlyout>

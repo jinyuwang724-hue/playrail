@@ -18,6 +18,9 @@ public sealed record UiPrefs
     public string[] TabsHidden { get; init; } = Array.Empty<string>();
     public bool ShowHiddenGames { get; init; }
     public bool SourceSteam { get; init; } = true;
+    public bool SourceXbox { get; init; } = true;
+    public bool PreloadSteam { get; init; } = true;
+    public bool BackgroundRun { get; init; } = true;
     public bool SourceShortcuts { get; init; } = true;
     public AfterLaunch AfterLaunch { get; init; }
     /// <summary>强调色：-1 = 跟随封面，0… = 固定色（UiPrefs.Accents）。</summary>
@@ -71,6 +74,9 @@ public sealed record UiPrefs
                     "tabsHidden" => p with { TabsHidden = List() },
                     "showHidden" when bool.TryParse(v, out var b) => p with { ShowHiddenGames = b },
                     "sourceSteam" when bool.TryParse(v, out var b) => p with { SourceSteam = b },
+                    "sourceXbox" when bool.TryParse(v, out var b) => p with { SourceXbox = b },
+                    "preloadSteam" when bool.TryParse(v, out var b) => p with { PreloadSteam = b },
+                    "backgroundRun" when bool.TryParse(v, out var b) => p with { BackgroundRun = b },
                     "sourceShortcuts" when bool.TryParse(v, out var b) => p with { SourceShortcuts = b },
                     "afterLaunch" when Enum.TryParse<AfterLaunch>(v, out var e) && Enum.IsDefined(e) => p with { AfterLaunch = e },
                     "accent" when int.TryParse(v, out var i) => p with { Accent = Math.Clamp(i, -1, Accents.Length - 1) },
@@ -104,6 +110,7 @@ public sealed record UiPrefs
                 $"styleB={StyleB}", $"backdrop={Backdrop}", $"reduced={Reduced}", $"boot={Boot}", $"startTab={StartTab}",
                 $"tabOrder={string.Join(',', TabOrder)}", $"tabsHidden={string.Join(',', TabsHidden)}", $"showHidden={ShowHiddenGames}",
                 $"sourceSteam={SourceSteam}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}",
+                $"sourceXbox={SourceXbox}", $"preloadSteam={PreloadSteam}", $"backgroundRun={BackgroundRun}",
                 $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
                 $"soundTheme={SoundTheme}", $"musicEnabled={MusicEnabled}", $"musicVolume={MusicVolume}", $"musicTrack={MusicTrack}", $"musicLoop={MusicLoop}",
             });

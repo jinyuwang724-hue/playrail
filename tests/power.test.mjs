@@ -1,6 +1,40 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createPowerPanel, powerSummaries, powerTiles } from "../plugin/power.js";
+import { createPowerController, createPowerPanel, powerSummaries, powerTiles } from "../plugin/power.js";
+
+test("core setting controller reports failed writes and restores through its dedicated API", async () => {
+  const calls = [];
+  const controller = createPowerController({ async call(method, ...args) {
+    calls.push([method, ...args]);
+    if (method === "set_ecore") throw new Error("permission denied");
+    return { settings: {}, ecore: { enabled: false, pending: true } };
+  } });
+  await controller.setEcore(true);
+  assert.match(controller.value.message, /permission denied/);
+  assert.equal(controller.value.busy, false);
+  assert.equal(controller.value.view, null);
+  await controller.restoreEcore();
+  assert.deepEqual(calls, [["set_ecore", true], ["restore_ecore"]]);
+  assert.equal(controller.value.view.ecore.enabled, false);
+  assert.match(controller.value.message, /重启/);
+});
+
+test("core setting rows keep the restart reminder, preserve restore and disable unsupported topology", () => {
+  const value = state();
+  value.view.ecore = { enabled: false, pending: null, status: "", supported: false, backup: true };
+  const h = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() });
+  const React = { createElement: h, Fragment: "Fragment", useState: f => [f(), () => {}], useEffect() {} };
+  const ui = new Proxy({}, { get: (_, name) => name });
+  const Panel = createPowerPanel(React, ui, { value, subscribe() {}, refresh() {} }, "Status", "Section");
+  const walk = n => n && typeof n === "object" ? [n, ...n.children.flatMap(walk)] : [];
+  const rows = walk(Panel({ section: "power" }));
+  const core = rows.find(n => n.props.label === "模拟全核心 E 核");
+  assert.equal(core.props.checked, false);
+  assert.equal(core.props.disabled, true);
+  assert.match(core.props.description, /重启/);
+  const restore = rows.find(n => n.children.includes("恢复原始核心设置"));
+  assert.equal(restore.props.disabled, true);
+});
 
 function state(mode = "autotdp") {
   const draft = { enabled: true, mode, autotdp: { target: 60, floor: 12, acMax: 35, dcMax: 25 },

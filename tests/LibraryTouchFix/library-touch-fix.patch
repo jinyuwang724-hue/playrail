@@ -1,0 +1,225 @@
+--- a/ClawLibrary/Stage/WallStage.Touch.Navigation.cs
++++ b/ClawLibrary/Stage/WallStage.Touch.Navigation.cs
+@@ -49,17 +49,17 @@
+     }
+ 
+     private float TouchScale => Math.Min((float)View.Width / 1280, (float)View.Height / 800);
+-    // 0 = hidden, 1 = back, 2 = control centre. No extra explanatory text.
++    // 0 = hidden, 2 = home control-centre menu. Child pages have no added back button.
+     private int TouchNavigationMode => _stack.Count == 0 || _startupShield?.IsVisible == true ? 0
+-        : _ob != null ? (_obStep is ObStep.Account or ObStep.Home ? 1 : 0)
++        : _ob != null ? 0
+         : _qsOpen || _lm is { Leaving: false } ? 0
+-        : _ccOpen || _searchOpen || _backgroundSettingsOpen || _expandedKey != null || _stack.Count > 1 ? 1 : 2;
++        : _ccOpen || _searchOpen || _backgroundSettingsOpen || _expandedKey != null || _stack.Count > 1 ? 0 : 2;
+ 
+     private bool TouchFilterHit(double x, double y) => _shOpen && !_shViewer
+         && x >= 96 * TouchScale && x < 140 * TouchScale && y >= 24 * TouchScale && y < 72 * TouchScale;
+ 
+-    private bool TouchNavigationHit(double x, double y) => TouchFilterHit(x, y) || TouchNavigationMode != 0
+-        && x >= 0 && (x < 40 * TouchScale || TouchShotStyleHit(x, y)) && y >= 24 * TouchScale && y < 72 * TouchScale;
++    private bool TouchNavigationHit(double x, double y) => TouchFilterHit(x, y) || TouchShotStyleHit(x, y)
++        || TouchNavigationMode == 2 && x >= 0 && x < 40 * TouchScale && y >= 24 * TouchScale && y < 72 * TouchScale;
+ 
+     private bool TouchShotStyleHit(double x, double y) => _shOpen && !_shViewer && !_shFilterOpen
+         && x >= 148 * TouchScale && x < 192 * TouchScale && y >= 24 * TouchScale && y < 72 * TouchScale;
+@@ -69,7 +69,7 @@
+         if (!TouchNavigationHit(x, y)) return false;
+         if (TouchFilterHit(x, y)) { ShToggleFilter(); return true; }
+         if (TouchShotStyleHit(x, y)) { ShX(); return true; }
+-        if (TouchNavigationMode == 1) Back(); else ToggleControlCenter();
++        ToggleControlCenter();
+         return true;
+     }
+ 
+@@ -88,13 +88,12 @@
+             _touchNavigation = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+             _top.Children.InsertAtTop(_touchNavigation);
+         }
+-        _touchNavigation.IsVisible = mode != 0;
+-        if (mode == 0) return;
++        _touchNavigation.IsVisible = mode == 2 || filter;
++        if (mode == 0 && !filter) return;
+         _top.Children.Remove(_touchNavigation); _top.Children.InsertAtTop(_touchNavigation);
+         CcSet(_touchNavigation, CcDraw(filter ? 192 : 40, 48, k * Chrome.Dpi, ds =>
+         {
+-            if (mode == 1) DrawChevron(ds, 23, 24, true, CcText);
+-            else for (int row = 0; row < 3; row++) ds.DrawLine(12, 18 + row * 6, 28, 18 + row * 6, CcText, 1.8f);
++            if (mode == 2) for (int row = 0; row < 3; row++) ds.DrawLine(12, 18 + row * 6, 28, 18 + row * 6, CcText, 1.8f);
+             if (filter) LineIcons.Draw(ds, "", 118, 24, 20, CcText);
+             if (filter && !_shFilterOpen) LineIcons.Draw(ds, _shStyle == ShStyle.Calendar ? "" : _shStyle == ShStyle.Projector ? "" : "", 170, 24, 20, CcText);
+         }));
+--- a/ClawLibrary/Stage/WallStage.cs
++++ b/ClawLibrary/Stage/WallStage.cs
+@@ -241,6 +241,7 @@
+         if (Program.Args.Contains("--settings-edit-probe")) _ = SettingsEditProbeAsync();
+         if (Program.Args.Contains("--copy-review-probe")) _ = CopyReviewProbeAsync();
+         if (Program.Args.Contains("--touch-probe")) _ = TouchProbeAsync();
++        if (Program.Args.Contains("--library-touch-probe")) _ = LibraryTouchProbeAsync();
+         if (Program.Args.Contains("--osd-probe")) _ = OsdSettingsProbeAsync();
+         if (_prefs.SourceXbox) After(500, () => _ = RefreshPlatformLibrary("xbox", quiet: true));
+         if (Program.Args.Contains("--debug-backplate")) _root.IsVisible = false;
+@@ -1294,11 +1295,20 @@
+             if (t.CurrentRect(now).Contains(wx, wy) && (hit == null || t.Expanded || (t.Focused && !hit.Expanded))) hit = t;
+         if (hit == null || !HasContent(hit.Slot)) return;
+         var key = hit.Slot.Key;
++        bool fromRail = _railFocused;
++        if (fromRail)
++        {
++            // A card hit transfers input ownership before Activate dispatches the action.
++            _railFocused = false;
++            _railFocus = -1;
++            RepaintRail();
++        }
+         if (FocusKey != key)
+         {
+             if (_expandedKey is { } ek && ek != key) Collapse(false);
+             Focus(key);
+         }
++        else if (fromRail) Focus(key);
+         Activate();
+     }
+ 
+--- a/ClawLibrary/Stage/WallStage.TouchProbe.cs
++++ b/ClawLibrary/Stage/WallStage.TouchProbe.cs
+@@ -165,7 +165,7 @@
+             _qsTouchTransport = null;
+ 
+             OpenControlCenter(quiet: true);
+-            Check("navigation: control centre exposes back", TouchNavigationMode == 1 && TouchNavigationHit(20 * _ccK, 48 * _ccK));
++            Check("navigation: control centre has no added back button or hotspot", TouchNavigationMode == 0 && !TouchNavigationHit(20 * _ccK, 48 * _ccK));
+         }
+         catch (Exception ex) { error = ex.Message; Log.Error("touch probe", ex); }
+         finally
+--- a/ClawLibrary/Package.appxmanifest
++++ b/ClawLibrary/Package.appxmanifest
+@@ -8,7 +8,7 @@
+   IgnorableNamespaces="uap uap3 uap4 rescap">
+ 
+   <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。主页能力由包根目录的 SCCD 配套声明。 -->
+-  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.183.0" />
++  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.185.0" />
+ 
+   <Properties>
+     <DisplayName>Claw 游戏库</DisplayName>
+--- /dev/null
++++ b/ClawLibrary/Stage/WallStage.LibraryTouchProbe.cs
+@@ -0,0 +1,118 @@
++using System.Text.Json.Nodes;
++using ClawLibrary.Data;
++using ClawLibrary.Engine;
++using static ClawLibrary.Engine.Geometry;
++using static ClawLibrary.Engine.ViewMath;
++
++namespace ClawLibrary.Stage;
++
++public sealed partial class WallStage
++{
++    // Runs the real card hit-testing and Activate dispatch. A single click only expands a card;
++    // the probe never clicks an expanded card, launches a game, or changes persisted preferences.
++    internal async Task LibraryTouchProbeAsync()
++    {
++        var checks = new JsonArray();
++        string? error = null;
++        int originalTab = _tabIndex;
++        var originalPrefs = _prefs;
++        void Check(string name, bool passed)
++        {
++            checks.Add((JsonNode)new JsonObject { ["name"] = name, ["passed"] = passed });
++            if (!passed) throw new InvalidOperationException(name);
++        }
++        try
++        {
++            await Task.Delay(2200);
++            _prefs = _prefs with { Screensaver = false };
++            MarkInput();
++            if (_ccOpen) CloseControlCenter();
++            await Task.Delay(1000);
++            if (MorphBusy) RushMorph();
++            foreach (string tabId in new[] { "all", "steam", "local" })
++            {
++                int tab = _lib.HomeTabs.FindIndex(t => t.Id == tabId);
++                Check(tabId + ": category exists", tab >= 0);
++                if (_expandedKey != null) Collapse(false);
++                _railFocused = false; _railFocus = -1;
++                SwitchTab(tab - _tabIndex);
++                // Steam categories can fill the first viewport with collections. Keep the real
++                // category and item order; anchor an actual game into view for the click fixture.
++                if (SlotNearSeam() is { } anchor)
++                {
++                    int gameIndex = CurrentLayer.Items.FindIndex(item => item.Kind == ItemKind.Game);
++                    Check(tabId + ": contains games", gameIndex >= 0);
++                    CurrentLayer.Layout = Content.Anchor(CurrentLayer.Layout, anchor.Key, gameIndex);
++                    SwapContent(null);
++                    Focus(anchor.Key, reveal: false);
++                }
++                await Task.Delay(900);
++                foreach (bool sameFocus in new[] { true, false })
++                {
++                    MarkInput();
++                    if (_expandedKey != null) Collapse(false);
++                    await Task.Delay(400);
++                    Sync(); Recull(true); RepaintRail();
++                    var geo = SeamGeometry(_anchorX, _center, _openWidth, View);
++                    var candidates = _tiles.Values.Where(tile =>
++                    {
++                        if (!HasContent(tile.Slot) || Lookup(ItemFor(tile.Slot) ?? "")?.Kind != ItemKind.Game) return false;
++                        var box = TileScreenBox(tile, NowMs);
++                        double x = box.X + box.W / 2, y = box.Y + box.H / 2;
++                        return x > 50 && x < View.Width - 50 && y > 90 && y < View.Height - 50
++                            && Math.Abs(x - geo.ScreenX) > geo.Width / 2 + 10;
++                    }).OrderBy(tile => Math.Abs(TileScreenBox(tile, NowMs).X - View.Width / 2)).Take(2).ToList();
++                    string name = tabId + (sameFocus ? ": previous game focus" : ": different game focus");
++                    Check(name + " has a visible game card", candidates.Count > 0);
++                    var target = candidates[0];
++                    _railFocused = false;
++                    var previous = sameFocus ? target : _tiles.Values.First(tile => tile.Slot.Key != target.Slot.Key && HasContent(tile.Slot));
++                    Focus(previous.Slot.Key, reveal: false);
++                    int railTab = _rail.Items.FindIndex(i => i.Kind == RailKind.Tab && i.Index == tab);
++                    Check(name + " has category target", railTab >= 0);
++                    var row = _rail.Items[railTab].Bounds;
++                    EnterRail(row.Y + row.Height / 2, railTab);
++                    Check(name + " begins with category owning focus", _railFocused && _railFocus == railTab && _expandedKey == null);
++                    var hit = TileScreenBox(target, NowMs);
++                    ClickAt(hit.X + hit.W / 2, hit.Y + hit.H / 2);
++                    Check(name + " transfers focus from category to game", !_railFocused && _railFocus == -1 && FocusKey == target.Slot.Key);
++                    Check(name + " expands the tapped game", _expandedKey == target.Slot.Key);
++                    Check(name + " preserves selected category", _tabIndex == tab);
++                    Collapse(false);
++                    await Task.Delay(450);
++                }
++            }
++            if (_expandedKey != null) Collapse(false);
++            SwitchTab(originalTab - _tabIndex);
++            OpenControlCenter(quiet: true);
++            Check("control centre has no back icon hit region", TouchNavigationMode == 0 && !TouchNavigationHit(20 * TouchScale, 48 * TouchScale));
++            foreach (var page in new (string Name, Action Open, Action Close)[] {
++                ("display", OpenDisplay, () => CloseDisplay(true)),
++                ("system", OpenSystem, () => CloseSystem(true)),
++                ("performance", OpenPerf, () => ClosePerf(true)),
++                ("software", OpenSettingsPage, () => CloseSettingsPage(true)),
++                ("gamepad", OpenGamepad, () => CloseGamepad(true)),
++                ("screenshots", () => OpenShots(), () => CloseShots(true)),
++            })
++            {
++                page.Open();
++                Check(page.Name + " has no back icon hit region", TouchNavigationMode == 0 && !TouchNavigationHit(20 * TouchScale, 48 * TouchScale));
++                page.Close();
++            }
++        }
++        catch (Exception ex) { error = ex.Message; Log.Error("library touch probe", ex); }
++        finally
++        {
++            _prefs = originalPrefs;
++            if (_expandedKey != null) Collapse(false);
++            _railFocused = false; _railFocus = -1;
++            CloseShots(true); CloseGamepad(true); CloseDisplay(true); CloseSystem(true); ClosePerf(true); CloseSettingsPage(true);
++            if (_ccOpen) CloseControlCenter();
++            if (MorphBusy) RushMorph();
++            SwitchTab(originalTab - _tabIndex);
++            RepaintRail(); MarkInput();
++            File.WriteAllText(Path.Combine(App.CacheDir, "library-touch-probe.json"),
++                new JsonObject { ["checks"] = checks, ["error"] = error }.ToJsonString());
++        }
++    }
++}

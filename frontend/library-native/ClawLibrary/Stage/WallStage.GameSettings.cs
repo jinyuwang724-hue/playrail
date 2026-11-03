@@ -154,15 +154,17 @@ public sealed partial class WallStage
                     }
                 }
                 // 小黄鸭（Lossless Scaling）：不是工具箱自带的，是 Steam 上单独买的软件；工具箱只替它给这款游戏建一份配置
-                _stRows.Add(new PerfRow { Section = true, Title = "小黄鸭（Lossless Scaling）" });
-                if (s == null) _stRows.Add(StInfo("小黄鸭", wait));
-                else if (!Bool(ls?["installed"])) _stRows.Add(StInfo("小黄鸭", "没有装"));
-                else if (Str(s["exe"]) == null) _stRows.Add(StInfo("小黄鸭", noExe));
-                else _stRows.Add(StToggle("小黄鸭", Bool(ls?["enabled"]), on =>
+                if (Bool(ls?["configured"]))
                 {
-                    GsLocal("lossless", "enabled", JsonValue.Create(on));
-                    _ = GsSet("lossless", JsonValue.Create(on), on ? "小黄鸭会在这款游戏打开时自动开始" : "已关掉这款游戏的小黄鸭");
-                }));
+                    _stRows.Add(new PerfRow { Section = true, Title = "小黄鸭（Lossless Scaling）" });
+                    if (!Bool(ls?["settingsReady"])) _stRows.Add(StInfo("小黄鸭", "请先在设置 › 小黄鸭打开并保存默认配置"));
+                    else if (Str(s?["exe"]) == null) _stRows.Add(StInfo("小黄鸭", noExe));
+                    else _stRows.Add(StToggle("小黄鸭", Bool(ls?["enabled"]), on =>
+                    {
+                        GsLocal("lossless", "enabled", JsonValue.Create(on));
+                        _ = GsSet("lossless", JsonValue.Create(on), on ? "小黄鸭会在这款游戏打开时自动开始" : "已关掉这款游戏的小黄鸭");
+                    }));
+                }
                 break;
             }
             case 2:

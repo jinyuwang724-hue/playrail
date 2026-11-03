@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -195,6 +195,7 @@ class Executor : IDisposable {
             else if (command == "auto_brightness_set") reply["display"] = DisplayAudio.SetAutoBrightness(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
             else if (command == "gpu_set") { IntelGpu.Set(Convert.ToString(request["name"]), request.ContainsKey("value") ? request["value"] : null); reply["display"] = DisplayAudio.Read(); }
             else if (command == "fps_limit_set") reply["sys"] = SystemControls.SetFpsLimit(Convert.ToInt32(Number(request, "fps")), request.ContainsKey("exe") ? Convert.ToString(request["exe"]) : null);
+            else if (command.StartsWith("driver_game_", StringComparison.Ordinal)) reply["fpsProfile"] = IntelFrameLimit.Session(command, request);
             else if (command == "kill") reply["sys"] = SystemControls.Kill(Convert.ToInt32(Number(request, "pid")));
             else if (command == "power_action") reply["sys"] = SystemControls.Power(Convert.ToString(request["action"]));
             else if (command == "keyboard") reply["sys"] = SystemControls.ToggleKeyboard();
@@ -214,7 +215,11 @@ class Executor : IDisposable {
             else if (command == "vendor_app_set") reply["apps"] = SystemPage.SetVendorApp(Convert.ToString(request["app"]), true.Equals(request["disabled"]));
             else if (command == "startup_approve") reply["system"] = SystemPage.SetStartupApproved(Convert.ToString(request["key"]), Convert.ToString(request["name"]), true.Equals(request["enabled"]));
             else if (command == "wake_set") reply["system"] = SystemPage.SetWake(true.Equals(request["lock"]), Strings(request, "restore"));
-            else if (command == "ecore_set") reply["ecore"] = SmallCores.Set(true.Equals(request.ContainsKey("enabled") ? request["enabled"] : false));
+            else if (command == "ecore_set") {
+                if (!request.ContainsKey("enabled") || !(request["enabled"] is bool)) throw new ArgumentException("开关格式错误");
+                reply["ecore"] = SmallCores.Set((bool)request["enabled"]);
+            }
+            else if (command == "ecore_restore") reply["ecore"] = SmallCores.Restore(request.ContainsKey("original") ? request["original"] as Dictionary<string, object> : null);
             else throw new ArgumentException("未知命令");
             reply["ok"] = true;
         } catch (Exception error) {
@@ -623,14 +628,7 @@ static class Osd {
     }
 
     // Frame limit (RTSS "FramerateLimit", 0 = off) of the global profile, for the widget.
-    internal static int HooksForWidget() {
-        var hooks = Hooks();
-        var load = Get<ProfileFn>(hooks, "LoadProfile");
-        var getProp = Get<PropertyFn>(hooks, "GetProfileProperty");
-        load("");
-        var data = new byte[4];
-        return getProp("FramerateLimit", data, 4) ? BitConverter.ToInt32(data, 0) : 0;
-    }
+
 
     static IntPtr Hooks() {
         string dir = null;
@@ -688,10 +686,7 @@ static class Osd {
 //   Get_AP(1)[0] bit 7  software curve in control (Set_Data 0xD4); clear = firmware's own curve
 //   Get_Data(0x98) bit 7 full speed
 // Every Get_* reply starts with a status byte (1 = ok) that is stripped here.
-// "All cores as E-cores" (体感助手's 模拟全核心E核): SmallProcessorMask marks every logical
-// processor of group 0 as a small core, so the scheduler stops preferring P-cores. Windows reads
-// it at boot only. Writing the same value 体感助手 writes keeps the two interchangeable.
-// System controls for the Game Bar widget: brightness, volume, refresh rate, RTSS frame limit,
+// System controls for the Game Bar widget: brightness, volume, refresh rate, driver frame limit,
 // closing the game, power actions, touch keyboard and screenshot. All run in this elevated
 // executor because the games (and Steam) run elevated here.
 static class SystemControls {
@@ -724,9 +719,8 @@ static class SystemControls {
         result["refresh"] = current.dmDisplayFrequency;
         result["refreshRates"] = RefreshRates(current);
         try {
-            var hooks = Osd.HooksForWidget();
-            result["fpsLimit"] = hooks;
-        } catch (Exception) { result["fpsLimit"] = null; }
+            foreach (var value in IntelFrameLimit.Read()) result[value.Key] = value.Value;
+        } catch (Exception error) { result["fpsLimit"] = null; result["fpsLimitError"] = error.Message; }
         return result;
     }
 
@@ -801,12 +795,9 @@ static class SystemControls {
         return Read();
     }
 
-    // Global profile plus the running game's own profile (it overrides the global one). Touching every
-    // profile like the OSD settings do took ~10 s with the ~60 profiles here, far too slow for a tile.
+    // The global driver limit is also used temporarily by journalled game overrides.
     public static Dictionary<string, object> SetFpsLimit(int fps, string exe) {
-        if (fps < 0 || fps > 360) throw new ArgumentException("帧率限制超出范围");
-        Osd.SetIntIn("FramerateLimit", fps, string.IsNullOrEmpty(exe) ? new[] { "" } : new[] { "", exe });
-        return new Dictionary<string, object> { { "fpsLimit", fps } };
+        return IntelFrameLimit.Set(fps);
     }
 
     // Only ever called with the foreground game the agent detected.
@@ -847,24 +838,6 @@ static class SystemControls {
         keybd_event(WIN, 0, 0, UIntPtr.Zero); keybd_event(ALT, 0, 0, UIntPtr.Zero); keybd_event(PRINT, 0, 0, UIntPtr.Zero);
         keybd_event(PRINT, 0, UP, UIntPtr.Zero); keybd_event(ALT, 0, UP, UIntPtr.Zero); keybd_event(WIN, 0, UP, UIntPtr.Zero);
         return new Dictionary<string, object> { { "screenshot", true } };
-    }
-}
-
-static class SmallCores {
-    const string Key = @"SYSTEM\CurrentControlSet\Control\Session Manager\kernel\Kgroups\00";
-    const string Name = "SmallProcessorMask";
-
-    public static Dictionary<string, object> Set(bool enabled) {
-        using (var key = Microsoft.Win32.Registry.LocalMachine.CreateSubKey(Key)) {
-            if (key == null) throw new InvalidOperationException("无法打开处理器分组注册表项");
-            if (enabled) {
-                int threads = Math.Min(Environment.ProcessorCount, 64);
-                ulong mask = threads == 64 ? ulong.MaxValue : (1UL << threads) - 1;
-                if (mask <= uint.MaxValue) key.SetValue(Name, unchecked((int)(uint)mask), Microsoft.Win32.RegistryValueKind.DWord);
-                else key.SetValue(Name, unchecked((long)mask), Microsoft.Win32.RegistryValueKind.QWord);
-            } else key.DeleteValue(Name, false);
-            return new Dictionary<string, object> { { "enabled", key.GetValue(Name) != null } };
-        }
     }
 }
 

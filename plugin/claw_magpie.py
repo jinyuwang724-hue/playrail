@@ -1,6 +1,7 @@
 """Own a source-built Magpie child, including a verified elevation pipe bridge."""
 import asyncio
 import ctypes
+import copy
 from ctypes import wintypes as W
 from contextlib import contextmanager
 import json
@@ -244,6 +245,18 @@ class Magpie:
         self.games_path = Path(data) / "magpie-games.json"
         # The library's game settings: per game whether Magpie starts by itself (自动缩放) and which 超分预设
         self.meta_path = Path(data) / "magpie-game-meta.json"
+        self.presets_path = Path(data) / "magpie-presets.json"
+        self.custom_presets = {}
+        try:
+            saved = json.loads(self.presets_path.read_text(encoding="utf-8"))
+            if isinstance(saved, dict):
+                for name, effects in list(saved.items())[:64]:
+                    try:
+                        self.custom_presets[self.preset_name(name)] = validate_pipeline(effects)
+                    except (ValueError, TypeError):
+                        logging.warning("Ignoring invalid Magpie preset %r", name)
+        except (OSError, ValueError):
+            pass
         try: self.meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
         except (OSError, ValueError): self.meta = {}
         if not isinstance(self.meta, dict): self.meta = {}
@@ -265,12 +278,13 @@ class Magpie:
         except (ValueError, OSError): logging.warning("Magpie game list could not be loaded")
         self.blockers = set(); self.closed = False; self.source = None; self.started_at = 0
         self.requested = False; self.output_seen = False; self.geometry = None; self.engine_pid = 0
-        self.prefs = dict(DEFAULTS)
+        self.prefs = dict(DEFAULTS)  # 设置页 › Magpie defaults; self.current = what the running scaling uses
         try:
             saved = validate({**DEFAULTS, **json.loads(self.prefs_path.read_text(encoding="utf-8")), "target": 0})
             self.prefs.update({k: saved[k] for k in DEFAULTS})
         except FileNotFoundError: pass
         except (ValueError, OSError, TypeError): logging.warning("Magpie preferences could not be loaded")
+        self.current = dict(self.prefs)
         self.state = {"enabled": False, "active": False, "target": 0, "phase": "尚未应用到游戏", "error": "",
                       "engineVersion": VERSION, "preferences": dict(self.prefs), "source": [], "dest": [], "crop": {}}
 
@@ -285,10 +299,76 @@ class Magpie:
         if key in self.games: return key
         return next((k for k in self.games if k.startswith("dir:") and key.startswith(k[4:].rstrip("\\") + os.sep)), None)
 
-    @staticmethod
-    def presets():
+    def presets(self):
         """超分预设 names: 无 (only fill + sharpen) and Magpie's own presets from the catalog."""
-        return ["无"] + [p["name"] for p in CATALOG.get("presets", [])]
+        return ["无"] + [p["name"] for p in self.preset_catalog()]
+
+    @staticmethod
+    def preset_name(name):
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80 or any(ord(c) < 32 for c in name) or name.strip() == "无":
+            raise ValueError("预设名称需为 1–80 个字符，且不能叫「无」")
+        return name.strip()
+
+    def preset_catalog(self):
+        presets = {p["name"]: {**p, "builtin": True, "modified": False} for p in CATALOG["presets"]}
+        for name, effects in self.custom_presets.items():
+            presets[name] = {"name": name, "effects": effects, "builtin": name in presets, "modified": True}
+        return copy.deepcopy(list(presets.values()))
+
+    def _update_preset_games(self, old, new, effects):
+        for key, meta in self.meta.items():
+            if meta.get("preset") != old:
+                continue
+            meta["preset"] = new
+            if key in self.games:
+                self.games[key] = {**(self.games[key] or self.prefs), "pipeline": copy.deepcopy(effects)}
+        self._save_games()
+
+    def _save_presets(self):
+        temp = self.presets_path.with_suffix(".tmp")
+        temp.write_text(json.dumps(self.custom_presets, ensure_ascii=False), encoding="utf-8")
+        os.replace(temp, self.presets_path)
+
+    def save_preset(self, value):
+        if not isinstance(value, dict) or set(value) != {"name", "originalName", "effects"}:
+            raise ValueError("预设格式错误")
+        name = self.preset_name(value["name"])
+        old = value["originalName"]
+        names = self.presets()[1:]
+        if old is not None and (not isinstance(old, str) or old not in names):
+            raise ValueError("原预设已不存在，请重新打开")
+        if name != old and name in names:
+            raise ValueError("已经有同名预设")
+        if old in {p["name"] for p in CATALOG["presets"]} and old != name:
+            raise ValueError("内置预设请先复制再改名")
+        if name not in self.custom_presets and old not in self.custom_presets and len(self.custom_presets) >= 64:
+            raise ValueError("最多保存 64 个自定义预设")
+        effects = validate_pipeline(value["effects"])
+        previous = copy.deepcopy(self.custom_presets)
+        if old != name:
+            self.custom_presets.pop(old, None)
+        self.custom_presets[name] = effects
+        try:
+            self._save_presets()
+        except OSError:
+            self.custom_presets = previous
+            raise
+        if old is not None:
+            self._update_preset_games(old, name, effects)
+        return {"presets": self.preset_catalog()}
+
+    def delete_preset(self, name):
+        if not isinstance(name, str) or name not in self.custom_presets:
+            raise ValueError("这个预设没有可删除的自定义设置")
+        previous = self.custom_presets.pop(name)
+        try:
+            self._save_presets()
+        except OSError:
+            self.custom_presets[name] = previous
+            raise
+        builtin = next((p for p in CATALOG["presets"] if p["name"] == name), None)
+        self._update_preset_games(name, name if builtin else "无", builtin["effects"] if builtin else [])
+        return {"presets": self.preset_catalog()}
 
     def norm_key(self, key):
         if not isinstance(key, str) or not key or len(key) > 4096: raise ValueError("游戏路径格式错误")
@@ -314,7 +394,7 @@ class Magpie:
             meta["preset"] = preset
         if enabled is None: enabled = key in self.games
         if enabled:
-            chain = next((p["effects"] for p in CATALOG.get("presets", []) if p["name"] == meta["preset"]), [])
+            chain = next((p["effects"] for p in self.preset_catalog() if p["name"] == meta["preset"]), [])
             prefs = {**self.prefs, "pipeline": validate_pipeline([{k: e[k] for k in ("name", "parameters", "scalingType", "scale") if k in e} for e in chain])}
             self.games[key] = prefs
             self.meta[key] = meta
@@ -401,21 +481,22 @@ class Magpie:
                 root = self.windows.foreground_root() if hasattr(self.windows, "foreground_root") else hwnd
                 item = self.windows.describe(root) if root else None
                 if item and self.match_key(item["path"]) is not None and self.auto_for(item["path"]):
-                    await self.apply({**self.game_prefs(item["path"]), "target": item["hwnd"]})
+                    # The game's own settings (its 超分预设): not new defaults, and its entry stays as the library saved it
+                    await self.apply({**self.game_prefs(item["path"]), "target": item["hwnd"]}, persist=False)
                     return
         except asyncio.CancelledError: raise
         except Exception as error:
             logging.exception("Magpie auto start failed")
             await self.publish(error=str(error), phase="自动铺满未能启动，可在画面模块中手动应用")
 
-    async def catalog(self): return CATALOG
+    async def catalog(self): return {**copy.deepcopy(CATALOG), "presets": self.preset_catalog()}
 
     def save(self):
         temp = self.prefs_path.with_suffix(".tmp")
         temp.write_text(json.dumps(self.prefs, ensure_ascii=False), encoding="utf-8")
         os.replace(temp, self.prefs_path)
 
-    async def apply(self, settings):
+    async def apply(self, settings, persist=True):
         settings = validate(settings)
         if not settings["fill"] and not settings["sharpen"] and not settings["pipeline"]: raise ValueError("请开启画面效果，或使用恢复原画面")
         async with self.lock:
@@ -423,7 +504,7 @@ class Magpie:
             source = self.windows.describe(settings["target"])
             if not source: raise ValueError("游戏窗口已关闭、最小化或不可用，请刷新后重新选择")
             crop = calculate_crop(source["width"], source["height"], source["screenWidth"], source["screenHeight"], settings)
-            if self.state["enabled"] and self.source and source["pid"] == self.source["pid"] and source["hwnd"] == self.source["hwnd"] and settings == {**self.prefs, "target": self.source["hwnd"]}:
+            if self.state["enabled"] and self.source and source["pid"] == self.source["pid"] and source["hwnd"] == self.source["hwnd"] and settings == {**self.current, "target": self.source["hwnd"]}:
                 return self.view()
             await self.stop_runtime()
             if self.windows.hotkey(): raise RuntimeError("另一个 Magpie 实例正在运行，请退出它后再应用")
@@ -434,16 +515,18 @@ class Magpie:
                    hashlib.sha256((self.runtime / name).read_bytes()).digest() != hashlib.sha256((self.bundle / name).read_bytes()).digest()) for name in files):
                 await asyncio.to_thread(shutil.copytree, self.bundle, self.runtime, dirs_exist_ok=True, ignore=shutil.ignore_patterns("magpie-source.zip"))
             self.source = source; self.geometry = self.signature(source); self.switched = 0
-            self.prefs = {k: settings[k] for k in DEFAULTS}; self.save()
-            # Remember the game so its next launch fills the screen without opening the panel.
-            self.remember(source["path"], True, self.prefs)
+            self.current = {k: settings[k] for k in DEFAULTS}
+            if persist:
+                self.prefs = dict(self.current); self.save()
+                # Remember the game so its next launch fills the screen without opening the panel.
+                self.remember(source["path"], True, self.prefs)
             # Minimal portable startup settings; rendering parameters travel over
             # the explicit pipe, never through a hotkey or a default game profile.
             self.write_config({"language": "zh-CN", "showNotifyIcon": False,
                 "autoCheckForUpdates": False, "alwaysRunAsAdmin": False,
                 "profiles": [{"scalingMode": -1}]})
             await self.publish(enabled=True, active=False, target=source["hwnd"], targetTitle=source["title"], error="",
-                               preferences=dict(self.prefs), crop=crop, source=[], dest=[], phase="已准备，关闭菜单并返回所选游戏后生效")
+                               preferences=dict(self.current), crop=crop, source=[], dest=[], phase="已准备，关闭菜单并返回所选游戏后生效")
             if not self.watcher or self.watcher.done(): self.watcher = asyncio.create_task(self.watch())
             return self.view()
 
@@ -572,7 +655,7 @@ class Magpie:
         return self.windows.foreground_root() if hasattr(self.windows, "foreground_root") else self.windows.u.GetForegroundWindow()
 
     def game_fullscreen(self, current):
-        return bool(self.prefs["fill"] and current["width"] >= current["screenWidth"] and current["height"] >= current["screenHeight"])
+        return bool(self.current["fill"] and current["width"] >= current["screenWidth"] and current["height"] >= current["screenHeight"])
 
     async def tick(self):
         hwnd = self.source["hwnd"]
@@ -588,15 +671,15 @@ class Magpie:
             await self.suspend(); await self.publish(active=False, phase="等待关闭菜单并返回所选游戏"); return
         if self.signature(current) != self.geometry:
             await self.suspend()
-            crop = calculate_crop(current["width"], current["height"], current["screenWidth"], current["screenHeight"], self.prefs)
+            crop = calculate_crop(current["width"], current["height"], current["screenWidth"], current["screenHeight"], self.current)
             self.geometry = self.signature(current); await self.publish(crop=crop)
         # Fill covers the screen at Magpie's output stage instead of cropping the
         # capture. Steam's side menus are drawn into the game frame; the frontend
         # lays them out inside the part of the frame that stays visible after the
         # cover crop, so the view never changes while they are open.
-        cover = self.prefs["fill"]
+        cover = self.current["fill"]
         crop = calculate_crop(current["width"], current["height"], current["screenWidth"], current["screenHeight"],
-                              {**self.prefs, "fill": False})
+                              {**self.current, "fill": False})
         if self.requested and self.running and self.running[0] != crop: await self.suspend()
         if self.requested and self.running and self.running[1] != cover:
             await self.command("view", cover=cover); self.running = (crop, cover)
@@ -623,13 +706,13 @@ class Magpie:
                     if hasattr(self.windows, "toggle_fullscreen") and await asyncio.to_thread(self.windows.toggle_fullscreen, hwnd):
                         await self.publish(active=False, phase="正在把游戏切换为窗口模式，以便铺满屏幕…"); return
                 elif time.monotonic() - self.switched_at < 3: return
-            effects = self.prefs["pipeline"] or [{"name": "Bicubic", "scalingType": 1,
+            effects = self.current["pipeline"] or [{"name": "Bicubic", "scalingType": 1,
                 "parameters": {"paramB": 0, "paramC": .5}}]
-            if self.prefs["sharpen"]:
-                effects = [*effects, {"name": "FSR\\FSR_RCAS", "parameters": {"sharpness": self.prefs["strength"]}}]
-            reply = await self.command("start", target=hwnd, capture=CAPTURES[self.prefs["capture"]],
-                effects=effects, fitOutput=bool(self.prefs["pipeline"]), cover=cover, maxFrameRate=self.prefs["maxFrameRate"],
-                game3D=self.prefs["game3D"], adjustCursor=self.prefs["adjustCursor"],
+            if self.current["sharpen"]:
+                effects = [*effects, {"name": "FSR\\FSR_RCAS", "parameters": {"sharpness": self.current["strength"]}}]
+            reply = await self.command("start", target=hwnd, capture=CAPTURES[self.current["capture"]],
+                effects=effects, fitOutput=bool(self.current["pipeline"]), cover=cover, maxFrameRate=self.current["maxFrameRate"],
+                game3D=self.current["game3D"], adjustCursor=self.current["adjustCursor"],
                 crop=[crop[k] for k in ("left", "top", "right", "bottom")])
             if not reply["ok"]:
                 if "pid" not in reply: raise RuntimeError("Magpie 启动失败：" + reply.get("error", "权限启动失败"))

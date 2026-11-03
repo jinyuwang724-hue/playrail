@@ -616,10 +616,16 @@ public sealed partial class WallStage
     }
 
     /// <summary>电源动作：先给提示，0.4 s 后执行（提示看得见）。--power-dry 只记日志（测试用，不真的关机）。</summary>
+    private async Task CcRequestAnimatedPower(string action)
+    {
+        try { _agent ??= new(); await _agent.Call("power_action", System.Text.Json.Nodes.JsonValue.Create(action)); }
+        catch (Exception ex) { Log.Error("animated power action", ex); Toast("电源操作未完成：" + ex.Message); }
+    }
+
     private void CcRunPower(string id)
     {
         var item = _ccPower.First(p => p.Id == id);
-        Toast($"正在{item.Label}…");
+        if (id is not ("restart" or "shutdown")) Toast($"正在{item.Label}…");
         Log.Info($"control center power: {id}");
         if (Program.Args.Contains("--power-dry")) return;
         nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
@@ -629,8 +635,8 @@ public sealed partial class WallStage
             {
                 case "sleep": SystemInfo.Sleep(hwnd); break;
                 case "hibernate": SystemInfo.Hibernate(); break;
-                case "restart": SystemInfo.Restart(); break;
-                case "shutdown": SystemInfo.Shutdown(); break;
+                case "restart": _ = CcRequestAnimatedPower("restart"); break;
+                case "shutdown": _ = CcRequestAnimatedPower("shutdown"); break;
             }
         });
         CcPowerShow(false);

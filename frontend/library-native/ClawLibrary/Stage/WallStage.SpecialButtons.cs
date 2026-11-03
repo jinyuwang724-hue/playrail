@@ -62,7 +62,6 @@ public sealed partial class WallStage
         {
             new() { Section = true, Title = "专用按键映射" },
             Choice("生效场景", new[] { "常规场景", "Steam 大屏接管" }, steam ? 1 : 0, i => { picker.SteamMapping = i == 1; PaintGpBody(); }),
-            Info("使用范围", steam ? "大屏打开时按原接管开关生效" : "关闭 Steam 大屏后使用这套映射"),
         };
         bool on = steam ? Bool(_gpSettings?["enabled"]) : (_gpSettings?["buttonMappings"] as JsonObject)?.Count > 0;
         rows.Add(Choice(steam ? "Steam 接管" : "常规映射", new[] { "关", "开" }, on ? 1 : 0, i =>
@@ -77,14 +76,14 @@ public sealed partial class WallStage
         {
             picker.Level = GpSubLevel.Chooser; picker.Tab = 4; picker.Cell = 0; picker.InTabs = false; picker.Chord.Clear(); PaintGpBody();
         } });
-        rows.Add(new() { Title = "禁用这个键", Value = "按下不执行  ›", Press = () => GpSetSpecial(picker, new JsonObject { ["type"] = "none" }) });
+        rows.Add(new() { Title = "禁用这个键", Value = "›", Press = () => GpSetSpecial(picker, new JsonObject { ["type"] = "none" }) });
         rows.Add(new() { Title = steam ? "恢复原接管映射" : "恢复默认映射", Value = "›", Press = () =>
         {
             if (steam) { (_gpSettings?["steamBindings"] as JsonObject)?.Remove(picker.Source); _ = GpSaveSpecial(); }
             else GpSetSpecial(picker, GpDefaultSpecial(picker.Source));
             PaintGpBody();
         } });
-        rows.Add(new() { Title = "测试这项指令", Value = "立即执行  ›", Press = async () =>
+        rows.Add(new() { Title = "测试指令", Value = "立即执行  ›", Press = async () =>
         {
             await GpSaveSpecial();
             try

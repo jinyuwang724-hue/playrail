@@ -42,6 +42,7 @@ public sealed class LibraryItem
     public bool Installed = true;
     /// <summary>手动加的文件夹里的游戏：直接启动这个 exe。</summary>
     public string? ExePath;
+    public string? XboxAumid;
     public string? Series;
     public double SeedFx;
     public string? SeedColor;
@@ -205,6 +206,16 @@ public sealed class Library
             g.OwnArt = art(g.Id);
             games.Add(g);
         }
+        foreach (var x in XboxLibrary)
+        {
+            string id = "xbox-" + x.Aumid;
+            games.Add(new LibraryItem
+            {
+                Id = id, Kind = ItemKind.Game, Title = x.Name, Main = x.Name,
+                Platform = "xbox", Badge = "XBOX", Subtitle = "Xbox / Microsoft Store",
+                XboxAumid = x.Aumid, Hue = HueOf(x.Name), SeedFx = 0.5,
+            });
+        }
         return Build(games, steamCollections);
     }
 
@@ -216,6 +227,7 @@ public sealed class Library
     public static bool ShowHidden, IncludeSteam = true;
     /// <summary>设置页手动加的文件夹里扫出来的游戏（载入前填好）。</summary>
     public static List<(string Title, string Exe, long? Last)> FolderGames = new();
+    internal static List<XboxGames.Game> XboxLibrary = new();
 
     public static Library Build(List<LibraryItem> games, List<SteamCollection> steamCollections)
     {
@@ -254,7 +266,8 @@ public sealed class Library
         {
             new("all", "全部", () => ordered),
             new("steam", "Steam", () => lib.Collections.Concat(steamGames).ToList()),   // Steam 的分类排最前，就在竖条旁边
-            new("local", "本地", () => ordered.Where(g => g.Platform != "steam").ToList()),
+            new("xbox", "Xbox", () => ordered.Where(g => g.Platform == "xbox").ToList()),
+            new("local", "本地", () => ordered.Where(g => g.Platform != "steam" && g.Platform != "xbox").ToList()),
         };
         Log.Info($"library: {shown.Count} shown ({games.Count - shown.Count} hidden in Steam), steam collections: {string.Join(", ", lib.Collections.Select(c => $"{c.Title}({c.Children!.Count})"))}");
         return lib;

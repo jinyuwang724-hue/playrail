@@ -21,13 +21,14 @@ Start-Transcript -LiteralPath $taskLog -Force | Out-Null
 try {
     $taskBinary = Join-Path $taskRoot 'plugin\bin\ClawFanService.exe'
     $taskModule = Join-Path $taskRoot 'plugin\bin\pawnio\IntelMSR.bin'
+    $taskEcModule = Join-Path $taskRoot 'plugin\bin\pawnio\LpcACPIEC.bin'
     $taskApp = Join-Path $AgentHome 'app'
     $taskData = Join-Path $AgentHome 'data'
     $taskServiceFolder = Join-Path $env:ProgramFiles 'ClawToolbox\FanService'
     $taskConfigFolder = Join-Path $env:ProgramData 'ClawToolbox\FanService'
     $taskConfigPath = Join-Path $taskConfigFolder 'service.json'
     $taskBackupPath = Join-Path $taskData 'fan-backup.json'
-    foreach ($taskRequired in @($taskBinary,$taskModule,$taskBackupPath,(Join-Path $taskApp 'claw_power.py'),(Join-Path $AgentHome 'current.json'))) {
+    foreach ($taskRequired in @($taskBinary,$taskModule,$taskEcModule,$taskBackupPath,(Join-Path $taskApp 'claw_power.py'),(Join-Path $AgentHome 'current.json'))) {
         if (-not (Test-Path -LiteralPath $taskRequired -PathType Leaf)) { throw ('Missing required file: '+$taskRequired) }
     }
     $taskOriginal = Get-Content -Raw -Encoding UTF8 -LiteralPath $taskBackupPath | ConvertFrom-Json
@@ -89,6 +90,8 @@ try {
     Protect-Folder (Join-Path $taskServiceFolder 'pawnio')
     Copy-Item -LiteralPath $taskBinary -Destination (Join-Path $taskServiceFolder 'ClawFanService.exe') -Force
     Copy-Item -LiteralPath $taskModule -Destination (Join-Path $taskServiceFolder 'pawnio\IntelMSR.bin') -Force
+    Copy-Item -LiteralPath $taskEcModule -Destination (Join-Path $taskServiceFolder 'pawnio\LpcACPIEC.bin') -Force
+    Copy-Item -LiteralPath (Join-Path $taskRoot 'plugin\bin\pawnio\LpcACPIEC-COPYING.txt') -Destination (Join-Path $taskServiceFolder 'pawnio\LpcACPIEC-COPYING.txt') -Force
     if (-not (Test-Path -LiteralPath $taskConfigPath)) {
         $taskPower = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $taskData 'power.json') | ConvertFrom-Json
         $taskFan = $taskPower.fan

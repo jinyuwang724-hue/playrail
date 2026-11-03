@@ -1,4 +1,4 @@
-param([switch]$FrontendOnly, [switch]$RouterOnly, [string]$Python = $env:CLAW_PYTHON)
+﻿param([switch]$FrontendOnly, [switch]$RouterOnly, [string]$Python = $env:CLAW_PYTHON)
 $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
 # The agent's private Python runtime (the device has no system Python). Built once from a local
@@ -14,11 +14,12 @@ $taskCompiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.
 if (-not (Test-Path -LiteralPath $taskCompiler)) { throw 'Windows .NET Framework 4.x compiler is required.' }
 $taskOutput = Join-Path $taskRoot 'plugin\bin'
 [IO.Directory]::CreateDirectory($taskOutput) | Out-Null
-& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Management.dll /reference:System.Web.Extensions.dll /reference:System.Windows.Forms.dll ("/out:" + (Join-Path $taskOutput 'ClawRouter.exe')) (Join-Path $taskRoot 'native\ClawRouter.cs') (Join-Path $taskRoot 'native\FirmwareShortcutFilter.cs') (Join-Path $taskRoot 'native\GameBarGuard.cs')
+& (Join-Path $taskRoot 'tools\Prepare-FanModule.ps1')
+& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Management.dll /reference:System.Web.Extensions.dll /reference:System.Windows.Forms.dll ("/out:" + (Join-Path $taskOutput 'ClawRouter.exe')) (Join-Path $taskRoot 'native\ClawRouter.cs') (Join-Path $taskRoot 'native\FirmwareShortcutFilter.cs') (Join-Path $taskRoot 'native\GameBarGuard.cs') (Join-Path $taskRoot 'native\SessionModeProbe.cs') (Join-Path $taskRoot 'native\RawKeyboardSource.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:winexe /platform:x64 ("/out:" + (Join-Path $taskOutput 'ClawTouchBridge.exe')) (Join-Path $taskRoot 'native\ClawTouchBridge.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Touch bridge build failed.' }
-& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Management.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /reference:Microsoft.CSharp.dll ("/out:" + (Join-Path $taskOutput 'ClawPower.exe')) (Join-Path $taskRoot 'native\ClawPower.cs') (Join-Path $taskRoot 'native\ClawMappedInput.cs') (Join-Path $taskRoot 'native\ClawFanHardware.cs') (Join-Path $taskRoot 'native\ClawDisplay.cs') (Join-Path $taskRoot 'native\ClawGpu.cs') (Join-Path $taskRoot 'native\ClawSystem.cs') (Join-Path $taskRoot 'native\ClawUpdate.cs')
+& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Management.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /reference:Microsoft.CSharp.dll ("/out:" + (Join-Path $taskOutput 'ClawPower.exe')) (Join-Path $taskRoot 'native\ClawPower.cs') (Join-Path $taskRoot 'native\ClawSmallCores.cs') (Join-Path $taskRoot 'native\ClawMappedInput.cs') (Join-Path $taskRoot 'native\ClawFanHardware.cs') (Join-Path $taskRoot 'native\ClawDisplay.cs') (Join-Path $taskRoot 'native\ClawGpu.cs') (Join-Path $taskRoot 'native\ClawFrameLimit.cs') (Join-Path $taskRoot 'native\ClawSystem.cs') (Join-Path $taskRoot 'native\ClawUpdate.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Power helper build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Management.dll /reference:System.ServiceProcess.dll ("/out:" + (Join-Path $taskOutput 'ClawFanService.exe')) (Join-Path $taskRoot 'native\ClawFanService.cs') (Join-Path $taskRoot 'native\ClawFanHardware.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Fan service build failed.' }

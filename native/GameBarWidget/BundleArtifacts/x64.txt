@@ -1,0 +1,6 @@
+MainPackage=C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\artifacts\gamebar-widget\bin\ClawWidget\ClawWidget_0.4.20.0_x64.msix
+SymbolPackage=C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\artifacts\gamebar-widget\obj\Symbols\ClawWidget_0.4.20.0_x64.appxsym
+ResourcePack=C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\artifacts\gamebar-widget\bin\ClawWidget\ClawWidget_0.4.20.0_scale-100.msix
+ResourcePack=C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\artifacts\gamebar-widget\bin\ClawWidget\ClawWidget_0.4.20.0_scale-125.msix
+ResourcePack=C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\artifacts\gamebar-widget\bin\ClawWidget\ClawWidget_0.4.20.0_scale-150.msix
+ResourcePack=C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\artifacts\gamebar-widget\bin\ClawWidget\ClawWidget_0.4.20.0_scale-400.msix

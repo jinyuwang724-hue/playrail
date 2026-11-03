@@ -111,16 +111,7 @@ def main():
             assert power.freq_offered(4700) == [0, 1500, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 4000, 4500]
             assert power.freq_offered(4700, [5000, 2750])[-1] == 5000, "a saved older cap stays selectable"
             assert power.freq_offered(0)[-1] == 4500
-            # E-core switch: "pending" means the registry differs from what this boot started with.
-            state = {"on": True, "boot": 1000.0}
-            power.small_cores_enabled, power.boot_time = (lambda: state["on"]), (lambda: state["boot"])
-            assert control.ecore_view() == {"enabled": True, "pending": False}
-            state["on"] = False
-            assert control.ecore_view() == {"enabled": False, "pending": True}
-            state["boot"] = 5000.0  # restarted: the new state is what Windows uses now
-            assert control.ecore_view() == {"enabled": False, "pending": False}
-            state["on"] = True
-            assert control.ecore_view()["pending"]
+            # Full mask, backup/restore and restart tracking are covered by ecore_backend_test.py.
             try:
                 await control.set_ecore("on")
                 raise AssertionError("accepted a non-boolean switch")

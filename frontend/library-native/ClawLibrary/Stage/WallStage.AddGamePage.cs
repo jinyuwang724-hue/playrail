@@ -1307,7 +1307,7 @@ public sealed partial class WallStage
     {
         var old = ds.Transform;
         ds.Transform = Matrix3x2.CreateTranslation(40, top) * old;
-        PaintRowList(ds, rows, focus, null, true, AgRowsW);
+        PaintRowList(ds, rows, focus, null, false, AgRowsW);
         ds.Transform = old;
         float y = top;
         for (int i = 0; i < rows.Count; i++)

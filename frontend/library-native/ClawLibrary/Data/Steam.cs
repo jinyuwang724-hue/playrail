@@ -34,12 +34,34 @@ public static class Steam
         {
             var ud = Path.Combine(root, "userdata");
             if (!Directory.Exists(ud)) return null;
+            // 游戏过程中缓存的写入时间可能落在其他账户；优先使用 Steam 当前活动账户。
+            using var active = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam\ActiveProcess");
+            if (active?.GetValue("ActiveUser") is int account && account != 0)
+            {
+                var current = Path.Combine(ud, unchecked((uint)account).ToString());
+                if (Directory.Exists(current)) return current;
+            }
             return Directory.GetDirectories(ud)
                 .Where(d => File.Exists(Path.Combine(d, "config", "localconfig.vdf")))
                 .OrderByDescending(d => File.GetLastWriteTimeUtc(Path.Combine(d, "config", "localconfig.vdf")))
                 .FirstOrDefault();
         }
         catch (Exception ex) { Log.Warn($"steam userdata: {ex.Message}"); return null; }
+    }
+
+    public static string LocalAccount()
+    {
+        var root = Root();
+        if (root == null) return "未安装 Steam";
+        var dir = UserDir(root);
+        if (dir == null || !uint.TryParse(Path.GetFileName(dir), out var account)) return "没有本机账户记录，请在 Steam 中登录";
+        string id = (76561197960265728UL + account).ToString();
+        try
+        {
+            var users = TextVdf.Parse(File.ReadAllText(Path.Combine(root, "config", "loginusers.vdf"))).Path("users", id);
+            return users?.Value("PersonaName") is { Length: > 0 } name ? name + " · 本机账户" : id + " · 本机账户";
+        }
+        catch { return id + " · 本机账户"; }
     }
 
     public static Dictionary<string, PlayStats> ReadPlayStats(string? userDir)

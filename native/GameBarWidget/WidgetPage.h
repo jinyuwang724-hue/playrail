@@ -34,6 +34,11 @@ namespace winrt::ClawWidget::implementation
         struct Pending { std::wstring method; JsonArray args; };
 
         // setup
+        winrt::fire_and_forget RequestAnimatedPower(hstring action, bool preview = false);
+        bool m_powerTransition = false;
+        winrt::fire_and_forget PublishPowerVisibility();
+        bool m_powerVisibilityWriting = false, m_powerVisibilityDirty = false;
+        hstring m_lastPowerVisibility;
         void BuildRail();
         void BuildStats();
         void BuildTiles();

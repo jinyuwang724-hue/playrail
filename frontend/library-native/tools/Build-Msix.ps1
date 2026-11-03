@@ -17,9 +17,8 @@ if ($LASTEXITCODE) { throw "publish failed ($LASTEXITCODE)" }
 $msix = Get-ChildItem $out -Recurse -Filter *.msix | Sort-Object LastWriteTime | Select-Object -Last 1
 "package: $($msix.FullName) ($([math]::Round($msix.Length / 1MB, 1)) MB)"
 if ($Install) {
-    # same version can't be re-installed over different content: remove our own package first
-    # (the package's cached art kits are rebuilt in the background on the next start, ~10 s)
-    foreach ($pkg in @(Get-AppxPackage ClawToolbox.Library)) { Remove-AppxPackage $pkg.PackageFullName }
+    # Upgrade in place so LocalState, art kits and user preferences survive. Increment the
+    # manifest version for a new build; never uninstall the package to bypass version checks.
     Add-AppxPackage -Path $msix.FullName -ForceApplicationShutdown
     Get-AppxPackage ClawToolbox.Library | Select-Object Name, Version, PackageFamilyName
 }

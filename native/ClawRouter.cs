@@ -18,6 +18,16 @@ namespace ClawRouter {
         public static bool CanRoute(bool enabled, bool ready, string mode, bool released) { return enabled && ready && mode == "BigPicture" && released; }
         public static bool GeneralContext(string mode, bool suspended, bool configured, bool steamWasActive=false) { return configured && !suspended && mode != "BigPicture" && !(mode=="Unknown" && steamWasActive); }
         public static string Action(object value) { string s = value as string; return s == "MainMenu" || s == "QuickAccess" || s == "MagpieToggle" || s == "None" ? s : "None"; }
+        public static bool IsGameBarCommand(object raw) {
+            var command=raw as Dictionary<string,object>;object type,action,rawKeys;
+            if(command==null || !command.TryGetValue("type",out type))return false;
+            if(Equals(type,"system"))return command.TryGetValue("action",out action) && Equals(action,"gamebar");
+            if(!Equals(type,"keyboard") || !command.TryGetValue("keys",out rawKeys))return false;
+            var keys=rawKeys as System.Collections.IList;
+            if(keys==null || keys.Count!=2)return false;
+            return Equals(keys[0],"G") && IsWindowsKey(keys[1]) || Equals(keys[1],"G") && IsWindowsKey(keys[0]);
+        }
+        static bool IsWindowsKey(object key) {return Equals(key,"LWin") || Equals(key,"RWin");}
     }
     public sealed class GameBarPermission {
         string context;
@@ -31,12 +41,17 @@ namespace ClawRouter {
         readonly JavaScriptSerializer json = new JavaScriptSerializer();
         readonly string configDir, dataDir, handoverDir, journalPath;
         readonly Dictionary<int, long> lastButtons = new Dictionary<int, long>();
+        readonly GameBarShortcutCorrelation gamebarShortcuts = new GameBarShortcutCorrelation();
+        string shortcutContext;
         readonly Dictionary<string, System.Threading.Timer> pending = new Dictionary<string, System.Threading.Timer>();
         readonly Dictionary<string, KeyValuePair<long,int>> pendingInputs = new Dictionary<string, KeyValuePair<long,int>>();
         Dictionary<string,object> lastTimings;
         FileSystemWatcher files;
         ManagementEventWatcher buttons;
         FirmwareShortcutFilter shortcutFilter;
+        SessionModeProbe sessionMode;
+        volatile bool sessionGameMode;
+        readonly SpecialShortcutCorrelation specialKeys = new SpecialShortcutCorrelation();
         GameBarGuard gameBarGuard;
         System.Threading.Timer changed;
         System.Threading.Timer steamWatchdog;
@@ -68,7 +83,7 @@ namespace ClawRouter {
             lock(outputGate) { record["at"] = DateTime.UtcNow.ToString("o"); Console.WriteLine(new JavaScriptSerializer().Serialize(record)); Console.Out.Flush(); }
         }
         public void Status() {
-            Emit(new Dictionary<string, object> { {"type","status"}, {"configured",configured}, {"mode",mode}, {"bigPictureOpen",mode=="BigPicture"}, {"enabled",enabled}, {"ready",ready}, {"released",released}, {"phase",phase}, {"error",error}, {"canObserve",buttons != null}, {"helperCheck","按压时核对，不定时扫描"}, {"canSuppress","Steam 大屏幕接管期间过滤固件快捷键"}, {"shortcutFilterReady",shortcutFilter != null}, {"gameBarGuardActive",gameBarGuard!=null && gameBarGuard.Active}, {"gameBarClosed",gameBarGuard==null?0:gameBarGuard.Closed}, {"gameBarCloseFailures",gameBarGuard==null?0:gameBarGuard.Failures}, {"shortcutSuppressed",shortcutFilter==null?0:shortcutFilter.Suppressed}, {"shortcutReplayFailures",shortcutFilter==null?0:shortcutFilter.ReplayFailures}, {"modeSource","Steam 窗口状态通知 / 15 秒连接保护"}, {"playhubPort",playhubPort}, {"modeQueries",queries}, {"observed",observed}, {"routed",routed}, {"msiAction",msiAction}, {"qamAction",qamAction}, {"restorePending",restoreHelper}, {"helperRunning",Helpers().Length > 0}, {"diagnostic",diagnostic}, {"lastTimings",lastTimings} });
+            Emit(new Dictionary<string, object> { {"type","status"}, {"configured",configured}, {"mode",mode}, {"bigPictureOpen",mode=="BigPicture"}, {"enabled",enabled}, {"ready",ready}, {"released",released}, {"phase",phase}, {"error",error}, {"canObserve",buttons != null}, {"helperCheck","按压时核对，不定时扫描"}, {"canSuppress","Steam 大屏幕接管期间过滤固件快捷键"}, {"shortcutFilterReady",shortcutFilter != null}, {"sessionGameMode",sessionGameMode}, {"rawKeyboardReady",shortcutFilter!=null&&shortcutFilter.RawReady}, {"firmwareWindows",shortcutFilter==null?0:shortcutFilter.FirmwareWindows}, {"gameBarGuardActive",gameBarGuard!=null && gameBarGuard.Active}, {"gameBarClosed",gameBarGuard==null?0:gameBarGuard.Closed}, {"gameBarCloseFailures",gameBarGuard==null?0:gameBarGuard.Failures}, {"shortcutSuppressed",shortcutFilter==null?0:shortcutFilter.Suppressed}, {"shortcutReplayFailures",shortcutFilter==null?0:shortcutFilter.ReplayFailures}, {"modeSource","Steam 窗口状态通知 / 15 秒连接保护"}, {"playhubPort",playhubPort}, {"modeQueries",queries}, {"observed",observed}, {"routed",routed}, {"msiAction",msiAction}, {"qamAction",qamAction}, {"restorePending",restoreHelper}, {"helperRunning",Helpers().Length > 0}, {"diagnostic",diagnostic}, {"lastTimings",lastTimings} });
         }
         static Process[] Helpers() {var result=new List<Process>();foreach(var p in Process.GetProcessesByName("XboxGamingBarHelper")){if(Native.IsAlive(p.Id))result.Add(p);else p.Dispose();}return result.ToArray();}
         static bool HelperRunning(int id) {foreach(var p in Helpers()){int pid=p.Id;p.Dispose();if(pid==id)return true;}return false;}
@@ -91,7 +106,7 @@ namespace ClawRouter {
                     buttons.EventArrived += OnButton; buttons.Start();
                 } catch(Exception ex) { if(buttons != null) buttons.Dispose(); buttons = null; error = "按键通知不可用：" + ex.Message; }
                 if(!diagnostic) {
-                    try {shortcutFilter=new FirmwareShortcutFilter();shortcutFilter.GameBarSuppressed+=OnSuppressedGamebar;}
+                    try {sessionMode=new SessionModeProbe(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"ClawToolbox","shell","state.json"),OnSessionMode);sessionGameMode=sessionMode.Game;shortcutFilter=new FirmwareShortcutFilter(delegate{return sessionGameMode&&!suspended&&maintenance==null;});shortcutFilter.GameBarSuppressed+=OnSuppressedGamebar;shortcutFilter.ShortcutPressed+=OnImmediateShortcut;}
                     catch(Exception ex){Log("shortcut-filter-unavailable",ex.Message);}
                     try {gameBarGuard=new GameBarGuard(Log);}
                     catch(Exception ex){Log("gamebar-guard-unavailable",ex.Message);}
@@ -137,8 +152,8 @@ namespace ClawRouter {
             } catch { /* Playhub is optional for ownership; keep the last menu fallback port. */ }
         }
         void Refresh() { lock(gate) { if(disposed)return; ReadPort();mode=ReadMode();Reconcile();Status(); } }
-        bool GeneralWanted() { return !diagnostic && !generalFailed && !(mode=="Unknown" && steamWindowOpen) && Policy.GeneralContext(mode,suspended,generalMappings.Count!=0,steamActive); }
-        bool CanFilter() { return Policy.CanRoute(enabled,ready,mode,released) || GeneralWanted() && released; }
+        bool GeneralWanted() { return !diagnostic && !generalFailed && !suspended && (sessionGameMode || !(mode=="Unknown" && steamWindowOpen) && Policy.GeneralContext(mode,suspended,generalMappings.Count!=0,steamActive)); }
+        bool CanFilter() { return sessionGameMode && !suspended && maintenance==null; }
         bool AllowsConfiguredGamebar() {
             foreach(var raw in steamBindings.Values) {
                 var command=raw as Dictionary<string,object>;
@@ -151,22 +166,39 @@ namespace ClawRouter {
             if(value==null || Equals(Get(value,"type"),"none"))return;
             routed++; Emit(new Dictionary<string,object>{{"type","mapped_action"},{"source",source},{"command",value},{"scope",scope}});
         }
-        void OnSuppressedGamebar() {
+        void OnSessionMode(bool game) {
+            sessionGameMode=game;
+            Task.Run((Action)delegate {lock(gate){if(disposed)return;gamebarShortcuts.Reset();Reconcile();Emit(new Dictionary<string,object>{{"type","session_mode"},{"game",game}});Status();}});
+        }
+        void OnImmediateShortcut(string action,IntPtr foreground,bool game) {
             long at=Stopwatch.GetTimestamp();
+            if(action!="gamebarInput")specialKeys.Keyboard(action=="windowSwitcher"||action=="gamebar"?42:88,at*1000.0/Stopwatch.Frequency);
+            Task.Run((Action)delegate {lock(gate){
+                if(disposed||maintenance!=null||suspended||game!=sessionGameMode)return;
+                if(action=="gamebarInput"){Emit(new Dictionary<string,object>{{"type","desktop_gamebar_input"}});return;}
+                routed++;
+                Emit(new Dictionary<string,object>{{"type","mapped_action"},{"source","QS"},{"scope","general"},
+                    {"command",new Dictionary<string,object>{{"type","system"},{"action",action}}},
+                    {"gesture",action=="windowSwitcher"?"long":"short"},{"gameMode",game},{"foregroundWindow",foreground.ToInt64()},
+                    {"nativeMs",(Stopwatch.GetTimestamp()-at)*1000.0/Stopwatch.Frequency}});
+            }});
+        }
+        void OnSuppressedGamebar() {
+            double at=Stopwatch.GetTimestamp()*1000.0/Stopwatch.Frequency;
+            int epoch=gamebarShortcuts.Generation;
             Task.Run(async delegate {
-                await Task.Delay(160);
-                bool vendor=false;
-                lock(lastButtons) foreach(var timestamp in lastButtons.Values)
-                    if(Math.Abs((at-timestamp)*1000.0/Stopwatch.Frequency)<=350)vendor=true;
+                await Task.Delay(GameBarShortcutCorrelation.ReplayDelayMs);
                 lock(gate) {
                     // Retain the old strict Steam suppression. In general mode,
-                    // replay a keyboard Win+G only when no vendor event accompanied it.
-                    if(!disposed && maintenance==null && !vendor && GeneralWanted() && released)
+                    // wait for the delayed QS report; the Claw button is unrelated.
+                    if(!disposed && maintenance==null && GeneralWanted() && released &&
+                        gamebarShortcuts.ShouldReplay(at,Stopwatch.GetTimestamp()*1000.0/Stopwatch.Frequency,epoch))
                         EmitMapping("Keyboard",new Dictionary<string,object>{{"type","system"},{"action","gamebar"}},"general");
                 }
             });
         }
         void Reconcile() {
+            if(shortcutContext!=mode) {shortcutContext=mode;gamebarShortcuts.Reset();}
             // An intentional Game Bar action in the desktop scene must not disable protection in Steam.
             gamebarPermission.EnterContext(mode);
             if(maintenance!=null) { if(shortcutFilter!=null)shortcutFilter.SetEnabled(false); if(gameBarGuard!=null)gameBarGuard.SetEnabled(false); phase="插件正在维护兼容性修复"; return; }
@@ -175,7 +207,7 @@ namespace ClawRouter {
             try {ReconcileOwner();}
             finally {
                 if(shortcutFilter!=null)shortcutFilter.SetEnabled(CanFilter());
-                if(gameBarGuard!=null)gameBarGuard.SetEnabled(Policy.CanRoute(enabled,ready,mode,released) && !AllowsConfiguredGamebar() && !gamebarPermission.Requested);
+                if(gameBarGuard!=null)gameBarGuard.SetEnabled(sessionGameMode && !gamebarPermission.Requested);
             }
         }
         void ReconcileOwner() {
@@ -205,7 +237,7 @@ namespace ClawRouter {
             }
             if(released)phase="Steam 大屏幕：插件接管";
         }
-        void ClearPending() { foreach(var timer in pending.Values)timer.Dispose();pending.Clear();pendingInputs.Clear(); }
+        void ClearPending() { gamebarShortcuts.Reset();foreach(var timer in pending.Values)timer.Dispose();pending.Clear();pendingInputs.Clear(); }
         void StopTweaks() {
             var processes=Helpers();
             if(processes.Length==0) { Log("handoff","helper 本来未运行"); return; }
@@ -264,15 +296,23 @@ namespace ClawRouter {
         }
         void OnButton(object sender, EventArrivedEventArgs args) {
             int raw; try { raw=Convert.ToInt32(args.NewEvent.Properties["MSIEvt"].Value); } catch { return; }
-            int code=raw & 255; if(code != 41 && code != 88)return;
+            int code=raw & 255; if(code != 41 && code != 88 && code != 42)return;
             // Timestamp before dispatch: queued work must not turn one burst into multiple presses.
             long now=Stopwatch.GetTimestamp();
             lock(lastButtons) { long before; if(lastButtons.TryGetValue(code,out before) && (now-before)*1000.0/Stopwatch.Frequency < 80)return; lastButtons[code]=now; }
+            if(code==88)gamebarShortcuts.QuickSettings(now*1000.0/Stopwatch.Frequency);
             Task.Run((Action)delegate { lock(gate) {
                 if(disposed)return; observed++;
                 Emit(new Dictionary<string,object>{{"type","button"},{"button",code==41?"MSI":"QuickSettings"},{"rawCode",raw},{"source","MSI_Event"}});
-                if(diagnostic || maintenance!=null)return;
+                if(diagnostic || maintenance!=null || suspended)return;
                 if((Stopwatch.GetTimestamp()-now)*1000.0/Stopwatch.Frequency>700) { Log("button-expired","过渡期间的旧按压已丢弃");return; }
+                if(code==88 || code==42) {
+                    if(specialKeys.Consume(code,now*1000.0/Stopwatch.Frequency)){Log("special-key-correlated","delayed WMI "+code+" already handled by keyboard path");return;}
+                    if(sessionGameMode)EmitMapping("QS",new Dictionary<string,object>{{"type","system"},{"action",code==42?"windowSwitcher":"controlCenter"}},"general");
+                    else if(code==42)EmitMapping("QS",new Dictionary<string,object>{{"type","system"},{"action","gamebar"}},"general");
+                    else Emit(new Dictionary<string,object>{{"type","desktop_gamebar_input"}});
+                    return;
+                }
                 if(ReadMode()=="Unknown" && steamActive) {
                     var steam=Process.GetProcessesByName("steam");
                     if(steam.Length==0)steamActive=false;
@@ -282,6 +322,12 @@ namespace ClawRouter {
                 string source=code==41?"Claw":"QS";
                 if(GeneralWanted() && released) {
                     if(Helpers().Length>0) {generalFailed=true;released=false;Restore();error="原按键后台已重新启动，常规映射已暂停";Status();return;}
+                    // QS already emits a native Win+G. Windows can activate Game Bar
+                    // independently of the low-level hook, before this delayed WMI
+                    // report. Let that original shortcut toggle it exactly once.
+                    if(source=="QS" && Policy.IsGameBarCommand(Get(generalMappings,source))) {
+                        routed++;Log("native-gamebar","QS 使用固件原生 Win+G，不重复发送开关指令");Status();return;
+                    }
                     EmitMapping(source,Get(generalMappings,source),"general");return;
                 }
                 if(!Policy.CanRoute(enabled,ready,mode,released)) {Status();return;}
@@ -378,6 +424,7 @@ namespace ClawRouter {
             if(disposed)return;disposed=true;enabled=false;ready=false;released=false;
             if(gameBarGuard!=null){gameBarGuard.Dispose();gameBarGuard=null;}
             if(shortcutFilter!=null){shortcutFilter.Dispose();shortcutFilter=null;}
+            if(sessionMode!=null){sessionMode.Dispose();sessionMode=null;}
             ClearPending();
             SystemEvents.PowerModeChanged-=OnPower;
             if(files != null)files.Dispose();if(changed != null)changed.Dispose();
@@ -422,6 +469,10 @@ namespace ClawRouter {
         public static int ControllerCount() {int count=0;try{for(uint i=0;i<4;i++){XState s;if(XInputGetState(i,out s)==0)count++;}}catch{}return count;}
     }
     public static class Program {
+        [StructLayout(LayoutKind.Sequential)] struct QueueMessage { public IntPtr Window;public uint Message;public UIntPtr WParam;public IntPtr LParam;public uint Time;public int X,Y;public uint Private; }
+        [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll")] static extern bool PeekMessage(out QueueMessage message,IntPtr window,uint first,uint last,uint flags);
+        [DllImport("user32.dll")] static extern bool PostThreadMessage(uint thread,uint message,UIntPtr wp,IntPtr lp);
         [STAThread] public static int Main(string[] args) {
             Console.OutputEncoding = new UTF8Encoding(false);
             Console.InputEncoding = new UTF8Encoding(false);
@@ -431,12 +482,30 @@ namespace ClawRouter {
             bool created; using(var mutex=new Mutex(true,"Local\\ClawPlayhubButtonRouter",out created)) {
                 if(!created){Console.WriteLine("{\"type\":\"error\",\"error\":\"按键工具已在运行\"}");return 2;}
                 using(var router=new Router(data,config,diagnostic)) {
+                    Process owner=null;
                     try {
+                        // Bind this listener to its agent. Inherited stdin handles
+                        // can outlive the original writer, so EOF alone is insufficient.
+                        uint uiThread=GetCurrentThreadId();QueueMessage queued;
+                        PeekMessage(out queued,IntPtr.Zero,0,0,0);
+                        foreach(string argument in args) if(argument.StartsWith("--owner-pid=",StringComparison.Ordinal)) {
+                            int ownerId;
+                            if(owner!=null || !Int32.TryParse(argument.Substring(12),out ownerId) || ownerId<=0 || ownerId==Process.GetCurrentProcess().Id)
+                                throw new InvalidDataException("按键后台所属进程参数无效");
+                            owner=Process.GetProcessById(ownerId);
+                            IntPtr ownerHandle=owner.Handle;
+                            if(owner.HasExited)throw new InvalidOperationException("按键后台所属进程已经退出");
+                        }
+                        if(owner!=null) {
+                            Process trackedOwner=owner;
+                            Task.Run((Action)delegate {try {trackedOwner.WaitForExit();PostThreadMessage(uiThread,0x12,UIntPtr.Zero,IntPtr.Zero);}catch(ObjectDisposedException){}catch(InvalidOperationException){}});
+                        }
                         router.Start();
                         if(Array.IndexOf(args,"--handoff-test")>=0)return router.TestHandoff()?0:3;
-                        Task.Run((Action)delegate {string line;while((line=Console.ReadLine())!=null)router.Command(line);Application.Exit();});
+                        Task.Run((Action)delegate {string line;while((line=Console.ReadLine())!=null)router.Command(line);PostThreadMessage(uiThread,0x12,UIntPtr.Zero,IntPtr.Zero);});
                         Application.Run();
                     }catch(Exception ex){router.Emit(new Dictionary<string,object>{{"type","error"},{"error",ex.Message}});return 1;}
+                    finally {if(owner!=null)owner.Dispose();}
                 }
             }
             return 0;

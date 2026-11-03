@@ -6,8 +6,11 @@
 - Vendor software the toolbox replaces (MSI Center M, ClawTweaks, Intel's assistant): the helper
   disables their services and tasks and closes them; nothing is uninstalled."""
 import asyncio
+import json
 import os
 from pathlib import Path
+import subprocess
+import threading
 import time
 import winreg
 
@@ -31,6 +34,55 @@ FRIENDLY = {
 # Entries the toolbox itself needs: shown, but not switchable from here.
 PROTECTED = {"DeckyLoader": "工具箱需要", "Intel Endurance Gaming": "功耗的 Auto 模式要用"}
 
+_home_cache = None
+_home_cache_at = 0.0
+_home_lock = threading.Lock()
+_HOME_QUERY = r'''
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$catalog = [Windows.ApplicationModel.AppExtensions.AppExtensionCatalog, Windows.ApplicationModel, ContentType=WindowsRuntime]::Open('windows.gamingApp')
+$homes = @($catalog.FindAll() | ForEach-Object {
+    $extension = $_
+    if ($extension.Package.Status.VerifyIsOK()) {
+        $manifest = [xml](Get-Content -LiteralPath (Join-Path $extension.Package.InstalledLocation.Path 'AppxManifest.xml') -Raw)
+        if (@($manifest.Package.Capabilities.CustomCapability.Name) -contains 'Microsoft.appCategory.gamingHome_8wekyb3d8bbwe') {
+            @{ id = $extension.AppInfo.AppUserModelId; name = $extension.DisplayName }
+        }
+    }
+})
+ConvertTo-Json -InputObject $homes -Compress
+'''
+
+
+def _gaming_apps(refresh=False):
+    """Use the system extension catalog AND the gaming-home capability, as the picker does.
+
+    Cache discovery only; read the selected home and startup flag live on every view.
+    Never synthesize a selectable home just because its AUMID is in the registry.
+    """
+    global _home_cache, _home_cache_at
+    with _home_lock:
+        if not refresh and _home_cache is not None and time.monotonic() - _home_cache_at < 15:
+            return [dict(c) for c in _home_cache]
+        result = subprocess.run(
+            [os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
+                          r"System32\WindowsPowerShell\v1.0\powershell.exe"),
+             "-NoProfile", "-NonInteractive", "-Command", _HOME_QUERY],
+            capture_output=True, timeout=12, creationflags=subprocess.CREATE_NO_WINDOW)
+        if result.returncode:
+            raise RuntimeError("无法读取系统全屏主页列表，请稍后重试")
+        homes = json.loads(result.stdout.decode("utf-8-sig"))
+        if not isinstance(homes, list) or any(not isinstance(c, dict) or not c.get("id") or not c.get("name") for c in homes):
+            raise RuntimeError("系统全屏主页列表格式错误")
+        for c in homes:
+            if c["id"] == OWN_HOME:
+                c["name"] = "Claw 游戏库"
+            elif c["id"] == XBOX_HOME:
+                c["name"] = "Xbox"
+        homes.sort(key=lambda c: (c["id"] != OWN_HOME, c["name"]))
+        _home_cache, _home_cache_at = homes, time.monotonic()
+        return [dict(c) for c in homes]
+
 
 def _friendly(name):
     if name.startswith("MicrosoftEdgeAutoLaunch_"):
@@ -50,20 +102,26 @@ def _read_gaming(name):
 
 def home_app():
     """全屏体验：开机是否进入（StartupToGamingHome）和主页应用（GamingHomeApp）。"""
-    current = _read_gaming("GamingHomeApp")
+    configured = _read_gaming("GamingHomeApp")
     startup = _read_gaming("StartupToGamingHome")
-    choices = [{"id": OWN_HOME, "name": "Claw 游戏库"}, {"id": XBOX_HOME, "name": "Xbox"}]
-    if current and current not in (OWN_HOME, XBOX_HOME):
-        family = current.split("!")[0].split("_")[0]
-        choices.append({"id": current, "name": family.rsplit(".", 1)[-1]})
-    return {"current": current, "startup": startup != 0, "choices": choices}
+    try:
+        choices, error = _gaming_apps(), None
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        choices, error = [], "无法读取系统全屏主页列表，请稍后重试"
+    current = configured if any(c["id"] == configured for c in choices) else None
+    if configured and current is None and error is None:
+        error = "已配置的主页未注册为系统全屏主页，请更新对应应用后重新选择"
+    return {"current": current, "configured": configured, "startup": startup != 0,
+            "choices": choices, "error": error}
 
 
 def set_home_app(aumid):
     """aumid = "off"：开机不进全屏体验（主页设置不动）；其余：开机进全屏体验，主页用它。
     Steam 大屏幕模式也是把主页设成 Claw 游戏库，由游戏库被当主页打开时转去 Steam 大屏幕（替代 AnyFSE）。"""
-    if aumid != "off" and aumid not in [c["id"] for c in home_app()["choices"]]:
-        raise ValueError("不认识的主页应用")
+    if type(aumid) is not str:
+        raise ValueError("主页应用格式错误")
+    if aumid != "off" and aumid not in [c["id"] for c in _gaming_apps(refresh=True)]:
+        raise ValueError("这个应用尚未注册为系统全屏主页，请更新应用后重试")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, GAMING) as key:
         winreg.SetValueEx(key, "StartupToGamingHome", 0, winreg.REG_DWORD, 0 if aumid == "off" else 1)
         if aumid != "off":

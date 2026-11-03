@@ -268,16 +268,49 @@ public sealed partial class WallStage
                 int bi = Array.IndexOf(ids, cur);
                 _syRows.Add(Pick("按电源键", names, bi < 0 ? 0 : bi, i => { power["buttonDc"] = power["buttonAc"] = ids[i]; SySet("set_power_button", JsonValue.Create(ids[i])); },
                     Str(power["buttonAc"]) != cur ? "插电时不同" : ""));
-                if (hib)
+                int di = Array.IndexOf(SyDisplay, Int(power["displayDc"], -1));
+                _syRows.Add(Pick("电池供电时关屏", SyDisplayNames, di < 0 ? 2 : di, i => { power["displayDc"] = SyDisplay[i]; SySet("set_display_off", JsonValue.Create(SyDisplay[i])); },
+                    di < 0 ? (Int(power["displayDc"]) == 0 ? "当前为从不关屏" : "当前为自定义时间") : ""));
+                _syRows.Add(new PerfRow { Section = true, Title = "睡眠与唤醒" });
+                var animation = v["powerAnimation"] as JsonObject;
+                void AnimationRow(string title, string flag, string method)
+                {
+                    bool enabled = Bool(animation?[flag]);
+                    bool available = Bool(animation?["available"]);
+                    void Set(bool to) { if (animation != null) animation[flag] = to; SySet(method, JsonValue.Create(to)); }
+                    _syRows.Add(new PerfRow { Title = title, Choices = new[] { "关", "开" }, Choice = enabled ? 1 : 0,
+                        Disabled = !available, Value = available ? flag == "suspendEnabled" ? Str(animation?["error"]) ?? "" : "" : "动画后台暂未连接",
+                        Step = d => { if ((d > 0) != enabled) Set(d > 0); }, Press = () => Set(!enabled), Select = i => Set(i == 1) });
+                }
+                AnimationRow("睡眠／休眠动画", "suspendEnabled", "set_sleep_animation");
+                AnimationRow("唤醒动画", "resumeEnabled", "set_wake_animation");
+                var enhanced = animation?["enhancedSleep"] as JsonObject;
+                void EnhancedRow(string title, string flag, string method, string detail = "", bool nested = false)
+                {
+                    bool enabled = Bool(enhanced?[flag]);
+                    bool available = Bool(animation?["available"]) && enhanced != null;
+                    void Set(bool to) { if (enhanced != null) enhanced[flag] = to; SySet(method, JsonValue.Create(to)); }
+                    _syRows.Add(new PerfRow { Title = title, Choices = new[] { "关", "开" }, Choice = enabled ? 1 : 0,
+                        Indent = nested ? 20 : 0,
+                        Disabled = !available, Value = available ? Str(enhanced?["error"]) ?? detail : "睡眠后台暂未连接",
+                        Step = d => { if ((d > 0) != enabled) Set(d > 0); }, Press = () => Set(!enabled), Select = i => Set(i == 1) });
+                }
+                EnhancedRow("增强睡眠", "enabled", "set_enhanced_sleep", "抑制自动唤醒");
+                if (Bool(enhanced?["enabled"]))
+                {
+                    EnhancedRow("暂停游戏", "suspendGames", "set_sleep_games", "检测到反作弊时跳过", nested: true);
+                    EnhancedRow("暂停指纹识别", "fingerprint", "set_sleep_fingerprint", nested: true);
+                }
+                if (hib && Bool(enhanced?["enabled"]))
+                    _syRows.Add(Later("睡眠转休眠", "48 小时 · 增强睡眠"));
+                else if (hib)
                 {
                     int hi = Array.IndexOf(SyHibernate, Int(power["hibernateDc"], -1));
-                    _syRows.Add(Pick("睡眠多久后转休眠", SyHibernateNames, hi < 0 ? 2 : hi, i => { power["hibernateDc"] = power["hibernateAc"] = SyHibernate[i]; SySet("set_hibernate_after", JsonValue.Create(SyHibernate[i])); },
-                        hi < 0 ? "现在是自定义时间" : ""));
+                    _syRows.Add(Pick("睡眠转休眠", SyHibernateNames, hi < 0 ? 2 : hi, i => { power["hibernateDc"] = power["hibernateAc"] = SyHibernate[i]; SySet("set_hibernate_after", JsonValue.Create(SyHibernate[i])); },
+                        hi < 0 ? "当前为自定义时间" : ""));
                 }
-                else _syRows.Add(Later("睡眠多久后转休眠", "这台机器没有开启休眠"));
-                int di = Array.IndexOf(SyDisplay, Int(power["displayDc"], -1));
-                _syRows.Add(Pick("电池下多久关屏", SyDisplayNames, di < 0 ? 2 : di, i => { power["displayDc"] = SyDisplay[i]; SySet("set_display_off", JsonValue.Create(SyDisplay[i])); },
-                    di < 0 ? (Int(power["displayDc"]) == 0 ? "现在是从不关屏" : "现在是自定义时间") : ""));
+                else _syRows.Add(Later("睡眠转休眠", "休眠未启用"));
+
             }
 
             if (v["wakeArmed"] is JsonArray armed)
@@ -303,8 +336,8 @@ public sealed partial class WallStage
         }
 
         // ---- 更新与维护：只留一行，进三级页面「全部更新」 ----
-        _syRows.Add(new PerfRow { Section = true, Title = "更新与维护" });
-        _syRows.Add(SyAct("查看全部更新", "updates", SyUpdateSummary(v), () => SyOpenUpdates(true)));
+        _syRows.Add(new PerfRow { Section = true, Title = "更新" });
+        _syRows.Add(SyAct("系统与驱动更新", "updates", SyUpdateSummary(v) + "  ›", () => SyOpenUpdates(true)));
         if (_syFocus >= _syRows.Count || (_syFocus >= 0 && (_syRows[_syFocus].Skip || _syRows[_syFocus].Section)))
         {
             int f = Math.Min(_syFocus, _syRows.Count - 1);
@@ -329,7 +362,7 @@ public sealed partial class WallStage
         _syUpdatesOpen = open;
         _syArmed = null;
         BuildSyRows();
-        _syFocus = open ? Math.Max(0, _syRows.FindIndex(r => !r.Section && !r.Skip)) : Math.Max(0, _syRows.FindIndex(r => r.Title == "查看全部更新"));
+        _syFocus = open ? Math.Max(0, _syRows.FindIndex(r => !r.Section && !r.Skip)) : Math.Max(0, _syRows.FindIndex(r => r.Title == "系统与驱动更新"));
         _syScroll = 0;
         _syScrollY = float.NaN;
         PaintSy();
@@ -365,7 +398,6 @@ public sealed partial class WallStage
         var pending = items.Where(i => Str(i["result"]) is not ("done" or "restart")).ToArray();
         bool checking = state == "checking" || Str(w?["state"]) == "checking";
 
-        _syRows.Add(new PerfRow { Section = true, Title = "更新" });
         string checkText = checking ? "正在检查…" : state is "done" or "partial" ? $"{Str(u!["checked"])} 检查" : state == "error" ? "没查成" : v == null ? "—" : "";
         _syRows.Add(SyAct("检查更新", "check", checkText, () =>
         {
@@ -539,7 +571,7 @@ public sealed partial class WallStage
         if (_sy == null) return;
         float k = _ccK, raster = k * Chrome.Dpi;
         float h = RowsHeight(_syRows), vh = PerfViewH;
-        using (var tl = TextKit.Layout(G.Device, _syUpdatesOpen ? "系统 · 全部更新" : "系统", TextKit.Ui(700), 24, 600, CanvasHorizontalAlignment.Left))
+        using (var tl = TextKit.Layout(G.Device, _syUpdatesOpen ? "系统 · 更新" : "系统", TextKit.Ui(700), 24, 600, CanvasHorizontalAlignment.Left))
         {
             var bb = tl.LayoutBounds;
             float w = (float)bb.Width + 4, th = (float)bb.Height + 4;
@@ -548,7 +580,7 @@ public sealed partial class WallStage
             _syTitle.Offset = new Vector3(40 * k, 32 * k, 0);
         }
         _settingsTargets.Clear();
-        CcSet(_syRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _syRows, _syFocus, _settingsTargets)));
+        CcSet(_syRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _syRows, _syFocus, _settingsTargets, numbers: false, leadingNotes: !_syUpdatesOpen)));
         _syRight.Size = new Vector2(PerfRightW * k, h * k);
         _syRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _syRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);

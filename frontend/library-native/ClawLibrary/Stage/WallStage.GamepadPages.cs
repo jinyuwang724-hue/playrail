@@ -156,7 +156,7 @@ public sealed partial class WallStage
         var it = new GpItem
         {
             Title = "模式", Side = 0, X = GpIsMapPage ? GpMapCx : GpCx, Y = 112,
-            Value = fw == null ? "—" : !GpWantDesktop ? "手柄模式 · 手柄输出" : _gpDesktopHeld ? "桌面模式 · 离开游戏库后生效" : "桌面模式 · 键盘鼠标",
+            Value = fw == null ? "—" : !GpWantDesktop ? "手柄模式" : _gpDesktopHeld ? "桌面模式 · 离开游戏库后生效" : "桌面模式",
             Disabled = fw == null, Why = _gpFwError ?? "正在读取…",
         };
         it.Press = () => _ = GpToggleMode();

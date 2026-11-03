@@ -16,6 +16,7 @@ public sealed partial class WallStage
     private enum LgPage { None, List }
 
     private LgPage _lgPage;
+    private Action<string>? _stBrowsePick;
     private bool _stBrowseExe, _lgPolling, _lgFolderTaken;
     private JsonObject? _lgState;
     private readonly Dictionary<string, CanvasBitmap?> _lgBitmaps = new();
@@ -188,7 +189,7 @@ public sealed partial class WallStage
             long mb = 0;
             try { mb = new FileInfo(exe).Length >> 20; } catch { }
             var target = exe;
-            _stRows.Add(new PerfRow { Title = Path.GetFileName(exe), Value = $"{mb} MB", Press = () => LgNewFromExe(target) });
+            _stRows.Add(new PerfRow { Title = Path.GetFileName(exe), Value = $"{mb} MB", Press = () => { if (_stBrowsePick is { } pick) pick(target); else LgNewFromExe(target); } });
         }
     }
 

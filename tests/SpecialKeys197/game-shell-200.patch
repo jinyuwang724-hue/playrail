@@ -1,0 +1,373 @@
+--- a/native/ClawShell/Program.cs
++++ b/native/ClawShell/Program.cs
+@@ -18,7 +18,7 @@
+ {
+     public static class Program
+     {
+-        public const string Version = "1.0.0";
++        public const string Version = "1.0.1";
+         private static WindowsShellSystem _sys;
+         private static string _verb = "";
+ 
+@@ -86,6 +86,7 @@
+                     GC.KeepAlive(mutex);
+                     return 0;
+                 }
++                case "ensure-surface": return _sys.EnsureLibrarySurface(args.Contains("--activate")) ? 0 : 1;
+                 case "to-game": return (int)guard.ToGame();
+                 case "to-desktop": return (int)guard.ToDesktop();
+                 case "set-default":
+--- a/native/ClawShell/ShellGuard.cs
++++ b/native/ClawShell/ShellGuard.cs
+@@ -8,6 +8,8 @@
+ 
+ namespace ClawShell
+ {
++    public interface IGameSurface { bool EnsureLibrarySurface(bool activate); }
++
+     public interface IDesktopSurface { bool FocusDesktop(); }
+ 
+     public interface IShellSystem
+@@ -99,7 +101,7 @@
+                 try { _sys.RunStartupApps(); } catch (Exception ex) { _sys.Log("startup apps: " + ex.Message); }
+                 for (int i = 0; i < MaxFailures; i++)
+                 {
+-                    if (_sys.LaunchLibrary()) { _sys.WriteState("game", "boot"); return true; }
++                    if (_sys.LaunchLibrary()) { _sys.WriteState("game", "boot"); if (EnsureSurface(true)) return true; }
+                     _failures.Add(_sys.Now);
+                     _sys.Log("library launch failed at boot (" + (i + 1) + ")");
+                     _sys.Sleep(1000);
+@@ -142,10 +144,25 @@
+                 _gaveUp = false;
+                 _failures.Clear();
+             }
+-            if (_gaveUp || _sys.LibraryRunning()) return;
++            if (_gaveUp) return;
++            if (_sys.LibraryRunning())
++            {
++                if (!EnsureSurface(false))
++                {
++                    RecordFailure("library-window-unavailable");
++                    if (!_gaveUp && !_sys.LaunchLibrary()) RecordFailure("library-window-recovery-failed");
++                }
++                return;
++            }
+             RecordFailure("library-not-running");
+             if (_gaveUp) return;
+             if (!_sys.LaunchLibrary()) RecordFailure("library-relaunch-failed");
++        }
++
++        private bool EnsureSurface(bool activate)
++        {
++            var surface = _sys as IGameSurface;
++            return surface == null || surface.EnsureLibrarySurface(activate);
+         }
+ 
+         private void RecordFailure(string what)
+@@ -181,12 +198,19 @@
+         public SwitchResult ToGame()
+         {
+             if (_sys.ForceFlagExists()) { _sys.WriteState("desktop", "refused:force-desktop.flag"); return SwitchResult.Refused; }
+-            if (!_sys.ExplorerRunning()) { _sys.WriteState("game", "already"); return SwitchResult.Ok; }
++            if (!_sys.ExplorerRunning())
++            {
++                if ((!_sys.LibraryRunning() && !_sys.LaunchLibrary()) || !EnsureSurface(true))
++                { FallbackToDesktop("library-window-unavailable"); return SwitchResult.Failed; }
++                _sys.WriteState("game", "already"); return SwitchResult.Ok;
++            }
+             if (!_sys.LibraryRunning() && !_sys.LaunchLibrary())
+             {
+                 _sys.WriteState("desktop", "refused:library");
+                 return SwitchResult.Refused;
+             }
++            if (!EnsureSurface(true))
++            { _sys.WriteState("desktop", "refused:library-window"); return SwitchResult.Refused; }
+             if (_sys.SteamInstalled() && !_sys.SteamRunning() && !_sys.StartSteam())
+             {
+                 _sys.WriteState("desktop", "refused:steam");
+@@ -208,6 +232,8 @@
+             _gaveUp = false;
+             _failures.Clear();
+             _sys.WriteState("game", "switched");
++            if (!EnsureSurface(true))
++            { FallbackToDesktop("library-window-unavailable"); return SwitchResult.Failed; }
+             return SwitchResult.Ok;
+         }
+ 
+--- a/native/ClawShell/WindowsShellSystem.cs
++++ b/native/ClawShell/WindowsShellSystem.cs
+@@ -11,7 +11,7 @@
+ 
+ namespace ClawShell
+ {
+-    public sealed class WindowsShellSystem : IShellSystem, IDesktopSurface
++    public sealed partial class WindowsShellSystem : IShellSystem, IDesktopSurface, IGameSurface
+     {
+         public const string LibraryAumid = "ClawToolbox.Library_ba3r68zr466za!App";
+         public const string LibraryFamily = "ClawToolbox.Library_ba3r68zr466za";
+@@ -180,12 +180,12 @@
+             {
+                 var manager = (IApplicationActivationManager)new ApplicationActivationManager();
+                 uint pid;
+-                int hr = manager.ActivateApplication(LibraryAumid, "", 0, out pid);
++                int hr = manager.ActivateApplication(LibraryAumid, "--game-shell", 0, out pid);
+                 Log("activate library hr=0x" + hr.ToString("x8") + " pid=" + pid);
+                 if (hr < 0) return false;
+             }
+             catch (Exception ex) { Log("activate library: " + ex.Message); return false; }
+-            for (int i = 0; i < 100; i++) { if (LibraryRunning()) return true; Thread.Sleep(100); }
++            for (int i = 0; i < 100; i++) { if (FindSurface() != IntPtr.Zero) return true; Thread.Sleep(100); }
+             return false;
+         }
+ 
+--- /dev/null
++++ b/native/ClawShell/WindowsShellSystem.GameSurface.cs
+@@ -0,0 +1,42 @@
++using System;
++using System.Diagnostics;
++using System.Runtime.InteropServices;
++namespace ClawShell {
++    public sealed partial class WindowsShellSystem {
++        const string SurfaceMessage="ClawToolbox.Library.Activation.v1";
++        delegate bool SurfaceEnum(IntPtr window,IntPtr data);
++        [DllImport("user32.dll")] static extern bool EnumWindows(SurfaceEnum callback,IntPtr data);
++        [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern IntPtr GetProp(IntPtr window,string name);
++        [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
++        [DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
++        [DllImport("user32.dll")] static extern bool IsHungAppWindow(IntPtr window);
++        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
++        [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern uint RegisterWindowMessage(string name);
++        [DllImport("user32.dll")] static extern bool PostMessage(IntPtr window,uint message,IntPtr wp,IntPtr lp);
++        IntPtr FindSurface() {
++            IntPtr found=IntPtr.Zero;
++            EnumWindows(delegate(IntPtr window,IntPtr ignored){
++                if(GetProp(window,SurfaceMessage)==IntPtr.Zero)return true;
++                uint pid;GetWindowThreadProcessId(window,out pid);
++                try {using(var process=Process.GetProcessById((int)pid)){
++                    if(process.SessionId==_session&&process.ProcessName.Equals("ClawLibrary",StringComparison.OrdinalIgnoreCase)){found=window;return false;}
++                }}catch{}
++                return true;
++            },IntPtr.Zero);
++            return found;
++        }
++        public bool EnsureLibrarySurface(bool activate) {
++            IntPtr window=FindSurface();
++            if(window==IntPtr.Zero)return false;
++            bool ready=IsWindowVisible(window)&&!IsIconic(window)&&!IsHungAppWindow(window);
++            if(ready&&!activate)return true;
++            uint message=RegisterWindowMessage(SurfaceMessage);
++            if(message==0||!PostMessage(window,message,new IntPtr(activate?8:9),IntPtr.Zero))return false;
++            for(int waited=0;waited<(activate?3000:500);waited+=50){
++                System.Threading.Thread.Sleep(50);
++                if(IsWindowVisible(window)&&!IsIconic(window)&&!IsHungAppWindow(window)&&(!activate||GetForegroundWindow()==window))return true;
++            }
++            Log("library surface did not become visible");return false;
++        }
++    }
++}
+--- a/frontend/library-native/ClawLibrary/App.cs
++++ b/frontend/library-native/ClawLibrary/App.cs
+@@ -101,6 +101,7 @@
+         if (data is Windows.ApplicationModel.Activation.IProtocolActivatedEventArgs protocol && protocol.Uri.Scheme == "claw-library")
+             return ((ToolboxActivation.IsRoute(protocol.Uri.Host) ? protocol.Uri.Host : "activate") + (protocol.Uri.Query.Contains("via=shell") ? ViaShell : ""),
+                 ToolboxActivation.ReturnWindow(protocol.Uri.Query));
++        if (data is Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch && launch.Arguments == "--game-shell") return ("game-shell", 0);
+         return ("activate", 0);
+     }
+ 
+@@ -148,6 +149,7 @@
+ 
+         InitializeShortcutWindow(returnWindow);
+         _shortcutWindow?.EnsureFullscreenBounds();
++        InitializeGameShell();
+ 
+         try
+         {
+@@ -158,6 +160,7 @@
+         catch (Exception ex) { Log.Warn($"tray init: {ex.Message}"); }
+         AppWindow.Closing += (_, e) =>
+         {
++            if (Stage.ShellMode.GameMode && !_desktopHandoff) { e.Cancel = true; RestoreGameShell(_shortcutWindow?.IsForeground == true); return; }
+             if (!_exiting && UiPrefs.Load().BackgroundRun && _tray?.EnsureIcon() == true)
+             {
+                 e.Cancel = true;
+@@ -181,7 +184,7 @@
+         Closed += (_, _) => { DisposeShortcutWindow(); _tray?.Dispose(); _stage?.Dispose(); Log.Info("closed"); };
+     }
+ 
+-    public void ExitLibrary() { _exiting = true; Close(); }
++    public void ExitLibrary() { if (Stage.ShellMode.GameMode) { RestoreGameShell(true); return; } _exiting = true; Close(); }
+ 
+     public void RunInBackground()
+     {
+--- a/frontend/library-native/ClawLibrary/Data/LibraryWindow.cs
++++ b/frontend/library-native/ClawLibrary/Data/LibraryWindow.cs
+@@ -14,7 +14,7 @@
+     private uint _overlayPid;
+     private Windows.Graphics.RectInt32 _overlayBounds;
+     private uint _returnPid;
+-    private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center", "window-switcher"];
++    private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center", "window-switcher", "game-shell", "keep-game-shell"];
+ 
+     public LibraryWindow(nint window, Action<string, nint> activate)
+     {
+@@ -94,6 +94,28 @@
+         }
+         finally { _sizing = false; }
+     }
++
++    public void ShowGameShell(bool activate)
++    {
++        SetTopmost(false);
++        ShowWindow(_window, 4);
++        EnsureFullscreenBounds();
++        SetWindowPos(_window, -2, 0, 0, 0, 0, 0x253);
++        if (activate) BringForward(_window);
++        else StayBehindForeground();
++    }
++
++    public static bool HasForegroundApp(nint self)
++    {
++        nint fg = Foreground;
++        if (fg == self) return true;
++        if (fg == 0 || !IsWindow(fg) || !IsWindowVisible(fg) || ToolboxWindow.IsIconic(fg)) return false;
++        var cls = new System.Text.StringBuilder(128);
++        GetClassName(fg, cls, cls.Capacity);
++        return cls.ToString() is not ("Progman" or "WorkerW" or "Shell_TrayWnd");
++    }
++
++    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(nint hwnd, System.Text.StringBuilder text, int capacity);
+ 
+     public void ShowOverlay()
+     {
+--- /dev/null
++++ b/frontend/library-native/ClawLibrary/MainWindow.GameShell.cs
+@@ -0,0 +1,80 @@
++using ClawLibrary.Data;
++using Microsoft.UI.Dispatching;
++using Microsoft.UI.Xaml;
++
++namespace ClawLibrary;
++public sealed partial class MainWindow
++{
++    private DispatcherQueueTimer? _gameShellTimer;
++    private bool _wasGameMode;
++    private int _emptyShellTicks;
++
++    private void InitializeGameShell()
++    {
++        _wasGameMode = Stage.ShellMode.GameMode;
++        _gameShellTimer = DispatcherQueue.CreateTimer();
++        _gameShellTimer.Interval = TimeSpan.FromMilliseconds(500);
++        _gameShellTimer.Tick += (_, _) =>
++        {
++            if (_shortcutClosed || _desktopHandoff || _stage == null || _overlayRoutes.CurrentCount == 0) return;
++            bool game = Stage.ShellMode.GameMode;
++            if (!game) { _wasGameMode = false; _emptyShellTicks = 0; return; }
++            bool entered = !_wasGameMode;
++            _wasGameMode = true;
++            nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
++            bool missing = !AppWindow.IsVisible || ToolboxWindow.IsIconic(hwnd);
++            bool hasForeground = LibraryWindow.HasForegroundApp(hwnd);
++            _emptyShellTicks = hasForeground ? 0 : _emptyShellTicks + 1;
++            if (entered && !_overlayActive && !_stage.SpecialSurfaceOpen) RestoreGameShell(true);
++            else if (_emptyShellTicks >= 2) RestoreGameShell(true);
++            else if (missing) RestoreGameShell(false);
++            else _shortcutWindow?.EnsureFullscreenBounds();
++        };
++        _gameShellTimer.Start();
++    }
++
++    private void RestoreGameShell(bool activate)
++    {
++        if (_shortcutClosed || _desktopHandoff) return;
++        if (_stage == null) { if (activate) _pendingRoute = "game-shell"; return; }
++        if (!activate && _overlayActive)
++        { _shortcutWindow?.EnsureFullscreenBounds(); _shortcutWindow?.ShowOverlay(); return; }
++        if (!activate && _overlayAgent != null && _shortcutWindow?.IsForeground != true)
++        { _stage.CloseSpecialSurfaces(); ReleaseOverlay(); _surfaceSession = false; }
++        if (activate)
++        {
++            _shortcutWindow?.RememberReturnWindow(0);
++            CancelShortcutTransition();
++            _stage.CloseSpecialSurfaces();
++            ReleaseOverlay();
++            _surfaceSession = false;
++            _shortcutMotion.Cancel();
++            _stage.EndShortcutSoftFocus();
++            ResetShortcutVisual();
++        }
++        _shortcutInTray = _shortcutHiding = false;
++        _shortcutVisible = true;
++        _stage.ResumeFromTray();
++        _shortcutWindow?.ShowGameShell(activate);
++        if (activate) _root.Focus(FocusState.Programmatic);
++        _emptyShellTicks = 0;
++        Log.Info($"game shell surface restored activate={activate}");
++    }
++
++    private void ParkGameShell(bool returnToPrevious)
++    {
++        bool returnFocus = returnToPrevious && _shortcutWindow?.IsForeground == true;
++        _surfaceSession = false;
++        _shortcutMotion.Cancel();
++        _stage?.EndShortcutSoftFocus();
++        _stage?.CloseSpecialSurfaces();
++        ReleaseOverlay();
++        _shortcutHiding = _shortcutInTray = false;
++        _shortcutVisible = true;
++        ResetShortcutVisual();
++        _stage?.ResumeFromTray();
++        _shortcutWindow?.ReturnToPreviousWindow(returnFocus);
++        _shortcutWindow?.ShowGameShell(false);
++        Log.Info("game shell parked visible behind foreground");
++    }
++}
+--- a/frontend/library-native/ClawLibrary/MainWindow.Overlay.cs
++++ b/frontend/library-native/ClawLibrary/MainWindow.Overlay.cs
+@@ -24,6 +24,8 @@
+         try
+         {
+             if (_shortcutClosed || _desktopHandoff) return;
++            if (route == "game-shell") { RestoreGameShell(true); return; }
++            if (route == "keep-game-shell") { if (Stage.ShellMode.GameMode) RestoreGameShell(false); return; }
+             string targetRoute = ToolboxActivation.Target(route.Replace(App.ViaShell, ""));
+             bool quick = targetRoute == "control-center", switcher = targetRoute == "window-switcher";
+             bool special = quick || switcher;
+--- a/frontend/library-native/ClawLibrary/MainWindow.Shortcut.cs
++++ b/frontend/library-native/ClawLibrary/MainWindow.Shortcut.cs
+@@ -153,6 +153,7 @@
+ 
+     private void HideShortcutWindow()
+     {
++        if (Stage.ShellMode.GameMode && !_desktopHandoff) { CancelShortcutTransition(); CompleteShortcutHide(); return; }
+         if (_shortcutHiding)
+         {
+             ShowShortcutWindow("restore-" + ToolboxActivation.Target(_pendingRoute));
+@@ -175,6 +176,7 @@
+ 
+     private void CompleteShortcutHide(bool returnToPrevious = true)
+     {
++        if (Stage.ShellMode.GameMode && !_desktopHandoff) { ParkGameShell(returnToPrevious); return; }
+         _surfaceSession = false;
+         _shortcutMotion.Cancel();
+         bool returnFocus = returnToPrevious && _shortcutWindow?.IsForeground == true;
+@@ -247,6 +249,7 @@
+ 
+     private void DisposeShortcutWindow()
+     {
++        _gameShellTimer?.Stop();
+         ReleaseOverlay();
+         _shortcutClosed = true; _shortcutMotion.Cancel(); CancelShortcutTransition();
+         _stage?.EndShortcutSoftFocus(); _shortcutWindow?.Dispose();
+--- a/frontend/library-native/ClawLibrary/Package.appxmanifest
++++ b/frontend/library-native/ClawLibrary/Package.appxmanifest
+@@ -8,7 +8,7 @@
+   IgnorableNamespaces="uap uap3 uap4 rescap">
+ 
+   <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。主页能力由包根目录的 SCCD 配套声明。 -->
+-  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.199.0" />
++  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.200.0" />
+ 
+   <Properties>
+     <DisplayName>Claw 游戏库</DisplayName>

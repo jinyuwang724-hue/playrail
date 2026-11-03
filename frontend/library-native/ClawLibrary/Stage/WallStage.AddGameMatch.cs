@@ -140,7 +140,7 @@ public sealed partial class WallStage
         var old = ds.Transform;
         // 和分类页一样的整宽设置行：行号 / 焦点三角在左头，名称缩进 36
         ds.Transform = Matrix3x2.CreateTranslation(AgMatchX, AgMatchTop) * old;
-        PaintRowList(ds, rows, _agZone == 1 ? _agIndex : -1, null, true, AgMatchW);
+        PaintRowList(ds, rows, _agZone == 1 ? _agIndex : -1, null, false, AgMatchW);
         ds.Transform = old;
         for (int i = 0; i < n; i++)
         {

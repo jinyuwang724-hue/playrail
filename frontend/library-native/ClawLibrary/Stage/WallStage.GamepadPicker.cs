@@ -318,8 +318,8 @@ public sealed partial class WallStage
             // 桌面模式：固件一层，只有「按下发什么」
             rows.Add(new PerfRow { Section = true, Title = "桌面模式" });
             rows.Add(new PerfRow { Title = "指令", Value = GpDesktopSummary(src) + "  ›", Press = () => { p.Act = 0; p.Level = GpSubLevel.Chooser; p.Cell = 0; p.InTabs = false; p.Chord.Clear(); PaintGpBody(); } });
-            rows.Add(new PerfRow { Title = "禁用这个键", Value = "按下不起作用  ›", Press = () => GpWriteFirmware(p, new[] { 0xFF }) });
-            rows.Add(new PerfRow { Title = "恢复原键位", Value = $"{GpSourceName(src)}自己  ›", Press = () => { _ = GpWrite("restore_gamepad", JsonValue.Create("dkey." + src)); p.KeyFocus = 1; } });
+            rows.Add(new PerfRow { Title = "禁用这个键", Value = "›", Press = () => GpWriteFirmware(p, new[] { 0xFF }) });
+            rows.Add(new PerfRow { Title = "恢复原键位", Value = GpSourceName(src) + "  ›", Press = () => { _ = GpWrite("restore_gamepad", JsonValue.Create("dkey." + src)); p.KeyFocus = 1; } });
             return rows;
         }
         var acts = GpActs(src);
@@ -371,7 +371,7 @@ public sealed partial class WallStage
         rows.Add(new PerfRow { Section = true, Title = "这个键" });
         rows.Add(new PerfRow
         {
-            Title = "添加触发方式", Value = "长按、双击、组合键……  ›",
+            Title = "添加触发方式", Value = "›",
             Press = () =>
             {
                 var list = GpEnsureActs(src);
@@ -382,14 +382,14 @@ public sealed partial class WallStage
         });
         rows.Add(new PerfRow
         {
-            Title = "禁用这个键", Value = "按下不起作用  ›",
+            Title = "禁用这个键", Value = "›",
             Press = () =>
             {
                 if (GpActs(src) != null || !GpFirmwareSource(src)) { GpEnsureActs(src).Clear(); GpSaveLayout(); }
                 else GpWriteFirmware(p, new[] { 0xFF });
             },
         });
-        rows.Add(new PerfRow { Title = "恢复原键位", Value = $"{GpSourceName(src)}自己  ›", Press = () => GpRestoreKey(p) });
+        rows.Add(new PerfRow { Title = "恢复原键位", Value = GpSourceName(src) + "  ›", Press = () => GpRestoreKey(p) });
         return rows;
     }
 
@@ -436,11 +436,11 @@ public sealed partial class WallStage
                 Press = () => { GpActObj(p)[field] = !v; GpSaveLayout(); },
             };
         }
-        PerfRow Later(string title, string value) => new() { Title = title, Value = value + " · 第二批", Disabled = true, Press = () => Toast("这一项在软件输入层的第二批里做") };
+        PerfRow Later(string title, string value) => new() { Title = title, Value = "暂不可用", Disabled = true, Press = () => Toast("此功能暂不可用") };
         var rows = new List<PerfRow> { new() { Section = true, Title = $"{GpActTypes[Math.Max(0, Array.IndexOf(GpActIds, t))]}设置" } };
         if (t == "long") rows.Add(Num("长按时间", "longPressMs", 300, 50, 5000, 50, v => $"{v} ms"));
         if (t == "double") rows.Add(Num("双击间隔", "doublePressMs", 250, 50, 2000, 25, v => $"{v} ms"));
-        rows.Add(Num("按住以重复（连发）", "repeatHz", 0, 0, 60, 5, v => v == 0 ? "关" : $"{v} 次/秒"));
+        rows.Add(Num("按住连发", "repeatHz", 0, 0, 60, 5, v => v == 0 ? "关" : $"{v} 次/秒"));
         rows.Add(Toggle("切换", "toggle", false));
         rows.Add(Num("触发启动延迟", "startDelayMs", 0, 0, 5000, 50, v => $"{v} ms"));
         rows.Add(Num("触发结束延迟", "endDelayMs", 0, 0, 5000, 50, v => $"{v} ms"));
@@ -632,7 +632,7 @@ public sealed partial class WallStage
                 p.KeyFocus = Math.Clamp(p.KeyFocus, 0, rows.Count - 1);
                 PText(ds, GpSourceName(p.Source) + where, TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
                 string now = GpIsSpecial(p.Source) ? GpSpecialSummary(p.Source, p.SteamMapping) : p.Desktop ? GpDesktopSummary(p.Source) : GpKeySummary(p.Source);
-                PText(ds, $"现在：{now}  ·  改了立刻生效", ui, 13, muted, GpPickX, 170, 900);
+                PText(ds, $"当前：{now}", ui, 13, muted, GpPickX, 170, 900);
                 PaintGpRows(ds, rows, p.KeyFocus);
                 GpHints(ds, ("B", "返回"));
                 break;
@@ -642,7 +642,6 @@ public sealed partial class WallStage
                 var rows = GpSettingsRows(p);
                 p.SettingsFocus = Math.Clamp(p.SettingsFocus, 0, rows.Count - 1);
                 PText(ds, $"{GpSourceName(p.Source)}{where} · 触发设置", TextKit.Ui(700), 22, CcText, GpPickX, 140, 900);
-                PText(ds, "照 Steam 输入", ui, 13, muted, GpPickX, 170, 900);
                 PaintGpRows(ds, rows, p.SettingsFocus);
                 GpHints(ds, ("B", "返回"));
                 break;
@@ -759,8 +758,8 @@ public sealed partial class WallStage
 
         // 底部：键盘组合的状态 / 这一页的说明（一行小字），再下面按键提示
         string? note = p.Tab == 2
-            ? (p.Chord.Count > 0 ? $"组合：{string.Join(" + ", p.Chord.Select(c => c.Label))} + …  再按一个普通键完成" : "Ctrl / Shift / Alt / Win 按一下是叠加，可以组合；再按一个普通键完成")
-            : GpIsSpecial(p.Source) ? "专用功能键支持系统动作、键盘组合和鼠标指令" : p.Tab == 4 ? "系统动作与专用按键共用，选择后立即生效" : null;
+            ? (p.Chord.Count > 0 ? $"组合：{string.Join(" + ", p.Chord.Select(c => c.Label))} + …  选择普通键完成" : "先选修饰键，再选普通键完成组合")
+            : null;
         if (note != null)
         {
             float nw = PWidth(ds, note, ui, 13);

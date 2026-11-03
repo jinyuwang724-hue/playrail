@@ -1,4 +1,4 @@
-﻿// 舞台（照 src/stage/stage.ts）：一面常驻的墙 + 一道缝，全部画在合成视觉层上。
+// 舞台（照 src/stage/stage.ts）：一面常驻的墙 + 一道缝，全部画在合成视觉层上。
 // - 相机与缝的开口是一个 CompositionPropertySet 里的几个数（cx、cy、open…），两半墙、缝、边缘标签的位置都是表达式动画，
 //   相机补间 / 缝补间就是对这几个数做关键帧动画 —— 全在合成线程跑，UI 线程不逐帧干活。
 // - UI 线程用同一条曲线解析地算出「此刻相机在哪」，供导航、裁剪、点击命中用。
@@ -61,6 +61,7 @@ public sealed partial class WallStage : IDisposable
 
     private readonly RootElement _rootEl;
     private readonly Window _window;
+    private readonly nint _windowHandle;
     private readonly DispatcherQueue _dq;
     private Library _lib = new();
     private readonly ContainerVisual _root;
@@ -112,6 +113,7 @@ public sealed partial class WallStage : IDisposable
     {
         _rootEl = rootEl;
         _window = window;
+        _windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(window);
         _dq = DispatcherQueue.GetForCurrentThread();
         var host = ElementCompositionPreview.GetElementVisual(rootEl.Surface);
         G = new Gfx(host.Compositor);
@@ -201,11 +203,13 @@ public sealed partial class WallStage : IDisposable
         Log.Info($"wall built: {_tiles.Count} tiles ({NowMs - t0}ms in stage, {App.SinceProcessStartMs():F0}ms since process start)");
 
         // 第一帧真正画出来的时刻
+        PrepareStartupShield();
         EventHandler<object>? first = null;
         first = (_, _) =>
         {
             CompositionTarget.Rendering -= first;
             FirstFrameLogged = true;
+            BeginStartupReadiness();
             _dq.TryEnqueue(DispatcherQueuePriority.Low, RenderEdgeTabs);
             After(1500, () => { try { PrewarmControlCenter(); } catch (Exception ex) { Log.Error("prewarm", ex); } });
             _dq.TryEnqueue(DispatcherQueuePriority.Low, () => { var t = NowMs; Recull(true); Log.Info($"overscan tiles built: {_tiles.Count} ({NowMs - t}ms)"); });
@@ -260,8 +264,7 @@ public sealed partial class WallStage : IDisposable
 
     private bool IsForeground()
     {
-        try { return GetForegroundWindow() == WinRT.Interop.WindowNative.GetWindowHandle(_window); }
-        catch { return true; }
+        return (_window as MainWindow)?.AcceptsGamepad != false && !ToolboxWindow.IsIconic(_windowHandle) && GetForegroundWindow() == _windowHandle;
     }
 
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
@@ -299,6 +302,8 @@ public sealed partial class WallStage : IDisposable
         var played = FolderGames.ReadPlayed();
         Library.FolderGames = _prefs.Folders.SelectMany(f => FolderGames.Scan(f, shortcuts))
             .Select(g => (g.Title, g.Exe, played.TryGetValue(FolderGames.IdOf(g.Exe), out var t) ? (long?)t : null)).ToList();
+        Library.XboxLibrary = _prefs.SourceXbox
+            ? Task.Run(XboxGames.ReadAsync).GetAwaiter().GetResult().Games : new();
         if (Library.FolderGames.Count > 0) Log.Info($"folder games: {Library.FolderGames.Count}");
         _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), collections, owned, installed, Steam.ShortcutTargets(user), local);
         _steamRoot = steam; _steamUser = user;
@@ -317,7 +322,7 @@ public sealed partial class WallStage : IDisposable
         if (_steamRoot == null) return;
         // 按墙上的顺序（最近玩过的在前）生成，先看得到的先有图
         var order = _lib.HomeTabs.Count > 0 ? _lib.HomeTabs[0].Items() : _lib.Games;
-        var missing = order.Where(g => g.Kind == ItemKind.Game && g.Art == null && g.Platform != "folder").ToList();
+        var missing = order.Where(g => g.Kind == ItemKind.Game && g.Art == null && g.Platform != "folder" && g.Platform != "xbox").ToList();
         if (missing.Count == 0) return;
         Log.Info($"art kits missing: {missing.Count}; building");
         var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -815,6 +820,7 @@ public sealed partial class WallStage : IDisposable
     /// </summary>
     private void LaunchOrInstall(LibraryItem item)
     {
+        if (item.XboxAumid is string aumid) { _ = LaunchXboxGame(item, aumid); return; }
         if (item.ExePath is string exe)
         {
             try
@@ -848,6 +854,17 @@ public sealed partial class WallStage : IDisposable
             Toast($"在 Steam 里安装「{item.Title}」");
         }
         Log.Info($"launch {item.Id} {item.Platform} installed={item.Installed}");
+    }
+
+    private async Task LaunchXboxGame(LibraryItem item, string aumid)
+    {
+        try
+        {
+            await XboxGames.LaunchAsync(aumid);
+            Toast($"正在启动「{item.Title}」");
+            AfterGameLaunch();
+        }
+        catch (Exception ex) { SoundFx.Play(Sfx.Error); Toast($"「{item.Title}」没能启动：{ex.Message}"); }
     }
 
     /// <summary>B：收起聚焦卡 → 返回上一层。</summary>
@@ -1436,15 +1453,20 @@ public sealed partial class WallStage : IDisposable
 
     public void Dispose()
     {
+        DisposeStartupReadiness();
+        DisposeShortcutMotion();
+        foreach (var timer in new[] { _ccTimer, _stTimer, _perfTimer, _dsTimer, _syTimer, _gpLive, _railTimer, _toastTimer, _morphTimer }) timer?.Stop();
+        _trayTimers.Clear();
+        // 先取消帧回调，再释放背景资源；显式退出不能留下轮询去访问已销毁的窗口。
+        if (_backdropLoop) { CompositionTarget.Rendering -= OnBackdropFrame; _backdropLoop = false; }
+        if (_ccBackLoop) { CompositionTarget.Rendering -= OnCcBackFrame; _ccBackLoop = false; }
+        if (_loopOn) { CompositionTarget.Rendering -= OnRendering; _loopOn = false; }
         DisposeHomeAudio();
         _pad?.Dispose();
         _backdrop?.Dispose();
         _agent?.Dispose();
         _cpuFreq?.Dispose();
         _ccBack?.Dispose();
-        if (_backdropLoop) CompositionTarget.Rendering -= OnBackdropFrame;
-        if (_ccBackLoop) CompositionTarget.Rendering -= OnCcBackFrame;
-        if (_loopOn) CompositionTarget.Rendering -= OnRendering;
     }
 
     // 给自动测试用

@@ -154,13 +154,11 @@ public sealed partial class WallStage
         if (_shInfo == null) return;
         float k = _ccK;
         const float W = 800, H = 80;
-        string folder = Captures.GameBarFolder();
         CcSet(_shInfo, CcDraw(W, H, ShRaster, ds =>
         {
             string head = !_shLoaded ? "正在读取…" : ShFilterName() is { } fn ? $"「{fn}」在「{ShCurrentTab?.Name}」里没有截图" : "还没有截图";
             PText(ds, head, TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.8), 0, 20, W, CanvasHorizontalAlignment.Center);
-            if (_shLoaded && _shFilter != null) PText(ds, "按 View 换一款游戏或取消筛选", TextKit.Ui(400), 14, Gfx.WithAlpha(CcText, 0.5), 0, 52, W, CanvasHorizontalAlignment.Center);
-            else if (_shLoaded) PText(ds, $"Game Bar 截图（{folder}）、Steam 截图和 Steam 上传的截图都会出现在这里", TextKit.Ui(400), 14, Gfx.WithAlpha(CcText, 0.5), 0, 52, W, CanvasHorizontalAlignment.Center);
+            if (_shLoaded && _shFilter != null) PText(ds, "View 更改或清除筛选", TextKit.Ui(400), 14, Gfx.WithAlpha(CcText, 0.5), 0, 52, W, CanvasHorizontalAlignment.Center);
         }));
         _shInfo.Size = new Vector2(W * k, H * k);
         _shInfo.Offset = new Vector3(240 * k, 360 * k, 0);

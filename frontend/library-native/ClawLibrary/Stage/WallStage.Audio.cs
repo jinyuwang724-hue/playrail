@@ -25,7 +25,7 @@ public sealed partial class WallStage
                 if (_audioDisposed) return;
                 _musicError = "播放失败，请重新选择曲目";
                 Log.Warn("home music: " + message);
-                if (_stOpen && _gsItem == null && _stCat == 4) { Toast(_musicError); Repaint(); }
+                if (_stOpen && _gsItem == null && _stCat == 5) { Toast(_musicError); Repaint(); }
             });
             _audioTimer = _dq.CreateTimer();
             _audioTimer.Interval = TimeSpan.FromMilliseconds(100);
@@ -86,7 +86,7 @@ public sealed partial class WallStage
         _stRows.Add(new PerfRow { Title = "试听音效", Value = "移动 · 确认 · 返回 · 切换 · 启动", Press = PreviewSounds });
 
         _stRows.Add(new PerfRow { Section = true, Title = "背景音乐" });
-        _stRows.Add(StToggle("主页背景音乐", _prefs.MusicEnabled, on => SaveAudio(_prefs with { MusicEnabled = on }), false));
+        _stRows.Add(StToggle("背景音乐", _prefs.MusicEnabled, on => SaveAudio(_prefs with { MusicEnabled = on }), false));
         _stRows.Add(StNumber("音乐音量", _prefs.MusicVolume, 0, 100, 5, n => $"{n} %", n => SaveAudio(_prefs with { MusicVolume = n }), 20));
         var tracks = MusicFiles.Tracks();
         int index = Math.Max(0, tracks.ToList().FindIndex(t => t.Id == _prefs.MusicTrack));
@@ -101,7 +101,7 @@ public sealed partial class WallStage
         _stRows.Add(StToggle("循环播放", _prefs.MusicLoop, on => SaveAudio(_prefs with { MusicLoop = on }), true));
         _stRows.Add(new PerfRow
         {
-            Title = "导入本地音乐", Value = _musicImporting ? "正在导入…" : "MP3 / WAV / M4A / FLAC / AAC / WMA", Disabled = _musicImporting,
+            Title = "导入本地音乐", Value = _musicImporting ? "正在导入…" : "", Disabled = _musicImporting,
             Press = () => { _stBrowseExe = false; _stBrowseMusic = true; StBrowseTo(""); },
         });
         if (tracks[index].Custom)
@@ -120,7 +120,7 @@ public sealed partial class WallStage
             }));
         }
         if (_musicError != null) _stRows.Add(StInfo("音乐状态", _musicError));
-        else _stRows.Add(StInfo("播放范围", "前端在前台时播放，进入游戏后淡出"));
+        else _stRows.Add(StInfo("播放范围", "仅前台播放 · 游戏中淡出"));
     }
 
     private void BuildMusicBrowse(string path)

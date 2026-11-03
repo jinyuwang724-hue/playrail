@@ -42,7 +42,7 @@ MAX_LINE = 8 * 1024 * 1024
 METHODS = {
     "get_state", "refresh", "save_settings", "frontend_ready", "set_steam_context", "action_result", "test_button_mapping",
     "manage_compatibility",
-    "get_power_state", "save_power", "restore_power", "set_ecore", "fan_test",
+    "get_power_state", "save_power", "restore_power", "set_ecore", "restore_ecore", "fan_test",
     "get_rumble_state", "set_rumble_strength", "restore_rumble", "test_rumble",
     "get_gamepad_state", "set_gamepad_mode", "set_stick_deadzone", "set_stick_swap", "set_trigger_range",
     "set_quick_trigger", "set_back_key", "set_key_map", "set_desktop_key_map", "set_light", "restore_gamepad",
@@ -54,18 +54,21 @@ METHODS = {
     "play_navigation_haptic", "set_navigation_context", "steam_cloud_screenshots",
     # Game Bar widget
     "widget_state", "set_brightness", "set_volume", "set_mute", "set_refresh_rate", "set_fps_limit",
-    "close_game", "power_action", "toggle_keyboard", "screenshot",
+    "close_game", "power_action", "preview_power_animation", "toggle_keyboard", "screenshot",
     # ClawLibrary 显示与声音
     "get_display_state", "set_resolution", "set_vrr", "set_hdr", "set_audio_output", "set_mic_mute",
     "set_display_scale", "set_auto_brightness", "set_gpu_option",
     # ClawLibrary 系统
     "get_system_state", "get_settings_state", "set_home_app", "set_startup_item", "set_vendor_app",
     "set_haptics_enabled", "restart_agent", "check_driver_updates", "install_updates", "set_steam_keys", "library_haptic", "install_windows_updates", "set_charge_limit", "set_power_button", "set_hibernate_after", "set_display_off", "set_wake_lock",
-    "set_autostart", "check_updates", "backup_settings", "restore_settings", "reset_settings", "export_logs",
+    "set_autostart", "check_updates", "backup_settings", "restore_settings", "reset_settings", "export_logs", "set_sleep_animation", "set_wake_animation",
+    "set_enhanced_sleep", "set_sleep_games", "set_sleep_fingerprint",
     # ClawLibrary 截图
     "refresh_steam_cloud_screenshots", "hide_steam_cloud_screenshot",
     # ClawLibrary 添加游戏
     "game_settings_get", "game_settings_set", "get_magpie_prefs", "set_magpie_prefs", "game_art_get", "game_art_save",
+    "save_magpie_preset", "delete_magpie_preset", "get_lossless_config", "configure_lossless", "clear_lossless_config", "open_lossless",
+    "get_lossless_settings", "save_lossless_settings", "set_lossless_running",
     "local_games_state", "local_games_search", "local_games_candidates", "local_games_save", "local_games_remove",
     "local_games_add_many", "local_games_fill_art", "local_games_sync", "set_steamgriddb_key", "local_games_official",
 }

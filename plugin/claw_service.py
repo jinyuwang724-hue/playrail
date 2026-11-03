@@ -62,6 +62,9 @@ _local_games_spec.loader.exec_module(_local_games_module)
 _game_settings_spec = importlib.util.spec_from_file_location("claw_toolbox_game_settings", PLUGIN_ROOT / "claw_game_settings.py")
 _game_settings_module = importlib.util.module_from_spec(_game_settings_spec)
 _game_settings_spec.loader.exec_module(_game_settings_module)
+_lossless_spec = importlib.util.spec_from_file_location("claw_toolbox_lossless", PLUGIN_ROOT / "claw_lossless.py")
+_lossless_module = importlib.util.module_from_spec(_lossless_spec)
+_lossless_spec.loader.exec_module(_lossless_module)
 
 # ControllerHapticsService.PlayPattern in Playhub 2.1.0 executes the first step.
 HAPTIC_PATTERNS = {
@@ -115,6 +118,25 @@ def _steam_game_running():
         return False
 
 
+async def start_router(executable, data, config):
+    """Allow an exiting owner to release its mutex; never accept an exited child."""
+    for attempt in range(12):
+        process = await asyncio.create_subprocess_exec(
+            str(executable), str(data), str(config), "--owner-pid=" + str(os.getpid()),
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+        try:
+            await asyncio.wait_for(asyncio.shield(process.wait()), .15)
+        except asyncio.TimeoutError:
+            return process
+        detail = (await process.stdout.read()).decode("utf-8", errors="replace").strip()
+        if process.returncode == 2 and attempt < 11:
+            logging.info("Previous button listener is still exiting; retrying startup")
+            await asyncio.sleep(.25)
+            continue
+        raise RuntimeError("按键监听启动失败（退出码 %s）：%s" % (process.returncode, detail[:512]))
+
+
 class Service:
     def __init__(self, data, emit):
         """data: settings folder. emit(event, value): coroutine that pushes to every front end."""
@@ -136,6 +158,9 @@ class Service:
         self._data = Path(data)
         self._data.mkdir(parents=True, exist_ok=True)
         self._magpie = _magpie_module.Magpie(PLUGIN_ROOT, self._data, self._emit_magpie)
+        self._lossless = _game_settings_module.LosslessConfig(self._data)
+        self._lossless_editor = _lossless_module.SettingsEditor(self._data, _game_settings_module.LS_SETTINGS)
+        self._lossless_lock = asyncio.Lock()
         self._overlay_frames = _frames_module.OverlayFrames()
         self._power = _power_module.PowerControl(PLUGIN_ROOT, self._data, self._emit_power)
         self._system = _system_module.SystemControl(
@@ -188,10 +213,8 @@ class Service:
             logging.info("Claw residual feedback recovery: %s", self._haptics.recover())
         config = Path(os.environ["APPDATA"]) / "GamingMode"
         version = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))["version"]
-        self._process = await asyncio.create_subprocess_exec(
+        self._process = await start_router(
             str(PLUGIN_ROOT / "bin" / ("ClawRouter-" + version + ".exe")), str(self._data), str(config),
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW,
         )
         self._started.set()
         self._reader = asyncio.create_task(self._read_output())
@@ -244,7 +267,7 @@ class Service:
     def _schedule_mapping(self, event):
         if self._stopping or len(self._mapping_tasks) >= 4:
             return
-        if (event.get("source") == "Claw" and event.get("scope") == "general"
+        if (event.get("source") == "Claw" and event.get("scope") in ("general", "steam")
                 and (event.get("command") or {}).get("action") in ("library", "controlCenter")):
             now = time.monotonic()
             if self._toolbox_last_press is not None and now - self._toolbox_last_press < .35:
@@ -267,10 +290,9 @@ class Service:
     async def _execute_system_mapping(self, action, event=None):
         if action in ("library", "controlCenter"):
             mode = "BigPicture" if self._status.get("bigPictureOpen") else self._status.get("mode")
-            eligible = event and event.get("source") == "Claw" and event.get("scope") == "general" and mode != "BigPicture"
-            context = await asyncio.to_thread(_buttons_module.toolbox_context) if eligible else {}
+            context = await asyncio.to_thread(_buttons_module.toolbox_context)
             route = _buttons_module.toolbox_route(action, event or {}, mode, context)
-            await asyncio.to_thread(os.startfile, "claw-library://" + route)
+            await asyncio.to_thread(_buttons_module.activate_toolbox, route, context)
             return route
         elif action in ("steamMainMenu", "steamQuickAccess"):
             if not self._ready or self._status.get("mode") != "BigPicture":
@@ -437,6 +459,11 @@ class Service:
             raise RuntimeError("工具箱后台正在退出，请稍候")
         return await self._power.set_ecore(enabled)
 
+    async def restore_ecore(self):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        return await self._power.restore_ecore()
+
     # ---- Game Bar widget ----------------------------------------------------------
     async def widget_state(self):
         """Everything the widget's single page shows, in one call. Answered from what the agent
@@ -523,6 +550,21 @@ class Service:
 
     async def set_power_button(self, action):
         return await self._system_write(self._system.set_power_button, action)
+
+    async def set_sleep_animation(self, enabled):
+        return await self._system_write(self._system.set_sleep_animation, enabled)
+
+    async def set_wake_animation(self, enabled):
+        return await self._system_write(self._system.set_wake_animation, enabled)
+
+    async def set_enhanced_sleep(self, enabled):
+        return await self._system_write(self._system.set_enhanced_sleep, enabled)
+
+    async def set_sleep_games(self, enabled):
+        return await self._system_write(self._system.set_sleep_games, enabled)
+
+    async def set_sleep_fingerprint(self, enabled):
+        return await self._system_write(self._system.set_sleep_fingerprint, enabled)
 
     async def set_hibernate_after(self, seconds):
         return await self._system_write(self._system.set_hibernate_after, seconds)
@@ -637,7 +679,18 @@ class Service:
     async def power_action(self, action):
         if action not in ("sleep", "shutdown", "restart", "lock"):
             raise ValueError("不支持的电源操作")
+        if action in ("shutdown", "restart"):
+            animation = _system_module._animation
+            state = await animation.view()
+            if state.get("available") and state.get("suspendEnabled"):
+                result = await animation.power_action(action)
+                if result.get("handled"):
+                    return result
         return await self._power.system_set("power_action", action=action)
+
+    async def preview_power_animation(self):
+        """Preview uses a fixed non-destructive pipe command, never the OS fallback."""
+        return await _system_module._animation.power_action("restart", preview=True)
 
     async def toggle_keyboard(self):
         logging.info("Touch keyboard toggled from the Game Bar widget")
@@ -1050,7 +1103,7 @@ class Service:
             exe = self._game_exe(appid, platform, folder)
             # Magpie: a Steam game by its install folder (its exe may differ from our guess), others by exe
             magpie_key = ("dir:" + folder) if appid < 0x80000000 and folder else exe
-            ls_exe = gs.lossless_exe()
+            ls = self._lossless.view()
             return {"steam": props, "shortcut": appid >= 0x80000000, "exe": exe, "folder": folder,
                     "magpie": {"available": self._magpie.view().get("available", False), "key": magpie_key,
                                **(self._magpie.game_info(magpie_key) if magpie_key else
@@ -1058,8 +1111,8 @@ class Service:
                     # 手柄档案: the input layer's per-game layout (by exe name; none = the global one)
                     "pad": {"exe": os.path.basename(exe) if exe else None,
                             "custom": bool(exe) and os.path.basename(exe).lower() in self._input.layouts.games()},
-                    "lossless": {"installed": bool(ls_exe), "running": bool(gs.lossless_pids()),
-                                 "enabled": gs.lossless_enabled(exe) if exe else False}}
+                    "lossless": {**ls, "installed": ls["configured"],
+                                 "enabled": ls["configured"] and gs.lossless_enabled(exe) if exe else False}}
         return await asyncio.to_thread(read)
 
     async def game_settings_set(self, item, key, value=None):
@@ -1084,21 +1137,8 @@ class Service:
                 return await self._input.save_layout(current["layout"], game)
             return await self._input.save_layout(None, game)
         if key == "lossless":
-            exe = item.get("exe")
-            if not isinstance(exe, str) or not exe.lower().endswith(".exe"):
-                raise ValueError("找不到这款游戏的程序")
-            ls = gs.lossless_exe()
-            if not ls:
-                raise RuntimeError("没有装小黄鸭（Lossless Scaling）")
-            pids = await asyncio.to_thread(gs.lossless_pids)
-            # LS writes its in-memory settings back when it exits: stop it hard first, then edit, then start again
-            for pid in pids:
-                await self._power._call("kill", pid=pid)
-            if pids:
-                await asyncio.sleep(0.5)
-            await asyncio.to_thread(gs.lossless_write, exe, title, bool(value))
-            await asyncio.to_thread(gs.lossless_start, ls)
-            return {"enabled": bool(value)}
+            async with self._lossless_lock:
+                return await self._set_lossless_game(item, title, value)
         if key not in ("launchOptions", "overlay", "cloud", "favorite", "hidden", "verify"):
             raise ValueError("不认识的游戏设置")
         if key == "launchOptions" and (not isinstance(value, str) or len(value) > 2000):
@@ -1108,11 +1148,112 @@ class Service:
         await asyncio.to_thread(cdp.set_app_property, appid, key, value)
         return {"ok": True}
 
+    async def _set_lossless_game(self, item, title, value):
+        gs = _game_settings_module
+        if type(value) is not bool:
+            raise ValueError("小黄鸭开关格式错误")
+        exe = item.get("exe")
+        if not isinstance(exe, str) or not exe.lower().endswith(".exe"):
+            raise ValueError("找不到这款游戏的程序")
+        if not await asyncio.to_thread(self._lossless.exe):
+            raise RuntimeError("请先在设置 › 小黄鸭中完成配置")
+        editor = await asyncio.to_thread(self._lossless_editor.read)
+        matching = [p for p in editor["profiles"] if p["path"] and gs._same_exe(p["path"], exe)]
+        # A game's on/off switch must retain the scaling/FG settings edited on the full page.
+        updates = [dict(index=p["index"], values={"AutoScale": value}) for p in matching]
+        if not matching:
+            if not value: return {"enabled": False}
+            updates.append(dict(index=None, values={"Title": title, "Path": exe, "AutoScale": True}))
+        result = await self._save_lossless_settings(dict(revision=editor["revision"], globalValues={}, profiles=updates, remove=[]), start_if_stopped=value)
+        if result["warning"]: raise RuntimeError(result["warning"])
+        return {"enabled": bool(value)}
+
+    async def get_lossless_config(self, refresh=False):
+        if type(refresh) is not bool: raise ValueError("检测参数格式错误")
+        return await asyncio.to_thread(self._lossless.view, refresh)
+
+    async def get_lossless_settings(self):
+        def read():
+            state = self._lossless.view()
+            return {**state, "editor": self._lossless_editor.read() if state["configured"] else None}
+        return await asyncio.to_thread(read)
+
+    async def _stop_lossless(self, exe):
+        gs = _game_settings_module
+        processes = await asyncio.to_thread(gs.lossless_processes)
+        matching = [p for p in processes if p["path"] and gs._same_exe(p["path"], exe)]
+        if any(not p["path"] for p in processes):
+            raise RuntimeError("无法确认小黄鸭后台路径，请先退出小黄鸭后再保存")
+        for process in matching:
+            # Check identity immediately before passing the PID to the existing elevated helper.
+            if process not in await asyncio.to_thread(gs.lossless_processes): continue
+            await self._power._call("kill", pid=process["pid"])
+        for _ in range(50):
+            if not await asyncio.to_thread(self._lossless.pids, exe): return
+            await asyncio.sleep(.1)
+        raise RuntimeError("小黄鸭后台仍在运行，本次未写入设置")
+
+    async def save_lossless_settings(self, value):
+        async with self._lossless_lock:
+            return await self._save_lossless_settings(value)
+
+    async def _save_lossless_settings(self, value, start_if_stopped=False):
+        """Called only while holding _lossless_lock, including per-game on/off updates."""
+        exe = await asyncio.to_thread(self._lossless.exe)
+        if not exe: raise RuntimeError("没有找到小黄鸭，请重新选择程序")
+        # Validate every field and the file revision before touching a running application.
+        prepared = await asyncio.to_thread(self._lossless_editor.prepare, value)
+        running = bool(await asyncio.to_thread(self._lossless.pids, exe))
+        if running: await self._stop_lossless(exe)
+        try:
+            editor = await asyncio.to_thread(self._lossless_editor.commit, prepared, exe)
+        except Exception:
+            if running:
+                try: await asyncio.to_thread(_game_settings_module.lossless_start, exe)
+                except Exception: logging.exception("Could not restore Lossless Scaling after rejected save")
+            raise
+        warning = ""
+        if running or start_if_stopped:
+            try: await asyncio.to_thread(_game_settings_module.lossless_start, exe)
+            except Exception as e: warning = "设置已保存，后台未能恢复：" + str(e)
+        return {**await asyncio.to_thread(self._lossless.view), "editor": editor, "warning": warning}
+
+    async def set_lossless_running(self, enabled):
+        if type(enabled) is not bool: raise ValueError("后台开关格式错误")
+        async with self._lossless_lock:
+            exe = await asyncio.to_thread(self._lossless.exe)
+            if not exe: raise RuntimeError("没有找到小黄鸭，请重新选择程序")
+            running = bool(await asyncio.to_thread(self._lossless.pids, exe))
+            if enabled and not running: await asyncio.to_thread(_game_settings_module.lossless_start, exe)
+            elif not enabled and running: await self._stop_lossless(exe)
+            return await asyncio.to_thread(self._lossless.view)
+
+    async def configure_lossless(self, mode, exe=None):
+        async with self._lossless_lock:
+            return await asyncio.to_thread(self._lossless.configure, mode, exe)
+
+    async def clear_lossless_config(self):
+        async with self._lossless_lock:
+            return await asyncio.to_thread(self._lossless.clear)
+
+    async def open_lossless(self):
+        exe = await asyncio.to_thread(self._lossless.exe)
+        if not exe:
+            raise RuntimeError("请先配置有效的小黄鸭程序")
+        await asyncio.to_thread(os.startfile, exe)
+        return {"ok": True}
+
     async def get_magpie_prefs(self):
         return await self._magpie.get_prefs()
 
     async def set_magpie_prefs(self, value):
         return await self._magpie.set_prefs(value)
+
+    async def save_magpie_preset(self, value):
+        return self._magpie.save_preset(value)
+
+    async def delete_magpie_preset(self, name):
+        return self._magpie.delete_preset(name)
 
     async def game_art_get(self, item):
         """A Steam game's current library images (custom grid ones first, else Steam's own cache)."""

@@ -455,6 +455,7 @@ namespace ClawInput {
         readonly IntPtr timer;
         readonly long period;
         long next;
+        bool paused;
         public readonly bool HighResolution;
         public Ticker(int hz) {
             period = System.Diagnostics.Stopwatch.Frequency / Math.Max(100, Math.Min(1000, hz));
@@ -463,7 +464,17 @@ namespace ClawInput {
             HighResolution = timer != IntPtr.Zero;
             if (!HighResolution) timeBeginPeriod(1);
         }
+        public void Pause() {
+            if (paused) return;
+            paused = true;
+            if (!HighResolution) timeEndPeriod(1);
+        }
         public void Wait() {
+            if (paused) {
+                paused = false;
+                if (!HighResolution) timeBeginPeriod(1);
+                next = System.Diagnostics.Stopwatch.GetTimestamp() + period;
+            }
             long now = System.Diagnostics.Stopwatch.GetTimestamp(), wait = next - now;
             if (wait > 0) {
                 if (HighResolution) {
@@ -475,6 +486,6 @@ namespace ClawInput {
             next += period;
             if (now - next > 4 * period) next = now + period; // after a stall (sleep, debugger): no catch-up burst
         }
-        public void Dispose() { if (HighResolution) Win.CloseHandle(timer); else timeEndPeriod(1); }
+        public void Dispose() { if (HighResolution) Win.CloseHandle(timer); else if (!paused) timeEndPeriod(1); }
     }
 }

@@ -17,6 +17,9 @@ import importlib.util
 _updates_spec = importlib.util.spec_from_file_location("claw_toolbox_updates", Path(__file__).with_name("claw_updates.py"))
 _updates_module = importlib.util.module_from_spec(_updates_spec)
 _updates_spec.loader.exec_module(_updates_module)
+_animation_spec = importlib.util.spec_from_file_location("claw_sleep_animation", Path(__file__).with_name("claw_sleep_animation.py"))
+_animation = importlib.util.module_from_spec(_animation_spec)
+_animation_spec.loader.exec_module(_animation)
 
 TASK = "\\ClawToolbox\\Agent"
 HOME = Path(os.environ.get("LOCALAPPDATA", ".")) / "ClawToolbox"
@@ -24,7 +27,7 @@ BACKUPS = Path(os.environ.get("USERPROFILE", ".")) / "Documents" / "ClawToolbox 
 # What "the toolbox's settings" means for backup, restore and defaults. Hardware restore journals
 # (power-backup, fan-backup, restore.json, osd-*-backup, gamepad.json originals, hidhide-journal)
 # are never touched: they are what puts the machine back the way it was.
-CONFIG = ("settings.json", "power.json", "magpie.json", "magpie-games.json", "rumble.json", "scaling.json",
+CONFIG = ("settings.json", "power.json", "magpie.json", "magpie-games.json", "magpie-game-meta.json", "magpie-presets.json", "lossless.json", "rumble.json", "scaling.json",
           "input-layer/settings.json", "input-layer/layouts")
 CHARGE_STEPS = (0, 60, 80, 90)
 HIBERNATE_STEPS = (0, 1800, 3600, 10800)
@@ -84,6 +87,13 @@ class SystemControl:
 
     async def view(self, gamepad_firmware=None):
         system = await self.call("system_read")
+        animation = await _animation.view()
+        power = system.get("power")
+        if isinstance(power, dict):
+            if power.get("buttonAc") == "nothing" and animation.get("effectiveButtonAc"):
+                power["buttonAc"] = animation["effectiveButtonAc"]
+            if power.get("buttonDc") == "nothing" and animation.get("effectiveButtonDc"):
+                power["buttonDc"] = animation["effectiveButtonDc"]
         try:
             stats = await self.call("stats")
         except RuntimeError:
@@ -119,6 +129,7 @@ class SystemControl:
             "battery": battery, "batteryError": system.get("batteryError"),
             "chargeLimit": system.get("chargeLimit"), "chargeLimitError": system.get("chargeLimitError"),
             "power": system.get("power"), "powerError": system.get("powerError"),
+            "powerAnimation": animation,
             "wakeArmed": system.get("wakeArmed"), "wakeLocked": system.get("wakeArmed") == [],
             "wakeRestore": wake_restore, "wakeError": system.get("wakeError"),
             "device": system.get("device") or {},
@@ -242,7 +253,26 @@ class SystemControl:
     async def set_power_button(self, action):
         if action not in ("sleep", "hibernate", "shutdown"):
             raise ValueError("不支持的电源键动作")
-        await self.call("power_button_set", action=action)
+        state = await _animation.view()
+        if state.get("available"):
+            await _animation.set_action(action)
+        else:
+            await self.call("power_button_set", action=action)
+
+    async def set_sleep_animation(self, enabled):
+        await _animation.set_enabled("suspend", enabled)
+
+    async def set_wake_animation(self, enabled):
+        await _animation.set_enabled("resume", enabled)
+
+    async def set_enhanced_sleep(self, enabled):
+        await _animation.set_enabled("enhanced", enabled)
+
+    async def set_sleep_games(self, enabled):
+        await _animation.set_enabled("sleep_games", enabled)
+
+    async def set_sleep_fingerprint(self, enabled):
+        await _animation.set_enabled("sleep_fingerprint", enabled)
 
     async def set_hibernate_after(self, seconds):
         if seconds not in HIBERNATE_STEPS:

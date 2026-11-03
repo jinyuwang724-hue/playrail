@@ -1,0 +1,732 @@
+--- a/frontend/library-native/ClawLibrary/App.cs
++++ b/frontend/library-native/ClawLibrary/App.cs
+@@ -118,6 +118,7 @@
+     private string _pendingRoute;
+     private LibraryTray? _tray;
+     private bool _exiting;
++    private int _routeRevision;
+ 
+     public MainWindow(string route = "activate", nint returnWindow = 0)
+     {
+@@ -185,8 +186,11 @@
+         CompleteShortcutHide();
+     }
+ 
+-    public void ActivateRoute(string route, nint returnWindow = 0)
+-    {
++    public void ActivateRoute(string route, nint returnWindow = 0) => _ = ActivateOverlayRoute(route, returnWindow);
++
++    private void ActivateRouteCore(string route, nint returnWindow = 0)
++    {
++        ++_routeRevision;
+         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+         bool viaShell = route.EndsWith(App.ViaShell, StringComparison.Ordinal);
+         if (viaShell) route = route[..^App.ViaShell.Length];
+@@ -209,6 +213,7 @@
+             _stage?.OpenQuickPanel(0);
+             return;
+         }
++        if (_overlayActive && !quick && route.StartsWith("minimize-", StringComparison.Ordinal)) { HideShortcutWindow(); return; }
+         if (AppWindow.IsVisible && !ToolboxWindow.IsIconic(hwnd) && route.StartsWith("minimize-", StringComparison.Ordinal) &&
+             ToolboxActivation.ShouldMinimize(route, ToolboxWindow.XboxFseActive(), ToolboxWindow.SteamBigPictureOpen()))
+         {
+@@ -233,13 +238,14 @@
+     /// </summary>
+     private void ShowAfterFrames(string route, int frames)
+     {
++        int revision = _routeRevision;
+         bool shown = false;
+         void Show()
+         {
+             if (shown) return;
+             shown = true;
+             Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnFrame;
+-            ShowShortcutWindow(route);
++            if (revision == _routeRevision && _stage?.QuickPanelOpen == true) ShowShortcutWindow(route);
+         }
+         void OnFrame(object? s, object e) { if (--frames <= 0) Show(); }
+         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += OnFrame;
+@@ -254,9 +260,9 @@
+     {
+         if (!AppWindow.IsVisible) AppWindow.Show(false);
+         _stage?.ResumeFromTray();
+-        ToolboxWindow.Restore(WinRT.Interop.WindowNative.GetWindowHandle(this));
++        if (!_overlayActive) ToolboxWindow.Restore(WinRT.Interop.WindowNative.GetWindowHandle(this));
+         if (!ToolboxActivation.PreservePage(route)) _stage?.ActivateShortcut(_pendingRoute);
+-        _root.Focus(FocusState.Programmatic);
++        if (!_overlayActive) _root.Focus(FocusState.Programmatic);
+     }
+ }
+ 
+--- /dev/null
++++ b/frontend/library-native/ClawLibrary/MainWindow.Overlay.cs
+@@ -0,0 +1,147 @@
++using System.Text.Json.Nodes;
++using ClawLibrary.Data;
++using Microsoft.UI.Dispatching;
++using Microsoft.UI.Windowing;
++
++namespace ClawLibrary;
++
++public sealed partial class MainWindow
++{
++    private readonly SemaphoreSlim _overlayRoutes = new(1, 1);
++    private AgentClient? _overlayAgent;
++    private DispatcherQueueTimer? _overlayTimer;
++    private volatile bool _overlayActive;
++    private nint _overlayTarget;
++    private bool _overlayRenewing;
++    private bool _overlayPresenter;
++
++    private void EnableOverlayPresenter()
++    {
++        if (_overlayPresenter) return;
++        var bounds = new Windows.Graphics.RectInt32(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
++        var presenter = OverlappedPresenter.Create();
++        presenter.SetBorderAndTitleBar(false, false);
++        presenter.IsResizable = false;
++        presenter.IsAlwaysOnTop = true;
++        AppWindow.SetPresenter(presenter);
++        _shortcutWindow?.SetOverlayBounds(bounds);
++        _overlayPresenter = true;
++    }
++
++    internal bool OverlayAcceptsGamepad => _overlayActive && _shortcutVisible && !_shortcutInTray
++        && _shortcutWindow?.OverlayTargetIsForeground == true;
++
++    // The input hold must be acknowledged before showing any UI over a game.
++    private async Task ActivateOverlayRoute(string route, nint returnWindow)
++    {
++        await _overlayRoutes.WaitAsync();
++        try
++        {
++            if (_shortcutClosed) return;
++            bool quick = ToolboxActivation.Target(route.Replace(App.ViaShell, "")) == "control-center";
++            // The game stays foreground, so the router's restore-library route
++            // must still toggle an already visible library overlay closed.
++            if (!quick && _overlayActive && _shortcutVisible && _stage?.QuickPanelOpen != true
++                && route == "restore-library") route = "minimize-library";
++            bool closing = quick ? _stage?.QuickPanelOpen == true
++                : _overlayActive && route.StartsWith("minimize-", StringComparison.Ordinal);
++            nint target = _overlayActive ? _overlayTarget : returnWindow != 0 ? returnWindow : LibraryWindow.Foreground;
++            bool gameMode = Stage.ShellMode.Available && !Stage.ShellMode.ExplorerRunning();
++            bool candidate = gameMode && !closing && LibraryWindow.CanOverlay(target)
++                && LibraryWindow.Foreground == target && !ToolboxWindow.ShellCloaked(WinRT.Interop.WindowNative.GetWindowHandle(this));
++            if (!closing && (candidate || quick) && _overlayAgent == null)
++            {
++                _overlayAgent ??= new AgentClient();
++                try
++                {
++                    await _overlayAgent.Call("refresh_input_layer_apps");
++                    var result = await _overlayAgent.Call("set_overlay_hold", JsonValue.Create(true));
++                    if ((bool?)result?["safe"] != true) throw new InvalidOperationException("输入隔离尚未就绪");
++                    if (_shortcutClosed || (candidate && LibraryWindow.Foreground != target))
++                    {
++                        await _overlayAgent.Call("set_overlay_hold", JsonValue.Create(false));
++                        return;
++                    }
++                    _overlayTarget = candidate ? target : 0;
++                    _overlayActive = candidate;
++                    _shortcutWindow?.SetOverlayTarget(_overlayTarget);
++                    if (candidate) EnableOverlayPresenter();
++                    StartOverlayHeartbeat();
++                    Log.Info($"overlay ready target={target}");
++                }
++                catch (Exception ex)
++                {
++                    Log.Warn($"overlay unavailable; foreground fallback: {ex.Message}");
++                    _overlayAgent.Dispose(); _overlayAgent = null;
++                }
++            }
++            ActivateRouteCore(route, returnWindow);
++        }
++        catch (Exception ex) { Log.Error("overlay route", ex); }
++        finally { _overlayRoutes.Release(); }
++    }
++
++    private void StartOverlayHeartbeat()
++    {
++        _overlayTimer ??= DispatcherQueue.CreateTimer();
++        _overlayTimer.Interval = TimeSpan.FromMilliseconds(500);
++        _overlayTimer.Tick -= OverlayHeartbeat;
++        _overlayTimer.Tick += OverlayHeartbeat;
++        _overlayTimer.Start();
++    }
++
++    private async void OverlayHeartbeat(DispatcherQueueTimer sender, object args)
++    {
++        if (_overlayAgent == null || _overlayRenewing) return;
++        // Explicitly switching to a third app also dismisses the overlay.
++        if (_shortcutWindow?.OverlayTargetIsForeground != true && _shortcutWindow?.IsForeground != true)
++        {
++            _stage?.CloseQuickPanel(hideWindow: false, instant: true);
++            CompleteShortcutHide();
++            return;
++        }
++        _overlayRenewing = true;
++        var client = _overlayAgent!;
++        try
++        {
++            var result = await client.Call("set_overlay_hold", JsonValue.Create(true));
++            if ((bool?)result?["safe"] != true) throw new IOException("input isolation lost");
++        }
++        catch (Exception ex)
++        {
++            if (!ReferenceEquals(client, _overlayAgent)) return;
++            Log.Warn($"overlay heartbeat: {ex.Message}");
++            // Hide before dropping the hold if the input engine has failed.
++            _stage?.CloseQuickPanel(hideWindow: false, instant: true);
++            CompleteShortcutHide();
++        }
++        finally { _overlayRenewing = false; }
++    }
++
++    private void ReleaseOverlay()
++    {
++        _overlayActive = false;
++        _overlayTarget = 0;
++        _overlayTimer?.Stop();
++        _shortcutWindow?.SetOverlayTarget(0);
++        // One connection owns the lease. EOF releases it even during app shutdown;
++        // an old close can never release a newly opened overlay's lease.
++        _overlayAgent?.Dispose(); _overlayAgent = null;
++    }
++
++    private void RestoreOrdinaryPresenter()
++    {
++        // Changing presenter on a minimized window restores and activates it.
++        // Defer this until an ordinary foreground activation is actually wanted.
++        if (_overlayActive || !_overlayPresenter) return;
++        _overlayPresenter = false;
++        AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
++    }
++
++    internal void RequestTextInputFocus()
++    {
++        if (!_overlayActive) return;
++        _shortcutWindow?.SetOverlayTarget(0);
++        LibraryWindow.BringForward(WinRT.Interop.WindowNative.GetWindowHandle(this));
++    }
++}
+--- a/frontend/library-native/ClawLibrary/MainWindow.Shortcut.cs
++++ b/frontend/library-native/ClawLibrary/MainWindow.Shortcut.cs
+@@ -23,6 +23,7 @@
+         _shortcutWindow.RememberReturnWindow(previous);
+         Activated += (_, e) =>
+         {
++            if (_overlayActive) return;
+             if (e.WindowActivationState == WindowActivationState.Deactivated)
+             {
+                 // Foreground may still be in transit during deactivation: re-check once the switch has settled.
+@@ -49,7 +50,7 @@
+     }
+ 
+     /// <summary>A game (or Steam's install dialog) is about to open: let it come in front of the library.</summary>
+-    internal void HandOffForeground() => _shortcutWindow?.HandOffForeground();
++    internal void HandOffForeground() { ReleaseOverlay(); _shortcutWindow?.HandOffForeground(); }
+ 
+     private void StopShortcutTimers()
+     {
+@@ -86,6 +87,7 @@
+             visual.StopAnimation("Opacity"); visual.StopAnimation("Scale");
+             visual.Opacity = 0; visual.Scale = new Vector3(1.02f, 1.02f, 1);
+         }
++        RestoreOrdinaryPresenter();
+         if (!initial) RestoreShortcutContent(route);
+         nint previous = LibraryWindow.Foreground;
+         bool started = entrance is ShortcutEntrance.None or ShortcutEntrance.KeepCurrent;
+@@ -95,6 +97,13 @@
+             started = true;
+             Log.Info($"shortcut show mode={entrance} version={motionVersion}");
+             AnimateShortcut(true, entrance == ShortcutEntrance.Reveal, motionVersion, () => { });
++        }
++        if (_overlayActive)
++        {
++            _shortcutWindow?.ShowOverlay();
++            if (!started) AnimateShortcut(true, entrance == ShortcutEntrance.Reveal, motionVersion, () => { });
++            Log.Info($"shortcut shown without activation target={_overlayTarget}");
++            return;
+         }
+         TryShortcutFocus();
+         StartWhenForeground();
+@@ -151,7 +160,7 @@
+         CancelShortcutTransition(); _shortcutHiding = true;
+         int version = _shortcutVersion;
+         int motionVersion = _shortcutMotion.Hide();
+-        if (_shortcutWindow?.IsForeground != true)
++        if (!_overlayActive && _shortcutWindow?.IsForeground != true)
+         {
+             _shortcutMotion.Cancel(); _stage?.EndShortcutSoftFocus();
+             CompleteShortcutHide(); return;
+@@ -177,6 +186,7 @@
+         if (tray) AppWindow.Hide();
+         else ToolboxWindow.Minimize(WinRT.Interop.WindowNative.GetWindowHandle(this));
+         _stage?.SuspendToTray();
++        ReleaseOverlay();
+         _shortcutHiding = false;
+         ResetShortcutVisual();
+         _shortcutWindow?.ReturnToPreviousWindow(returnFocus);
+@@ -235,6 +245,7 @@
+ 
+     private void DisposeShortcutWindow()
+     {
++        ReleaseOverlay();
+         _shortcutClosed = true; _shortcutMotion.Cancel(); CancelShortcutTransition();
+         _stage?.EndShortcutSoftFocus(); _shortcutWindow?.Dispose();
+     }
+--- a/frontend/library-native/ClawLibrary/Package.appxmanifest
++++ b/frontend/library-native/ClawLibrary/Package.appxmanifest
+@@ -8,7 +8,7 @@
+   IgnorableNamespaces="uap uap3 uap4 rescap">
+ 
+   <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。主页能力由包根目录的 SCCD 配套声明。 -->
+-  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.190.0" />
++  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.196.0" />
+ 
+   <Properties>
+     <DisplayName>Claw 游戏库</DisplayName>
+--- a/frontend/library-native/ClawLibrary/Data/LibraryWindow.cs
++++ b/frontend/library-native/ClawLibrary/Data/LibraryWindow.cs
+@@ -10,6 +10,9 @@
+     private readonly Action<string, nint> _activate;
+     private readonly uint _message;
+     private nint _returnWindow;
++    private nint _overlayTarget;
++    private uint _overlayPid;
++    private Windows.Graphics.RectInt32 _overlayBounds;
+     private uint _returnPid;
+     private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center"];
+ 
+@@ -27,6 +30,8 @@
+ 
+     private nint HandleMessage(nint hwnd, uint message, nuint wp, nint lp, nuint id, nuint data)
+     {
++        if (_overlayTarget != 0 && message == 0x21) return 3; // WM_MOUSEACTIVATE / MA_NOACTIVATE
++        if (_overlayTarget != 0 && message == 0x0245) return 3; // WM_POINTERACTIVATE / PA_NOACTIVATE
+         if (message == 0x112 && (wp & 0xfff0) == 0xf020 && IsWindowVisible(hwnd) && !ToolboxWindow.IsIconic(hwnd)) // WM_SYSCOMMAND / SC_MINIMIZE
+         {
+             try { _activate("minimize-library", 0); }
+@@ -41,6 +46,50 @@
+             return 0;
+         }
+         return DefSubclassProc(hwnd, message, wp, lp);
++    }
++
++    public static bool CanOverlay(nint window)
++    {
++        if (window == 0 || !IsWindowVisible(window) || ToolboxWindow.IsIconic(window)) return false;
++        GetWindowThreadProcessId(window, out uint pid);
++        if (pid == (uint)Environment.ProcessId) return false;
++        try
++        {
++            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
++            return p.ProcessName is not ("explorer" or "ClawShell" or "steam" or "steamwebhelper" or "GameBar" or "ClawWidget");
++        }
++        catch { return false; }
++    }
++
++    public bool OverlayTargetIsForeground => _overlayTarget != 0 && Foreground == _overlayTarget
++        && GetWindowThreadProcessId(_overlayTarget, out uint pid) != 0 && pid == _overlayPid;
++
++    public void SetOverlayTarget(nint target)
++    {
++        _overlayTarget = target;
++        GetWindowThreadProcessId(target, out _overlayPid);
++        long style = GetWindowLongPtr(_window, -20).ToInt64();
++        SetWindowLongPtr(_window, -20, (nint)(target != 0 ? style | 0x08000000L : style & ~0x08000000L));
++    }
++
++    public void SetOverlayBounds(Windows.Graphics.RectInt32 bounds)
++    {
++        _overlayBounds = bounds;
++        // OverlappedPresenter retains a nonclient edge even with its title bar
++        // disabled. Remove it so client pixels still cover the full monitor.
++        long style = GetWindowLongPtr(_window, -16).ToInt64();
++        SetWindowLongPtr(_window, -16, (nint)(style & ~0x00C40000L));
++        long extended = GetWindowLongPtr(_window, -20).ToInt64();
++        SetWindowLongPtr(_window, -20, (nint)(extended & ~0x300L));
++        SetWindowPos(_window, -1, bounds.X, bounds.Y, bounds.Width, bounds.Height, 0x230);
++    }
++
++    public void ShowOverlay()
++    {
++        ShowWindow(_window, 4); // SW_SHOWNOACTIVATE (also restores from minimized)
++        if (_overlayBounds.Width > 0) SetOverlayBounds(_overlayBounds);
++        bool shown = SetWindowPos(_window, -1, 0, 0, 0, 0, 0x253); // NOOWNERZORDER | NOACTIVATE | SHOWWINDOW | NOMOVE | NOSIZE
++        Log.Info($"overlay show topmost={shown} style={GetWindowLongPtr(_window, -20).ToInt64():X}");
+     }
+ 
+     public static nint Foreground => GetForegroundWindow();
+@@ -59,7 +108,7 @@
+     {
+         bool current = (GetWindowLongPtr(_window, -20).ToInt64() & 0x8) != 0;
+         if (current == on) return false;
+-        SetWindowPos(_window, on ? -1 : -2, 0, 0, 0, 0, 0x13);
++        SetWindowPos(_window, on ? -1 : -2, 0, 0, 0, 0, 0x213);
+         if (!on) StayBehindForeground();
+         return true;
+     }
+@@ -73,7 +122,7 @@
+         nint fg = Foreground;
+         if (fg == 0 || fg == _window || !IsWindowVisible(fg) || (GetWindowLongPtr(fg, -20).ToInt64() & 0x8) != 0) return;
+         if ((GetWindowLongPtr(_window, -20).ToInt64() & 0x8) != 0) return;
+-        SetWindowPos(_window, fg, 0, 0, 0, 0, 0x13);
++        SetWindowPos(_window, fg, 0, 0, 0, 0, 0x213);
+     }
+ 
+     /// <summary>Before handing a launch to Steam / a game: no topmost, and whoever opens the game window may take foreground.</summary>
+@@ -131,6 +180,7 @@
+     [DllImport("user32.dll")] private static extern nint SetFocus(nint hwnd);
+     [DllImport("user32.dll")] private static extern bool BringWindowToTop(nint hwnd);
+     [DllImport("user32.dll")] private static extern bool SetWindowPos(nint hwnd, nint after, int x, int y, int w, int h, uint flags);
++    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
+     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern nint GetWindowLongPtr(nint hwnd, int index);
+     [DllImport("user32.dll")] private static extern bool IsWindow(nint hwnd);
+     [DllImport("user32.dll")] private static extern bool IsWindowVisible(nint hwnd);
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.AddGame.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.AddGame.cs
+@@ -280,7 +280,7 @@
+         _stSecretBox ??= CreateSecretBox();
+         _stSecretBox.Password = "";
+         PositionInlineInput(_stSecretBox, done);
+-        _dq.TryEnqueue(() => { if (_stSecretBox.Visibility == Visibility.Visible) _stSecretBox.Focus(FocusState.Programmatic); });
++        _dq.TryEnqueue(() => { if (_stSecretBox.Visibility == Visibility.Visible) { (_window as MainWindow)?.RequestTextInputFocus(); _stSecretBox.Focus(FocusState.Programmatic); } });
+     }
+ 
+     // All settings inputs share the existing inline editor's type, colours and placement.
+@@ -407,6 +407,7 @@
+         _dq.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+         {
+             if (!stillWanted() || box.Visibility != Visibility.Visible) return;
++            (_window as MainWindow)?.RequestTextInputFocus();
+             box.Focus(FocusState.Programmatic);
+             box.SelectAll();
+         });
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.cs
+@@ -282,7 +282,7 @@
+ 
+     private bool IsForeground()
+     {
+-        return (_window as MainWindow)?.AcceptsGamepad != false && !ToolboxWindow.IsIconic(_windowHandle) && GetForegroundWindow() == _windowHandle;
++        return (_window as MainWindow)?.AcceptsGamepad != false && !ToolboxWindow.IsIconic(_windowHandle) && (GetForegroundWindow() == _windowHandle || (_window as MainWindow)?.OverlayAcceptsGamepad == true);
+     }
+ 
+     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.QuickPanel.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.QuickPanel.cs
+@@ -109,6 +109,7 @@
+     /// <summary>窗口出来之前调用：把游戏画面先铺满（第一帧就是游戏，不闪墙面 / 黑底），面板从左边外面开始滑。</summary>
+     internal void OpenQuickPanel(nint returnWindow)
+     {
++        ExitScreensaver(); MarkInput();
+         EnsureQsVisuals();
+         bool again = _qsOpen;
+         _qsOpen = true;
+@@ -131,7 +132,7 @@
+             }
+             _qsShow = 0;
+             if (_ccOpen) CloseControlCenter();
+-            _ = QsHold(true);
++            // The owning window acquires the input/OSD lease before showing.
+         }
+         _qsShowTo = 1;
+         // 有游戏画面时底下铺黑（缩略图盖住右边）；没有（在游戏库里按的）就压暗当前画面
+@@ -157,7 +158,7 @@
+         if (!_qsOpen || _qs == null) return;
+         _qsOpen = false;
+         _qsPoll?.Stop();
+-        _ = QsHold(false);
++        // Keep the lease through the complete close animation.
+         if (_qsEditing) { _qsEditing = false; QsSaveTiles(); }
+         _qsHideWindowAfter = hideWindow;
+         Cue(Sfx.MenuOut);
+@@ -189,7 +190,7 @@
+         if (_qs == null) return;
+         bool hide = _qsHideWindowAfter;
+         _qsHideWindowAfter = false;
+-        if (hide && _qsGame != 0) LibraryWindow.BringForward(_qsGame);
++        if (hide && _qsGame != 0 && (_window as MainWindow)?.OverlayAcceptsGamepad != true) LibraryWindow.BringForward(_qsGame);
+         if (hide) (_window as MainWindow)?.HideAfterQuickPanel();
+         // 窗口收起之后再拆缩略图，免得最后一帧露出黑底
+         After(hide ? 260 : 0, () =>
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.Rail.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.Rail.cs
+@@ -635,6 +635,7 @@
+         _searchFocus = 1;
+         _railFocused = true;
+         PlaceSearchBox();
++        (_window as MainWindow)?.RequestTextInputFocus();
+         _searchBox.Focus(FocusState.Programmatic);
+         RepaintRail();
+     }
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.Screensaver.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.Screensaver.cs
+@@ -46,7 +46,7 @@
+         _screensaverTimer.Start();
+     }
+ 
+-    private bool ScreensaverBlocked => _stack.Count == 0 || _ccOpen || MorphBusy || _searchOpen || _backgroundSettingsOpen
++    private bool ScreensaverBlocked => _stack.Count == 0 || _qsOpen || _ccOpen || MorphBusy || _searchOpen || _backgroundSettingsOpen
+         || _railModel.SettingsOpen || _drag != null || PanVelocity != Vector2.Zero
+         || _pad?.Panning == true || NowMs < _wallBusyUntil || NowMs < _screensaverPauseUntil;
+ 
+--- a/plugin/claw_agent.py
++++ b/plugin/claw_agent.py
+@@ -217,6 +217,9 @@
+         self.tasks = set()
+         self.closed = False
+         self.service = service_factory(self.emit)
++        self.overlay_holds = {}
++        self.overlay_lock = asyncio.Lock()
++        self.overlay_watch = None
+ 
+     async def emit(self, event, value):
+         message = {"event": event, "value": value}
+@@ -233,7 +236,37 @@
+         # A suspended renderer must not stop hardware replies or updates to other clients.
+         await asyncio.gather(*(send(connection) for connection in list(self.connections)))
+ 
++    async def overlay_hold(self, connection, on):
++        if type(on) is not bool:
++            raise ValueError("叠加层状态格式错误")
++        async with self.overlay_lock:
++            if on:
++                if connection not in self.connections:
++                    raise RuntimeError("界面已断开")
++                try:
++                    result = await self.service.set_overlay_hold(True)
++                except Exception:
++                    self.overlay_holds.pop(connection, None)
++                    raise
++                self.overlay_holds[connection] = time.monotonic() + 8
++                return result
++            self.overlay_holds.pop(connection, None)
++            if not self.overlay_holds:
++                return await self.service.set_overlay_hold(False)
++            return {"held": True, "safe": True}
++
++    async def expire_overlay_holds(self):
++        while not self.stopped.is_set():
++            await asyncio.sleep(1)
++            async with self.overlay_lock:
++                expired = [c for c, deadline in self.overlay_holds.items() if deadline <= time.monotonic()]
++                for c in expired:
++                    self.overlay_holds.pop(c, None)
++                if expired and not self.overlay_holds:
++                    await self.service.set_overlay_hold(False)
++
+     async def start(self, port=0):
++        self.overlay_watch = asyncio.create_task(self.expire_overlay_holds())
+         self.server = await asyncio.start_server(self.handle, "127.0.0.1", port, limit=MAX_LINE)
+         port = self.server.sockets[0].getsockname()[1]
+         self.ws_server = await asyncio.start_server(self.handle_ws, "127.0.0.1", 0, limit=MAX_LINE)
+@@ -302,6 +335,8 @@
+         finally:
+             if connection in self.connections:
+                 self.connections.discard(connection)
++                if connection in self.overlay_holds:
++                    await self.overlay_hold(connection, False)
+                 logging.info("Front end disconnected: %s", connection.name)
+                 if connection.frontends:
+                     await self.service.frontend_gone(connection.frontends)
+@@ -317,6 +352,10 @@
+             elif method == "shutdown":
+                 self.stopped.set()
+                 result = {"stopping": True}
++            elif method == "set_overlay_hold":
++                if len(args) != 1:
++                    raise ValueError("叠加层参数错误")
++                result = await self.overlay_hold(connection, args[0])
+             elif method in METHODS:
+                 result = await getattr(self.service, method)(*args)
+                 if method == "frontend_ready" and len(args) >= 2 and isinstance(args[1], str):
+@@ -342,6 +381,8 @@
+             return
+         self.closed = True
+         self.stopped.set()
++        if self.overlay_watch:
++            self.overlay_watch.cancel()
+         for server in (self.server, self.ws_server):
+             if server:
+                 server.close()
+--- a/plugin/claw_input_layer.py
++++ b/plugin/claw_input_layer.py
+@@ -658,6 +658,9 @@
+     @property
+     def exe(self):
+         version = json.loads((self._root / "plugin.json").read_text(encoding="utf-8"))["version"]
++        overlay = self._root / "bin" / ("ClawInput-" + version + "-overlay-r2.exe")
++        if overlay.is_file():
++            return overlay
+         enhanced = self._root / "bin" / ("ClawInput-" + version + "-enhanced-sleep.exe")
+         if enhanced.is_file():
+             return enhanced
+@@ -672,15 +675,30 @@
+         # while the game stays in the foreground (a backgrounded game pauses rendering).
+         return self.desktop or layouts_bind_buttons(self.layouts.all()) or shell_game_mode()
+ 
+-    async def set_hold(self, exe):
+-        """Quick panel open over the foreground game (or released with None)."""
+-        self._hold = exe.lower() if exe else None
+-        if self._hold and self._phase != "active":
+-            await self.reconcile("quick panel")
++    async def set_hold(self, value):
++        """All virtual output is held, regardless of foreground changes."""
++        value = bool(value)
++        if value and self._phase != "active":
++            await self.reconcile("overlay")
+         async with self._lock:
++            if value and (self._phase != "active" or self._process is None):
++                raise RuntimeError("输入层未就绪，无法隔离游戏手柄")
++            changed = bool(self._hold) != value
++            self._hold = "overlay" if value else None
+             if self._phase == "active" and self._process is not None:
+-                await self._call("configure", **self._configure_args())
+-        return {"held": self._hold, "layer": self._phase}
++                if changed:
++                    await self._call("configure", **self._configure_args())
++                for attempt in range(20):
++                    status = (await self._call("status")).get("status", {})
++                    if not value or status.get("overlayHeld"):
++                        break
++                    await asyncio.sleep(.01)
++                if value and not (status.get("overlayHeld") and status.get("hidhide", {}).get("cloak")
++                                  and status.get("hidhide", {}).get("hidden")
++                                  and status.get("virtualPad", {}).get("plugged")
++                                  and status.get("pad", {}).get("connected")):
++                    raise RuntimeError("输入层未确认游戏手柄已归零")
++        return {"held": value, "layer": self._phase, "safe": value and self._phase == "active"}
+ 
+     def can_translate(self):
+         return self._spawn != self._spawn_engine or hidhide_available()
+@@ -913,7 +931,8 @@
+         return {"layouts": {"global": self._compiled_desktop() if self.desktop else compile_layout(layouts["global"]),
+                             "games": {} if self.desktop else {game: compile_layout(layout) for game, layout in layouts["games"].items()}},
+                 "desktop": self.desktop,
+-                "notGames": self._not_games + ([self._hold] if self._hold else []),
++                "notGames": self._not_games,
++                "overlayHold": bool(self._hold),
+                 "whitelist": ([self._python] if self._python else []) + list(self._extra_apps() if self._extra_apps else []),
+                 "pollHz": self._settings["pollHz"]}
+ 
+--- a/plugin/claw_service.py
++++ b/plugin/claw_service.py
+@@ -806,19 +806,18 @@
+         return await self.get_gamepad_state()
+ 
+     async def set_overlay_hold(self, on):
+-        """Quick panel over a game, without taking the foreground: the game keeps rendering, the virtual pad
+-        rests at zero for it and the fixed performance display steps aside until released."""
++        """Lease owner is tracked by the agent connection, including EOF/expiry."""
+         if type(on) is not bool:
+             raise ValueError("叠加层状态格式错误")
+-        if self._stopping:
+-            raise RuntimeError("工具箱后台正在退出，请稍候")
+-        exe = await asyncio.to_thread(_input_module.foreground_exe) if on else None
+         self._power.overlay.suppressed = on
+-        if on:
+-            await self._power.overlay.close()
+-        result = await self._input.set_hold(exe)
+-        logging.info("Quick panel hold %s (%s)", on, exe)
+-        return result
++        try:
++            if on:
++                await self._power.overlay.close()
++            return await self._input.set_hold(on)
++        except Exception:
++            self._power.overlay.suppressed = False
++            await self._input.set_hold(False)
++            raise
+ 
+     async def set_gamepad_mode(self, mode, notify=True):
+         # notify=False: a temporary switch (the game library in front), no mode notice.
+--- /dev/null
++++ b/native/InputLayer/OverlayInputGate.cs
+@@ -0,0 +1,19 @@
++namespace ClawInput {
++    // Keep output neutral through the close animation and until the dismissing
++    // button/stick has been released. The physical pad remains readable by UI.
++    public sealed class OverlayInputGate {
++        bool waiting;
++        public bool Waiting { get { return waiting; } }
++        public bool Block(bool held, InputFrame frame) {
++            if (held) waiting = true;
++            else if (waiting && Neutral(frame)) waiting = false;
++            return held || waiting;
++        }
++        static bool Neutral(InputFrame frame) {
++            foreach (bool down in frame.Pressed) if (down) return false;
++            return frame.LT < 30 && frame.RT < 30
++                && System.Math.Abs((int)frame.LX) < 8000 && System.Math.Abs((int)frame.LY) < 8000
++                && System.Math.Abs((int)frame.RX) < 8000 && System.Math.Abs((int)frame.RY) < 8000;
++        }
++    }
++}
+--- a/native/InputLayer/Program.cs
++++ b/native/InputLayer/Program.cs
+@@ -224,6 +224,8 @@
+         volatile Script script, finished;
+         volatile bool rescanDevices;
+         bool highRes;
++        volatile bool overlayHold, overlayHeld;
++        volatile int configRevision;
+ 
+         public Host(string dataDir, StreamWriter writer) {
+             this.dataDir = dataDir; this.writer = writer; journalPath = Program.JournalPath(dataDir);
+@@ -290,6 +292,8 @@
+             if (c.ContainsKey("pollHz")) pollHz = Math.Max(250, Math.Min(1000, Convert.ToInt32(c["pollHz"])));
+             global = nextGlobal; games = nextGames; notGames = names; extraApps = extra;
+             desktop = c.ContainsKey("desktop") && true.Equals(c["desktop"]);
++            overlayHold = c.ContainsKey("overlayHold") && Convert.ToBoolean(c["overlayHold"]);
++            Interlocked.Increment(ref configRevision);
+             layoutName = ""; // re-pick the layout on the next tick
+         }
+ 
+@@ -461,6 +465,9 @@
+             uint lastPacket = 0;
+             double nextScan = 0, nextForeground = 0;
+             Layout active = null;
++            var overlayGate = new OverlayInputGate();
++            int seenConfig = -1;
++            bool blockedBefore = false;
+             using (var sleep = new EnhancedSleepGate())
+             using (var ticker = new Ticker(pollHz)) {
+                 highRes = ticker.HighResolution;
+@@ -470,7 +477,8 @@
+                     if (!running) break;
+                     double now = Now();
+                     try { heartbeat.Write(0, Win.UnbiasedMs()); } catch { }
+-                    if (now >= nextForeground) {
++                    if (now >= nextForeground || seenConfig != configRevision) {
++                        seenConfig = configRevision;
+                         nextForeground = now + 100;
+                         foreground.Refresh();
+                         string name;
+@@ -506,11 +514,16 @@
+                     // Outside games the virtual pad rests at zero: Steam, the game library, Game Bar read the
+                     // real pad themselves (they are whitelisted), and a mirrored copy would get Steam's desktop
+                     // configuration on top (left stick moving the mouse).
+-                    var report = active == null ? new PadReport() : translator.Update(frame, now, events);
++                    bool held = overlayHold;
++                bool blocked = overlayGate.Block(held, frame);
++                if (blocked && !blockedBefore) translator.ReleaseAll(events);
++                blockedBefore = blocked;
++                var report = blocked || active == null ? new PadReport() : translator.Update(frame, now, events);
+                     bool wrote = false, typed = false;
+                     if (!sentOnce || !report.Same(last)) {
+                         if (pad != null && pad.Send(report)) { last = report; sentOnce = true; wrote = true; sent++; }
+                     }
++                    overlayHeld = held && sentOnce && last.Same(new PadReport());
+                     long padDone = Stopwatch.GetTimestamp();
+                     if (events.Count > 0) {
+                         if (s != null) foreach (var e in events) s.Timeline.Add(new Dictionary<string, object> { { "t", Math.Round(now - s.Start, 1) }, { "qpcMs", Math.Round(now, 3) }, { "event", e.ToString() } });
+@@ -572,7 +585,7 @@
+                 { "pad", new Dictionary<string, object> { { "connected", padIndex >= 0 }, { "index", padIndex }, { "packetHz", Math.Round(packetHz) } } },
+                 { "virtualPad", new Dictionary<string, object> { { "plugged", pad != null }, { "serial", pad == null ? 0 : (int)pad.Serial }, { "index", virtualIndex },
+                     { "reports", pad == null ? 0 : pad.Submitted }, { "failed", pad == null ? 0 : pad.Failed }, { "rumbleRequests", pad == null ? 0 : pad.RumbleRequests } } },
+-                { "foreground", foreground.Name }, { "layout", layoutName },
++                { "foreground", foreground.Name }, { "layout", layoutName }, { "overlayHeld", overlayHeld },
+                 { "hidhide", new Dictionary<string, object> { { "cloak", cloak }, { "hidden", devices }, { "apps", apps }, { "blacklist", black }, { "whitelist", white }, { "reapplied", reapplied } } },
+                 { "latency", latency.Snapshot() }, { "keyLatency", keyLatency.Snapshot() }, { "testLatency", testLatency.Snapshot() }, { "xinputSlots", slots }, { "loopHz", Math.Round(loopHz) }, { "highResolutionTimer", highRes }, { "pollHz", pollHz },
+                 { "backKeys", new Dictionary<string, object> { { "hooked", h != null && h.Error == null }, { "m1", h != null && h.M1 }, { "m2", h != null && h.M2 }, { "swallowed", h == null ? 0 : h.Swallowed } } },

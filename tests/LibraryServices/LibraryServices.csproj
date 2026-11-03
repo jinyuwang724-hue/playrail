@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows10.0.22621.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="../../frontend/library-native/ClawLibrary/Assets/ClawIcon.ico" Link="Assets/ClawIcon.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/Log.cs" Link="Log.cs" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/LibraryTray.cs" Link="LibraryTray.cs" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/Stage/UiPrefs.cs" Link="UiPrefs.cs" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/Data/Steam.cs" Link="Steam.cs" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/Data/XboxGames.cs" Link="XboxGames.cs" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/Data/PlatformClients.cs" Link="PlatformClients.cs" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/Data/Library.cs" Link="Library.cs" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/Data/LocalGames.cs" Link="LocalGames.cs" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/Data/FolderGames.cs" Link="FolderGames.cs" />
+  </ItemGroup>
+</Project>

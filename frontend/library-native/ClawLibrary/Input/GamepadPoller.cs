@@ -3,6 +3,7 @@
 // X 切换标题样式，Y 游戏设置（占位；控制中心里 = 设为主页），≡ 开关控制中心，视图键开性能读数。只在本窗口在前台时响应。
 using System.Numerics;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using ClawLibrary.Engine;
 using ClawLibrary.Stage;
 using Microsoft.UI.Dispatching;
@@ -44,6 +45,10 @@ public sealed unsafe class GamepadPoller : IDisposable
     private readonly Func<bool> _foreground;
     private Thread? _thread;
     private volatile bool _stop;
+    private readonly EventWaitHandle _sleepStop = new(false, EventResetMode.ManualReset);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern SafeWaitHandle OpenEventW(uint access, bool inherit, string name);
+    [DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(SafeWaitHandle handle, uint milliseconds);
+    [DllImport("kernel32.dll")] private static extern uint WaitForMultipleObjects(uint count, nint[] handles, bool all, uint milliseconds);
     private readonly Dictionary<Direction, long> _held = new();
     private ushort _prev;
     private int _index = -1;
@@ -82,7 +87,7 @@ public sealed unsafe class GamepadPoller : IDisposable
         _wasPanning = Panning;
     }
 
-    private void Post(Action a) => _dq.TryEnqueue(() => { try { a(); } catch (Exception ex) { Log.Error("pad action", ex); } });
+    private void Post(Action a) => _dq.TryEnqueue(() => { try { if (!_stop && _foreground()) a(); } catch (Exception ex) { Log.Error("pad action", ex); } });
 
     private void Loop()
     {
@@ -90,6 +95,9 @@ public sealed unsafe class GamepadPoller : IDisposable
         long last = 0;
         bool fg = true;
         long nextFg = 0;
+        SafeWaitHandle? awake = null; long nextSleepCheck = 0;
+        try
+        {
         while (!_stop)
         {
             long now = clock.ElapsedMilliseconds;
@@ -97,7 +105,19 @@ public sealed unsafe class GamepadPoller : IDisposable
             last = now;
             try
             {
-                if (now >= nextFg) { fg = _foreground(); nextFg = now + 250; }
+                if (awake == null && now >= nextSleepCheck)
+                {
+                    nextSleepCheck = now + 2000;
+                    var candidate = OpenEventW(0x100000, false, @"Global\ClawEnhancedSleep.Awake-" + System.Diagnostics.Process.GetCurrentProcess().SessionId);
+                    if (candidate.IsInvalid) candidate.Dispose(); else awake = candidate;
+                }
+                if (awake != null && WaitForSingleObject(awake, 0) == 258)
+                {
+                    Release(dt);
+                    WaitForMultipleObjects(2, [awake.DangerousGetHandle(), _sleepStop.SafeWaitHandle.DangerousGetHandle()], false, 1000);
+                    continue;
+                }
+                if (now >= nextFg) { fg = _foreground(); nextFg = now + 16; }
                 XInputState st;
                 bool ok = false;
                 if (_index >= 0) ok = XInputGetState((uint)_index, &st) == 0;
@@ -119,6 +139,8 @@ public sealed unsafe class GamepadPoller : IDisposable
             catch (Exception ex) { Log.Error("gamepad", ex); Thread.Sleep(500); }
             Thread.Sleep(4);
         }
+        }
+        finally { awake?.Dispose(); }
     }
 
     private void Release(double dt)
@@ -192,6 +214,7 @@ public sealed unsafe class GamepadPoller : IDisposable
     public void Dispose()
     {
         _stop = true;
+        _sleepStop.Set();
         _thread?.Join(200);
     }
 }

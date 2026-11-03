@@ -54,22 +54,23 @@ public sealed partial class App : Application, Microsoft.UI.Xaml.Markup.IXamlMet
             if (StartupNote != null) Log.Info(StartupNote);
             Log.Info($"start pid={Environment.ProcessId} packaged={Packaged} args=[{string.Join(' ', Program.Args)}] since-process-start={SinceProcessStartMs():F0}ms");
             _ = Task.Run(Stage.TextKit.Warm);
-            _window = new MainWindow(ActivationRoute(Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs().Data));
+            var initial = ActivationRoute(Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs().Data);
+            _window = new MainWindow(initial.Route, initial.ReturnWindow);
             _window.Activate();
-            ToolboxWindow.SteamHomeRedirect(ActivationRoute(Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs().Data), WinRT.Interop.WindowNative.GetWindowHandle(_window));
+            ToolboxWindow.SteamHomeRedirect(initial.Route, WinRT.Interop.WindowNative.GetWindowHandle(_window));
             var dq = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
             Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += (_, activation) =>
             {
                 // Copy the WinRT activation payload on the callback thread; only a managed route crosses into the UI queue.
-                string route;
+                (string Route, nint ReturnWindow) route;
                 try { route = ActivationRoute(activation.Data); }
-                catch (Exception ex) { Log.Error("read activation", ex); route = "activate"; }
+                catch (Exception ex) { Log.Error("read activation", ex); route = ("activate", 0); }
                 if (!dq.TryEnqueue(() =>
                 {
                     try
                     {
                         Log.Info($"re-activated: {route}");
-                        (_window as MainWindow)?.ActivateRoute(route);
+                        (_window as MainWindow)?.ActivateRoute(route.Route, route.ReturnWindow);
                     }
                     catch (Exception ex) { Log.Error("route activation", ex); }
                 })) Log.Warn("activation queue unavailable");
@@ -88,11 +89,11 @@ public sealed partial class App : Application, Microsoft.UI.Xaml.Markup.IXamlMet
         catch { return -1; }
     }
 
-    private static string ActivationRoute(object data)
+    private static (string Route, nint ReturnWindow) ActivationRoute(object data)
     {
         if (data is Windows.ApplicationModel.Activation.IProtocolActivatedEventArgs protocol && protocol.Uri.Scheme == "claw-library")
-            return ToolboxActivation.IsRoute(protocol.Uri.Host) ? protocol.Uri.Host : "activate";
-        return "activate";
+            return (ToolboxActivation.IsRoute(protocol.Uri.Host) ? protocol.Uri.Host : "activate", ToolboxActivation.ReturnWindow(protocol.Uri.Query));
+        return ("activate", 0);
     }
 
     private static bool DetectPackaged()
@@ -107,8 +108,10 @@ public sealed partial class MainWindow : Window
     private readonly RootElement _root;
     private WallStage? _stage;
     private string _pendingRoute;
+    private LibraryTray? _tray;
+    private bool _exiting;
 
-    public MainWindow(string route = "activate")
+    public MainWindow(string route = "activate", nint returnWindow = 0)
     {
         _pendingRoute = route;
         Title = "Claw 游戏库";
@@ -131,36 +134,71 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex) { Log.Warn($"window presenter: {ex.Message}"); }
 
+        InitializeShortcutWindow(returnWindow);
+
+        try
+        {
+            _tray = new LibraryTray(WinRT.Interop.WindowNative.GetWindowHandle(this),
+                () => ActivateRoute("restore-library"), ExitLibrary);
+            _tray.EnsureIcon();
+        }
+        catch (Exception ex) { Log.Warn($"tray init: {ex.Message}"); }
+        AppWindow.Closing += (_, e) =>
+        {
+            if (!_exiting && UiPrefs.Load().BackgroundRun && _tray?.EnsureIcon() == true)
+            {
+                e.Cancel = true;
+                RunInBackground();
+            }
+        };
+
         _root.Loaded += (_, _) =>
         {
             try
             {
                 _stage = new WallStage(_root, this);
+                _stage.StartupShieldRequested = _pendingRoute == "activate";
                 _stage.Start();
                 _stage.ActivateShortcut(ToolboxActivation.Target(_pendingRoute));
+                if (_pendingRoute != "activate") ShowShortcutWindow(_pendingRoute, initial: true);
             }
             catch (Exception ex) { Log.Error("stage start", ex); }
         };
-        Closed += (_, _) => { _stage?.Dispose(); Log.Info("closed"); };
+        Closed += (_, _) => { DisposeShortcutWindow(); _tray?.Dispose(); _stage?.Dispose(); Log.Info("closed"); };
     }
 
-    public void ActivateRoute(string route)
+    public void ExitLibrary() { _exiting = true; Close(); }
+
+    public void RunInBackground()
+    {
+        CancelShortcutTransition();
+        _shortcutMotion.Cancel();
+        _stage?.EndShortcutSoftFocus();
+        CompleteShortcutHide();
+    }
+
+    public void ActivateRoute(string route, nint returnWindow = 0)
     {
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         if (ToolboxWindow.SteamHomeRedirect(route, hwnd)) return;
-        if (route.StartsWith("minimize-", StringComparison.Ordinal) &&
+        if (AppWindow.IsVisible && !ToolboxWindow.IsIconic(hwnd) && route.StartsWith("minimize-", StringComparison.Ordinal) &&
             ToolboxActivation.ShouldMinimize(route, ToolboxWindow.XboxFseActive(), ToolboxWindow.SteamBigPictureOpen()))
         {
-            ToolboxWindow.Minimize(hwnd);
-            Log.Info($"Claw shortcut minimize: iconic={ToolboxWindow.IsIconic(hwnd)}");
+            HideShortcutWindow();
             return;
         }
+        _shortcutWindow?.RememberReturnWindow(returnWindow);
         _pendingRoute = ToolboxActivation.Target(route);
-        ToolboxWindow.Restore(hwnd);
-        Activate();
+        ShowShortcutWindow(route);
+    }
+
+    private void RestoreShortcutContent(string route)
+    {
+        if (!AppWindow.IsVisible) AppWindow.Show(false);
+        _stage?.ResumeFromTray();
+        ToolboxWindow.Restore(WinRT.Interop.WindowNative.GetWindowHandle(this));
         if (!ToolboxActivation.PreservePage(route)) _stage?.ActivateShortcut(_pendingRoute);
         _root.Focus(FocusState.Programmatic);
-        Log.Info($"shortcut window shown: {route}, iconic={ToolboxWindow.IsIconic(hwnd)}");
     }
 }
 

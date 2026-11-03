@@ -1,0 +1,15 @@
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\bin\Release\net9.0\StartupVisibility.exe
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\bin\Release\net9.0\StartupVisibility.deps.json
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\bin\Release\net9.0\StartupVisibility.runtimeconfig.json
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\bin\Release\net9.0\StartupVisibility.dll
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\bin\Release\net9.0\StartupVisibility.pdb
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\obj\Release\net9.0\StartupVisibility.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\obj\Release\net9.0\StartupVisibility.AssemblyInfoInputs.cache
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\obj\Release\net9.0\StartupVisibility.AssemblyInfo.cs
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\obj\Release\net9.0\StartupVisibility.csproj.CoreCompileInputs.cache
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\obj\Release\net9.0\StartupVisibility.sourcelink.json
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\obj\Release\net9.0\StartupVisibility.dll
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\obj\Release\net9.0\refint\StartupVisibility.dll
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\obj\Release\net9.0\StartupVisibility.pdb
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\obj\Release\net9.0\StartupVisibility.genruntimeconfig.cache
+C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\tests\StartupVisibility\obj\Release\net9.0\ref\StartupVisibility.dll

@@ -22,6 +22,7 @@ public sealed partial class WallStage
     {
         public string Title = "";
         public string Value = "";
+        public float Indent; // Optional child-row indentation; used by the system-page pilot.
         public string[]? Choices;
         public int Choice = -1;
         public bool Section, Disabled, Numeric;
@@ -226,6 +227,13 @@ public sealed partial class WallStage
         catch (Exception ex) { Toast($"没有改成：{ex.Message}"); }
     }
 
+    private async Task PerfRestoreEcore()
+    {
+        if (_agent == null) return;
+        try { PerfApplyView(await _agent.Call("restore_ecore"), fromSave: true); Toast("已恢复首次修改前的核心设置，修改后需重启生效"); }
+        catch (Exception ex) { Toast($"没有恢复：{ex.Message}"); }
+    }
+
     // ---------------- 读设置的小工具 ----------------
 
     private static int Int(JsonNode? n, int fallback = 0) => n is JsonValue v && v.TryGetValue(out int i) ? i : n is JsonValue d && d.TryGetValue(out double x) ? (int)Math.Round(x) : fallback;
@@ -331,24 +339,31 @@ public sealed partial class WallStage
         int[] freqs = (_perfView?["limits"]?["freq"] as JsonArray)?.Select(n => Int(n)).ToArray() is { Length: > 0 } fq ? fq : new[] { 0, 1500, 2000, 2500, 2750, 3000, 3500, 4000 };
         bool manual = mode == "manual";
         int freq = manual ? Int(s["manual"]!["freq"]) : Int(s[PerfCharger ? "ac" : "dc"]!["freq"]);
-        _perfRows.Add(autoMode ? Info("CPU 频率", "不限频 · 按负载运行") : List("固定 CPU 频率", freqs, freq, Ghz, f =>
+        _perfRows.Add(autoMode ? Info("CPU 频率", "不限频") : List("固定 CPU 频率", freqs, freq, Ghz, f =>
         {
             if (manual) s["manual"]!["freq"] = f; else { s["ac"]!["freq"] = f; s["dc"]!["freq"] = f; }
             PerfChanged();
         }, !on));
-        bool ecore = Bool(_perfView?["ecore"]?["enabled"]), pending = Bool(_perfView?["ecore"]?["pending"]);
-        var er = Choice("模拟全核心 E 核", new[] { "关", "开" }, ecore ? 1 : 0, i => _ = PerfSetEcore(i == 1));
-        er.Value = pending ? "重启后生效" : "";
+        bool ecore = Bool(_perfView?["ecore"]?["enabled"]);
+        bool ecoreUnavailable = _perfView?["ecore"]?["supported"]?.GetValue<bool>() == false;
+        var er = Choice("模拟全核心 E 核", new[] { "关", "开" }, ecore ? 1 : 0, i => _ = PerfSetEcore(i == 1), ecoreUnavailable);
+        er.Value = Str(_perfView?["ecore"]?["status"]) ?? "修改后需重启";
         _perfRows.Add(er);
+        if (Bool(_perfView?["ecore"]?["partial"])) _perfRows.Add(Info("已保存的核心设置", "部分核心 · 可恢复原值"));
+        if (Bool(_perfView?["ecore"]?["backup"])) _perfRows.Add(new PerfRow
+        {
+            Title = "恢复原始核心设置", Value = "首次修改前的值 ›", Disabled = ecoreUnavailable,
+            Press = () => { if (!ecoreUnavailable) _ = PerfRestoreEcore(); },
+        });
 
         _perfRows.Add(new PerfRow { Section = true, Title = "风扇" });
         var fan = s["fan"]!;
         string fmode = Str(fan["mode"]) ?? "balanced";
         _perfRows.Add(Choice("风扇模式", FanModeNames, Math.Max(0, Array.IndexOf(FanModes, fmode)), i => { fan["control"] = "custom"; fan["mode"] = FanModes[i]; _perfCurveEdit = false; PerfChanged(); }));
-        _perfRows.Add(Info("调速方式", Str(_perfView?["fan"]?["error"]) is { Length: > 0 } fanError ? fanError : Str(fan["control"]) == "auto" ? "原厂自动控制" : Bool(_perfView?["fan"]?["thermalBoost"]) ? "EC 高温保护 · 冷却后恢复曲线" : Str(_perfView?["fan"]?["execution"]) == "service" ? "开机风扇服务 · 退出界面仍生效" : "软件自动调速"));
+        _perfRows.Add(Info("调速方式", Str(_perfView?["fan"]?["error"]) is { Length: > 0 } fanError ? fanError : Str(fan["control"]) == "auto" ? "原厂自动控制" : Bool(_perfView?["fan"]?["thermalBoost"]) ? "高温保护 · 冷却后恢复" : Str(_perfView?["fan"]?["execution"]) == "service" ? "后台调速" : "软件自动调速"));
         _perfRows.Add(new PerfRow
         {
-            Title = "编辑这档曲线", Value = _perfCurveEdit ? "编辑中 · ← → 选点  ↑ ↓ 改" : "6 个温度点 ›",
+            Title = "编辑当前曲线", Value = _perfCurveEdit ? "编辑中 · ← → 选点  ↑ ↓ 改" : "6 个温度点 ›",
             Press = () => { _perfCurveEdit = !_perfCurveEdit; _perfPoint = Math.Clamp(_perfPoint, 0, 5); BuildPerfRows(); PaintPerf(); },
         });
         if (_perfCurveEdit)
@@ -373,7 +388,7 @@ public sealed partial class WallStage
         _perfRows.Add(new PerfRow { Title = "恢复原厂自动控制", Value = "›", Press = () => { fan["control"] = "auto"; fan["full"] = false; PerfChanged(); } });
         _perfRows.Add(new PerfRow
         {
-            Title = "恢复这档默认曲线", Value = "›",
+            Title = "恢复当前默认曲线", Value = "›",
             Press = () =>
             {
                 if (_perfView?["fan"]?["presets"]?[fmode] is not JsonArray preset) return;
@@ -446,7 +461,7 @@ public sealed partial class WallStage
     private void PerfFinishCurveEdit()
     {
         _perfCurveEdit = false;
-        _perfFocus = _perfRows.FindIndex(r => r.Title == "编辑这档曲线");
+        _perfFocus = _perfRows.FindIndex(r => r.Title == "编辑当前曲线");
         BuildPerfRows(); PaintPerf();
     }
 
@@ -521,7 +536,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>控制中心子页右栏的设置列表（性能、手柄共用）：分组标题、行号、焦点 ▸、几选一下划线、焦点数值 ‹ ›。</summary>
-    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus, List<SettingsPointerTarget>? targets = null, bool numbers = true, float listWidth = PerfRightW)
+    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus, List<SettingsPointerTarget>? targets = null, bool numbers = false, float listWidth = PerfRightW, bool leadingNotes = true)
     {
         var ui = TextKit.Ui(400);
         var mono = new FontSpec("Cascadia Mono", 400);
@@ -550,7 +565,7 @@ public sealed partial class WallStage
             }
             else if (numbers) PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(CcText, 0.32f * a), 0, cy, 40);
             if (r.Changed) ds.FillCircle(27, cy, 3, PerfAccent);
-            PText(ds, r.Title, ui, 17, Gfx.WithAlpha(CcText, (f ? 1f : 0.88f) * a), 36, cy, 400);
+            PText(ds, r.Title, ui, 17, Gfx.WithAlpha(CcText, (f ? 1f : 0.88f) * a), 36 + r.Indent, cy, 400);
             if (targets != null && r.SetNumber != null && !r.Disabled)
             {
                 const float sliderWidth = 200;
@@ -567,7 +582,7 @@ public sealed partial class WallStage
             {
                 // 几选一：平铺文字，当前项白色加下划线；后面可以跟一句状态（如「重启后生效」）
                 float x = W;
-                if (r.Value.Length > 0)
+                if (!leadingNotes && r.Value.Length > 0)
                 {
                     float vw = PWidth(ds, r.Value, ui, 14);
                     x -= vw;
@@ -575,6 +590,20 @@ public sealed partial class WallStage
                     x -= 24;
                 }
                 var widths = r.Choices.Select(c => PWidth(ds, c, ui, 17)).ToArray();
+                if (leadingNotes && r.Value.Length > 0)
+                {
+                    // Keep controls on one axis; fit essential status into the space before them.
+                    float choicesW = widths.Sum(w => targets != null ? Math.Max(44, w + 20) : w + 20);
+                    float right = W - choicesW - 24;
+                    float left = 36 + r.Indent + PWidth(ds, r.Title, ui, 17) + 24;
+                    float available = Math.Max(0, right - left);
+                    if (available > 0)
+                    {
+                        string note = GpFit(ds, r.Value, ui, 14, available);
+                        float noteW = PWidth(ds, note, ui, 14);
+                        PText(ds, note, ui, 14, Gfx.WithAlpha(CcText, 0.65f), right - noteW, cy, noteW + 4);
+                    }
+                }
                 for (int j = r.Choices.Length - 1; j >= 0; j--)
                 {
                     float width = targets != null ? Math.Max(44, widths[j] + 20) : widths[j];
@@ -592,7 +621,7 @@ public sealed partial class WallStage
             {
                 string v = r.Value;
                 float vw = PWidth(ds, v, ui, 17);
-                var col = Gfx.WithAlpha(CcText, (f ? 1f : 0.6f) * a);
+                var col = Gfx.WithAlpha(CcText, leadingNotes && r.Disabled ? 0.65f : (f ? 1f : 0.6f) * a);
                 if ((f || targets != null) && r.Numeric && !r.Disabled)
                 {
                     // 焦点上的数值：‹ 值 ›，← → 直接改

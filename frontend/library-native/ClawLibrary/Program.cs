@@ -1,6 +1,7 @@
 // 入口：不用 XAML 生成的 Main，自己起 WinUI 应用。
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using System.Runtime.InteropServices;
 
 namespace ClawLibrary;
 
@@ -21,6 +22,7 @@ public static class Program
             var main = Microsoft.Windows.AppLifecycle.AppInstance.FindOrRegisterForKey("main");
             if (!main.IsCurrent)
             {
+                AllowSetForegroundWindow(main.ProcessId);
                 var activation = Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs();
                 Task.Run(() => main.RedirectActivationToAsync(activation).AsTask()).Wait(3000);
                 return 0;
@@ -35,4 +37,6 @@ public static class Program
         });
         return 0;
     }
+
+    [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(uint processId);
 }

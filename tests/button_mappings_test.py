@@ -4,7 +4,7 @@ import copy
 import importlib.util
 from pathlib import Path
 import unittest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("button_service_test", ROOT / "plugin/claw_service.py")
@@ -45,7 +45,7 @@ class MappingValidation(unittest.TestCase):
         with self.assertRaises(ValueError):
             service.validate_settings({**BASE, "buttonMappings": {"Unknown": {"type": "none"}}})
 
-    def test_toolbox_toggle_is_limited_to_the_claw_general_context(self):
+    def test_explicit_claw_library_mapping_toggles_in_all_fullscreen_contexts(self):
         route = service._buttons_module.toolbox_route
         for source in ("Claw", "QS", "Guide"):
             for scope in ("general", "steam", "input"):
@@ -54,13 +54,51 @@ class MappingValidation(unittest.TestCase):
                         for foreground in (False, True):
                             event = {"source": source, "scope": scope}
                             actual = route("library", event, steam, {"xboxFse": xbox, "foregroundLibrary": foreground})
-                            eligible = source == "Claw" and scope == "general" and steam != "BigPicture" and xbox is False
+                            eligible = source == "Claw" and scope in ("general", "steam")
                             expected = ("minimize-library" if foreground else "restore-library") if eligible else "library"
                             self.assertEqual(actual, expected, (event, steam, xbox, foreground))
+
+    def test_live_window_uses_direct_message_and_preserves_original_hwnd(self):
+        native = MagicMock()
+        native.GetPropW.return_value = 1
+        native.RegisterWindowMessageW.return_value = 0xC123
+        native.PostMessageW.return_value = True
+        with patch.object(service._buttons_module, "_library_window", return_value=(100, 200)), \
+             patch.object(service._buttons_module.ctypes, "WinDLL", return_value=native), \
+             patch.object(service.os, "startfile") as launch:
+            service._buttons_module.activate_toolbox("restore-library", {"foregroundWindow": 12345678901})
+        native.AllowSetForegroundWindow.assert_called_once_with(200)
+        native.PostMessageW.assert_called_once_with(100, 0xC123, 3, 12345678901)
+        launch.assert_not_called()
+
+    def test_old_window_without_receiver_falls_back_to_cold_start_protocol(self):
+        native = MagicMock()
+        native.GetPropW.return_value = 0
+        with patch.object(service._buttons_module, "_library_window", return_value=(100, 200)), \
+             patch.object(service._buttons_module.ctypes, "WinDLL", return_value=native), \
+             patch.object(service.os, "startfile") as launch:
+            service._buttons_module.activate_toolbox("restore-library", {"foregroundWindow": 123})
+        native.PostMessageW.assert_not_called()
+        launch.assert_called_once_with("claw-library://restore-library?returnWindow=123")
+
+    def test_stale_foreground_hwnd_after_minimize_uses_restore(self):
+        native = MagicMock()
+        native.GetForegroundWindow.return_value = 123
+        native.IsWindowVisible.return_value = True
+        native.IsIconic.return_value = True
+        with patch.object(service._buttons_module.ctypes, "WinDLL", return_value=native):
+            context = service._buttons_module.toolbox_context()
+        self.assertFalse(context["foregroundLibrary"])
+        self.assertEqual(context["foregroundWindow"], 123)
+        self.assertEqual(service._buttons_module.toolbox_route("library", {"source": "Claw", "scope": "general"}, "Unknown", context), "restore-library")
 
 
 class DispatchTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        context = patch.object(service._buttons_module, "toolbox_context", return_value={"xboxFse": False, "foregroundLibrary": False, "foregroundWindow": 456})
+        windows = patch.object(service._buttons_module, "_library_window", return_value=None)
+        context.start(); windows.start()
+        self.addCleanup(context.stop); self.addCleanup(windows.stop)
         self.s = object.__new__(service.Service)
         self.s._mapping_lock = asyncio.Lock()
         self.s._permission_waiters = {}
@@ -97,7 +135,7 @@ class DispatchTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(service.os, "startfile") as launch:
             result = await self.s.test_button_mapping("Claw", False)
         self.assertTrue(result["ok"])
-        launch.assert_called_once_with("claw-library://library")
+        launch.assert_called_once_with("claw-library://restore-library?returnWindow=456")
         self.assertEqual(self.calls, [])
 
     async def test_steam_menu_reuses_original_frontend_confirmation(self):
@@ -128,7 +166,7 @@ class DispatchTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(service._buttons_module, "toolbox_context", side_effect=context), \
              patch.object(service.os, "startfile", side_effect=lambda uri: calls.append(uri)):
             result = await self.s.test_button_mapping("Claw", False)
-        self.assertEqual(calls, ["snapshot", "claw-library://minimize-library"])
+        self.assertEqual(calls, ["snapshot", "claw-library://minimize-library?returnWindow=0"])
         self.assertEqual(result["windowRoute"], "minimize-library")
 
     async def test_background_toolbox_restores_instead_of_minimizing(self):
@@ -136,21 +174,21 @@ class DispatchTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(service._buttons_module, "toolbox_context", return_value={"xboxFse": False, "foregroundLibrary": False}), \
              patch.object(service.os, "startfile") as launch:
             await self.s.test_button_mapping("Claw", False)
-        launch.assert_called_once_with("claw-library://restore-library")
+        launch.assert_called_once_with("claw-library://restore-library?returnWindow=0")
 
-    async def test_xbox_desktop_retains_open_only_behavior(self):
+    async def test_xbox_desktop_allows_explicit_minimize(self):
         self.s._status = {"mode": "SteamClosed"}
         with patch.object(service._buttons_module, "toolbox_context", return_value={"xboxFse": True, "foregroundLibrary": True}), \
              patch.object(service.os, "startfile") as launch:
             await self.s.test_button_mapping("Claw", False)
-        launch.assert_called_once_with("claw-library://library")
+        launch.assert_called_once_with("claw-library://minimize-library?returnWindow=0")
 
-    async def test_steam_library_override_still_only_opens(self):
+    async def test_steam_library_override_uses_the_same_toggle(self):
         self.s._settings["steamBindings"]["Claw"] = {"type": "system", "action": "library"}
-        with patch.object(service._buttons_module, "toolbox_context", side_effect=AssertionError("must not query foreground in Steam")), \
+        with patch.object(service._buttons_module, "toolbox_context", return_value={"foregroundLibrary": True}), \
              patch.object(service.os, "startfile") as launch:
             await self.s.test_button_mapping("Claw", True)
-        launch.assert_called_once_with("claw-library://library")
+        launch.assert_called_once_with("claw-library://minimize-library?returnWindow=0")
 
     async def test_control_center_mapping_uses_the_same_toggle(self):
         self.s._status = {"mode": "SteamClosed"}
@@ -158,7 +196,7 @@ class DispatchTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(service._buttons_module, "toolbox_context", return_value={"xboxFse": False, "foregroundLibrary": True}), \
              patch.object(service.os, "startfile") as launch:
             await self.s.test_button_mapping("Claw", False)
-        launch.assert_called_once_with("claw-library://minimize-control-center")
+        launch.assert_called_once_with("claw-library://minimize-control-center?returnWindow=0")
 
     async def test_one_hardware_burst_cannot_open_and_immediately_minimize(self):
         self.s._execute_mapping = AsyncMock(return_value={"ok": True})

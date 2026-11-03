@@ -9,15 +9,27 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     private JsonObject? _mgPrefs;
+    private JsonObject? _mgCatalog;
+    private bool _mgLoading;
+    private string? _mgError;
 
     private async Task MgLoad()
     {
+        if (_mgLoading) return;
+        _mgLoading = true;
         try
         {
             _agent ??= new AgentClient();
-            if (await _agent.Call("get_magpie_prefs") is JsonObject o && o["preferences"] is JsonObject p) _mgPrefs = (JsonObject)p.DeepClone();
+            if (await _agent.Call("get_magpie_prefs") is not JsonObject o || o["preferences"] is not JsonObject p)
+                throw new InvalidOperationException("没有读到 Magpie 设置，请刷新重试");
+            _mgPrefs = (JsonObject)p.DeepClone();
+            if (await _agent.Call("get_magpie_catalog") is not JsonObject catalog || catalog["effects"] is not JsonArray || catalog["presets"] is not JsonArray)
+                throw new InvalidOperationException("没有读到效果器列表，请刷新重试");
+            _mgCatalog = (JsonObject)catalog.DeepClone();
+            _mgError = null;
         }
-        catch (Exception ex) { Log.Warn($"magpie prefs: {ex.Message}"); }
+        catch (Exception ex) { _mgError = ex.Message; Log.Warn($"magpie prefs: {ex.Message}"); }
+        finally { _mgLoading = false; }
         if (_stOpen && _gsItem == null && _stCat == 3) Repaint();
     }
 
@@ -45,12 +57,28 @@ public sealed partial class WallStage
 
     private void BuildStMagpie()
     {
+        if (_mgEdit != null) { BuildMgEditor(); return; }
+        _stRows.Add(new PerfRow { Section = true, Title = "超分预设" });
+        if (_mgError != null) _stRows.Add(StInfo("读取失败", _mgError));
+        if (_mgCatalog?["presets"] is JsonArray presets && presets.Count > 0)
+        {
+            var names = presets.Select(n => Str(n?["name"]) ?? "").ToArray();
+            int selected = Math.Max(0, Array.IndexOf(names, _mgSelected));
+            _mgSelected = names[selected];
+            _stRows.Add(StPick("预设", names, selected, i => { _mgSelected = names[i]; Repaint(); }));
+            var current = (JsonObject)presets[selected]!;
+            _stRows.Add(StInfo("效果链", string.Join(" → ", ((JsonArray)current["effects"]!).Select(e => MgEffectLabel(Str(e?["name"]) ?? "")))));
+            _stRows.Add(StAction("编辑预设", "mg-edit", Bool(current["builtin"]) ? "内置预设" : "自定义预设", () => MgOpenEditor(current, false)));
+            _stRows.Add(StAction("复制预设", "mg-copy", "", () => MgOpenEditor(current, true)));
+        }
+        if (_mgCatalog != null) _stRows.Add(StAction("新建预设", "mg-new", "", () => MgOpenEditor(null, true)));
+        _stRows.Add(StAction("刷新预设与设置", "mg-reload", _mgLoading ? "正在读取…" : "", () => { _ = MgLoad(); }));
         var p = _mgPrefs;
         if (p == null)
         {
             _stRows.Add(new PerfRow { Section = true, Title = "画面" });
-            _stRows.Add(StInfo("Magpie", "正在读取…"));
-            _ = MgLoad();
+            _stRows.Add(StInfo("Magpie", _mgError == null ? "正在读取…" : "请刷新重试"));
+            if (_mgError == null) _ = MgLoad();
             return;
         }
         _stRows.Add(new PerfRow { Section = true, Title = "画面" });

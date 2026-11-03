@@ -1,5 +1,13 @@
 $ErrorActionPreference = 'Stop'
 $taskCompiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+& $taskCompiler /nologo /codepage:65001 /target:exe /platform:x64 ("/out:"+(Join-Path $PSScriptRoot 'plugin\bin\DriverFrameLimitTests.exe')) (Join-Path $PSScriptRoot 'native\ClawFrameLimit.cs') (Join-Path $PSScriptRoot 'tests\DriverFrameLimitTests.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Driver frame limiter tests compile failed.' }
+& (Join-Path $PSScriptRoot 'plugin\bin\DriverFrameLimitTests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Driver frame limiter tests failed.' }
+& $taskCompiler /nologo /codepage:65001 /target:exe /platform:x64 /reference:System.Numerics.dll ("/out:"+(Join-Path $PSScriptRoot 'plugin\bin\SmallCoresTests.exe')) (Join-Path $PSScriptRoot 'native\ClawSmallCores.cs') (Join-Path $PSScriptRoot 'tests\SmallCoresTests.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Small-core tests compile failed.' }
+& (Join-Path $PSScriptRoot 'plugin\bin\SmallCoresTests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Small-core native tests failed.' }
 & $taskCompiler /nologo /codepage:65001 /target:exe /platform:x64 ("/reference:"+(Join-Path $PSScriptRoot 'plugin\bin\ClawRouter.exe')) ("/out:"+(Join-Path $PSScriptRoot 'plugin\bin\NativePolicyTests.exe')) (Join-Path $PSScriptRoot 'tests\NativePolicyTests.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Test compile failed.' }
 & (Join-Path $PSScriptRoot 'plugin\bin\NativePolicyTests.exe')

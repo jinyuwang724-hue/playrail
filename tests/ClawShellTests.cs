@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using ClawShell;
 
-internal sealed class FakeSystem : IShellSystem
+internal class FakeSystem : IShellSystem
 {
     public DateTime Clock = new DateTime(2026, 10, 29, 12, 0, 0, DateTimeKind.Utc);
     public bool Explorer, Library, Steam, SteamInstalledFlag = true, SteamStarts = true;

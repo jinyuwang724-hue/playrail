@@ -11,7 +11,7 @@ using Microsoft.Win32;
 
 namespace ClawShell
 {
-    public sealed class WindowsShellSystem : IShellSystem
+    public sealed class WindowsShellSystem : IShellSystem, IDesktopSurface
     {
         public const string LibraryAumid = "ClawToolbox.Library_ba3r68zr466za!App";
         public const string LibraryFamily = "ClawToolbox.Library_ba3r68zr466za";
@@ -45,6 +45,21 @@ namespace ClawShell
             }
             catch { }
         }
+
+        public bool FocusDesktop()
+        {
+            object shell = null;
+            try {
+                Type type = Type.GetTypeFromProgID("Shell.Application");
+                shell = Activator.CreateInstance(type);
+                type.InvokeMember("MinimizeAll", System.Reflection.BindingFlags.InvokeMethod, null, shell, null);
+                IntPtr desktop = GetShellWindow();
+                if (desktop != IntPtr.Zero) { DesktopSetForegroundWindow(desktop); return true; }
+            } catch (Exception ex) { Log("focus desktop: " + ex.Message); }
+            finally { if (shell != null && Marshal.IsComObject(shell)) Marshal.FinalReleaseComObject(shell); }
+            return false;
+        }
+        [DllImport("user32.dll", EntryPoint="SetForegroundWindow")] static extern bool DesktopSetForegroundWindow(IntPtr window);
 
         // ---------- explorer ----------
 

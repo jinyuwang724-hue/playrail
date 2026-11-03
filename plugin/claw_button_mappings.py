@@ -38,16 +38,76 @@ def selected(settings, source, steam):
 
 def toolbox_route(action, event, steam_mode, context):
     target = "control-center" if action == "controlCenter" else "library"
-    eligible = (event.get("source") == "Claw" and event.get("scope") == "general"
-                and steam_mode != "BigPicture" and context.get("xboxFse") is False)
+    eligible = event.get("source") == "Claw" and event.get("scope") in ("general", "steam")
     if not eligible:
         return target
     return ("minimize-" if context.get("foregroundLibrary") else "restore-") + target
 
 
+WINDOW_MESSAGE = "ClawToolbox.Library.Activation.v1"
+WINDOW_ROUTES = ("library", "control-center", "restore-library", "restore-control-center",
+                 "minimize-library", "minimize-control-center")
+
+
+def _library_window():
+    """Find the actual library HWND, including its minimized/hidden window."""
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    kernel.OpenProcess.argtypes, kernel.OpenProcess.restype = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.GetPackageFamilyName.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.UINT), wintypes.LPWSTR]
+    kernel.GetPackageFamilyName.restype = wintypes.LONG
+    found = []
+    callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(window, _):
+        title = ctypes.create_unicode_buffer(256)
+        user.GetWindowTextW(window, title, len(title))
+        if title.value != "Claw 游戏库":
+            return True
+        pid = wintypes.DWORD()
+        user.GetWindowThreadProcessId(window, ctypes.byref(pid))
+        handle = kernel.OpenProcess(0x1000, False, pid.value)
+        if handle:
+            try:
+                size = wintypes.UINT(256)
+                family = ctypes.create_unicode_buffer(size.value)
+                if kernel.GetPackageFamilyName(handle, ctypes.byref(size), family) == 0 and family.value == "ClawToolbox.Library_ba3r68zr466za":
+                    found.append((int(window), pid.value))
+                    return False
+            finally:
+                kernel.CloseHandle(handle)
+        return True
+    user.EnumWindows.argtypes, user.EnumWindows.restype = [callback_type, wintypes.LPARAM], wintypes.BOOL
+    user.EnumWindows(callback_type(visit), 0)
+    return found[0] if found else None
+
+
+def activate_toolbox(route, context):
+    """Fast path avoids shell activation changing foreground before the toggle."""
+    import os
+    if route not in WINDOW_ROUTES:
+        raise ValueError("Unknown library route")
+    target = _library_window()
+    if target:
+        user = ctypes.WinDLL("user32", use_last_error=True)
+        user.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+        user.RegisterWindowMessageW.argtypes, user.RegisterWindowMessageW.restype = [wintypes.LPCWSTR], wintypes.UINT
+        user.GetPropW.argtypes, user.GetPropW.restype = [wintypes.HWND, wintypes.LPCWSTR], wintypes.HANDLE
+        user.PostMessageW.argtypes, user.PostMessageW.restype = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM], wintypes.BOOL
+        user.AllowSetForegroundWindow(target[1])
+        message = user.RegisterWindowMessageW(WINDOW_MESSAGE)
+        if message and user.GetPropW(target[0], WINDOW_MESSAGE) and user.PostMessageW(target[0], message, WINDOW_ROUTES.index(route) + 1, context.get("foregroundWindow", 0)):
+            return
+    # Cold start and compatibility with older installations retain the protocol.
+    os.startfile("claw-library://" + route + "?returnWindow=" + str(context.get("foregroundWindow", 0)))
+
+
 def toolbox_context():
     """Capture foreground BEFORE protocol activation can move focus to the library."""
-    result = {"xboxFse": None, "foregroundLibrary": False}
+    result = {"xboxFse": None, "foregroundLibrary": False, "foregroundWindow": 0}
     try:
         query = ctypes.WinDLL("api-ms-win-gaming-experience-l1-1-0.dll").IsGamingFullScreenExperienceActive
         query.argtypes, query.restype = [], wintypes.BOOL
@@ -57,6 +117,8 @@ def toolbox_context():
     try:
         user, kernel = ctypes.WinDLL("user32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
         user.GetForegroundWindow.argtypes, user.GetForegroundWindow.restype = [], wintypes.HWND
+        user.IsIconic.argtypes, user.IsIconic.restype = [wintypes.HWND], wintypes.BOOL
+        user.IsWindowVisible.argtypes, user.IsWindowVisible.restype = [wintypes.HWND], wintypes.BOOL
         user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
         user.GetWindowThreadProcessId.restype = wintypes.DWORD
         kernel.OpenProcess.argtypes, kernel.OpenProcess.restype = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD], wintypes.HANDLE
@@ -64,7 +126,13 @@ def toolbox_context():
         kernel.GetPackageFamilyName.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.UINT), wintypes.LPWSTR]
         kernel.GetPackageFamilyName.restype = wintypes.LONG
         pid = wintypes.DWORD()
-        if not user.GetWindowThreadProcessId(user.GetForegroundWindow(), ctypes.byref(pid)):
+        foreground = user.GetForegroundWindow()
+        result["foregroundWindow"] = int(foreground or 0)
+        # Windows can briefly report the old foreground HWND after minimizing.
+        # Such a window must use the restore route and preserve its current page.
+        if not user.IsWindowVisible(foreground) or user.IsIconic(foreground):
+            return result
+        if not user.GetWindowThreadProcessId(foreground, ctypes.byref(pid)):
             return result
         handle = kernel.OpenProcess(0x1000, False, pid.value)
         if not handle:

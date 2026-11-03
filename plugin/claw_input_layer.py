@@ -503,6 +503,9 @@ class InputLayer:
     @property
     def exe(self):
         version = json.loads((self._root / "plugin.json").read_text(encoding="utf-8"))["version"]
+        enhanced = self._root / "bin" / ("ClawInput-" + version + "-enhanced-sleep.exe")
+        if enhanced.is_file():
+            return enhanced
         return self._root / "bin" / ("ClawInput-" + version + ".exe")
 
     def wanted(self):

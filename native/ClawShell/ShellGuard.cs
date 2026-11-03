@@ -8,6 +8,8 @@ using System.Collections.Generic;
 
 namespace ClawShell
 {
+    public interface IDesktopSurface { bool FocusDesktop(); }
+
     public interface IShellSystem
     {
         DateTime Now { get; }
@@ -212,7 +214,11 @@ namespace ClawShell
         /// <summary>游戏模式 → 桌面：只拉起 explorer，游戏库留着。</summary>
         public SwitchResult ToDesktop()
         {
-            if (_sys.ExplorerRunning() || _sys.StartExplorer()) { _sys.WriteState("desktop", "switched"); return SwitchResult.Ok; }
+            if (_sys.ExplorerRunning() || _sys.StartExplorer()) {
+                var desktop = _sys as IDesktopSurface;
+                if (desktop != null && !desktop.FocusDesktop()) _sys.Log("desktop focus request did not settle");
+                _sys.WriteState("desktop", "switched"); return SwitchResult.Ok;
+            }
             _sys.WriteState("game", "failed:explorer");
             return SwitchResult.Failed;
         }

@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Reflection;
 using ClawRouter;
 class NativePolicyTests {
     static void Check(bool result,string name){if(!result)throw new Exception(name);Console.WriteLine("PASS "+name);}
@@ -17,6 +20,30 @@ class NativePolicyTests {
         Check(!Policy.CanRoute(true,true,"Gaming",true),"Playhub Gaming alone cannot acquire ownership");
         Check(!Policy.CanRoute(true,true,"Desktop",true),"Playhub Desktop is no longer an ownership signal");
         Check(Policy.Action("shell")=="None","arbitrary actions cannot be executed");
+        Check(Policy.IsGameBarCommand(new Dictionary<string,object>{{"type","system"},{"action","gamebar"}}),"default QS Game Bar action uses the firmware shortcut once");
+        Check(Policy.IsGameBarCommand(new Dictionary<string,object>{{"type","keyboard"},{"keys",new object[]{"LWin","G"}}}),"explicit Win+G mapping also uses the firmware shortcut");
+        Check(Policy.IsGameBarCommand(new Dictionary<string,object>{{"type","keyboard"},{"keys",new object[]{"G","RWin"}}}),"reversed right Windows shortcut is recognized");
+        Check(!Policy.IsGameBarCommand(new Dictionary<string,object>{{"type","system"},{"action","screenshot"}}),"screenshot mapping keeps its own dispatcher");
+        Check(!Policy.IsGameBarCommand(new Dictionary<string,object>{{"type","keyboard"},{"keys",new object[]{"LWin","LCtrl","G"}}}),"other keyboard chords keep their own dispatcher");
+        Check(!Policy.IsGameBarCommand(null) && !Policy.IsGameBarCommand(new Dictionary<string,object>{{"type","none"}}),"empty and disabled mappings cannot enable native passthrough");
+        // Construct only: no Start(), WMI subscription, keyboard hook, or hardware calls.
+        var scratch=Path.Combine(Path.GetTempPath(),"ClawRouterPolicy-"+Guid.NewGuid().ToString("N"));
+        var router=new Router(scratch,scratch,false);
+        Action<string,object> field=(name,value)=>typeof(Router).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic).SetValue(router,value);
+        Func<bool> filter=()=> (bool)typeof(Router).GetMethod("CanFilter",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(router,null);
+        var mappings=new Dictionary<string,object>{{"QS",new Dictionary<string,object>{{"type","system"},{"action","gamebar"}}}};
+        field("configured",true);field("released",true);field("mode","SteamClosed");field("generalMappings",mappings);
+        Check(!filter(),"general QS Game Bar passes the original Win+G instead of replacing it");
+        mappings["QS"]=new Dictionary<string,object>{{"type","keyboard"},{"keys",new object[]{"LWin","G"}}};
+        Check(!filter(),"an explicit Win+G mapping also passes the original shortcut");
+        mappings["QS"]=new Dictionary<string,object>{{"type","system"},{"action","library"}};
+        Check(filter(),"custom QS actions retain firmware-shortcut filtering");
+        mappings["QS"]=new Dictionary<string,object>{{"type","system"},{"action","gamebar"}};
+        field("mode","BigPicture");field("enabled",true);field("ready",true);
+        Check(filter(),"Steam takeover still filters Win+G despite a general Game Bar mapping");
+        field("enabled",false);
+        Check(!filter(),"disabled Steam takeover leaves the original shortcut available");
+        Directory.Delete(scratch);
         Check(Policy.GeneralContext("SteamClosed",false,true),"general mapping works outside Big Picture");
         Check(!Policy.GeneralContext("BigPicture",false,true),"Steam ownership always takes priority over general mapping");
         Check(!Policy.GeneralContext("SteamClosed",true,true),"suspend pauses general mapping");

@@ -14,6 +14,10 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import struct
+import time
+import hashlib
+from ctypes import wintypes as W
 import winreg
 import xml.etree.ElementTree as ET
 
@@ -46,14 +50,7 @@ def steam_game_exe(folder):
 # ---------------- Lossless Scaling ----------------
 
 def lossless_exe():
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
-            value = winreg.QueryValueEx(key, "LosslessScaling")[0]
-        m = re.match(r'\s*"([^"]+)"', value) or re.match(r"\s*(\S+)", value)
-        if m and os.path.isfile(m.group(1)):
-            return m.group(1)
-    except OSError:
-        pass
+    """Find an installed Steam copy using its manifest, including secondary libraries."""
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
             steam = Path(winreg.QueryValueEx(key, "SteamPath")[0])
@@ -62,18 +59,150 @@ def lossless_exe():
         if vdf.is_file():
             libraries += [Path(p.replace("\\\\", "\\")) for p in re.findall(r'"path"\s+"([^"]+)"', vdf.read_text(encoding="utf-8", errors="ignore"))]
         for lib in libraries:
-            exe = lib / "steamapps" / "common" / "Lossless Scaling" / "LosslessScaling.exe"
-            if exe.is_file():
-                return str(exe)
+            try:
+                manifest = (lib / "steamapps/appmanifest_993090.acf").read_text(encoding="utf-8-sig")
+                appid = re.search(r'"appid"\s+"(\d+)"', manifest)
+                folder = re.search(r'"installdir"\s+"([^"\\/]+)"', manifest)
+                if not appid or appid[1] != "993090" or not folder or folder[1] in (".", ".."):
+                    continue
+                return checked_lossless_exe(str(lib / "steamapps/common" / folder[1] / "LosslessScaling.exe"))
+            except (OSError, ValueError):
+                continue
     except OSError:
         pass
     return None
 
 
+def checked_lossless_exe(value):
+    if not isinstance(value, str) or not value or len(value) > 32767 or not os.path.isabs(value):
+        raise ValueError("请选择小黄鸭的 LosslessScaling.exe")
+    exe = Path(value)
+    if exe.name.lower() != "losslessscaling.exe":
+        raise ValueError("请选择 LosslessScaling.exe，不能选择其他程序或快捷方式")
+    try:
+        with exe.open("rb") as stream:
+            header = stream.read(64)
+            if len(header) != 64 or header[:2] != b"MZ":
+                raise ValueError("这个文件不是有效的小黄鸭程序")
+            stream.seek(struct.unpack_from("<I", header, 60)[0])
+            if stream.read(4) != b"PE\0\0":
+                raise ValueError("这个文件不是有效的小黄鸭程序")
+    except OSError as error:
+        raise ValueError("小黄鸭程序不存在或无法读取，请重新选择") from error
+    return str(exe.resolve())
+
+
+class LosslessConfig:
+    """Find the user's installed application. Reading never launches LS or edits profiles."""
+    def __init__(self, data):
+        self.path = Path(data) / "lossless.json"
+        self._detected = None
+        self._detect_at = 0
+
+    def saved(self):
+        try:
+            value = json.loads(self.path.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def exe(self):
+        config = self.saved()
+        for candidate in (config.get("exe"), self._detected):
+            try: return checked_lossless_exe(candidate)
+            except ValueError: pass
+        if time.monotonic() - self._detect_at < 10: return None
+        self._detect_at = time.monotonic()
+        candidates = [p["path"] for p in lossless_processes() if p["path"]]
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run") as key:
+                value = winreg.QueryValueEx(key, "LosslessScaling")[0]
+                m = re.match(r'\s*"([^"]+)"', value) or re.match(r"\s*(\S+)", value)
+                if m: candidates.append(m[1])
+        except OSError: pass
+        candidates.append(lossless_exe())
+        for candidate in candidates:
+            try:
+                self._detected = checked_lossless_exe(candidate)
+                return self._detected
+            except ValueError: pass
+        return None
+
+    def view(self, refresh=False):
+        if refresh:
+            self._detected = None
+            self._detect_at = 0
+        config, exe = self.saved(), self.exe()
+        ready, revision = False, "missing"
+        if exe:
+            try:
+                raw = LS_SETTINGS.read_bytes()
+                revision = hashlib.sha256(raw).hexdigest()
+                _, profiles = _profiles(ET.ElementTree(ET.fromstring(raw)))
+                ready = any(not (p.findtext("Path") or "").strip() for p in profiles)
+            except (ET.ParseError, OSError):
+                pass
+        return {"mode": config.get("mode", ""), "exe": config.get("exe", ""),
+                "configured": bool(exe), "installed": bool(exe), "running": bool(self.pids(exe)) if exe else False,
+                "settingsReady": ready, "detectedExe": exe or "", "revision": revision}
+
+    def pids(self, exe=None):
+        exe = exe or self.exe()
+        if not exe: return []
+        return [p["pid"] for p in lossless_processes() if not p["path"] or _same_exe(p["path"], exe)]
+
+    def configure(self, mode, exe=None):
+        if mode == "steam":
+            exe = lossless_exe()
+            if not exe:
+                raise ValueError("没有找到已安装的小黄鸭，请先在 Steam 安装，或选择本地 EXE")
+        elif mode != "local":
+            raise ValueError("请选择 Steam 检测或本地 EXE")
+        value = {"mode": mode, "exe": checked_lossless_exe(exe)}
+        temp = self.path.with_suffix(".tmp")
+        temp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        os.replace(temp, self.path)
+        return self.view()
+
+    def clear(self):
+        self.path.unlink(missing_ok=True)
+        self._detected = None; self._detect_at = 0
+        return self.view()
+
+
 def lossless_pids():
-    out = subprocess.run(["tasklist", "/fi", "imagename eq LosslessScaling.exe", "/fo", "csv", "/nh"],
-                         capture_output=True, text=True, creationflags=NO_WINDOW).stdout
-    return [int(m) for m in re.findall(r'"LosslessScaling\.exe","(\d+)"', out, re.I)]
+    return [p["pid"] for p in lossless_processes()]
+
+
+def lossless_processes():
+    """A cheap process snapshot, not a tasklist process on every settings-page refresh."""
+    class Entry(ctypes.Structure):
+        _fields_ = [("size", W.DWORD), ("usage", W.DWORD), ("pid", W.DWORD), ("heap", ctypes.c_size_t),
+                    ("module", W.DWORD), ("threads", W.DWORD), ("parent", W.DWORD), ("priority", W.LONG),
+                    ("flags", W.DWORD), ("name", W.WCHAR * 260)]
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateToolhelp32Snapshot.argtypes, k.CreateToolhelp32Snapshot.restype = [W.DWORD, W.DWORD], W.HANDLE
+    k.Process32FirstW.argtypes = k.Process32NextW.argtypes = [W.HANDLE, ctypes.POINTER(Entry)]
+    k.OpenProcess.argtypes, k.OpenProcess.restype = [W.DWORD, W.BOOL, W.DWORD], W.HANDLE
+    k.QueryFullProcessImageNameW.argtypes = [W.HANDLE, W.DWORD, W.LPWSTR, ctypes.POINTER(W.DWORD)]
+    k.CloseHandle.argtypes = [W.HANDLE]
+    snapshot = k.CreateToolhelp32Snapshot(2, 0)
+    if snapshot in (None, ctypes.c_void_p(-1).value): return []
+    result, entry = [], Entry(); entry.size = ctypes.sizeof(entry)
+    try:
+        more = k.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            if entry.name.lower() == "losslessscaling.exe":
+                handle, path = k.OpenProcess(0x1000, False, entry.pid), ""
+                if handle:
+                    try:
+                        buf, size = ctypes.create_unicode_buffer(32768), W.DWORD(32768)
+                        if k.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)): path = buf.value
+                    finally: k.CloseHandle(handle)
+                result.append(dict(pid=entry.pid, path=path))
+            more = k.Process32NextW(snapshot, ctypes.byref(entry))
+    finally: k.CloseHandle(snapshot)
+    return result
 
 
 def _profiles(tree):
@@ -136,7 +265,9 @@ def lossless_write(exe, name, enabled):
 
 
 def lossless_start(exe):
-    """Start LS minimized to the tray, elevated like its own StartAsAdmin start-up does."""
-    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, "-StartMinimized", os.path.dirname(exe), 7)
+    """Reload the installed app in the background, respecting its own administrator preference."""
+    try: admin = ET.parse(LS_SETTINGS).getroot().findtext("StartAsAdmin") == "true"
+    except (OSError, ET.ParseError): admin = False
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas" if admin else "open", exe, "-StartMinimized", os.path.dirname(exe), 7)
     if rc <= 32:
         raise RuntimeError("小黄鸭没能启动")

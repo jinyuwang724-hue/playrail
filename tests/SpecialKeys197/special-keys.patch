@@ -1,0 +1,1596 @@
+--- a/plugin/claw_agent.py
++++ b/plugin/claw_agent.py
+@@ -43,7 +43,7 @@
+ # Everything a front end may call. Anything else (private methods, close) is refused.
+ METHODS = {
+     "get_state", "refresh", "save_settings", "frontend_ready", "set_steam_context", "action_result", "test_button_mapping",
+-    "set_overlay_hold",
++    "set_overlay_hold", "open_gamebar",
+     "manage_compatibility",
+     "get_power_state", "save_power", "get_osd_state", "save_osd", "restore_power", "set_ecore", "restore_ecore", "fan_test",
+     "get_rumble_state", "set_rumble_strength", "restore_rumble", "test_rumble",
+--- a/plugin/claw_button_mappings.py
++++ b/plugin/claw_button_mappings.py
+@@ -1,11 +1,14 @@
+ """Two independent special-button contexts. Never rewrites legacy Steam actions."""
+ import copy
+ import ctypes
++import json
++import os
++from pathlib import Path
+ from ctypes import wintypes
+ 
+ SOURCES = ("QS", "Claw")
+ SYSTEM_ACTIONS = {"gamebar", "library", "controlCenter", "steamMainMenu", "steamQuickAccess",
+-                  "steamLibrary", "magpieToggle", "keyboard", "screenshot", "steamScreenshot", "volumeUp", "volumeDown", "mute"}
++                  "steamLibrary", "windowSwitcher", "magpieToggle", "keyboard", "screenshot", "steamScreenshot", "volumeUp", "volumeDown", "mute"}
+ DEFAULT_GENERAL = {"QS": {"type": "system", "action": "gamebar"},
+                    "Claw": {"type": "system", "action": "library"}}
+ LEGACY_ACTIONS = {"MainMenu": "steamMainMenu", "QuickAccess": "steamQuickAccess", "MagpieToggle": "magpieToggle"}
+@@ -25,6 +28,30 @@
+     return {**copy.deepcopy(DEFAULT_GENERAL), **result} if general and result else result
+ 
+ 
++def session_game_mode():
++    try:
++        if json.loads((Path(os.environ['LOCALAPPDATA'])/'ClawToolbox/shell/state.json').read_text(encoding='utf-8')).get('mode') != 'game':
++            return False
++        user = ctypes.WinDLL('user32', use_last_error=True)
++        user.GetShellWindow.restype = wintypes.HWND
++        shell = user.GetShellWindow()
++        if not shell: return True
++        pid = wintypes.DWORD()
++        user.GetWindowThreadProcessId(wintypes.HWND(shell), ctypes.byref(pid))
++        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
++        kernel.OpenProcess.restype = wintypes.HANDLE
++        kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
++        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
++        handle = kernel.OpenProcess(0x1000, False, pid.value)
++        if not handle: return False
++        try:
++            name = ctypes.create_unicode_buffer(1024); size = wintypes.DWORD(1024)
++            return bool(kernel.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(size))) and os.path.basename(name.value).lower() != 'explorer.exe'
++        finally: kernel.CloseHandle(handle)
++    except Exception:
++        return False
++
++
+ def selected(settings, source, steam):
+     if source not in SOURCES:
+         raise ValueError("不认识的专用按键")
+@@ -37,6 +64,7 @@
+ 
+ 
+ def toolbox_route(action, event, steam_mode, context):
++    if action == "windowSwitcher": return "window-switcher"
+     target = "control-center" if action == "controlCenter" else "library"
+     eligible = event.get("source") == "Claw" and event.get("scope") in ("general", "steam")
+     if not eligible:
+@@ -46,7 +74,7 @@
+ 
+ WINDOW_MESSAGE = "ClawToolbox.Library.Activation.v1"
+ WINDOW_ROUTES = ("library", "control-center", "restore-library", "restore-control-center",
+-                 "minimize-library", "minimize-control-center")
++                 "minimize-library", "minimize-control-center", "window-switcher")
+ 
+ 
+ def _library_window():
+--- /dev/null
++++ b/plugin/claw_gamebar_visibility.py
+@@ -0,0 +1,25 @@
++"""Game Bar uses delegated input; foreground HWND alone cannot detect it."""
++import ctypes,json,os
++from ctypes import wintypes
++from pathlib import Path
++
++def active():
++    try:
++        p = Path(os.environ['LOCALAPPDATA']) / 'Packages/ClawToolbox.GameBarWidget_ba3r68zr466za/LocalState/power-visibility.json'
++        data = json.loads(p.read_text(encoding='utf-8-sig'))
++        if data.get('foreground') is not True:
++            return False
++        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
++        kernel.OpenProcess.restype = wintypes.HANDLE
++        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
++        kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
++        process = kernel.OpenProcess(4096, False, int(data['pid']))
++        if not process:
++            return False
++        try:
++            code = wintypes.DWORD()
++            return bool(kernel.GetExitCodeProcess(process, ctypes.byref(code))) and code.value == 259
++        finally:
++            kernel.CloseHandle(process)
++    except (OSError, ValueError, KeyError, TypeError):
++        return False
+--- a/plugin/claw_input_layer.py
++++ b/plugin/claw_input_layer.py
+@@ -101,7 +101,7 @@
+ KEY_ALIASES = {"Ctrl": "LCtrl", "Shift": "LShift", "Alt": "LAlt", "Win": "LWin", "Escape": "Esc", "Return": "Enter"}
+ # System commands. Screenshot = Game Bar's own shortcut (saved to Videos\Captures);
+ # steamScreenshot = Steam's in-game screenshot key (F12 unless changed in Steam, see steam_screenshot_keys).
+-SYSTEM = {"screenshot": ["LWin", "LAlt", "PrintScreen"], "steamScreenshot": "steam", "keyboard": None,
++SYSTEM = {"screenshot": ["LWin", "LAlt", "PrintScreen"], "steamScreenshot": "steam", "keyboard": None, "windowSwitcher": None,
+           "volumeUp": ["VolumeUp"], "volumeDown": ["VolumeDown"], "mute": ["VolumeMute"],
+           "gamebar": None, "library": None, "controlCenter": None, "steamMainMenu": None,
+           "steamQuickAccess": None, "steamLibrary": None, "magpieToggle": None}
+@@ -667,6 +667,12 @@
+         return self._root / "bin" / ("ClawInput-" + version + ".exe")
+ 
+     def wanted(self):
++        # A bounded diagnostic survives the required Windows restart. Game
++        # mode always retains isolation; only the desktop comparison is direct.
++        try:
++            diagnostic = json.loads((self._data / "hidhide-diagnostic.json").read_text(encoding="utf-8"))
++            if time.time() < float(diagnostic.get("until", 0)) and not shell_game_mode(): return False
++        except (OSError, ValueError, TypeError): pass
+         if self._pad_mode not in (None, "xinput"):
+             return False  # desktop / DInput mode: no XInput pad to read, nothing hidden
+         if self._override is not None:
+--- a/plugin/claw_overlay.py
++++ b/plugin/claw_overlay.py
+@@ -33,18 +33,18 @@
+         except (BrokenPipeError, ConnectionError, asyncio.TimeoutError):
+             await self._close()
+ 
+-    async def close(self):
++    async def close(self, timeout=2):
+         async with self.lock:
+-            await self._close()
++            await self._close(timeout)
+ 
+-    async def _close(self):
++    async def _close(self, timeout=2):
+         process, self.process = self.process, None
+         if not process:
+             return
+         if process.stdin:
+             process.stdin.close()
+         try:
+-            await asyncio.wait_for(process.wait(), 2)
++            await asyncio.wait_for(process.wait(), timeout)
+         except asyncio.TimeoutError:
+             process.kill()
+             await process.wait()
+--- a/plugin/claw_service.py
++++ b/plugin/claw_service.py
+@@ -20,6 +20,9 @@
+ import uuid
+ 
+ PLUGIN_ROOT = Path(__file__).resolve().parent
++_gb_spec = importlib.util.spec_from_file_location('claw_gamebar_visibility', PLUGIN_ROOT / 'claw_gamebar_visibility.py')
++_gamebar_visibility = importlib.util.module_from_spec(_gb_spec)
++_gb_spec.loader.exec_module(_gamebar_visibility)
+ ALLOWED_ACTIONS = {"MainMenu", "QuickAccess", "MagpieToggle", "None"}
+ _haptic_spec = importlib.util.spec_from_file_location("claw_toolbox_haptics", PLUGIN_ROOT / "claw_navigation_haptics.py")
+ _haptic_module = importlib.util.module_from_spec(_haptic_spec)
+@@ -204,6 +207,12 @@
+         self._mapping_menu_waiters = {}
+         self._permission_waiters = {}
+         self._mapping_lock = asyncio.Lock()
++        self._special_mapping_lock = asyncio.Lock()
++        self._gamebar_input_task = None
++        self._session_prepare_task = None
++        self._session_epoch = 0
++        self._session_prepare_lock = asyncio.Lock()
++        self._pad_choice_revision = 0
+         self._last_mapping = None
+         self._toolbox_last_press = None
+         self._compatibility = _compatibility_module.Compatibility(PLUGIN_ROOT, self._data, self._maintenance)
+@@ -223,8 +232,9 @@
+             logging.info("Claw residual feedback recovery: %s", self._haptics.recover())
+         config = Path(os.environ["APPDATA"]) / "GamingMode"
+         version = json.loads((PLUGIN_ROOT / "plugin.json").read_text(encoding="utf-8"))["version"]
++        router = PLUGIN_ROOT / "bin" / ("ClawRouter-" + version + "-specialkeys.exe")
+         self._process = await start_router(
+-            PLUGIN_ROOT / "bin" / ("ClawRouter-" + version + ".exe"), self._data, config)
++            router if router.is_file() else PLUGIN_ROOT / "bin" / ("ClawRouter-" + version + ".exe"), self._data, config)
+         self._started.set()
+         self._reader = asyncio.create_task(self._read_output())
+         self._task = asyncio.create_task(self._read_errors())
+@@ -275,7 +285,7 @@
+             await self._emit(kind, value)
+ 
+     def _schedule_mapping(self, event):
+-        if self._stopping or len(self._mapping_tasks) >= 4:
++        if self._stopping or (event.get("source") != "QS" and len(self._mapping_tasks) >= 4):
+             return
+         if (event.get("source") == "Claw" and event.get("scope") in ("general", "steam")
+                 and (event.get("command") or {}).get("action") in ("library", "controlCenter")):
+@@ -298,9 +308,13 @@
+             self._permission_waiters.pop(ident, None)
+ 
+     async def _execute_system_mapping(self, action, event=None):
+-        if action in ("library", "controlCenter"):
++        if action == "windowSwitcher" and not _buttons_module.session_game_mode():
++            return None
++        if action in ("library", "controlCenter", "windowSwitcher"):
+             mode = "BigPicture" if self._status.get("bigPictureOpen") else self._status.get("mode")
+             context = await asyncio.to_thread(_buttons_module.toolbox_context)
++            if event and event.get("foregroundWindow"):
++                context["foregroundWindow"] = event["foregroundWindow"]
+             route = _buttons_module.toolbox_route(action, event or {}, mode, context)
+             await asyncio.to_thread(_buttons_module.activate_toolbox, route, context)
+             return route
+@@ -334,6 +348,7 @@
+             await self._power.system_set("keyboard")
+         else:
+             if action in ("gamebar", "screenshot"):
++                if action == "gamebar": self._request_gamebar_input()
+                 await self._allow_gamebar()
+             if action == "screenshot":
+                 await asyncio.to_thread(self._captures.note_request)
+@@ -341,10 +356,17 @@
+             await self._power._call("mapped_input", mapping=_input_module.compile_command(command))
+ 
+     async def _execute_mapping(self, event):
+-        async with self._mapping_lock:
++        async with (self._special_mapping_lock if event.get("source") == "QS" else self._mapping_lock):
+             result = {"source": event.get("source"), "scope": event.get("scope"), "ok": False}
+             try:
+-                command = _input_module.validate_command(event.get("command"))
++                raw = event.get("command")
++                if event.get("source") == "QS":
++                    game = _buttons_module.session_game_mode()
++                    if "gameMode" in event and event["gameMode"] != game:
++                        return {"ok": True, "ignored": "mode-changed"}
++                    long = event.get("gesture") == "long" or (isinstance(raw, dict) and raw.get("action") == "windowSwitcher")
++                    raw = {"type": "system", "action": "windowSwitcher" if game and long else "controlCenter" if game else "gamebar"}
++                command = _input_module.validate_command(raw)
+                 if command["type"] == "system":
+                     route = await self._execute_system_mapping(command["action"], event)
+                     if route is not None:
+@@ -382,6 +404,14 @@
+                 except (ValueError, UnicodeError):
+                     continue
+                 kind = event.get("type")
++                if kind == "desktop_gamebar_input":
++                    self._request_gamebar_input()
++                    continue
++                if kind == "session_mode":
++                    self._session_epoch += 1
++                    epoch = self._session_epoch
++                    self._session_prepare_task = asyncio.create_task(self._prepare_session(event.get("game") is True, epoch))
++                    continue
+                 if kind == "mapping_permission":
+                     waiter = self._permission_waiters.get(event.get("id"))
+                     if waiter is not None and not waiter.done():
+@@ -805,6 +835,66 @@
+             await self._input.use_desktop(True)
+         return await self.get_gamepad_state()
+ 
++    async def _prepare_session(self, game, epoch):
++        try:
++            async with self._session_prepare_lock:
++                if self._stopping or epoch != self._session_epoch or game != _buttons_module.session_game_mode(): return
++                await self._emit("session_mode", {"game": game})
++                if game:
++                    self._pad_choice_revision += 1
++                    await self.set_gamepad_mode("xinput", False)
++                else:
++                    await self.set_overlay_hold(False)
++                    # The login shell may still be the older in-memory build.
++                    # Complete every exit path with the updated desktop handoff.
++                    shell = Path(os.environ['LOCALAPPDATA']) / 'ClawToolbox/shell/ClawShell.exe'
++                    if shell.is_file():
++                        await asyncio.to_thread(subprocess.run, [str(shell), 'to-desktop'],
++                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=15, check=True)
++                if epoch == self._session_epoch:
++                    await self._input.reconcile("session-mode")
++        except Exception:
++            logging.exception("Session input preparation failed")
++
++    async def open_gamebar(self):
++        if _buttons_module.session_game_mode():
++            raise ValueError("游戏模式使用快捷栏")
++        self._request_gamebar_input()
++        await self._execute_system_mapping("gamebar")
++        return {"ok": True}
++
++    def _request_gamebar_input(self):
++        if self._gamebar_input_task is None or self._gamebar_input_task.done():
++            self._gamebar_input_task = asyncio.create_task(self._hold_gamebar_input())
++
++    async def _hold_gamebar_input(self):
++        revision = self._pad_choice_revision
++        desktop = self._input.desktop
++        try:
++            state = await self.get_gamepad_state()
++            desktop = desktop or state.get("mode") == "desktop"
++            if desktop:
++                await self.set_gamepad_mode("xinput", False)
++            await self._input.refresh_apps()
++            seen = False
++            deadline = time.monotonic() + 3
++            surfaces = {"gamebar.exe", "gamebarftserver.exe", "clawwidget.exe", "xboxgamebarwidgets.exe"}
++            while not self._stopping and revision == self._pad_choice_revision:
++                foreground = await asyncio.to_thread(_input_module.foreground_exe)
++                showing = _gamebar_visibility.active() or foreground in surfaces
++                if showing:
++                    seen = True
++                    deadline = time.monotonic() + .6
++                elif time.monotonic() >= deadline:
++                    break
++                if _buttons_module.session_game_mode(): break
++                await asyncio.sleep(.1)
++        except Exception:
++            logging.exception("Game Bar controller handoff failed")
++        finally:
++            if desktop and revision == self._pad_choice_revision and not self._stopping and not _buttons_module.session_game_mode():
++                await self.set_gamepad_mode("desktop", False)
++
+     async def set_overlay_hold(self, on):
+         """Lease owner is tracked by the agent connection, including EOF/expiry."""
+         if type(on) is not bool:
+@@ -812,7 +902,7 @@
+         self._power.overlay.suppressed = on
+         try:
+             if on:
+-                await self._power.overlay.close()
++                await self._power.overlay.close(timeout=.15)
+             return await self._input.set_hold(on)
+         except Exception:
+             self._power.overlay.suppressed = False
+@@ -820,6 +910,7 @@
+             raise
+ 
+     async def set_gamepad_mode(self, mode, notify=True):
++        if notify: self._pad_choice_revision += 1
+         # notify=False: a temporary switch (the game library in front), no mode notice.
+         if mode not in ("xinput", "desktop") or type(notify) is not bool:
+             raise ValueError("模式设置无效")
+@@ -1669,6 +1760,8 @@
+     async def close(self):
+         self._stopping = True
+         await self._notifications.close()
++        pending = [t for t in (self._gamebar_input_task, self._session_prepare_task) if t and not t.done()]
++        if pending: await asyncio.gather(*pending, return_exceptions=True)
+         tasks = list(self._mapping_tasks)
+         for task in tasks:
+             task.cancel()
+--- a/native/ClawRouter.cs
++++ b/native/ClawRouter.cs
+@@ -49,6 +49,9 @@
+         FileSystemWatcher files;
+         ManagementEventWatcher buttons;
+         FirmwareShortcutFilter shortcutFilter;
++        SessionModeProbe sessionMode;
++        volatile bool sessionGameMode;
++        readonly SpecialShortcutCorrelation specialKeys = new SpecialShortcutCorrelation();
+         GameBarGuard gameBarGuard;
+         System.Threading.Timer changed;
+         System.Threading.Timer steamWatchdog;
+@@ -80,7 +83,7 @@
+             lock(outputGate) { record["at"] = DateTime.UtcNow.ToString("o"); Console.WriteLine(new JavaScriptSerializer().Serialize(record)); Console.Out.Flush(); }
+         }
+         public void Status() {
+-            Emit(new Dictionary<string, object> { {"type","status"}, {"configured",configured}, {"mode",mode}, {"bigPictureOpen",mode=="BigPicture"}, {"enabled",enabled}, {"ready",ready}, {"released",released}, {"phase",phase}, {"error",error}, {"canObserve",buttons != null}, {"helperCheck","按压时核对，不定时扫描"}, {"canSuppress","Steam 大屏幕接管期间过滤固件快捷键"}, {"shortcutFilterReady",shortcutFilter != null}, {"gameBarGuardActive",gameBarGuard!=null && gameBarGuard.Active}, {"gameBarClosed",gameBarGuard==null?0:gameBarGuard.Closed}, {"gameBarCloseFailures",gameBarGuard==null?0:gameBarGuard.Failures}, {"shortcutSuppressed",shortcutFilter==null?0:shortcutFilter.Suppressed}, {"shortcutReplayFailures",shortcutFilter==null?0:shortcutFilter.ReplayFailures}, {"modeSource","Steam 窗口状态通知 / 15 秒连接保护"}, {"playhubPort",playhubPort}, {"modeQueries",queries}, {"observed",observed}, {"routed",routed}, {"msiAction",msiAction}, {"qamAction",qamAction}, {"restorePending",restoreHelper}, {"helperRunning",Helpers().Length > 0}, {"diagnostic",diagnostic}, {"lastTimings",lastTimings} });
++            Emit(new Dictionary<string, object> { {"type","status"}, {"configured",configured}, {"mode",mode}, {"bigPictureOpen",mode=="BigPicture"}, {"enabled",enabled}, {"ready",ready}, {"released",released}, {"phase",phase}, {"error",error}, {"canObserve",buttons != null}, {"helperCheck","按压时核对，不定时扫描"}, {"canSuppress","Steam 大屏幕接管期间过滤固件快捷键"}, {"shortcutFilterReady",shortcutFilter != null}, {"sessionGameMode",sessionGameMode}, {"rawKeyboardReady",shortcutFilter!=null&&shortcutFilter.RawReady}, {"firmwareWindows",shortcutFilter==null?0:shortcutFilter.FirmwareWindows}, {"gameBarGuardActive",gameBarGuard!=null && gameBarGuard.Active}, {"gameBarClosed",gameBarGuard==null?0:gameBarGuard.Closed}, {"gameBarCloseFailures",gameBarGuard==null?0:gameBarGuard.Failures}, {"shortcutSuppressed",shortcutFilter==null?0:shortcutFilter.Suppressed}, {"shortcutReplayFailures",shortcutFilter==null?0:shortcutFilter.ReplayFailures}, {"modeSource","Steam 窗口状态通知 / 15 秒连接保护"}, {"playhubPort",playhubPort}, {"modeQueries",queries}, {"observed",observed}, {"routed",routed}, {"msiAction",msiAction}, {"qamAction",qamAction}, {"restorePending",restoreHelper}, {"helperRunning",Helpers().Length > 0}, {"diagnostic",diagnostic}, {"lastTimings",lastTimings} });
+         }
+         static Process[] Helpers() {var result=new List<Process>();foreach(var p in Process.GetProcessesByName("XboxGamingBarHelper")){if(Native.IsAlive(p.Id))result.Add(p);else p.Dispose();}return result.ToArray();}
+         static bool HelperRunning(int id) {foreach(var p in Helpers()){int pid=p.Id;p.Dispose();if(pid==id)return true;}return false;}
+@@ -103,7 +106,7 @@
+                     buttons.EventArrived += OnButton; buttons.Start();
+                 } catch(Exception ex) { if(buttons != null) buttons.Dispose(); buttons = null; error = "按键通知不可用：" + ex.Message; }
+                 if(!diagnostic) {
+-                    try {shortcutFilter=new FirmwareShortcutFilter();shortcutFilter.GameBarSuppressed+=OnSuppressedGamebar;}
++                    try {sessionMode=new SessionModeProbe(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"ClawToolbox","shell","state.json"),OnSessionMode);sessionGameMode=sessionMode.Game;shortcutFilter=new FirmwareShortcutFilter(delegate{return sessionGameMode&&!suspended&&maintenance==null;});shortcutFilter.GameBarSuppressed+=OnSuppressedGamebar;shortcutFilter.ShortcutPressed+=OnImmediateShortcut;}
+                     catch(Exception ex){Log("shortcut-filter-unavailable",ex.Message);}
+                     try {gameBarGuard=new GameBarGuard(Log);}
+                     catch(Exception ex){Log("gamebar-guard-unavailable",ex.Message);}
+@@ -149,8 +152,8 @@
+             } catch { /* Playhub is optional for ownership; keep the last menu fallback port. */ }
+         }
+         void Refresh() { lock(gate) { if(disposed)return; ReadPort();mode=ReadMode();Reconcile();Status(); } }
+-        bool GeneralWanted() { return !diagnostic && !generalFailed && !(mode=="Unknown" && steamWindowOpen) && Policy.GeneralContext(mode,suspended,generalMappings.Count!=0,steamActive); }
+-        bool CanFilter() { return Policy.CanRoute(enabled,ready,mode,released) || GeneralWanted() && released && !Policy.IsGameBarCommand(Get(generalMappings,"QS")); }
++        bool GeneralWanted() { return !diagnostic && !generalFailed && !suspended && (sessionGameMode || !(mode=="Unknown" && steamWindowOpen) && Policy.GeneralContext(mode,suspended,generalMappings.Count!=0,steamActive)); }
++        bool CanFilter() { return sessionGameMode && !suspended && maintenance==null; }
+         bool AllowsConfiguredGamebar() {
+             foreach(var raw in steamBindings.Values) {
+                 var command=raw as Dictionary<string,object>;
+@@ -162,6 +165,23 @@
+             var value=command as Dictionary<string,object>;
+             if(value==null || Equals(Get(value,"type"),"none"))return;
+             routed++; Emit(new Dictionary<string,object>{{"type","mapped_action"},{"source",source},{"command",value},{"scope",scope}});
++        }
++        void OnSessionMode(bool game) {
++            sessionGameMode=game;
++            Task.Run((Action)delegate {lock(gate){if(disposed)return;gamebarShortcuts.Reset();Reconcile();Emit(new Dictionary<string,object>{{"type","session_mode"},{"game",game}});Status();}});
++        }
++        void OnImmediateShortcut(string action,IntPtr foreground,bool game) {
++            long at=Stopwatch.GetTimestamp();
++            if(action!="gamebarInput")specialKeys.Keyboard(action=="windowSwitcher"||action=="gamebar"?42:88,at*1000.0/Stopwatch.Frequency);
++            Task.Run((Action)delegate {lock(gate){
++                if(disposed||maintenance!=null||suspended||game!=sessionGameMode)return;
++                if(action=="gamebarInput"){Emit(new Dictionary<string,object>{{"type","desktop_gamebar_input"}});return;}
++                routed++;
++                Emit(new Dictionary<string,object>{{"type","mapped_action"},{"source","QS"},{"scope","general"},
++                    {"command",new Dictionary<string,object>{{"type","system"},{"action",action}}},
++                    {"gesture",action=="windowSwitcher"?"long":"short"},{"gameMode",game},{"foregroundWindow",foreground.ToInt64()},
++                    {"nativeMs",(Stopwatch.GetTimestamp()-at)*1000.0/Stopwatch.Frequency}});
++            }});
+         }
+         void OnSuppressedGamebar() {
+             double at=Stopwatch.GetTimestamp()*1000.0/Stopwatch.Frequency;
+@@ -187,7 +207,7 @@
+             try {ReconcileOwner();}
+             finally {
+                 if(shortcutFilter!=null)shortcutFilter.SetEnabled(CanFilter());
+-                if(gameBarGuard!=null)gameBarGuard.SetEnabled(Policy.CanRoute(enabled,ready,mode,released) && !AllowsConfiguredGamebar() && !gamebarPermission.Requested);
++                if(gameBarGuard!=null)gameBarGuard.SetEnabled(sessionGameMode && !gamebarPermission.Requested);
+             }
+         }
+         void ReconcileOwner() {
+@@ -276,7 +296,7 @@
+         }
+         void OnButton(object sender, EventArrivedEventArgs args) {
+             int raw; try { raw=Convert.ToInt32(args.NewEvent.Properties["MSIEvt"].Value); } catch { return; }
+-            int code=raw & 255; if(code != 41 && code != 88)return;
++            int code=raw & 255; if(code != 41 && code != 88 && code != 42)return;
+             // Timestamp before dispatch: queued work must not turn one burst into multiple presses.
+             long now=Stopwatch.GetTimestamp();
+             lock(lastButtons) { long before; if(lastButtons.TryGetValue(code,out before) && (now-before)*1000.0/Stopwatch.Frequency < 80)return; lastButtons[code]=now; }
+@@ -284,8 +304,15 @@
+             Task.Run((Action)delegate { lock(gate) {
+                 if(disposed)return; observed++;
+                 Emit(new Dictionary<string,object>{{"type","button"},{"button",code==41?"MSI":"QuickSettings"},{"rawCode",raw},{"source","MSI_Event"}});
+-                if(diagnostic || maintenance!=null)return;
++                if(diagnostic || maintenance!=null || suspended)return;
+                 if((Stopwatch.GetTimestamp()-now)*1000.0/Stopwatch.Frequency>700) { Log("button-expired","过渡期间的旧按压已丢弃");return; }
++                if(code==88 || code==42) {
++                    if(specialKeys.Consume(code,now*1000.0/Stopwatch.Frequency)){Log("special-key-correlated","delayed WMI "+code+" already handled by keyboard path");return;}
++                    if(sessionGameMode)EmitMapping("QS",new Dictionary<string,object>{{"type","system"},{"action",code==42?"windowSwitcher":"controlCenter"}},"general");
++                    else if(code==42)EmitMapping("QS",new Dictionary<string,object>{{"type","system"},{"action","gamebar"}},"general");
++                    else Emit(new Dictionary<string,object>{{"type","desktop_gamebar_input"}});
++                    return;
++                }
+                 if(ReadMode()=="Unknown" && steamActive) {
+                     var steam=Process.GetProcessesByName("steam");
+                     if(steam.Length==0)steamActive=false;
+@@ -397,6 +424,7 @@
+             if(disposed)return;disposed=true;enabled=false;ready=false;released=false;
+             if(gameBarGuard!=null){gameBarGuard.Dispose();gameBarGuard=null;}
+             if(shortcutFilter!=null){shortcutFilter.Dispose();shortcutFilter=null;}
++            if(sessionMode!=null){sessionMode.Dispose();sessionMode=null;}
+             ClearPending();
+             SystemEvents.PowerModeChanged-=OnPower;
+             if(files != null)files.Dispose();if(changed != null)changed.Dispose();
+--- a/native/ClawShell/ShellGuard.cs
++++ b/native/ClawShell/ShellGuard.cs
+@@ -8,6 +8,8 @@
+ 
+ namespace ClawShell
+ {
++    public interface IDesktopSurface { bool FocusDesktop(); }
++
+     public interface IShellSystem
+     {
+         DateTime Now { get; }
+@@ -212,7 +214,11 @@
+         /// <summary>游戏模式 → 桌面：只拉起 explorer，游戏库留着。</summary>
+         public SwitchResult ToDesktop()
+         {
+-            if (_sys.ExplorerRunning() || _sys.StartExplorer()) { _sys.WriteState("desktop", "switched"); return SwitchResult.Ok; }
++            if (_sys.ExplorerRunning() || _sys.StartExplorer()) {
++                var desktop = _sys as IDesktopSurface;
++                if (desktop != null && !desktop.FocusDesktop()) _sys.Log("desktop focus request did not settle");
++                _sys.WriteState("desktop", "switched"); return SwitchResult.Ok;
++            }
+             _sys.WriteState("game", "failed:explorer");
+             return SwitchResult.Failed;
+         }
+--- a/native/ClawShell/WindowsShellSystem.cs
++++ b/native/ClawShell/WindowsShellSystem.cs
+@@ -11,7 +11,7 @@
+ 
+ namespace ClawShell
+ {
+-    public sealed class WindowsShellSystem : IShellSystem
++    public sealed class WindowsShellSystem : IShellSystem, IDesktopSurface
+     {
+         public const string LibraryAumid = "ClawToolbox.Library_ba3r68zr466za!App";
+         public const string LibraryFamily = "ClawToolbox.Library_ba3r68zr466za";
+@@ -45,6 +45,21 @@
+             }
+             catch { }
+         }
++
++        public bool FocusDesktop()
++        {
++            object shell = null;
++            try {
++                Type type = Type.GetTypeFromProgID("Shell.Application");
++                shell = Activator.CreateInstance(type);
++                type.InvokeMember("MinimizeAll", System.Reflection.BindingFlags.InvokeMethod, null, shell, null);
++                IntPtr desktop = GetShellWindow();
++                if (desktop != IntPtr.Zero) { DesktopSetForegroundWindow(desktop); return true; }
++            } catch (Exception ex) { Log("focus desktop: " + ex.Message); }
++            finally { if (shell != null && Marshal.IsComObject(shell)) Marshal.FinalReleaseComObject(shell); }
++            return false;
++        }
++        [DllImport("user32.dll", EntryPoint="SetForegroundWindow")] static extern bool DesktopSetForegroundWindow(IntPtr window);
+ 
+         // ---------- explorer ----------
+ 
+--- a/native/FirmwareShortcutFilter.cs
++++ b/native/FirmwareShortcutFilter.cs
+@@ -28,21 +28,28 @@
+         }
+         public void Reset() {lock(gate){generation++;quickSettings.Clear();}}
+     }
++    public sealed class SpecialShortcutCorrelation {
++        readonly object gate=new object();
++        readonly List<KeyValuePair<int,double>> pending=new List<KeyValuePair<int,double>>();
++        public void Keyboard(int code,double at){lock(gate){pending.RemoveAll(x=>at-x.Value>900);pending.Add(new KeyValuePair<int,double>(code,at));}}
++        public bool Consume(int code,double at){lock(gate){pending.RemoveAll(x=>at-x.Value>900);for(int i=0;i<pending.Count;i++)if(pending[i].Key==code&&at>=pending[i].Value){pending.RemoveAt(i);return true;}return false;}}
++    }
+     public struct KeyboardStroke {
+         public uint Key, Scan, Flags, Time;
+         public ulong Extra;
+         public bool Up { get { return (Flags & 128) != 0; } }
+     }
+     public sealed class ShortcutDecision {
+-        public bool Swallow, GameBar;
++        public bool Swallow, GameBar, Switcher, ObservedGameBar;
+     }
+     // Steam ownership disables the Game Bar shortcut itself. Downstream hooks
+     // can consume a modifier before raw device input arrives; replay on a missing
+     // report would launch Game Bar again. Other keys keep their normal delivery.
+     public sealed class FirmwareShortcutState {
+         int windows;
+-        bool blockedG;
+-        public ShortcutDecision Key(KeyboardStroke key, bool enabled) {
++        bool blockedG, blockedTab, observedG;
++        public ShortcutDecision Key(KeyboardStroke key, bool enabled) { return Key(key,enabled,false); }
++        public ShortcutDecision Key(KeyboardStroke key, bool enabled, bool taskView) {
+             var result = new ShortcutDecision();
+             if(key.Extra==0x434C4157)return result; // our intentional mapped shortcut, not the firmware copy
+             if(key.Key==0x5b || key.Key==0x5c) {
+@@ -50,11 +57,19 @@
+                 if(key.Up) windows &= ~bit; else windows |= bit;
+                 return result;
+             }
++            if(key.Key==0x09) {
++                if(key.Up){result.Swallow=blockedTab;blockedTab=false;return result;}
++                if(taskView && windows!=0){result.Switcher=!blockedTab;result.Swallow=true;blockedTab=true;}
++                else blockedTab=false;
++                return result;
++            }
+             if(key.Key!=0x47)return result;
+             if(key.Up) {
+-                result.Swallow=blockedG;blockedG=false;
++                result.Swallow=blockedG;blockedG=false;observedG=false;
+                 return result;
+             }
++            result.ObservedGameBar=windows!=0&&!observedG;
++            if(windows!=0)observedG=true;
+             if(enabled && windows!=0) {
+                 result.GameBar=!blockedG;
+                 result.Swallow=true;blockedG=true;
+@@ -78,10 +93,21 @@
+         readonly Hook callback;
+         IntPtr hook;
+         volatile bool enabled;
++        readonly Func<bool> gameMode;
++        readonly RawKeyboardSource keyboardSource;
++        public event Action<string,IntPtr,bool> ShortcutPressed;
++        [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
++        [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
++        [DllImport("user32.dll")] static extern void keybd_event(byte key,byte scan,uint flags,UIntPtr extra);
++        public bool RawReady {get{return keyboardSource!=null&&keyboardSource.Ready;}}
++        public int FirmwareWindows {get{return keyboardSource==null?0:keyboardSource.FirmwareWindows;}}
+         public long Suppressed {get;private set;}
+         public long ReplayFailures {get{return 0;}}
+         public event Action GameBarSuppressed;
+-        public FirmwareShortcutFilter() {
++        public FirmwareShortcutFilter() : this(null) {}
++        public FirmwareShortcutFilter(Func<bool> gameMode) {
++            this.gameMode=gameMode;
++            if(gameMode!=null)keyboardSource=new RawKeyboardSource();
+             callback=OnKey;
+             CreateHandle(new CreateParams {Parent=new IntPtr(-3)});
+             hook=SetWindowsHookEx(13,callback,GetModuleHandle(null),0);
+@@ -91,8 +117,21 @@
+         IntPtr OnKey(int code,IntPtr message,IntPtr data) {
+             if(code<0)return CallNextHookEx(hook,code,message,data);
+             var key=(HookKey)Marshal.PtrToStructure(data,typeof(HookKey));
+-            var decision=state.Key(new KeyboardStroke {Key=key.key,Scan=key.scan,Flags=key.flags,Time=key.time,Extra=key.extra.ToUInt64()},enabled);
+-            if(decision.GameBar){Suppressed++;var handler=GameBarSuppressed;if(handler!=null)handler();}
++            var stroke=new KeyboardStroke {Key=key.key,Scan=key.scan,Flags=key.flags,Time=key.time,Extra=key.extra.ToUInt64()};
++            bool game=gameMode!=null&&gameMode();
++            if(keyboardSource!=null&&(key.key==91||key.key==92)&&!stroke.Up)keyboardSource.Begin(key.time);
++            bool firmwareTab=keyboardSource!=null&&!game&&key.key==9&&!stroke.Up&&keyboardSource.Firmware(key.time);
++            var decision=state.Key(stroke,gameMode==null?enabled:game,game||firmwareTab);
++            string action=null;
++            if(decision.GameBar){Suppressed++;if(gameMode==null){var old=GameBarSuppressed;if(old!=null)old();}else action="controlCenter";}
++            if(decision.Switcher) {
++                action=game?"windowSwitcher":"gamebar";
++                // A swallowed firmware Tab must not turn the trailing Windows
++                // release into a Start menu tap. Preserve real Ctrl state.
++                if(!game&&GetAsyncKeyState(0x11)>=0){var tag=new UIntPtr(0x434C4157u);keybd_event(0x11,0,0,tag);keybd_event(0x11,0,2,tag);}
++            }
++            if(gameMode!=null&&!game&&decision.ObservedGameBar)action="gamebarInput";
++            if(action!=null){var handler=ShortcutPressed;if(handler!=null)handler(action,GetForegroundWindow(),game);}
+             return decision.Swallow ? new IntPtr(1) : CallNextHookEx(hook,code,message,data);
+         }
+         protected override void WndProc(ref Message message) {
+@@ -101,6 +140,7 @@
+         }
+         public void Dispose() {
+             enabled=false;state.Disabled();
++            if(keyboardSource!=null)keyboardSource.Dispose();
+             if(hook!=IntPtr.Zero){UnhookWindowsHookEx(hook);hook=IntPtr.Zero;}
+             DestroyHandle();
+         }
+--- /dev/null
++++ b/native/RawKeyboardSource.cs
+@@ -0,0 +1,31 @@
++using System;
++using System.Collections.Generic;
++using System.Runtime.InteropServices;
++using System.Text;
++using System.Threading;
++using System.Windows.Forms;
++namespace ClawRouter {
++    // A separate raw-input queue identifies the firmware keyboard before a Tab
++    // chord is classified. Ordinary external keyboards retain native Win+Tab.
++    public sealed class RawKeyboardSource : NativeWindow,IDisposable {
++        [StructLayout(LayoutKind.Sequential)] struct Device {public ushort page,usage;public uint flags;public IntPtr target;}
++        [StructLayout(LayoutKind.Sequential)] struct Header {public uint type,size;public IntPtr device,param;}
++        [StructLayout(LayoutKind.Sequential)] struct Keyboard {public ushort make,flags,reserved,vkey;public uint message,extra;}
++        [DllImport("user32.dll")] static extern bool RegisterRawInputDevices(Device[] devices,uint count,uint size);
++        [DllImport("user32.dll")] static extern uint GetRawInputData(IntPtr raw,uint command,IntPtr data,ref uint size,uint headerSize);
++        [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern uint GetRawInputDeviceInfo(IntPtr device,uint command,StringBuilder data,ref uint size);
++        [DllImport("user32.dll")] static extern int GetMessageTime();
++        [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h,uint msg,IntPtr w,IntPtr l);
++        readonly object gate=new object();readonly AutoResetEvent classified=new AutoResetEvent(false);readonly ManualResetEvent ready=new ManualResetEvent(false);
++        readonly Dictionary<IntPtr,bool> devices=new Dictionary<IntPtr,bool>();readonly Thread thread;
++        uint stroke;int source;volatile bool disposed;
++        public int FirmwareWindows {get;private set;}public bool Ready {get;private set;}
++        public RawKeyboardSource(){thread=new Thread(Run){IsBackground=true,Name="firmware-keyboard-source"};thread.SetApartmentState(ApartmentState.STA);thread.Start();ready.WaitOne(1500);}
++        void Run(){try{CreateHandle(new CreateParams{Parent=new IntPtr(-3)});Ready=RegisterRawInputDevices(new[]{new Device{page=1,usage=6,flags=0x100,target=Handle}},1,(uint)Marshal.SizeOf(typeof(Device)));ready.Set();Application.Run();}finally{ready.Set();DestroyHandle();}}
++        public void Begin(uint time){lock(gate){stroke=time;source=0;classified.Reset();}}
++        public bool Firmware(uint time){for(int n=0;n<2;n++){lock(gate){if(source!=0&&unchecked(time-stroke)<2000)return source==1;}if(n==0)classified.WaitOne(8);}return false;}
++        bool IsFirmware(IntPtr device){bool yes;if(devices.TryGetValue(device,out yes))return yes;uint size=0;GetRawInputDeviceInfo(device,0x20000007,null,ref size);var name=new StringBuilder((int)size+1);GetRawInputDeviceInfo(device,0x20000007,name,ref size);string s=name.ToString().ToUpperInvariant();yes=s.Contains("MSNB1001")||s.Contains("VID_0DB0");devices[device]=yes;return yes;}
++        protected override void WndProc(ref Message m){if(m.Msg==0x8001){Application.ExitThread();return;}if(m.Msg==0xff){uint size=0,hs=(uint)Marshal.SizeOf(typeof(Header));GetRawInputData(m.LParam,0x10000003,IntPtr.Zero,ref size,hs);if(size>=hs+Marshal.SizeOf(typeof(Keyboard))){var data=Marshal.AllocHGlobal((int)size);try{if(GetRawInputData(m.LParam,0x10000003,data,ref size,hs)==size){var h=(Header)Marshal.PtrToStructure(data,typeof(Header));var key=(Keyboard)Marshal.PtrToStructure(IntPtr.Add(data,(int)hs),typeof(Keyboard));if(h.type==1&&(key.vkey==91||key.vkey==92)&&(key.flags&1)==0){bool fw=IsFirmware(h.device);lock(gate){source=fw?1:2;stroke=(uint)GetMessageTime();if(fw)FirmwareWindows++;classified.Set();}}}}finally{Marshal.FreeHGlobal(data);}}}base.WndProc(ref m);}
++        public void Dispose(){if(disposed)return;disposed=true;if(Handle!=IntPtr.Zero)PostMessage(Handle,0x8001,IntPtr.Zero,IntPtr.Zero);thread.Join(1500);}
++    }
++}
+--- /dev/null
++++ b/native/SessionModeProbe.cs
+@@ -0,0 +1,23 @@
++using System;
++using System.Diagnostics;
++using System.IO;
++using System.Runtime.InteropServices;
++using System.Threading;
++using System.Web.Script.Serialization;
++namespace ClawRouter {
++    // Updated off the low-level hook. Actual Explorer ownership wins over stale state.
++    public sealed class SessionModeProbe : IDisposable {
++        [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
++        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
++        readonly string path;readonly Action<bool> changed;readonly Timer timer;
++        IntPtr lastShell;bool explorer, savedGame;DateTime stamp;int busy;volatile bool game;
++        public bool Game {get{return game;}}
++        public SessionModeProbe(string path,Action<bool> changed){this.path=path;this.changed=changed;Refresh();timer=new Timer(delegate{Refresh();},null,50,50);}
++        void Refresh(){if(Interlocked.Exchange(ref busy,1)!=0)return;try{
++            var shell=GetShellWindow();if(shell!=lastShell){lastShell=shell;explorer=false;if(shell!=IntPtr.Zero){uint pid;GetWindowThreadProcessId(shell,out pid);try{using(var p=Process.GetProcessById((int)pid))explorer=p.ProcessName.Equals("explorer",StringComparison.OrdinalIgnoreCase);}catch{}}}
++            try{var at=File.GetLastWriteTimeUtc(path);if(at!=stamp){stamp=at;var json=new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(path));object value;savedGame=json.TryGetValue("mode",out value)&&Equals(value,"game");}}catch{}
++            bool next=!explorer&&savedGame;if(next!=game){game=next;if(changed!=null)changed(next);}
++        }finally{Interlocked.Exchange(ref busy,0);}}
++        public void Dispose(){timer.Dispose();}
++    }
++}
+--- a/frontend/library-native/ClawLibrary/App.cs
++++ b/frontend/library-native/ClawLibrary/App.cs
+@@ -137,13 +137,17 @@
+             }
+             else
+             {
+-                appWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
++                var presenter = OverlappedPresenter.Create();
++                presenter.SetBorderAndTitleBar(false, false);
++                presenter.IsResizable = false;
++                appWindow.SetPresenter(presenter);
+             }
+             if (appWindow.TitleBar is { } tb) { tb.BackgroundColor = Colors.Black; tb.ButtonBackgroundColor = Colors.Black; }
+         }
+         catch (Exception ex) { Log.Warn($"window presenter: {ex.Message}"); }
+ 
+         InitializeShortcutWindow(returnWindow);
++        _shortcutWindow?.EnsureFullscreenBounds();
+ 
+         try
+         {
+@@ -168,8 +172,9 @@
+                 _stage = new WallStage(_root, this);
+                 _stage.StartupShieldRequested = _pendingRoute == "activate" && !Program.Args.Any(a => a.StartsWith("--state="));   // 录屏 / 测试状态：窗口不在前台，盖板会一直等
+                 _stage.Start();
+-                _stage.ActivateShortcut(ToolboxActivation.Target(_pendingRoute));
+-                if (_pendingRoute != "activate") ShowShortcutWindow(_pendingRoute, initial: true);
++                _shortcutWindow?.EnsureFullscreenBounds();
++                if (_pendingRoute != "activate") ActivateRoute(_pendingRoute, returnWindow);
++                else _stage.ActivateShortcut("library");
+             }
+             catch (Exception ex) { Log.Error("stage start", ex); }
+         };
+@@ -206,6 +211,16 @@
+         if (ToolboxWindow.SteamHomeRedirect(route, hwnd)) return;
+         // 快速设置键（后台的 controlCenter 动作）= 快捷设置面板：开着就收起，游戏库在前台时直接在它上面开
+         bool quick = ToolboxActivation.Target(route) == "control-center";
++        bool switcher = ToolboxActivation.Target(route) == "window-switcher";
++        if (switcher)
++        {
++            _pendingRoute = "window-switcher";
++            _stage?.OpenSwitcherShortcut();
++            ShowShortcutWindow(route);
++            return;
++        }
++        if (quick) { if (_stage?.SwitcherOpen == true) _stage.CloseSpecialSurfaces(); _stage?.SetSpecialInput(true); }
++        else if (_stage?.SwitcherOpen == true) _stage.CloseSpecialSurfaces();
+         if (quick && _stage?.QuickPanelOpen == true) { _stage.CloseQuickPanel(); return; }
+         if (!quick && _stage?.QuickPanelOpen == true) _stage.CloseQuickPanel(hideWindow: false, instant: true);
+         if (quick && AppWindow.IsVisible && !ToolboxWindow.IsIconic(hwnd) && route.StartsWith("minimize-", StringComparison.Ordinal))
+@@ -229,7 +244,7 @@
+         if (_pendingRoute is "activate" or "library") _stage?.NowPlayingBeforeShow();
+         else if (quick) _stage?.OpenQuickPanel(returnWindow);   // 窗口出来之前先铺好游戏画面和面板
+         else _stage?.NowPlayingYield();   // Claw 键唤控制中心：正在游戏画面让开，不挡控制中心也不抢它的按键
+-        if (quick) { ShowAfterFrames(route, 2); return; }
++        if (quick) { ShowAfterFrames(route, 1); return; }
+         ShowShortcutWindow(route);
+     }
+ 
+@@ -261,7 +276,7 @@
+         if (!AppWindow.IsVisible) AppWindow.Show(false);
+         _stage?.ResumeFromTray();
+         if (!_overlayActive) ToolboxWindow.Restore(WinRT.Interop.WindowNative.GetWindowHandle(this));
+-        if (!ToolboxActivation.PreservePage(route)) _stage?.ActivateShortcut(_pendingRoute);
++        if (_stage?.SpecialSurfaceOpen != true && !ToolboxActivation.PreservePage(route)) _stage?.ActivateShortcut(_pendingRoute);
+         if (!_overlayActive) _root.Focus(FocusState.Programmatic);
+     }
+ }
+--- a/frontend/library-native/ClawLibrary/Data/LibraryWindow.cs
++++ b/frontend/library-native/ClawLibrary/Data/LibraryWindow.cs
+@@ -14,7 +14,7 @@
+     private uint _overlayPid;
+     private Windows.Graphics.RectInt32 _overlayBounds;
+     private uint _returnPid;
+-    private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center"];
++    private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center", "window-switcher"];
+ 
+     public LibraryWindow(nint window, Action<string, nint> activate)
+     {
+@@ -30,6 +30,8 @@
+ 
+     private nint HandleMessage(nint hwnd, uint message, nuint wp, nint lp, nuint id, nuint data)
+     {
++        if (message == 0x0083 && !Program.Args.Contains("--windowed")) return 0; // WM_NCCALCSIZE: the entire monitor is client area.
++        if (message == 0x007e || message == 0x02e0) Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()?.TryEnqueue(EnsureFullscreenBounds);
+         if (_overlayTarget != 0 && message == 0x21) return 3; // WM_MOUSEACTIVATE / MA_NOACTIVATE
+         if (_overlayTarget != 0 && message == 0x0245) return 3; // WM_POINTERACTIVATE / PA_NOACTIVATE
+         if (message == 0x112 && (wp & 0xfff0) == 0xf020 && IsWindowVisible(hwnd) && !ToolboxWindow.IsIconic(hwnd)) // WM_SYSCOMMAND / SC_MINIMIZE
+@@ -53,12 +55,7 @@
+         if (window == 0 || !IsWindowVisible(window) || ToolboxWindow.IsIconic(window)) return false;
+         GetWindowThreadProcessId(window, out uint pid);
+         if (pid == (uint)Environment.ProcessId) return false;
+-        try
+-        {
+-            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
+-            return p.ProcessName is not ("explorer" or "ClawShell" or "steam" or "steamwebhelper" or "GameBar" or "ClawWidget");
+-        }
+-        catch { return false; }
++        return pid != 0;
+     }
+ 
+     public bool OverlayTargetIsForeground => _overlayTarget != 0 && Foreground == _overlayTarget
+@@ -72,22 +69,36 @@
+         SetWindowLongPtr(_window, -20, (nint)(target != 0 ? style | 0x08000000L : style & ~0x08000000L));
+     }
+ 
+-    public void SetOverlayBounds(Windows.Graphics.RectInt32 bounds)
+-    {
+-        _overlayBounds = bounds;
+-        // OverlappedPresenter retains a nonclient edge even with its title bar
+-        // disabled. Remove it so client pixels still cover the full monitor.
+-        long style = GetWindowLongPtr(_window, -16).ToInt64();
+-        SetWindowLongPtr(_window, -16, (nint)(style & ~0x00C40000L));
+-        long extended = GetWindowLongPtr(_window, -20).ToInt64();
+-        SetWindowLongPtr(_window, -20, (nint)(extended & ~0x300L));
+-        SetWindowPos(_window, -1, bounds.X, bounds.Y, bounds.Width, bounds.Height, 0x230);
++    private bool _sizing;
++    public void EnsureFullscreenBounds()
++    {
++        if (_sizing || Program.Args.Contains("--windowed")) return;
++        _sizing = true;
++        try
++        {
++            nint monitor = MonitorFromWindow(_overlayTarget != 0 ? _overlayTarget : _window, 2);
++            var info = new MONITORINFO { Size = Marshal.SizeOf<MONITORINFO>() };
++            if (!GetMonitorInfo(monitor, ref info)) return;
++            var r = info.Monitor;
++            long style = GetWindowLongPtr(_window, -16).ToInt64();
++            long desired = (style & ~0x00CF0000L) | 0x80000000L;
++            long extended = GetWindowLongPtr(_window, -20).ToInt64();
++            bool changed = style != desired || (extended & 0x300) != 0;
++            if (style != desired) SetWindowLongPtr(_window, -16, (nint)desired);
++            if ((extended & 0x300) != 0) SetWindowLongPtr(_window, -20, (nint)(extended & ~0x300L));
++            int square = 1, noBorder = unchecked((int)0xfffffffe);
++            DwmSetWindowAttribute(_window, 33, ref square, 4);
++            DwmSetWindowAttribute(_window, 34, ref noBorder, 4);
++            if (changed || !GetWindowRect(_window, out var current) || !current.Equals(r))
++                SetWindowPos(_window, 0, r.Left, r.Top, r.Right-r.Left, r.Bottom-r.Top, 0x234);
++        }
++        finally { _sizing = false; }
+     }
+ 
+     public void ShowOverlay()
+     {
+         ShowWindow(_window, 4); // SW_SHOWNOACTIVATE (also restores from minimized)
+-        if (_overlayBounds.Width > 0) SetOverlayBounds(_overlayBounds);
++        EnsureFullscreenBounds();
+         bool shown = SetWindowPos(_window, -1, 0, 0, 0, 0, 0x253); // NOOWNERZORDER | NOACTIVATE | SHOWWINDOW | NOMOVE | NOSIZE
+         Log.Info($"overlay show topmost={shown} style={GetWindowLongPtr(_window, -20).ToInt64():X}");
+     }
+@@ -136,6 +147,8 @@
+     {
+         if (window == 0 || !IsWindow(window)) return false;
+         if (ToolboxWindow.IsIconic(window)) ShowWindow(window, 9);
++        nint popup = GetLastActivePopup(window);
++        if (popup != 0 && IsWindowVisible(popup)) window = popup;
+         SetForegroundWindow(window);
+         if (Foreground == window) return true;
+         uint current = GetCurrentThreadId();
+@@ -162,6 +175,12 @@
+ 
+     public void Dispose() { SetTopmost(false); RemoveProp(_window, "ClawToolbox.Library.Activation.v1"); RemoveWindowSubclass(_window, _callback, 82); }
+ 
++    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
++    [StructLayout(LayoutKind.Sequential)] private struct MONITORINFO { public int Size; public RECT Monitor, Work; public uint Flags; }
++    [DllImport("user32.dll")] private static extern nint MonitorFromWindow(nint hwnd, uint flags);
++    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern bool GetMonitorInfo(nint monitor, ref MONITORINFO info);
++    [DllImport("user32.dll")] private static extern bool GetWindowRect(nint hwnd, out RECT rect);
++    [DllImport("user32.dll")] private static extern nint GetLastActivePopup(nint hwnd);
+     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+     private delegate nint SubclassProc(nint hwnd, uint msg, nuint wp, nint lp, nuint id, nuint data);
+     [DllImport("comctl32.dll")] private static extern bool SetWindowSubclass(nint hwnd, SubclassProc proc, nuint id, nuint data);
+--- a/frontend/library-native/ClawLibrary/Data/OpenWindows.cs
++++ b/frontend/library-native/ClawLibrary/Data/OpenWindows.cs
+@@ -73,6 +73,8 @@
+ 
+     /// <summary>像点右上角 × 一样请它自己关（能存档）。以管理员身份运行的窗口收不到（返回 false）。</summary>
+     public static bool Close(nint hwnd) => PostMessage(hwnd, 0x0010 /* WM_CLOSE */, 0, 0);
++
++    public static bool Matches(OpenWindow window) => IsWindow(window.Hwnd) && GetWindowThreadProcessId(window.Hwnd, out uint pid) != 0 && pid == window.Pid;
+ 
+     public static bool Alive(nint hwnd) => IsWindow(hwnd) && IsWindowVisible(hwnd);
+ 
+--- a/frontend/library-native/ClawLibrary/Data/ToolboxActivation.cs
++++ b/frontend/library-native/ClawLibrary/Data/ToolboxActivation.cs
+@@ -7,7 +7,7 @@
+ internal static class ToolboxActivation
+ {
+     public static bool IsRoute(string route) => route is "library" or "control-center"
+-        or "restore-library" or "restore-control-center" or "minimize-library" or "minimize-control-center";
++        or "restore-library" or "restore-control-center" or "minimize-library" or "minimize-control-center" or "window-switcher";
+     public static string Target(string route) => route.StartsWith("restore-", StringComparison.Ordinal) ? route[8..]
+         : route.StartsWith("minimize-", StringComparison.Ordinal) ? route[9..] : route;
+     public static bool ShouldMinimize(string route, bool? xboxFse, bool? steamBigPicture) =>
+@@ -30,6 +30,7 @@
+     /// </summary>
+     public static bool SteamHomeRedirect(string route, nint window)
+     {
++        if (!Stage.ShellMode.GameMode) return false;
+         if (route != "activate" || XboxFseActive() != true) return false;
+         if (!ClawLibrary.Stage.UiPrefs.Load().FseSteam) return false;
+         try { Process.Start(new ProcessStartInfo("steam://open/bigpicture") { UseShellExecute = true }); }
+--- a/frontend/library-native/ClawLibrary/MainWindow.Overlay.cs
++++ b/frontend/library-native/ClawLibrary/MainWindow.Overlay.cs
+@@ -1,7 +1,6 @@
+ using System.Text.Json.Nodes;
+ using ClawLibrary.Data;
+ using Microsoft.UI.Dispatching;
+-using Microsoft.UI.Windowing;
+ 
+ namespace ClawLibrary;
+ 
+@@ -12,96 +11,104 @@
+     private DispatcherQueueTimer? _overlayTimer;
+     private volatile bool _overlayActive;
+     private nint _overlayTarget;
+-    private bool _overlayRenewing;
+-    private bool _overlayPresenter;
+-
+-    private void EnableOverlayPresenter()
+-    {
+-        if (_overlayPresenter) return;
+-        var bounds = new Windows.Graphics.RectInt32(AppWindow.Position.X, AppWindow.Position.Y, AppWindow.Size.Width, AppWindow.Size.Height);
+-        var presenter = OverlappedPresenter.Create();
+-        presenter.SetBorderAndTitleBar(false, false);
+-        presenter.IsResizable = false;
+-        presenter.IsAlwaysOnTop = true;
+-        AppWindow.SetPresenter(presenter);
+-        _shortcutWindow?.SetOverlayBounds(bounds);
+-        _overlayPresenter = true;
+-    }
++    private bool _overlayRenewing, _overlayInputPrepared;
++    private bool _surfaceHideWindow, _surfaceHadOverlay, _surfaceSession;
++    private bool _desktopHandoff;
+ 
+     internal bool OverlayAcceptsGamepad => _overlayActive && _shortcutVisible && !_shortcutInTray
+         && _shortcutWindow?.OverlayTargetIsForeground == true;
+ 
+-    // The input hold must be acknowledged before showing any UI over a game.
+     private async Task ActivateOverlayRoute(string route, nint returnWindow)
+     {
+         await _overlayRoutes.WaitAsync();
+         try
+         {
+-            if (_shortcutClosed) return;
+-            bool quick = ToolboxActivation.Target(route.Replace(App.ViaShell, "")) == "control-center";
+-            // The game stays foreground, so the router's restore-library route
+-            // must still toggle an already visible library overlay closed.
+-            if (!quick && _overlayActive && _shortcutVisible && _stage?.QuickPanelOpen != true
++            if (_shortcutClosed || _desktopHandoff) return;
++            string targetRoute = ToolboxActivation.Target(route.Replace(App.ViaShell, ""));
++            bool quick = targetRoute == "control-center", switcher = targetRoute == "window-switcher";
++            bool special = quick || switcher;
++            bool game = Stage.ShellMode.GameMode;
++            if (!game && route.StartsWith("minimize-", StringComparison.Ordinal))
++            { _stage?.CloseSpecialSurfaces(); CompleteShortcutHide(returnToPrevious: false); return; }
++            if (special && !game)
++            {
++                if (quick) { using var agent = new AgentClient(); await agent.Call("open_gamebar"); }
++                return;
++            }
++            if (quick && _stage?.QuickPanelOpen == true) { ActivateRouteCore(route, returnWindow); return; }
++            if (!special && _overlayActive && _shortcutVisible && _stage?.SpecialSurfaceOpen != true
+                 && route == "restore-library") route = "minimize-library";
+-            bool closing = quick ? _stage?.QuickPanelOpen == true
+-                : _overlayActive && route.StartsWith("minimize-", StringComparison.Ordinal);
+-            nint target = _overlayActive ? _overlayTarget : returnWindow != 0 ? returnWindow : LibraryWindow.Foreground;
+-            bool gameMode = Stage.ShellMode.Available && !Stage.ShellMode.ExplorerRunning();
+-            bool candidate = gameMode && !closing && LibraryWindow.CanOverlay(target)
+-                && LibraryWindow.Foreground == target && !ToolboxWindow.ShellCloaked(WinRT.Interop.WindowNative.GetWindowHandle(this));
+-            if (!closing && (candidate || quick) && _overlayAgent == null)
++            bool closing = !special && route.StartsWith("minimize-", StringComparison.Ordinal);
++            nint self = WinRT.Interop.WindowNative.GetWindowHandle(this);
++            nint foreground = LibraryWindow.Foreground;
++            bool owned = AppWindow.IsVisible && !ToolboxWindow.IsIconic(self)
++                && (foreground == self || OverlayAcceptsGamepad);
++            if (special && !_surfaceSession)
+             {
+-                _overlayAgent ??= new AgentClient();
++                _surfaceSession = true;
++                _surfaceHideWindow = !owned;
++                _surfaceHadOverlay = _overlayActive;
++            }
++            // Use the window that actually owns input now. A delayed firmware
++            // report must not pin the surface to an application already left.
++            nint target = foreground != self ? foreground : returnWindow;
++            bool candidate = game && !closing && LibraryWindow.CanOverlay(target)
++                && !ToolboxWindow.ShellCloaked(self);
++            if (!closing && (candidate || special) && _overlayAgent == null)
++            {
++                _overlayAgent = new AgentClient();
+                 try
+                 {
+-                    await _overlayAgent.Call("refresh_input_layer_apps");
+-                    var result = await _overlayAgent.Call("set_overlay_hold", JsonValue.Create(true));
+-                    if ((bool?)result?["safe"] != true) throw new InvalidOperationException("输入隔离尚未就绪");
+-                    if (_shortcutClosed || (candidate && LibraryWindow.Foreground != target))
++                    if (!_overlayInputPrepared)
+                     {
+-                        await _overlayAgent.Call("set_overlay_hold", JsonValue.Create(false));
+-                        return;
++                        await _overlayAgent.Call("refresh_input_layer_apps");
++                        _overlayInputPrepared = true;
+                     }
+-                    _overlayTarget = candidate ? target : 0;
+-                    _overlayActive = candidate;
+-                    _shortcutWindow?.SetOverlayTarget(_overlayTarget);
+-                    if (candidate) EnableOverlayPresenter();
++                    var state = await _overlayAgent.Call("set_overlay_hold", JsonValue.Create(true));
++                    if ((bool?)state?["safe"] != true) throw new IOException("输入层尚未确认隔离");
+                     StartOverlayHeartbeat();
+-                    Log.Info($"overlay ready target={target}");
+                 }
+                 catch (Exception ex)
+                 {
+-                    Log.Warn($"overlay unavailable; foreground fallback: {ex.Message}");
++                    Log.Warn($"shortcut input fallback: {ex.Message}");
++                    _overlayInputPrepared = false;
+                     _overlayAgent.Dispose(); _overlayAgent = null;
++                    candidate = false;
+                 }
++            }
++            if (candidate && _overlayAgent != null)
++            {
++                nint now = LibraryWindow.Foreground;
++                if (now != self && LibraryWindow.CanOverlay(now)) target = now;
++                _overlayTarget = target; _overlayActive = true;
++                _shortcutWindow?.SetOverlayTarget(target);
++                _shortcutWindow?.EnsureFullscreenBounds();
+             }
+             ActivateRouteCore(route, returnWindow);
+         }
+-        catch (Exception ex) { Log.Error("overlay route", ex); }
++        catch (Exception ex) { Log.Error("shortcut route", ex); }
+         finally { _overlayRoutes.Release(); }
+     }
+ 
+     private void StartOverlayHeartbeat()
+     {
+         _overlayTimer ??= DispatcherQueue.CreateTimer();
+-        _overlayTimer.Interval = TimeSpan.FromMilliseconds(500);
+-        _overlayTimer.Tick -= OverlayHeartbeat;
+-        _overlayTimer.Tick += OverlayHeartbeat;
++        _overlayTimer.Interval = TimeSpan.FromMilliseconds(400);
++        _overlayTimer.Tick -= OverlayHeartbeat; _overlayTimer.Tick += OverlayHeartbeat;
+         _overlayTimer.Start();
+     }
+ 
+     private async void OverlayHeartbeat(DispatcherQueueTimer sender, object args)
+     {
+         if (_overlayAgent == null || _overlayRenewing) return;
+-        // Explicitly switching to a third app also dismisses the overlay.
+-        if (_shortcutWindow?.OverlayTargetIsForeground != true && _shortcutWindow?.IsForeground != true)
++        if (!Stage.ShellMode.GameMode || (_shortcutWindow?.OverlayTargetIsForeground != true && _shortcutWindow?.IsForeground != true))
+         {
+-            _stage?.CloseQuickPanel(hideWindow: false, instant: true);
+-            CompleteShortcutHide();
++            _stage?.CloseSpecialSurfaces();
++            CompleteShortcutHide(returnToPrevious: false);
+             return;
+         }
+         _overlayRenewing = true;
+-        var client = _overlayAgent!;
++        var client = _overlayAgent;
+         try
+         {
+             var result = await client.Call("set_overlay_hold", JsonValue.Create(true));
+@@ -110,33 +117,50 @@
+         catch (Exception ex)
+         {
+             if (!ReferenceEquals(client, _overlayAgent)) return;
+-            Log.Warn($"overlay heartbeat: {ex.Message}");
+-            // Hide before dropping the hold if the input engine has failed.
+-            _stage?.CloseQuickPanel(hideWindow: false, instant: true);
+-            CompleteShortcutHide();
++            Log.Warn($"shortcut heartbeat: {ex.Message}");
++            _overlayInputPrepared = false;
++            _stage?.CloseSpecialSurfaces();
++            CompleteShortcutHide(returnToPrevious: false);
+         }
+         finally { _overlayRenewing = false; }
+     }
+ 
+     private void ReleaseOverlay()
+     {
+-        _overlayActive = false;
+-        _overlayTarget = 0;
++        _overlayActive = false; _overlayTarget = 0;
+         _overlayTimer?.Stop();
+         _shortcutWindow?.SetOverlayTarget(0);
+-        // One connection owns the lease. EOF releases it even during app shutdown;
+-        // an old close can never release a newly opened overlay's lease.
+         _overlayAgent?.Dispose(); _overlayAgent = null;
+     }
+ 
+-    private void RestoreOrdinaryPresenter()
++    private void RestoreOrdinaryPresenter() => _shortcutWindow?.EnsureFullscreenBounds();
++
++    internal void EndSpecialSurface()
+     {
+-        // Changing presenter on a minimized window restores and activates it.
+-        // Defer this until an ordinary foreground activation is actually wanted.
+-        if (_overlayActive || !_overlayPresenter) return;
+-        _overlayPresenter = false;
+-        AppWindow.SetPresenter(AppWindowPresenterKind.FullScreen);
++        _stage?.SetSpecialInput(false);
++        if (_surfaceHideWindow) CompleteShortcutHide();
++        else if (!_surfaceHadOverlay) ReleaseOverlay();
++        _surfaceSession = false;
+     }
++
++    internal bool SwitchToWindow(OpenWindow target)
++    {
++        if (!OpenWindows.Matches(target)) return false;
++        CancelShortcutTransition();
++        _stage?.CloseSpecialSurfaces();
++        CompleteShortcutHide(returnToPrevious: false);
++        return LibraryWindow.BringForward(target.Hwnd);
++    }
++
++    internal void BeginDesktopHandoff()
++    {
++        _desktopHandoff = true;
++        CancelShortcutTransition();
++        _stage?.CloseSpecialSurfaces();
++        CompleteShortcutHide(returnToPrevious: false);
++    }
++
++    internal void FinishDesktopHandoff() => _desktopHandoff = false;
+ 
+     internal void RequestTextInputFocus()
+     {
+--- a/frontend/library-native/ClawLibrary/MainWindow.Shortcut.cs
++++ b/frontend/library-native/ClawLibrary/MainWindow.Shortcut.cs
+@@ -70,7 +70,7 @@
+         // 游戏中唤出：直接是「正在游戏」画面，不做从透明开始的进场（透明那几帧露出的是窗口黑底）
+         if (entrance == ShortcutEntrance.Reveal && _stage?.NowPlayingShown == true) { _shortcutMotion.Cancel(); entrance = ShortcutEntrance.None; }
+         // 快捷设置：第一帧就是游戏画面（缩略图）+ 面板自己滑进来，也不做整窗淡入
+-        if (entrance is ShortcutEntrance.Reveal or ShortcutEntrance.KeepCurrent && _stage?.QuickPanelOpen == true) { _shortcutMotion.Cancel(); entrance = ShortcutEntrance.None; }
++        if (entrance is ShortcutEntrance.Reveal or ShortcutEntrance.KeepCurrent && _stage?.SpecialSurfaceOpen == true) { _shortcutMotion.Cancel(); entrance = ShortcutEntrance.None; }
+         int motionVersion = _shortcutMotion.Version;
+         CancelShortcutTransition();
+         _shortcutInTray = false;
+@@ -136,6 +136,7 @@
+     private void TryShortcutFocus()
+     {
+         nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
++        _shortcutWindow?.EnsureFullscreenBounds();
+         // The initial fullscreen presenter can rewrite z-order while the first
+         // frame is loading; include it in the same bounded focus handoff.
+         bool active = _shortcutWindow?.IsForeground == true || LibraryWindow.BringForward(hwnd);
+@@ -148,7 +149,7 @@
+     }
+ 
+     /// <summary>快捷设置收起后：窗口照 Claw 键收起游戏库那样退下去（游戏已经回到前台）。</summary>
+-    internal void HideAfterQuickPanel() => HideShortcutWindow();
++    internal void HideAfterQuickPanel() => EndSpecialSurface();
+ 
+     private void HideShortcutWindow()
+     {
+@@ -172,10 +173,11 @@
+         });
+     }
+ 
+-    private void CompleteShortcutHide()
+-    {
++    private void CompleteShortcutHide(bool returnToPrevious = true)
++    {
++        _surfaceSession = false;
+         _shortcutMotion.Cancel();
+-        bool returnFocus = _shortcutWindow?.IsForeground == true;
++        bool returnFocus = returnToPrevious && _shortcutWindow?.IsForeground == true;
+         _shortcutHiding = true;
+         _shortcutVisible = false;
+         _shortcutWindow?.SetTopmost(false);
+--- a/frontend/library-native/ClawLibrary/Package.appxmanifest
++++ b/frontend/library-native/ClawLibrary/Package.appxmanifest
+@@ -8,7 +8,7 @@
+   IgnorableNamespaces="uap uap3 uap4 rescap">
+ 
+   <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。主页能力由包根目录的 SCCD 配套声明。 -->
+-  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.196.0" />
++  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.199.0" />
+ 
+   <Properties>
+     <DisplayName>Claw 游戏库</DisplayName>
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.ControlCenter.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.ControlCenter.cs
+@@ -154,6 +154,7 @@
+     /// <summary>≡：墙上 = 打开控制中心（出场形变），控制中心里 = 关掉。</summary>
+     public void ToggleControlCenter() => WithCue(Sfx.None, () =>
+     {
++        if (_wsOpen) { WsBack(); return; }
+         if (ConsumeScreensaverWake()) return;
+         if (_ob != null) return;
+         if (_backgroundSettingsOpen) CloseBackgroundSettings();
+@@ -259,7 +260,7 @@
+         CloseSystem(instant: true);
+         CloseSettingsPage(instant: true);
+         CloseShots(instant: true);
+-        CloseSwitcher(instant: true);
++        if (!_wsStandalone) CloseSwitcher(instant: true);
+         _stFromLibrary = false;
+         _ccOpen = false;
+         int v = ++_ccVersion;
+@@ -284,7 +285,7 @@
+         CloseSystem(instant: true);
+         CloseSettingsPage(instant: true);
+         CloseShots(instant: true);
+-        CloseSwitcher(instant: true);
++        if (!_wsStandalone) CloseSwitcher(instant: true);
+         _cc.IsVisible = false;
+         _cc.StopAnimation("Opacity");
+         _cc.Opacity = 1;
+@@ -371,6 +372,7 @@
+     /// <summary>Y：各设置页保留自己的操作；控制中心切换卡片样式；游戏库仅为已展开游戏打开设置。</summary>
+     public void PadY()
+     {
++        if (_wsOpen) { return; }
+         if (ConsumeScreensaverWake()) return;
+         MarkInput();
+         if (_ob != null) return;
+@@ -388,6 +390,7 @@
+     /// <summary>View：截图页里 = 按游戏筛选；其余照旧开关性能读数。</summary>
+     public void PadView()
+     {
++        if (_wsOpen) { return; }
+         if (ConsumeScreensaverWake()) return;
+         MarkInput();
+         if (_ob != null) return;
+@@ -399,6 +402,7 @@
+     /// <summary>X：游戏库显示 / 隐藏竖条；其他页面保留各自的操作。</summary>
+     public void PadX()
+     {
++        if (_wsOpen) { WsCloseFocused(); return; }
+         if (ConsumeScreensaverWake()) return;
+         MarkInput();
+         if (_ob != null) return;
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.cs
+@@ -635,7 +635,7 @@
+         double dt = _lastFrame == 0 ? 16 : Math.Min(50, now - _lastFrame);
+         _lastFrame = now;
+         _pad?.ApplyPan(this);
+-        if (_ccOpen) { PanVelocity = Vector2.Zero; _glide = Vector2.Zero; }
++        if (_ccOpen || _wsOpen || _qsOpen) { PanVelocity = Vector2.Zero; _glide = Vector2.Zero; }
+         var v = PanVelocity + _glide;
+         if (v.X != 0 || v.Y != 0)
+         {
+@@ -670,7 +670,7 @@
+     {
+         if (ConsumeScreensaverWake()) return;
+         if (_backgroundSettingsOpen) return;
+-        if (_ccOpen || MorphBusy) return;
++        if (_ccOpen || _wsOpen || _qsOpen || MorphBusy) return;
+         MarkInput();
+         Sync();
+         _camX = _camY = null;
+@@ -806,8 +806,9 @@
+         if (ConsumeScreensaverWake()) return;
+         MarkInput();
+         NavHaptic(dir switch { Direction.Up => "moveUp", Direction.Down => "moveDown", Direction.Left => "moveLeft", _ => "moveRight" });
++        if (_wsOpen) { WsMove(dir); return; }
++        if (_qsOpen) { QsMove(dir); return; }
+         if (_ob != null) { ObMove(dir); return; }
+-        if (_qsOpen) { QsMove(dir); return; }
+         if (LaunchMotionIntercept(false, dir)) { if (_lm?.Mode != LmMode.Playing) Cue(Sfx.None); return; }
+         if (MorphIntercept()) return;
+         if (_ccOpen) { CcMove(dir); return; }
+@@ -828,8 +829,9 @@
+         if (ConsumeScreensaverWake()) return;
+         MarkInput();
+         NavHaptic("confirm");
++        if (_wsOpen) { WsActivate(); return; }
++        if (_qsOpen) { QsActivate(); return; }
+         if (_ob != null) { ObActivate(); return; }
+-        if (_qsOpen) { QsActivate(); return; }
+         if (LaunchMotionIntercept(false, activate: true)) { if (_lm?.Mode != LmMode.Playing) Cue(Sfx.None); return; }
+         if (MorphIntercept()) return;
+         if (_ccOpen) { CcActivate(); return; }
+@@ -913,8 +915,9 @@
+         if (ConsumeScreensaverWake()) return;
+         MarkInput();
+         NavHaptic("back");
++        if (_wsOpen) { WsBack(); return; }
++        if (_qsOpen) { QsBack(); return; }
+         if (_ob != null) { ObBack(); return; }
+-        if (_qsOpen) { QsBack(); return; }
+         if (LaunchMotionIntercept(true)) return;
+         if (MorphIntercept()) return;
+         if (_ccOpen) { if (!CcChromeBack()) CloseControlCenter(); return; }
+@@ -1130,7 +1133,7 @@
+     }
+ 
+     /// <summary>LB / RB：首页换页签，整墙出场 → 入场。</summary>
+-    public void SwitchTab(int delta) => WithCue(Sfx.Tab, () => { if (_qsOpen) { Cue(Sfx.None); QsTab(delta); return; } if (_ob != null || LaunchMotionIntercept(false)) { Cue(Sfx.None); return; } SwitchTabCore(delta); });
++    public void SwitchTab(int delta) => WithCue(Sfx.Tab, () => { if (_wsOpen) { WsMove(delta < 0 ? Direction.Left : Direction.Right); return; } if (_qsOpen) { Cue(Sfx.None); QsTab(delta); return; } if (_ob != null || LaunchMotionIntercept(false)) { Cue(Sfx.None); return; } SwitchTabCore(delta); });
+ 
+     private void SwitchTabCore(int delta)
+     {
+@@ -1274,9 +1277,10 @@
+     {
+         if (ConsumeScreensaverWake()) return;
+         MarkInput();
++        if (_wsOpen) { WsClick(sx, sy); return; }
+         if (TouchNavigationClick(sx, sy)) return;
++        if (_qsOpen) { QsClick(sx, sy); return; }
+         if (_ob != null) { ObClick(sx, sy); return; }
+-        if (_qsOpen) { QsClick(sx, sy); return; }
+         // 启动 / 正在游戏画面开着：点它自己的按钮，别的地方吞掉（以前会点穿到下面的墙，点到这款游戏的卡就反复「继续游戏」）
+         if (_lm is { Leaving: false }) { LaunchMotionClick(sx, sy); return; }
+         if (_backgroundSettingsOpen) { MarkInput(); RailClick(sx, sy); return; }
+@@ -1398,7 +1402,7 @@
+         if (_screensaverWakeKey != null) { e.Handled = true; return; }
+         if (ConsumeScreensaverWake()) { _screensaverWakeKey = e.Key; e.Handled = true; return; }
+         MarkInput();
+-        if (e.OriginalSource is Microsoft.UI.Xaml.Controls.TextBox) return;   // 搜索框里打字不当快捷键
++        if (!_wsOpen && !_qsOpen && e.OriginalSource is Microsoft.UI.Xaml.Controls.TextBox) return;   // 搜索框里打字不当快捷键
+         bool repeat = e.KeyStatus.RepeatCount > 1 || e.KeyStatus.WasKeyDown;
+         switch (e.Key)
+         {
+@@ -1450,7 +1454,7 @@
+             return;
+         }
+         MarkInput();
+-        if (_ob == null && !_qsOpen && _ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx && !TouchNavigationHit(pt.Position.X, pt.Position.Y))
++        if (!_wsOpen && _ob == null && !_qsOpen && _ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx && !TouchNavigationHit(pt.Position.X, pt.Position.Y))
+         {
+             MarkInput();
+             _edge = (pt.Position.X, pt.Position.Y, pt.PointerId);
+@@ -1460,7 +1464,7 @@
+             return;
+         }
+         // 添加游戏页叠在设置页上面：它的点按、拖动走下面通用那条（AgClick），不能让设置页的手势接走
+-        if (_ob == null && !_qsOpen && _lm is not { Leaving: false } && UseSettingsPointer(pt.Position.X, pt.Position.Y))
++        if (!_wsOpen && _ob == null && !_qsOpen && _lm is not { Leaving: false } && UseSettingsPointer(pt.Position.X, pt.Position.Y))
+         {
+             e.Handled = true;
+             if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;
+@@ -1520,7 +1524,8 @@
+         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, dx / dt * 1000, dy / dt * 1000, moved, d.id);
+         if (intent != TouchResult.Tap)
+         {
+-            if (_qsOpen) { if (intent == TouchResult.Horizontal && _quickTouchId != null) QsTouchDrag(_quickTouchId, pt.Position.X); }
++            if (_wsOpen) { }
++            else if (_qsOpen) { if (intent == TouchResult.Horizontal && _quickTouchId != null) QsTouchDrag(_quickTouchId, pt.Position.X); }
+             else if (_ob != null || _lm is { Leaving: false } || _searchOpen || _backgroundSettingsOpen || TouchNavigationHit(_dragFrom.x, _dragFrom.y)) { }
+             else if (_ccOpen) { if (intent == TouchResult.Vertical) CcDrag(dx, dy); }
+             else PanBy(dx, dy);
+@@ -1564,6 +1569,12 @@
+         _rootEl.ReleasePointerCapture(e.Pointer);
+         e.Handled = true;
+         if (result is TouchResult.None or TouchResult.Canceled) return;
++        if (_wsOpen)
++        {
++            if (result == TouchResult.Tap) WsClick(pt.Position.X, pt.Position.Y);
++            else if (result == TouchResult.Horizontal) WsMove(pt.Position.X < _dragFrom.x ? Direction.Right : Direction.Left);
++            return;
++        }
+         if (_qsOpen)
+         {
+             if (result == TouchResult.Tap && _quickTouchId == QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id) ClickAt(pt.Position.X, pt.Position.Y);
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.QuickPanel.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.QuickPanel.cs
+@@ -190,6 +190,7 @@
+         if (_qs == null) return;
+         bool hide = _qsHideWindowAfter;
+         _qsHideWindowAfter = false;
++        if (!hide && !_wsOpen) SetSpecialInput(false);
+         if (hide && _qsGame != 0 && (_window as MainWindow)?.OverlayAcceptsGamepad != true) LibraryWindow.BringForward(_qsGame);
+         if (hide) (_window as MainWindow)?.HideAfterQuickPanel();
+         // 窗口收起之后再拆缩略图，免得最后一帧露出黑底
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.Screensaver.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.Screensaver.cs
+@@ -46,7 +46,7 @@
+         _screensaverTimer.Start();
+     }
+ 
+-    private bool ScreensaverBlocked => _stack.Count == 0 || _qsOpen || _ccOpen || MorphBusy || _searchOpen || _backgroundSettingsOpen
++    private bool ScreensaverBlocked => _wsOpen || _stack.Count == 0 || _qsOpen || _ccOpen || MorphBusy || _searchOpen || _backgroundSettingsOpen
+         || _railModel.SettingsOpen || _drag != null || PanVelocity != Vector2.Zero
+         || _pad?.Panning == true || NowMs < _wallBusyUntil || NowMs < _screensaverPauseUntil;
+ 
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.ShellMode.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.ShellMode.cs
+@@ -11,6 +11,7 @@
+ {
+     public static string Exe => Path.Combine(AppContext.BaseDirectory, "Payload", "shell", "ClawShell.exe");
+     public static bool Available => File.Exists(Exe);
++    public static bool GameMode => Available && !ExplorerRunning() && ReadState()?["mode"]?.GetValue<string>() == "game";
+ 
+     private static readonly string StatePath = Path.Combine(
+         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClawToolbox", "shell", "state.json");
+@@ -137,12 +138,13 @@
+         {
+             bool toGame = ShellMode.ExplorerRunning();
+             Toast(toGame ? "正在返回游戏模式…" : "正在切换到桌面…");
++            if (!toGame) (_window as MainWindow)?.BeginDesktopHandoff();
+             int code = await ShellMode.Run(toGame ? "to-game" : "to-desktop");
+             if (code != 0) Toast(ShellMode.Why());
+-            else if (!toGame) (_window as MainWindow)?.RunInBackground();
++
+             CcUpdateModeButton();
+         }
+-        finally { _shellBusy = false; }
++        finally { (_window as MainWindow)?.FinishDesktopHandoff(); _shellBusy = false; }
+     }
+ 
+     /// <summary>设置 › 通用 › 开机：游戏模式 / 桌面模式。桌面模式下面才是原来的「全屏体验」。</summary>
+--- /dev/null
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.ShortcutSurfaces.cs
+@@ -0,0 +1,51 @@
++using ClawLibrary.Data;
++
++namespace ClawLibrary.Stage;
++
++public sealed partial class WallStage
++{
++    private bool? _specialStickNavigates;
++    internal bool SwitcherOpen => _wsOpen;
++    internal bool SpecialSurfaceOpen => _qsOpen || _wsOpen;
++
++    internal void SetSpecialInput(bool open)
++    {
++        if (_pad != null)
++        {
++            if (open) { _specialStickNavigates ??= _pad.StickNavigates; _pad.StickNavigates = true; }
++            else if (_specialStickNavigates is bool previous) { _pad.StickNavigates = previous; _specialStickNavigates = null; }
++        }
++        _rootEl.Overlay.Opacity = open ? 0 : 1;
++        _rootEl.Overlay.IsHitTestVisible = !open;
++        if (open)
++        {
++            ExitScreensaver(); MarkInput();
++            TouchKeyboard.Hide(WinRT.Interop.WindowNative.GetWindowHandle(_window));
++        }
++    }
++
++    internal void OpenSwitcherShortcut()
++    {
++        SetSpecialInput(true);
++        if (_wsOpen) { _top.Children.Remove(_ws!); _top.Children.InsertAtTop(_ws!); return; }
++        if (_qsOpen) CloseQuickPanel(hideWindow: false, instant: true);
++        SetSpecialInput(true);
++        NowPlayingYield();
++        _wsStandalone = true;
++        OpenSwitcher();
++    }
++
++    internal void CloseSpecialSurfaces()
++    {
++        ++_qsVersion;
++        _qsOpen = _qsHideWindowAfter = false;
++        _qsPoll?.Stop();
++        if (_qsTicking) Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= QsFrame;
++        _qsTicking = false; _qsShow = _qsShowTo = 0;
++        _qsThumb?.Dispose(); _qsThumb = null;
++        if (_qs != null) _qs.IsVisible = false;
++        if (_wsOpen) CloseSwitcher(instant: true);
++        _wsStandalone = false;
++        SetSpecialInput(false);
++    }
++}
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.Switcher.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.Switcher.cs
+@@ -32,7 +32,7 @@
+     private ContainerVisual? _ws;
+     private SpriteVisual _wsTitle = null!, _wsEmpty = null!;
+     private readonly List<WsCard> _wsCards = new();
+-    private bool _wsOpen, _wsTicking;
++    private bool _wsOpen, _wsTicking, _wsStandalone;
+     private int _wsFocus, _wsVersion;
+     /// <summary>横向滚动（设计 px）与进出场进度（0 = 没出来，1 = 到位）：当前值 → 目标值逐帧趋近。</summary>
+     private float _wsScroll, _wsScrollTo, _wsShow, _wsShowTo;
+@@ -60,8 +60,10 @@
+ 
+     private void OpenSwitcher()
+     {
+-        if (_cc == null) return;
++        if (!_wsStandalone && _cc == null) return;
++        _ccK = Math.Min((float)View.Width / 1280, (float)View.Height / 800);
+         EnsureWsVisuals();
++        _top.Children.Remove(_ws!); _top.Children.InsertAtTop(_ws!);
+         _wsOpen = true;
+         ++_wsVersion;
+         WsReleaseAll();
+@@ -78,7 +80,7 @@
+         _wsShow = 0; _wsShowTo = 1;
+         WsPaintTitle();
+         WsPaintEmpty();
+-        foreach (var vis in CcPageParts()) vis.StartAnimation("Opacity", ToScalar(0, 160, EaseOutCss));
++        if (!_wsStandalone) foreach (var vis in CcPageParts()) vis.StartAnimation("Opacity", ToScalar(0, 160, EaseOutCss));
+         _ws!.IsVisible = true;
+         _ws.StopAnimation("Opacity"); _ws.Opacity = 1;
+         _wsTitle.Opacity = 0;
+@@ -101,7 +103,7 @@
+         _wsOpen = false;
+         _wsPoll?.Stop();
+         int v = ++_wsVersion;
+-        foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); if (instant) vis.Opacity = 1; else vis.StartAnimation("Opacity", ToScalar(1, 220, EaseOutCss, 120)); }
++        if (!_wsStandalone) foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); if (instant) vis.Opacity = 1; else vis.StartAnimation("Opacity", ToScalar(1, 220, EaseOutCss, 120)); }
+         if (instant || Reduced) { WsFinishClose(); return; }
+         _wsTitle.StartAnimation("Opacity", ToScalar(0, 140, EaseOutCss));
+         _wsEmpty.StartAnimation("Opacity", ToScalar(0, 140, EaseOutCss));
+@@ -136,7 +138,11 @@
+         _wsEmpty = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+         _ws.Children.InsertAtTop(_wsTitle);
+         _ws.Children.InsertAtTop(_wsEmpty);
+-        _cc!.Children.InsertAtTop(_ws);
++        var backdrop = G.Sprite(G.C.CreateColorBrush(Windows.UI.Color.FromArgb(255, 9, 9, 11)));
++        backdrop.RelativeSizeAdjustment = Vector2.One;
++        _ws.Children.InsertAtBottom(backdrop);
++        _ws.RelativeSizeAdjustment = Vector2.One;
++        _top.Children.InsertAtTop(_ws);
+     }
+ 
+     // ---------------- 卡片 ----------------
+@@ -162,15 +168,21 @@
+     private CanvasBitmap? WsAppIcon(OpenWindow w)
+     {
+         if (_wsIcons.TryGetValue(w.Pid, out var cached)) return cached;
+-        CanvasBitmap? bmp = null;
+-        try
+-        {
+-            if (OpenWindows.IconPixels(w.Hwnd, w.Pid, out int size) is { } px)
+-                bmp = CanvasBitmap.CreateFromBytes(G.Device, px, size, size, Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
+-        }
+-        catch (Exception ex) { Log.Warn($"window icon {w.Process}: {ex.Message}"); }
+-        _wsIcons[w.Pid] = bmp;
+-        return bmp;
++        _wsIcons[w.Pid] = null;
++        int version = _wsVersion;
++        _ = Task.Run(() => {
++            byte[]? pixels = null; int size = 0;
++            try { pixels = OpenWindows.IconPixels(w.Hwnd, w.Pid, out size); }
++            catch (Exception ex) { Log.Warn($"window icon {w.Process}: {ex.Message}"); }
++            _dq.TryEnqueue(() => {
++                if (version != _wsVersion || !_wsOpen || pixels == null) return;
++                try {
++                    _wsIcons[w.Pid] = CanvasBitmap.CreateFromBytes(G.Device, pixels, size, size, Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
++                    foreach (var card in _wsCards.Where(c => c.Win.Pid == w.Pid)) WsPaintCard(card);
++                } catch (Exception ex) { Log.Warn($"window icon upload: {ex.Message}"); }
++            });
++        });
++        return null;
+     }
+ 
+     /// <summary>卡框（zinc-900 半透，最小化的窗口中间放大号图标）、外圈焦点描边、下面一行图标 + 标题。</summary>
+@@ -370,19 +382,10 @@
+     {
+         if (_wsFocus >= _wsCards.Count) return;
+         var w = _wsCards[_wsFocus].Win;
+-        if (_game is { Pending: false } g && (w.Pid == g.Pid || w.Hwnd == g.Hwnd))
+-        {
+-            CloseSwitcher(instant: true);
+-            CloseControlCenter();
+-            ResumeGame(g);
+-            return;
+-        }
+-        bool ok = LibraryWindow.BringForward(w.Hwnd);
++        if (!OpenWindows.Matches(w)) { WsPollTick(_wsPoll!, EventArgs.Empty); return; }
++        bool ok = (_window as MainWindow)?.SwitchToWindow(w) == true;
+         Log.Info($"switch to {w.Process} hwnd={w.Hwnd} foreground={ok}");
+-        if (!ok) { Cue(Sfx.Error); Toast("没能切过去"); return; }
+-        Cue(Sfx.Activate);
+-        CloseSwitcher(instant: true);
+-        CloseControlCenter();
++        if (!ok) { Cue(Sfx.Error); Toast("没能切过去，请再次长按快设重试"); }
+     }
+ 
+     /// <summary>X：请焦点窗口自己关（和点 × 一样，能存档）。管理员窗口收不到这个请求。</summary>
+@@ -397,7 +400,13 @@
+         WsStartTicking();
+     }
+ 
+-    private void WsBack() => CloseSwitcher();
++    private void WsBack()
++    {
++        bool standalone = _wsStandalone;
++        CloseSwitcher(instant: standalone);
++        _wsStandalone = false;
++        if (standalone) (_window as MainWindow)?.EndSpecialSurface();
++    }
+ 
+     /// <summary>自测用（--state=ws|wsnav）。</summary>
+     internal void SwitcherTestState() { if (_ccOpen && !_wsOpen) OpenSwitcher(); }
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.Touch.Navigation.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.Touch.Navigation.cs
+@@ -24,12 +24,13 @@
+     {
+         get
+         {
++            if (_wsOpen) return new(6, _wsFocus, _wsCards.Count);
+             if (_ob != null) return new(1, (int)_obStep, _obLang);
+             if (_qsOpen) return new(2, QsRowsStyle ? 1 : 0, _qsVersion);
+             if (_lm is { Leaving: false }) return new(3);
+             if (_agOpen) return new(4, (int)_agPage * 100 + _agTab, _agOffKind == null ? 0 : 1);
+             if (_shOpen) return new(5, _shTab * 4 + (_shViewer ? 1 : 0) + (_shFilterOpen ? 2 : 0), (int)_shStyle + _shVersion * 10, _shViewer ? ShViewerShot()?.Path : null);
+-            if (_wsOpen) return new(6, _wsFocus, _wsCards.Count);
++
+             if (_gpOpen || GsPadPicking) return new(7, _gpCat, (int?)_gpPicker?.Level ?? -1,
+                 $"{_gsItem?.Id}:{_gpPicker?.Source}:{_gpPicker?.Tab}:{_gpPicker?.Act}:{_gpPicker?.Group}");
+             if (_stOpen) return new(8, _stCat, _stVersion, _gsItem?.Id);
+@@ -51,6 +52,7 @@
+     private float TouchScale => Math.Min((float)View.Width / 1280, (float)View.Height / 800);
+     // 0 = hidden, 2 = home control-centre menu. Child pages have no added back button.
+     private int TouchNavigationMode => _stack.Count == 0 || _startupShield?.IsVisible == true ? 0
++        : _wsOpen ? 0
+         : _ob != null ? 0
+         : _qsOpen || _lm is { Leaving: false } ? 0
+         : _ccOpen || _searchOpen || _backgroundSettingsOpen || _expandedKey != null || _stack.Count > 1 ? 0 : 2;
