@@ -222,8 +222,8 @@ public sealed partial class MainWindow : Window
             ShowShortcutWindow(route);
             return;
         }
-        if (quick) { if (_stage?.SwitcherOpen == true) _stage.CloseSpecialSurfaces(); _stage?.SetSpecialInput(true); }
-        else if (_stage?.SwitcherOpen == true) _stage.CloseSpecialSurfaces();
+        if (quick) { if (_stage?.SwitcherOpen == true) _stage.CloseSwitcherForRoute(); _stage?.SetSpecialInput(true); }
+        else if (_stage?.SwitcherOpen == true) _stage.CloseSwitcherForRoute();
         if (quick && _stage?.QuickPanelOpen == true) { _stage.CloseQuickPanel(); return; }
         if (!quick && _stage?.QuickPanelOpen == true) _stage.CloseQuickPanel(hideWindow: false, instant: true);
         if (quick && AppWindow.IsVisible && !ToolboxWindow.IsIconic(hwnd) && route.StartsWith("minimize-", StringComparison.Ordinal))

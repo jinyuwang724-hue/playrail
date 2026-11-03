@@ -31,8 +31,9 @@ public sealed partial class WallStage
 
     private ContainerVisual? _ws;
     private SpriteVisual _wsTitle = null!, _wsEmpty = null!;
+    private SpriteVisual? _wsBackdrop;
     private readonly List<WsCard> _wsCards = new();
-    private bool _wsOpen, _wsTicking, _wsStandalone;
+    private bool _wsOpen, _wsTicking, _wsStandalone, _wsFromShortcut;
     private int _wsFocus, _wsVersion;
     /// <summary>横向滚动（设计 px）与进出场进度（0 = 没出来，1 = 到位）：当前值 → 目标值逐帧趋近。</summary>
     private float _wsScroll, _wsScrollTo, _wsShow, _wsShowTo;
@@ -48,6 +49,7 @@ public sealed partial class WallStage
     internal void OpenSwitcherFromAnywhere()
     {
         if (_ccOpen) { if (!_wsOpen) OpenSwitcher(); return; }
+        _wsFromShortcut = true;   // 不是从控制中心「窗口」点进来的：B 直接回到唤出前的地方
         OpenControlCenter();
         void Enter(int tries)
         {
@@ -83,6 +85,8 @@ public sealed partial class WallStage
         if (!_wsStandalone) foreach (var vis in CcPageParts()) vis.StartAnimation("Opacity", ToScalar(0, 160, EaseOutCss));
         _ws!.IsVisible = true;
         _ws.StopAnimation("Opacity"); _ws.Opacity = 1;
+        // 黑底只给单独唤出的那种；在控制中心里是控制中心自己的动态背景
+        if (_wsBackdrop != null) _wsBackdrop.IsVisible = _wsStandalone;
         _wsTitle.Opacity = 0;
         _wsTitle.StartAnimation("Opacity", ToScalar(1, 220, EaseOutCss, 60));
         WsRing(instant: true);
@@ -138,7 +142,7 @@ public sealed partial class WallStage
         _wsEmpty = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _ws.Children.InsertAtTop(_wsTitle);
         _ws.Children.InsertAtTop(_wsEmpty);
-        var backdrop = G.Sprite(G.C.CreateColorBrush(Windows.UI.Color.FromArgb(255, 9, 9, 11)));
+        var backdrop = _wsBackdrop = G.Sprite(G.C.CreateColorBrush(Windows.UI.Color.FromArgb(255, 9, 9, 11)));
         backdrop.RelativeSizeAdjustment = Vector2.One;
         _ws.Children.InsertAtBottom(backdrop);
         _ws.RelativeSizeAdjustment = Vector2.One;
@@ -383,9 +387,16 @@ public sealed partial class WallStage
         if (_wsFocus >= _wsCards.Count) return;
         var w = _wsCards[_wsFocus].Win;
         if (!OpenWindows.Matches(w)) { WsPollTick(_wsPoll!, EventArgs.Empty); return; }
-        bool ok = (_window as MainWindow)?.SwitchToWindow(w) == true;
-        Log.Info($"switch to {w.Process} hwnd={w.Hwnd} foreground={ok}");
-        if (!ok) { Cue(Sfx.Error); Toast("没能切过去，请再次长按快设重试"); }
+        _wsFromShortcut = false;
+        // 卡片沉下去的同时，选中的窗口按原位淡进来，淡满了再真的切过去；控制中心在游戏库里悄悄收起
+        CloseSwitcher();
+        RevealWindowThen(w.Hwnd, () =>
+        {
+            bool ok = (_window as MainWindow)?.SwitchToWindow(w) == true;
+            Log.Info($"switch to {w.Process} hwnd={w.Hwnd} foreground={ok}");
+            if (!ok) { Cue(Sfx.Error); Toast("没能切过去，请再次长按快设重试"); return; }
+            if (_ccOpen) CloseControlCenter();
+        });
     }
 
     /// <summary>X：请焦点窗口自己关（和点 × 一样，能存档）。管理员窗口收不到这个请求。</summary>
@@ -400,12 +411,25 @@ public sealed partial class WallStage
         WsStartTicking();
     }
 
+    /// <summary>
+    /// B：从控制中心「窗口」进来的回控制中心；长按快设 / 快设面板 / 正在游戏进来的回到唤出前的地方 ——
+    /// 在游戏库上唤出的，卡片沉下去、控制中心形变回墙；盖在别的程序上唤出的，卡片沉下去、那个程序按原位淡回来。
+    /// </summary>
     private void WsBack()
     {
-        bool standalone = _wsStandalone;
-        CloseSwitcher(instant: standalone);
-        _wsStandalone = false;
-        if (standalone) (_window as MainWindow)?.EndSpecialSurface();
+        bool shortcut = _wsFromShortcut || _wsStandalone;
+        _wsFromShortcut = _wsStandalone = false;
+        CloseSwitcher();
+        if (!shortcut) return;
+        var mw = _window as MainWindow;
+        nint over = mw?.SurfaceTarget ?? 0;
+        if (over != 0)
+        {
+            RevealWindowThen(over, () => { mw?.EndSpecialSurface(); if (_ccOpen) CloseControlCenter(); });
+            return;
+        }
+        if (_ccOpen) CloseControlCenter();
+        After(Reduced ? 0 : CcCloseMs + 40, () => { if (!_wsOpen) mw?.EndSpecialSurface(); });
     }
 
     /// <summary>自测用（--state=ws|wsnav）。</summary>

@@ -72,6 +72,7 @@ public sealed partial class WallStage
     private bool? _qsWifi, _qsBt, _qsLossless;
     private bool _qsLosslessKnown;
     private DwmThumb? _qsThumb;
+    private bool _qsUnderLibrary;
     private nint _qsGame;
     private (int L, int T, int W, int H) _qsGameRect;
     private string? _qsNote;
@@ -136,7 +137,10 @@ public sealed partial class WallStage
         }
         _qsShowTo = 1;
         // 有游戏画面时底下铺黑（缩略图盖住右边）；没有（在游戏库里按的）就压暗当前画面
-        _qsScrim.Brush = G.C.CreateColorBrush(_qsThumb != null ? Gfx.Rgba(0, 0, 0) : Gfx.Rgba(0, 0, 0, 0.45));
+        // 有游戏画面时：游戏模式下游戏库本来就垫在它后面，所以底下照样是游戏库（压暗），窗口画面按原位原尺寸盖在上面 ——
+        // 以前铺纯黑，窗口不满屏时整屏变黑、游戏库像是没了。桌面模式没有游戏库垫底，仍铺黑
+        _qsUnderLibrary = ShellMode.GameMode;
+        _qsScrim.Brush = G.C.CreateColorBrush(_qsThumb != null && !_qsUnderLibrary ? Gfx.Rgba(0, 0, 0) : Gfx.Rgba(0, 0, 0, 0.45));
         _qs!.IsVisible = true;
         _top.Children.Remove(_qs); _top.Children.InsertAtTop(_qs);
         QsBuild();
@@ -768,7 +772,7 @@ public sealed partial class WallStage
         float x = -QsW + QsW * ease;
         _qsPanel.Offset = new Vector3(x * k, 0, 0);
         _qsPanel.Opacity = _qsShow > 0.001f ? 1 : 0;   // 从屏幕外滑进来，不淡入（淡入那几帧露出的是黑底）
-        _qsScrim.Opacity = _qsThumb != null ? 1 : ease;
+        _qsScrim.Opacity = _qsThumb != null && !_qsUnderLibrary ? 1 : ease;
         if (_qsThumb is not { } th) return;
         int edge = (int)MathF.Round((x + QsW) * k * dpi);
         var (gl, gt, gw, gh) = _qsGameRect;
@@ -1087,8 +1091,7 @@ public sealed partial class WallStage
                 After(500, () => _ = QsCall("截图", "screenshot"));
                 return;
             case "windows":
-                CloseQuickPanel(hideWindow: false, instant: true);
-                OpenSwitcherFromAnywhere();
+                OpenSwitcherShortcut();   // 面板滑出去、游戏画面淡掉，控制中心同时进来
                 return;
             case "mode":
                 CloseQuickPanel(hideWindow: false, instant: true);

@@ -18,6 +18,11 @@ public sealed partial class MainWindow
     internal bool OverlayAcceptsGamepad => _overlayActive && _shortcutVisible && !_shortcutInTray
         && _shortcutWindow?.OverlayTargetIsForeground == true;
 
+    /// <summary>快设面板 / 切换器这次是盖在哪个程序上唤出的（游戏模式）；在游戏库自己上面唤出的是 0。</summary>
+    internal nint SurfaceTarget => _overlayActive ? _overlayTarget : _surfaceSession && _surfaceHideWindow ? _shortcutWindow?.ReturnWindow ?? 0 : 0;
+
+    private long _lastSpecialRouteAt = -10_000;
+
     private async Task ActivateOverlayRoute(string route, nint returnWindow)
     {
         await _overlayRoutes.WaitAsync();
@@ -30,6 +35,13 @@ public sealed partial class MainWindow
             bool quick = targetRoute == "control-center", switcher = targetRoute == "window-switcher";
             bool special = quick || switcher;
             bool game = Stage.ShellMode.GameMode;
+            Log.Info($"route {route} return={returnWindow}");
+            // 快设键按一下，固件 / 后台偶尔紧跟着再报一个游戏库开关：它会把刚开的面板连同游戏库一起收走、回到上一个程序。
+            // 游戏模式下快设之后 600 ms 内的游戏库开关一律不理
+            long routeAt = Environment.TickCount64;
+            if (special) _lastSpecialRouteAt = routeAt;
+            else if (game && routeAt - _lastSpecialRouteAt < 600 && ToolboxActivation.Target(route.Replace(App.ViaShell, "")) is "library" or "activate")
+            { Log.Info($"route {route} ignored: right after a quick-settings route"); return; }
             if (!game && route.StartsWith("minimize-", StringComparison.Ordinal))
             { _stage?.CloseSpecialSurfaces(); CompleteShortcutHide(returnToPrevious: false); return; }
             if (special && !game)

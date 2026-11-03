@@ -24,15 +24,29 @@ public sealed partial class WallStage
         }
     }
 
+    /// <summary>
+    /// 长按快设：控制中心的「窗口」页（控制中心照常从游戏库卡形变出来，再进这一页），不再是单独一张黑底。
+    /// 快设面板开着就让它滑出去，同时控制中心进来。
+    /// </summary>
     internal void OpenSwitcherShortcut()
     {
         SetSpecialInput(true);
         if (_wsOpen) { _top.Children.Remove(_ws!); _top.Children.InsertAtTop(_ws!); return; }
-        if (_qsOpen) CloseQuickPanel(hideWindow: false, instant: true);
-        SetSpecialInput(true);
+        if (_qsOpen) CloseQuickPanel(hideWindow: false);
         NowPlayingYield();
-        _wsStandalone = true;
-        OpenSwitcher();
+        _wsStandalone = false;
+        // 快设面板的游戏画面交给下面的淡出接着用，不等面板收完一下子拆掉
+        _qsThumb?.Dispose(); _qsThumb = null;
+        OpenSwitcherFromAnywhere();
+        // 盖在别的程序上：那个程序先原样留着，随控制中心进场淡掉
+        if ((_window as MainWindow)?.SurfaceTarget is nint over and not 0) FadeWindowAway(over);
+    }
+
+    /// <summary>别的入口要接手时收起切换器：卡片沉下去（有动画），不再一下子消失。</summary>
+    internal void CloseSwitcherForRoute()
+    {
+        _wsFromShortcut = _wsStandalone = false;
+        CloseSwitcher();
     }
 
     internal void CloseSpecialSurfaces()

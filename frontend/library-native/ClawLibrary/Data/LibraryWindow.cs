@@ -188,6 +188,8 @@ internal sealed class LibraryWindow : IDisposable
         return Foreground == window;
     }
 
+    public nint ReturnWindow => _returnWindow;
+
     public void ReturnToPreviousWindow(bool returnFocus)
     {
         GetWindowThreadProcessId(_returnWindow, out uint pid);
