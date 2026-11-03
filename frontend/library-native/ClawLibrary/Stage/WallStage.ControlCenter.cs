@@ -234,7 +234,14 @@ public sealed partial class WallStage
         _ccTimer ??= CcMakeTimer();
         _ccTimer.Start();
 
-        if (quiet)
+        if (quiet && _ccKeepWall)
+        {
+            // 长按快设直接进「窗口」页：墙不藏（游戏库那张卡的实时画面就是它），控制中心整层淡进来盖在墙上
+            foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 0; }
+            _top.Children.Remove(_cc); _top.Children.InsertAbove(_cc, _root);   // 控制中心平时在墙下面（墙淡掉露出它）；这回盖在墙上面
+            _cc.StartAnimation("Opacity", G.Scalar(0, 1, Reduced ? 1 : 240, EaseOutCss));
+        }
+        else if (quiet)
         {
             foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 0; }
             double ms = Reduced ? 1 : 240;
@@ -272,7 +279,20 @@ public sealed partial class WallStage
         _root.StopAnimation("Opacity");
         _root.IsVisible = true;
         bool instant = _ccInstantClose; _ccInstantClose = false;
-        if (_ccFocus == 0 && _ccZone == CcZone.Row && !Reduced && !instant && MorphEnter()) { Log.Info("control center close (morph)"); return; }
+        bool fade = _ccFadeClose, keptWall = _ccKeepWall; _ccFadeClose = _ccKeepWall = false;
+        if (keptWall)
+        {
+            // 墙一直在下面：控制中心整层淡出就露出来，不走形变
+            double fms = Reduced || instant ? 1 : CcCloseMs;
+            _root.Opacity = 1;
+            _cc.StopAnimation("Opacity");
+            _cc.StartAnimation("Opacity", G.Scalar(1, 0, fms, CcCloseEase));
+            After(fms + 10, () => { if (v == _ccVersion) HideControlCenter(); });
+            UpdateBackdropRunning();
+            Log.Info("control center close (fade)");
+            return;
+        }
+        if (_ccFocus == 0 && _ccZone == CcZone.Row && !Reduced && !instant && !fade && MorphEnter()) { Log.Info("control center close (morph)"); return; }
         double ms = Reduced || instant ? 1 : CcCloseMs;
         _root.Opacity = 0;
         _root.StartAnimation("Opacity", G.Scalar(0, 1, ms, CcCloseEase));   // 不再写 Opacity：动画进行中写这个属性会把动画停掉
@@ -292,6 +312,8 @@ public sealed partial class WallStage
         CloseShots(instant: true);
         if (!_wsStandalone) CloseSwitcher(instant: true);
         _cc.IsVisible = false;
+        _top.Children.Remove(_cc); _top.Children.InsertBelow(_cc, _root);   // 放回墙下面（「窗口」页直接唤出时临时挪到了墙上面）
+        foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 1; }   // 从「窗口」页直接收起时首页卡还是透明的，下次正常打开要在
         _cc.StopAnimation("Opacity");
         _cc.Opacity = 1;
         CcChromeHide();

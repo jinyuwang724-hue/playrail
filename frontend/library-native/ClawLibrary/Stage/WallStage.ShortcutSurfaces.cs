@@ -36,7 +36,7 @@ public sealed partial class WallStage
         NowPlayingYield();
         _wsStandalone = false;
         // 快设面板的游戏画面交给下面的淡出接着用，不等面板收完一下子拆掉
-        _qsThumb?.Dispose(); _qsThumb = null;
+        _qsThumb?.Dispose(); _qsThumb = null; if (_qsUnder != null) _qsUnder.IsVisible = false;
         OpenSwitcherFromAnywhere();
         // 盖在别的程序上：那个程序先原样留着，随控制中心进场淡掉
         if ((_window as MainWindow)?.SurfaceTarget is nint over and not 0) FadeWindowAway(over);
@@ -67,7 +67,7 @@ public sealed partial class WallStage
 public sealed partial class WallStage
 {
     private long _quickKeyAt = -10_000, _menuCcAt = -10_000;
-    private bool _ccInstantClose;
+    private bool _ccInstantClose, _ccFadeClose, _ccKeepWall;
 
     /// <summary>
     /// 每次快设键到达时调用。日志里快设键按下后，控制中心先被一个「菜单」打开、0.75 s 后快设才到：

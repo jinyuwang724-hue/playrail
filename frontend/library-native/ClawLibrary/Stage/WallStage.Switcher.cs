@@ -22,6 +22,9 @@ public sealed partial class WallStage
         public ContainerVisual El = null!;
         public SpriteVisual Box = null!, Ring = null!, Label = null!;
         public DwmThumb? Thumb;
+        /// <summary>游戏库自己这张：墙的实时画面（DWM 缩略图拿不到自己，用合成层的 VisualSurface）。</summary>
+        public SpriteVisual? Live;
+        public CompositionVisualSurface? Surf;
         public bool Closing;
         /// <summary>入场次序（出场倒过来），和列表下标无关：新出现的窗口不重放入场。</summary>
         public int Order;
@@ -50,16 +53,11 @@ public sealed partial class WallStage
     {
         if (_ccOpen) { if (!_wsOpen) OpenSwitcher(); return; }
         _wsFromShortcut = true;   // 不是从控制中心「窗口」点进来的：B 直接回到唤出前的地方
-        _wsPending = true;
-        OpenControlCenter();
-        void Enter(int tries)
-        {
-            if (!_ccOpen || !_wsPending) { _wsPending = false; return; }
-            if (MorphBusy && tries > 0) { After(50, () => Enter(tries - 1)); return; }
-            _wsPending = false;
-            OpenSwitcher();
-        }
-        Enter(60);
+        // 直接进「窗口」页：控制中心不走首页形变，背景淡进来、卡片同时浮上来；墙留在背景下面，游戏库那张卡要用它的实时画面
+        _ccKeepWall = _ccFadeClose = true;
+        OpenControlCenter(quiet: true);
+        _wsPending = false;
+        OpenSwitcher();
     }
 
     private void OpenSwitcher()
@@ -109,7 +107,7 @@ public sealed partial class WallStage
         _wsOpen = false;
         _wsPoll?.Stop();
         int v = ++_wsVersion;
-        if (!_wsStandalone) foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); if (instant) vis.Opacity = 1; else vis.StartAnimation("Opacity", ToScalar(1, 220, EaseOutCss, 120)); }
+        if (!_wsStandalone && !_ccKeepWall) foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); if (instant) vis.Opacity = 1; else vis.StartAnimation("Opacity", ToScalar(1, 220, EaseOutCss, 120)); }
         if (instant || Reduced) { WsFinishClose(); return; }
         _wsTitle.StartAnimation("Opacity", ToScalar(0, 140, EaseOutCss));
         _wsEmpty.StartAnimation("Opacity", ToScalar(0, 140, EaseOutCss));
@@ -129,7 +127,7 @@ public sealed partial class WallStage
 
     private void WsReleaseAll()
     {
-        foreach (var c in _wsCards) { c.Thumb?.Dispose(); _ws?.Children.Remove(c.El); }
+        foreach (var c in _wsCards) { c.Thumb?.Dispose(); c.Surf?.Dispose(); _ws?.Children.Remove(c.El); }
         _wsCards.Clear();
         foreach (var b in _wsIcons.Values) b?.Dispose();
         _wsIcons.Clear();
@@ -167,6 +165,20 @@ public sealed partial class WallStage
         c.El.Opacity = 0;
         _ws!.Children.InsertAtTop(c.El);
         if (!w.Minimized && !WsIsSelf(w)) c.Thumb = DwmThumb.Register(WinRT.Interop.WindowNative.GetWindowHandle(_window), w.Hwnd);
+        if (WsIsSelf(w))
+        {
+            // 游戏库自己：墙的实时画面，按卡框圆角裁好（墙在控制中心背景下面照常在画）
+            float k = _ccK;
+            c.Surf = G.C.CreateVisualSurface();
+            c.Surf.SourceVisual = _root;
+            c.Surf.SourceSize = new Vector2((float)View.Width, (float)View.Height);
+            var brush = G.C.CreateSurfaceBrush(c.Surf);
+            brush.Stretch = CompositionStretch.UniformToFill;
+            c.Live = G.Sprite(brush, relative: false);
+            c.Live.Size = new Vector2(WsBoxW * k, WsBoxH * k);
+            c.Live.Clip = G.C.CreateGeometricClip(RoundRect(WsBoxW * k, WsBoxH * k, WsRadius * k));
+            c.El.Children.InsertAbove(c.Live, c.Box);
+        }
         WsPaintCard(c);
         return c;
     }
@@ -199,7 +211,7 @@ public sealed partial class WallStage
         CcSet(c.Box, CcDraw(WsBoxW, WsBoxH, raster, ds =>
         {
             ds.FillRoundedRectangle(0, 0, WsBoxW, WsBoxH, WsRadius, WsRadius, Gfx.Rgba(0x18, 0x18, 0x1b, 0.78));
-            if (c.Thumb == null)
+            if (c.Thumb == null && c.Live == null)
             {
                 if (icon != null) ds.DrawImage(icon, new Windows.Foundation.Rect(WsBoxW / 2 - 48, WsBoxH / 2 - 48, 96, 96), icon.Bounds, 1, CanvasImageInterpolation.HighQualityCubic);
                 else LineIcons.Draw(ds, "", WsBoxW / 2, WsBoxH / 2, 56, Gfx.WithAlpha(CcText, 0.35f));

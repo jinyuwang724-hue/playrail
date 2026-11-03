@@ -210,7 +210,7 @@ internal sealed class DwmThumb : IDisposable
     }
 
     /// <summary>只显示源窗口的 (sx, sy, sw, sh) 那一块（源窗口像素），摆到目标矩形上。</summary>
-    public void PlaceCropped(int x, int y, int w, int h, int sx, int sy, int sw, int sh)
+    public void PlaceCropped(int x, int y, int w, int h, int sx, int sy, int sw, int sh, double opacity = 1)
     {
         if (_id == 0) return;
         bool visible = w > 0 && h > 0 && sw > 0 && sh > 0;
@@ -219,7 +219,7 @@ internal sealed class DwmThumb : IDisposable
             dwFlags = 0x1 | 0x2 | 0x4 | 0x8 | 0x10,   // RECTDESTINATION | RECTSOURCE | OPACITY | VISIBLE | SOURCECLIENTAREAONLY
             rcDestination = new RECT { Left = x, Top = y, Right = x + w, Bottom = y + h },
             rcSource = new RECT { Left = sx, Top = sy, Right = sx + sw, Bottom = sy + sh },
-            opacity = 255,
+            opacity = (byte)Math.Clamp(Math.Round(opacity * 255), 0, 255),
             fVisible = visible,
             fSourceClientAreaOnly = false,
         };

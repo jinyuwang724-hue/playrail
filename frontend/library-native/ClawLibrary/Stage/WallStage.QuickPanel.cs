@@ -73,6 +73,8 @@ public sealed partial class WallStage
     private bool _qsLosslessKnown;
     private DwmThumb? _qsThumb;
     private bool _qsUnderLibrary;
+    private SpriteVisual? _qsUnder;
+    private const float QsDim = 0.45f;
     private nint _qsGame;
     private (int L, int T, int W, int H) _qsGameRect;
     private string? _qsNote;
@@ -140,8 +142,9 @@ public sealed partial class WallStage
         // 有游戏画面时：游戏模式下游戏库本来就垫在它后面，所以底下照样是游戏库（压暗），窗口画面按原位原尺寸盖在上面 ——
         // 以前铺纯黑，窗口不满屏时整屏变黑、游戏库像是没了。桌面模式没有游戏库垫底，仍铺黑
         _qsUnderLibrary = ShellMode.GameMode;
-        // 游戏模式：底下的游戏库和窗口一点不变（不压暗），只多一块面板
-        _qsScrim.Brush = G.C.CreateColorBrush(_qsUnderLibrary ? Gfx.Rgba(0, 0, 0, 0) : _qsThumb != null ? Gfx.Rgba(0, 0, 0) : Gfx.Rgba(0, 0, 0, 0.45));
+        // 游戏模式：游戏库和游戏窗口原位原尺寸，一起压暗同样的一层（窗口画面底下垫一块纯黑，画面按 1 - 压暗 的透明度画上去）
+        _qsScrim.Brush = G.C.CreateColorBrush(_qsThumb != null && !_qsUnderLibrary ? Gfx.Rgba(0, 0, 0) : Gfx.Rgba(0, 0, 0, QsDim));
+        QsPlaceUnder();
         _qs!.IsVisible = true;
         _top.Children.Remove(_qs); _top.Children.InsertAtTop(_qs);
         QsBuild();
@@ -216,6 +219,9 @@ public sealed partial class WallStage
         _qsScrim.RelativeSizeAdjustment = Vector2.One;
         _qsPanel = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _qs.Children.InsertAtTop(_qsScrim);
+        _qsUnder = G.C.CreateSpriteVisual();
+        _qsUnder.Brush = G.C.CreateColorBrush(Gfx.Rgba(0, 0, 0));
+        _qs.Children.InsertAtTop(_qsUnder);
         _qs.Children.InsertAtTop(_qsPanel);
         _top.Children.InsertAtTop(_qs);
     }
@@ -765,6 +771,18 @@ public sealed partial class WallStage
     }
 
     /// <summary>面板 X（设计 px）= -448 → 0；游戏缩略图只画面板右边那一块，位置和游戏窗口原来一样。</summary>
+    /// <summary>游戏画面底下那块纯黑：和窗口一样大、一样位置（物理像素 → 合成层 DIP），画面变淡时露出它 = 压暗。</summary>
+    private void QsPlaceUnder()
+    {
+        if (_qsUnder == null) return;
+        _qsUnder.IsVisible = _qsThumb != null && _qsUnderLibrary;
+        if (!_qsUnder.IsVisible) return;
+        var (gl, gt, gw, gh) = _qsGameRect;
+        float dpi = Chrome.Dpi;
+        _qsUnder.Offset = new Vector3(gl / dpi, gt / dpi, 0);
+        _qsUnder.Size = new Vector2(gw / dpi, gh / dpi);
+    }
+
     private void QsLayout()
     {
         if (_qs == null) return;
@@ -780,7 +798,7 @@ public sealed partial class WallStage
         int left = Math.Max(edge, gl), right = gl + gw;
         if (right <= left) { th.PlaceCropped(0, 0, 0, 0, 0, 0, 0, 0); return; }
         double sx = (double)th.SourceW / gw, sy = (double)th.SourceH / gh;
-        th.PlaceCropped(left, gt, right - left, gh, (int)Math.Round((left - gl) * sx), 0, (int)Math.Round((right - left) * sx), (int)Math.Round(gh * sy));
+        th.PlaceCropped(left, gt, right - left, gh, (int)Math.Round((left - gl) * sx), 0, (int)Math.Round((right - left) * sx), (int)Math.Round(gh * sy), _qsUnderLibrary ? 1 - QsDim * ease : 1);
     }
 
     // ---------------- 输入 ----------------
@@ -1089,7 +1107,18 @@ public sealed partial class WallStage
             case "screenshot":
                 // 先收起面板再截，截到的是游戏
                 CloseQuickPanel();
-                After(500, () => _ = QsCall("截图", "screenshot"));
+                if (_qsUnderLibrary)
+                {
+                    // 游戏模式：Game Bar 的快捷键没人接，自己截（面板收完、游戏回到前台再截）
+                    nint game = _qsGame;
+                    After(500, async () =>
+                    {
+                        string? path = await CaptureScreenshotAsync(game);
+                        if (path == null) Toast("截图没能保存");
+                        else { Cue(Sfx.Activate); Toast("已截图"); }
+                    });
+                }
+                else After(500, () => _ = QsCall("截图", "screenshot"));
                 return;
             case "windows":
                 OpenSwitcherShortcut();   // 面板滑出去、游戏画面淡掉，控制中心同时进来
