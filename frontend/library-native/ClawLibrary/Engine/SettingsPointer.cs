@@ -1,7 +1,7 @@
 namespace ClawLibrary.Engine;
 
 internal enum SettingsPointerMode { None, Pending, Scroll, Slider }
-internal enum SettingsTargetKind { Row, Choice, Decrease, Increase, Slider, Category, Item, Tab, Cell, Action }
+internal enum SettingsTargetKind { Row, Choice, Decrease, Increase, Slider, Category, Item, Tab, Cell, Action, Secondary }
 
 internal readonly record struct SettingsPointerTarget(int Row, SettingsTargetKind Kind, double X, double Y, double Width, double Height, int Choice = -1)
 {

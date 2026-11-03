@@ -15,6 +15,7 @@ namespace ClawLibrary.Data;
 
 public static class ArtKitBuilder
 {
+    private static readonly SemaphoreSlim BuildGate = new(1, 1);
     private const int KitVersion = 3;   // 2：加 q（竖封面原尺寸，放大时用的同一张图）；3：方图 / 兜底竖图一律从正中裁
 
     public static ArtKit? TryLoad(string dir)
@@ -36,6 +37,14 @@ public static class ArtKitBuilder
     }
 
     public static async Task<ArtKit?> BuildAsync(string dir, string? portrait, string? hero, double fx, string? color)
+    {
+        // 启动补图和即时本地刷新可能同时请求同一套图片，串行写入避免临时文件互相覆盖。
+        await BuildGate.WaitAsync();
+        try { return await BuildCoreAsync(dir, portrait, hero, fx, color); }
+        finally { BuildGate.Release(); }
+    }
+
+    private static async Task<ArtKit?> BuildCoreAsync(string dir, string? portrait, string? hero, double fx, string? color)
     {
         if (portrait == null && hero == null) return null;
         fx = 0.5;   // 从正中裁：按焦点取景常把主体裁掉
@@ -103,8 +112,8 @@ public static class ArtKitBuilder
 
     private static async Task<(int w, int h)> SizeAsync(string path)
     {
-        var file = await StorageFile.GetFileFromPathAsync(path);
-        using var stream = await file.OpenReadAsync();
+        using var bytes = new MemoryStream(await File.ReadAllBytesAsync(path));
+        using var stream = bytes.AsRandomAccessStream();
         var dec = await BitmapDecoder.CreateAsync(stream);
         return ((int)dec.PixelWidth, (int)dec.PixelHeight);
     }
@@ -112,8 +121,9 @@ public static class ArtKitBuilder
     /// <summary>缩放到 w×h。focal 为 null 时整张缩放（宽高比按目标）；否则按焦点从原图裁出 w:h 的整块（高度用满）再缩。</summary>
     private static async Task ResizeAsync(string src, string dst, int w, int h, double? focal)
     {
-        var file = await StorageFile.GetFileFromPathAsync(src);
-        using var input = await file.OpenReadAsync();
+        // 解码器只持有内存，用户在封面页再次保存时不会占用后台的原图文件。
+        using var source = new MemoryStream(await File.ReadAllBytesAsync(src));
+        using var input = source.AsRandomAccessStream();
         var dec = await BitmapDecoder.CreateAsync(input);
         int sw = (int)dec.PixelWidth, sh = (int)dec.PixelHeight;
         var t = new BitmapTransform { InterpolationMode = BitmapInterpolationMode.Fant };

@@ -39,6 +39,23 @@ public static class Content
         return new InfiniteLayout(count, period, offset);
     }
 
+    /// <summary>列表变化后让原来选中的游戏留在原来的格子，不移动相机。</summary>
+    public static WallLayout Anchor(WallLayout layout, SlotKey key, int itemIndex)
+    {
+        int previous = ItemAt(layout, key);
+        if (previous < 0 || itemIndex < 0 || itemIndex >= layout.Count) return layout;
+        if (layout is InfiniteLayout infinite)
+            return infinite with { Offset = Mod(infinite.Offset + itemIndex - previous, infinite.Count) };
+        if (layout is FiniteLayout finite)
+        {
+            var ranks = new Dictionary<SlotKey, int>(finite.Ranks);
+            foreach (var other in ranks.Where(p => p.Value == itemIndex).Select(p => p.Key).ToList()) ranks[other] = previous;
+            ranks[key] = itemIndex;
+            return finite with { Ranks = ranks };
+        }
+        return layout;
+    }
+
     /// <summary>第几项（没有内容时为 -1）。</summary>
     public static int ItemAt(WallLayout layout, SlotKey slot)
     {

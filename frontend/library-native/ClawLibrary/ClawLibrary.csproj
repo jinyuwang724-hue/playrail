@@ -23,7 +23,7 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\ClawIcon.ico</ApplicationIcon>
-    <Version>0.1.84</Version>
+    <Version>0.1.166</Version>
     <InvariantGlobalization>false</InvariantGlobalization>
     <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
   </PropertyGroup>
@@ -48,6 +48,8 @@
   <ItemGroup>
     <Content Include="CustomCapability.SCCD" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- 首次启动引导安装的组件（tools\Stage-OobePayload.ps1 收集） -->
+    <Content Include="Payload\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Manifest Include="$(ApplicationManifest)" />
   </ItemGroup>
 </Project>

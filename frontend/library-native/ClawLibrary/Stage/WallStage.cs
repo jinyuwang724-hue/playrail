@@ -4,6 +4,7 @@
 // - UI 线程用同一条曲线解析地算出「此刻相机在哪」，供导航、裁剪、点击命中用。
 // - 只有右摇杆 / 拖动平移时 UI 线程才逐帧写相机（CompositionTarget.Rendering，停了就退订）。
 using System.Numerics;
+using System.Text.Json.Nodes;
 using System.Runtime.InteropServices;
 using ClawLibrary.Data;
 using ClawLibrary.Engine;
@@ -134,7 +135,10 @@ public sealed partial class WallStage : IDisposable
         foreach (var n in new[] { "cx", "cy", "open", "anchor", "scale", "lineX", "vw", "vh", "cw", "sx", "sw", "pad", "bhome", "bsw" }) _cam.InsertScalar(n, 0);
         // fade：墙的底（底色、光、动态背景、暗角、缝）整体的不透明度；控制中心的出入场（folia 集合层的背景板）只动它，卡片另算
         _cam.InsertScalar("fade", 1);
-        G.DeviceReplaced += () => _dq.TryEnqueue(() => { Text.Clear(); foreach (var t in _tiles.Values) t.Redraw(); RenderSeamContent(); });
+        // lfade：关灯时缝里的内容与边缘标签压到 0.4（透明的缝不涂黑，见 WallStage.WallLook.cs）
+        _seamLightsT = new CssTransition(G, _cam, "lfade", v => _cam.InsertScalar("lfade", v), 1);
+        _backgroundLightsT = new CssTransition(G, _cam, "ldim", v => _cam.InsertScalar("ldim", v), 0);
+        G.DeviceReplaced += () => _dq.TryEnqueue(() => { Text.Clear(); foreach (var t in _tiles.Values) t.Redraw(); RenderSeamContent(); RefreshScreensaverClock(force: true); });
     }
 
     public LibraryItem? Lookup(string id) => _lib.ById.TryGetValue(id, out var it) ? it : null;
@@ -147,6 +151,7 @@ public sealed partial class WallStage : IDisposable
         if (Program.Args.Contains("--style=b")) Style = TitleStyle.B;
         Measure();
         ApplyUiPrefsBeforeLoad();
+        UpdateSeamLights(animate: false);
         LoadLibrary();
         ApplyTabPrefs();
         if (Program.Args.FirstOrDefault(a => a.StartsWith("--export-web=")) is { } exp)
@@ -200,15 +205,17 @@ public sealed partial class WallStage : IDisposable
         if (!Reduced) foreach (var t in _tiles.Values) t.Land(Plans.WaveStagger(t.Slot.X, t.Slot.Y, vis.Left, vis.Top));
         TweenSeam(SeamHome, 0);
         Focus(start?.Key, false);
+        ApplyLibraryRailVisibility(animate: false);
         Log.Info($"wall built: {_tiles.Count} tiles ({NowMs - t0}ms in stage, {App.SinceProcessStartMs():F0}ms since process start)");
 
-        // 第一帧真正画出来的时刻
+        if (ShouldShowOobe()) OpenOobe();
         PrepareStartupShield();
+        // 第一帧真正画出来的时刻
         EventHandler<object>? first = null;
         first = (_, _) =>
         {
             CompositionTarget.Rendering -= first;
-            FirstFrameLogged = true;
+            FirstFrameLogged = true; PlayStartupSound();
             BeginStartupReadiness();
             _dq.TryEnqueue(DispatcherQueuePriority.Low, RenderEdgeTabs);
             After(1500, () => { try { PrewarmControlCenter(); } catch (Exception ex) { Log.Error("prewarm", ex); } });
@@ -222,6 +229,7 @@ public sealed partial class WallStage : IDisposable
         _pad = new Input.GamepadPoller(_dq, this, () => IsForeground());
         _pad.Start();
         StartRailTimers();
+        StartScreensaverTimer();
         StartHomeAudio();
         UpdateBackdropRunning();
         _rootEl.Focus(FocusState.Programmatic);
@@ -229,6 +237,13 @@ public sealed partial class WallStage : IDisposable
         _ = BuildMissingArtAsync();
         _ = CountShotsAsync();
         if (Program.Args.Contains("--probe")) StartFrameProbe();
+        if (Program.Args.Contains("--services-probe")) _ = ServicesProbeAsync();
+        if (Program.Args.Contains("--settings-edit-probe")) _ = SettingsEditProbeAsync();
+        if (Program.Args.Contains("--copy-review-probe")) _ = CopyReviewProbeAsync();
+        if (Program.Args.Contains("--touch-probe")) _ = TouchProbeAsync();
+        if (Program.Args.Contains("--library-touch-probe")) _ = LibraryTouchProbeAsync();
+        if (Program.Args.Contains("--osd-probe")) _ = OsdSettingsProbeAsync();
+        if (_prefs.SourceXbox) After(500, () => _ = RefreshPlatformLibrary("xbox", quiet: true));
         if (Program.Args.Contains("--debug-backplate")) _root.IsVisible = false;
         if (Program.Args.Contains("--bench")) _ = Bench.RunAsync(this);
         if (Program.Args.Contains("--hud")) ToggleHud();
@@ -240,6 +255,7 @@ public sealed partial class WallStage : IDisposable
         var xr = _rootEl.XamlRoot;
         double w = Math.Max(1, xr.Size.Width), h = Math.Max(1, xr.Size.Height);
         View = new View(w, h, ScaleFor(w), w / 2);
+        Text.ViewportWidth = (float)w;
         Chrome.Dpi = (float)xr.RasterizationScale;
         G.RasterScale = (float)(View.Scale * xr.RasterizationScale);
         _cam.InsertScalar("scale", (float)View.Scale);
@@ -257,6 +273,8 @@ public sealed partial class WallStage : IDisposable
         Log.Info($"resize {View.Width}x{View.Height} scale {View.Scale}");
         if (_ccOpen) CloseControlCenter();
         LayoutChrome();
+        ObResize();
+        RefreshScreensaverClock(force: true);
         if (Math.Abs(oldRs - G.RasterScale) > 1e-4) { Text.Clear(); foreach (var t in _tiles.Values) t.Redraw(); }
         RenderSeamContent();
         Recull(true);
@@ -264,7 +282,7 @@ public sealed partial class WallStage : IDisposable
 
     private bool IsForeground()
     {
-        return (_window as MainWindow)?.AcceptsGamepad != false && !ToolboxWindow.IsIconic(_windowHandle) && GetForegroundWindow() == _windowHandle;
+        return (_window as MainWindow)?.AcceptsGamepad != false && !ToolboxWindow.IsIconic(_windowHandle) && (GetForegroundWindow() == _windowHandle || (_window as MainWindow)?.OverlayAcceptsGamepad == true);
     }
 
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
@@ -276,7 +294,7 @@ public sealed partial class WallStage : IDisposable
     private void LoadLibrary()
     {
         var steam = Steam.Root();
-        var user = steam != null ? Steam.UserDir(steam) : null;
+        var user = steam != null ? _connections.Steam is { } account ? Steam.UserDirForAccount(steam, account.Id) : Steam.UserDir(steam) : null;
         var stats = Steam.ReadPlayStats(user);
         Log.Info($"steam root={steam ?? "-"} user={user ?? "-"} stats={stats.Count}");
         var seed = Path.Combine(AppContext.BaseDirectory, "Assets", "library.json");
@@ -286,42 +304,35 @@ public sealed partial class WallStage : IDisposable
         Log.Info($"steam owned apps={owned?.Count ?? 0} installed={installed?.Count ?? 0}");
         // 设置页手动加的游戏文件夹：已经是 Steam 非 Steam 快捷方式的不重复加
         var shortcuts = Steam.ShortcutPaths(user);
-        // 设置里「添加游戏」加的本地游戏也不在文件夹扫描里重复出现；它的封面原图换过，就把旧的封面套件删掉重新生成
+        // 本地游戏不在文件夹扫描里重复出现；封面缓存按原图版本定位，启动和库内刷新共用。
         var local = LocalGames.Read();
         shortcuts.AddRange(local.Select(l => l.Exe));
-        foreach (var lg in local)
-        {
-            var kit = Path.Combine(ArtRoot, lg.Id);
-            var src = LocalGames.ArtFile(lg.Id, "p");
-            try
-            {
-                if (src != null && Directory.Exists(kit) && File.GetLastWriteTimeUtc(src) > Directory.GetLastWriteTimeUtc(kit)) Directory.Delete(kit, true);
-            }
-            catch (Exception ex) { Log.Warn($"local art reset {lg.Id}: {ex.Message}"); }
-        }
+        _localArtDirs = local.ToDictionary(g => g.Id, LocalArtDirectory);
         var played = FolderGames.ReadPlayed();
         Library.FolderGames = _prefs.Folders.SelectMany(f => FolderGames.Scan(f, shortcuts))
             .Select(g => (g.Title, g.Exe, played.TryGetValue(FolderGames.IdOf(g.Exe), out var t) ? (long?)t : null)).ToList();
-        Library.XboxLibrary = _prefs.SourceXbox
-            ? Task.Run(XboxGames.ReadAsync).GetAwaiter().GetResult().Games : new();
+        // 首帧之后后台扫描 Xbox，不在启动时等待包枚举。
+        Library.XboxLibrary = new();
         if (Library.FolderGames.Count > 0) Log.Info($"folder games: {Library.FolderGames.Count}");
-        _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), collections, owned, installed, Steam.ShortcutTargets(user), local);
+        _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(ArtDirectory(id)), collections, owned, installed, Steam.ShortcutTargets(user), local);
         _steamRoot = steam; _steamUser = user;
+        LoadSteamCloudCache();
+        RestoreGameSession();
         if (_lib.Games.Count == 0)
         {
             Log.Warn("library empty");
-            _lib = Library.Build(new List<LibraryItem>(), new List<SteamCollection>());
+            // 保留完整来源，安装范围切回「所有」时可以立即恢复被筛掉的游戏。
         }
     }
 
     private string? _steamRoot, _steamUser;
 
     /// <summary>缺封面套件的游戏：后台从 Steam 原图生成，生成一张就把墙上用到它的卡重画。</summary>
-    private async Task BuildMissingArtAsync()
+    private async Task BuildMissingArtBatchAsync()
     {
         if (_steamRoot == null) return;
         // 按墙上的顺序（最近玩过的在前）生成，先看得到的先有图
-        var order = _lib.HomeTabs.Count > 0 ? _lib.HomeTabs[0].Items() : _lib.Games;
+        var order = _lib.HomeTabs.FirstOrDefault(t => t.Id == "all")?.Items() ?? _lib.Games;
         var missing = order.Where(g => g.Kind == ItemKind.Game && g.Art == null && g.Platform != "folder" && g.Platform != "xbox").ToList();
         if (missing.Count == 0) return;
         Log.Info($"art kits missing: {missing.Count}; building");
@@ -331,7 +342,8 @@ public sealed partial class WallStage : IDisposable
             try
             {
                 var (portrait, hero) = Steam.ArtSources(_steamRoot, _steamUser, g.Id);
-                var kit = await Task.Run(() => ArtKitBuilder.BuildAsync(Path.Combine(ArtRoot, g.Id), portrait, hero, g.SeedFx, g.SeedColor));
+                string dir = ArtDirectory(g.Id);
+                var kit = await Task.Run(() => ArtKitBuilder.BuildAsync(dir, portrait, hero, g.SeedFx, g.SeedColor));
                 if (kit == null) { Log.Warn($"no art for {g.Id} {g.Title}"); continue; }
                 g.OwnArt = kit;
                 RefreshItem(g.Id);
@@ -391,6 +403,11 @@ public sealed partial class WallStage : IDisposable
         Expr(_backdrop.Root, "Opacity", "p.fade");
         // 所有开启的背景和全屏预览都固定在视口上，覆盖游戏封面之间的空隙；不随侧边栏开口平移。
         Expr(_backdrop.Root, "Offset", "p.bpreview > 0.5 || p.bfull > 0.5 ? Vector3(0, 0, 0) : Vector3(p.sx - Lerp(p.bhome, p.vw / 2, Clamp((p.sw - p.bsw) / Max(1, p.vw - p.bsw), 0, 1)), 0, 0)");
+        // Dim the complete backdrop, including gutters and empty cells. Posters retain their
+        // own Folia lights-out layer so a raised card remains fully lit without double dimming.
+        var backgroundLights = G.Sprite(G.Solid(Microsoft.UI.Colors.Black));
+        Expr(backgroundLights, "Opacity", "p.ldim * p.fade * (p.bpreview > 0.5 ? 0 : 1)");
+        _root.Children.InsertAtTop(backgroundLights);
         _root.Children.InsertAtTop(_field);
         _field.Children.InsertAtTop(_worlds[0]);
         _field.Children.InsertAtTop(_worlds[1]);
@@ -444,7 +461,7 @@ public sealed partial class WallStage : IDisposable
         _seamInner = G.C.CreateContainerVisual();
         Expr(_seamInner, "Offset", "Vector3(p.sw / 2 - p.cw / 2, 0, 0)");
         Expr(_seamInner, "Size", "Vector2(p.cw, p.vh)");
-        Expr(_seamInner, "Opacity", "Min(1, p.sw / Max(1, p.cw)) < 0.6 ? 0 : (Min(1, p.sw / Max(1, p.cw)) - 0.6) / 0.4");
+        Expr(_seamInner, "Opacity", "(Min(1, p.sw / Max(1, p.cw)) < 0.6 ? 0 : (Min(1, p.sw / Max(1, p.cw)) - 0.6) / 0.4) * p.lfade");
         clip.Children.InsertAtTop(_seamInner);
         var persp = G.Container();
         persp.RelativeOffsetAdjustment = new Vector3(0.5f, 0.5f, 0);
@@ -470,8 +487,8 @@ public sealed partial class WallStage : IDisposable
             e.Shadow = sh;
             _root.Children.InsertAtTop(e);
         }
-        Expr(_edgeLeft, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx < p.lineX) ? p.fade : 0");
-        Expr(_edgeRight, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx >= p.lineX) ? p.fade : 0");
+        Expr(_edgeLeft, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx < p.lineX) ? p.fade * p.lfade : 0");
+        Expr(_edgeRight, "Opacity", "(p.open > 1 && p.sw < 2 && p.sx >= p.lineX) ? p.fade * p.lfade : 0");
 
         _toast = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _toast.Opacity = 0;
@@ -571,6 +588,7 @@ public sealed partial class WallStage : IDisposable
 
     private void TweenSeam(double to, double? from = null)
     {
+        if (!LibraryRailVisible) to = 0;
         Sync();
         double f = from ?? _openWidth;
         if (Reduced || Math.Abs(to - f) < 0.5)
@@ -596,7 +614,7 @@ public sealed partial class WallStage : IDisposable
         var slot = SlotByKey(key);
         if (slot == null) return;
         Sync();
-        TweenCamera(RevealCenter(Drawn(slot), _center, View, _anchorX, CurrentLayer.Home ? SeamHome : SeamFull));
+        TweenCamera(RevealCenter(Drawn(slot), _center, View, _anchorX, LibrarySeamWidth));
     }
 
     // ---------------- 平移（右摇杆 / 拖动）：UI 线程逐帧 ----------------
@@ -617,7 +635,7 @@ public sealed partial class WallStage : IDisposable
         double dt = _lastFrame == 0 ? 16 : Math.Min(50, now - _lastFrame);
         _lastFrame = now;
         _pad?.ApplyPan(this);
-        if (_ccOpen) { PanVelocity = Vector2.Zero; _glide = Vector2.Zero; }
+        if (_ccOpen || _wsOpen || _qsOpen) { PanVelocity = Vector2.Zero; _glide = Vector2.Zero; }
         var v = PanVelocity + _glide;
         if (v.X != 0 || v.Y != 0)
         {
@@ -645,13 +663,14 @@ public sealed partial class WallStage : IDisposable
         }
     }
 
-    public void RequestPanLoop() => EnsureLoop();
+    public void RequestPanLoop() { if (!ConsumeScreensaverWake()) EnsureLoop(); }
 
     /// <summary>拖动：直接平移相机（屏幕 px）。</summary>
     public void PanBy(double dx, double dy)
     {
+        if (ConsumeScreensaverWake()) return;
         if (_backgroundSettingsOpen) return;
-        if (_ccOpen || MorphBusy) return;
+        if (_ccOpen || _wsOpen || _qsOpen || MorphBusy) return;
         MarkInput();
         Sync();
         _camX = _camY = null;
@@ -717,6 +736,7 @@ public sealed partial class WallStage : IDisposable
                 _tiles.Remove(key);
             }
         if (_focusTop != null && FocusKey is { } fk && _tiles.TryGetValue(fk, out var ft)) BringToFront(ft);
+        RefreshScreensaverTiles();
     }
 
     private Tile? _focusTop;
@@ -733,6 +753,10 @@ public sealed partial class WallStage : IDisposable
             w.Children.Remove(et.El);
             w.Children.InsertAtTop(et.El);
         }
+        // Both halves meet when the rail closes. The raised card must also be above
+        // the other half, otherwise its outward pop disappears behind a neighbour.
+        _field.Children.Remove(w);
+        _field.Children.InsertAtTop(w);
     }
 
     private string? ItemFor(Slot slot)
@@ -777,11 +801,15 @@ public sealed partial class WallStage : IDisposable
         return true;
     }
 
-    public void Move(Direction dir)
+    public void Move(Direction dir) => WithCue(Sfx.Nav, () =>
     {
+        if (ConsumeScreensaverWake()) return;
         MarkInput();
-        SoundFx.Play(Sfx.Move);
         NavHaptic(dir switch { Direction.Up => "moveUp", Direction.Down => "moveDown", Direction.Left => "moveLeft", _ => "moveRight" });
+        if (_wsOpen) { WsMove(dir); return; }
+        if (_qsOpen) { QsMove(dir); return; }
+        if (_ob != null) { ObMove(dir); return; }
+        if (LaunchMotionIntercept(false, dir)) { if (_lm?.Mode != LmMode.Playing) Cue(Sfx.None); return; }
         if (MorphIntercept()) return;
         if (_ccOpen) { CcMove(dir); return; }
         if (RailMove(dir)) return;
@@ -790,17 +818,21 @@ public sealed partial class WallStage : IDisposable
         if (from == null) return;
         var next = Nav.FindAdjacentSlot(from, dir, HasContent, Drawn);
         if (TryEnterRailFrom(from, next, dir)) return;
-        if (next == null) return;
+        if (next == null) { Cue(Sfx.Bump); return; }
         if (_expandedKey is { } ek && next.Key != ek) Collapse(false);
         Focus(next.Key);
-    }
+    });
 
     /// <summary>A：游戏卡展开聚焦卡；聚焦卡上再按 = 启动；集合卡 = 进入。</summary>
-    public void Activate()
+    public void Activate() => WithCue(Sfx.Activate, () =>
     {
+        if (ConsumeScreensaverWake()) return;
         MarkInput();
-        SoundFx.Play(Sfx.Confirm);
         NavHaptic("confirm");
+        if (_wsOpen) { WsActivate(); return; }
+        if (_qsOpen) { QsActivate(); return; }
+        if (_ob != null) { ObActivate(); return; }
+        if (LaunchMotionIntercept(false, activate: true)) { if (_lm?.Mode != LmMode.Playing) Cue(Sfx.None); return; }
         if (MorphIntercept()) return;
         if (_ccOpen) { CcActivate(); return; }
         if (RailActivate()) return;
@@ -809,44 +841,55 @@ public sealed partial class WallStage : IDisposable
         var id = slot != null ? ItemFor(slot) : null;
         var item = id != null ? Lookup(id) : null;
         if (slot == null || item == null) return;
-        if (item.Kind == ItemKind.Collection) { Push(slot, item); return; }
-        if (_expandedKey == slot.Key) { LaunchOrInstall(item); return; }
+        if (item.Kind == ItemKind.Collection) { Cue(Sfx.DetailIn); Push(slot, item); return; }
+        if (_expandedKey == slot.Key) { LaunchOrInstall(item, _tiles.GetValueOrDefault(slot.Key)); return; }
+        Cue(Sfx.DetailIn);
         Expand(slot);
-    }
+    });
 
     /// <summary>
     /// 交给 Steam：装好的 Steam 游戏 steam://rungameid/&lt;appid&gt;；没装的 steam://install/&lt;appid&gt;（Steam 弹出安装窗口，
     /// 按一下就开始下载）；本地游戏是 Steam 里的非 Steam 快捷方式，用 (appid &lt;&lt; 32) | 0x02000000 的游戏 ID 启动。
     /// </summary>
-    private void LaunchOrInstall(LibraryItem item)
+    private void LaunchOrInstall(LibraryItem item, Tile? tile = null)
     {
+        _lmTile = tile;
+        if (InterceptLaunchWhilePlaying(item)) return;
+        (_window as MainWindow)?.HandOffForeground();
         if (item.XboxAumid is string aumid) { _ = LaunchXboxGame(item, aumid); return; }
         if (item.ExePath is string exe)
         {
-            try
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(exe) ?? "" });
-                FolderGames.MarkPlayed(item.Id);
-                Toast($"正在启动「{item.Title}」");
-                AfterGameLaunch();
-            }
-            catch (Exception ex) { SoundFx.Play(Sfx.Error); Toast($"「{item.Title}」没能启动：{ex.Message}"); }
+            string dir = string.IsNullOrEmpty(item.ExeStartDir) ? Path.GetDirectoryName(exe) ?? "" : item.ExeStartDir;
+            if (StartViaGameSession(item, exe, dir, item.ExeArgs ?? "")) { FolderGames.MarkPlayed(item.Id); AfterGameLaunch(item); }
+            else
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = true, Arguments = item.ExeArgs ?? "", WorkingDirectory = dir });
+                    FolderGames.MarkPlayed(item.Id);
+                    AfterGameLaunch(item);
+                }
+                catch (Exception ex) { Cue(Sfx.Error); Toast($"「{item.Title}」没能启动：{ex.Message}"); }
             Log.Info($"launch folder game {item.Id} {exe}");
             return;
         }
         if (!uint.TryParse(item.Id, out var appid)) { Toast($"「{item.Title}」没有可用的启动方式"); return; }
         if (item.Platform != "steam")
         {
-            ulong gameId = ((ulong)appid << 32) | 0x02000000UL;
-            SystemInfo.Open($"steam://rungameid/{gameId}");
-            Toast($"正在启动「{item.Title}」");
-            AfterGameLaunch();
+            // 本地游戏（Steam 里的非 Steam 快捷方式）：照快捷方式里的程序和参数，经 ClawGameSession 直接启动，运行状态才可靠
+            if (Steam.ShortcutLaunch(_steamUser, item.Id) is { } sc && StartViaGameSession(item, sc.Exe, sc.StartDir, sc.Options))
+                AfterGameLaunch(item);
+            else
+            {
+                ulong gameId = ((ulong)appid << 32) | 0x02000000UL;
+                SystemInfo.Open($"steam://rungameid/{gameId}");
+                AfterGameLaunch(item);
+            }
         }
         else if (item.Installed)
         {
             SystemInfo.Open($"steam://rungameid/{appid}");
-            Toast($"正在启动「{item.Title}」");
-            AfterGameLaunch();
+            BeginLaunchSession(item, SessionSource.Steam);
+            AfterGameLaunch(item);
         }
         else
         {
@@ -861,24 +904,29 @@ public sealed partial class WallStage : IDisposable
         try
         {
             await XboxGames.LaunchAsync(aumid);
-            Toast($"正在启动「{item.Title}」");
-            AfterGameLaunch();
+            AfterGameLaunch(item);
         }
         catch (Exception ex) { SoundFx.Play(Sfx.Error); Toast($"「{item.Title}」没能启动：{ex.Message}"); }
     }
 
     /// <summary>B：收起聚焦卡 → 返回上一层。</summary>
-    public void Back()
+    public void Back() => WithCue(Sfx.Back, () =>
     {
+        if (ConsumeScreensaverWake()) return;
         MarkInput();
-        SoundFx.Play(Sfx.Back);
         NavHaptic("back");
+        if (_wsOpen) { WsBack(); return; }
+        if (_qsOpen) { QsBack(); return; }
+        if (_ob != null) { ObBack(); return; }
+        if (LaunchMotionIntercept(true)) return;
         if (MorphIntercept()) return;
         if (_ccOpen) { if (!CcChromeBack()) CloseControlCenter(); return; }
         if (RailBack()) return;
-        if (_expandedKey != null) { Collapse(true); return; }
-        if (_stack.Count > 1) Pop();
-    }
+        if (_expandedKey != null) { Cue(Sfx.DetailOut); Collapse(true); return; }
+        if (_stack.Count > 1) { Cue(Sfx.DetailOut); Pop(); return; }
+        if (_npBar != null && _game is { } playing) { ResumeGame(playing); return; }
+        Cue(Sfx.Bump);
+    });
 
     // ---------------- 聚焦卡（块内让位） ----------------
 
@@ -890,7 +938,7 @@ public sealed partial class WallStage : IDisposable
         _expandedKey = slot.Key;
         if (_tiles.TryGetValue(slot.Key, out var t)) { t.SetExpanded(true); BringToFront(t); }
         Sync();
-        TweenCamera(RevealCenter(to[slot.Key], _center, View, _anchorX, CurrentLayer.Home ? SeamHome : SeamFull));
+        TweenCamera(RevealCenter(to[slot.Key], _center, View, _anchorX, LibrarySeamWidth));
     }
 
     private void Collapse(bool reveal)
@@ -905,7 +953,7 @@ public sealed partial class WallStage : IDisposable
         if (reveal)
         {
             Sync();
-            TweenCamera(RevealCenter(slot.Rect, _center, View, _anchorX, CurrentLayer.Home ? SeamHome : SeamFull));
+            TweenCamera(RevealCenter(slot.Rect, _center, View, _anchorX, LibrarySeamWidth));
         }
     }
 
@@ -1025,6 +1073,7 @@ public sealed partial class WallStage : IDisposable
     /// <summary>缝被摇杆推出了屏幕：换层时在视野里重新裂开（此时开口是 0，换锚点不会跳）。</summary>
     private Center ReopenSeamIfGone(double width)
     {
+        if (!LibraryRailVisible) return _center;
         Sync();
         var geo = SeamGeometry(_anchorX, _center, _openWidth, View);
         if (!geo.Collapsed && geo.Width > 1) return _center;
@@ -1055,13 +1104,13 @@ public sealed partial class WallStage : IDisposable
         cur.Saved = (_center, FocusKey);
         _stack.Add(layer);
         var target = ReopenSeamIfGone(SeamFull);
-        var plan = PlanSeam(target, SeamFull, View, _anchorX);
+        var plan = PlanSeam(target, LibrarySeamWidth, View, _anchorX);
         target = new Center(plan.CenterX, target.Y);
         TweenSeam(SeamFull);
         FlipSeam(SeamFull);
         SwapContent(new FlipOrigin.Point(slot.Cx, slot.Cy));
         Focus(slot.Key, false);
-        TweenCamera(RevealCenter(slot.Rect, target, View, _anchorX, SeamFull));
+        TweenCamera(RevealCenter(slot.Rect, target, View, _anchorX, LibrarySeamWidth));
         RenderEdgeTabs();
     }
 
@@ -1084,15 +1133,18 @@ public sealed partial class WallStage : IDisposable
     }
 
     /// <summary>LB / RB：首页换页签，整墙出场 → 入场。</summary>
-    public void SwitchTab(int delta)
+    public void SwitchTab(int delta) => WithCue(Sfx.Tab, () => { if (_wsOpen) { WsMove(delta < 0 ? Direction.Left : Direction.Right); return; } if (_qsOpen) { Cue(Sfx.None); QsTab(delta); return; } if (_ob != null || LaunchMotionIntercept(false)) { Cue(Sfx.None); return; } SwitchTabCore(delta); });
+
+    private void SwitchTabCore(int delta)
     {
+        if (ConsumeScreensaverWake()) return;
         if (_backgroundSettingsOpen) return;
         MarkInput();
         if (_ccOpen && _agOpen) { AgSwitchTab(delta); return; }   // 添加游戏页换图种
         if (_ccOpen && _gpOpen) { GpSwitchTab(delta); return; }   // 手柄页「选择指令」里 LB / RB 换页签
+        if (_ccOpen && _stOpen && GsOverlayTab(delta)) return;     // 游戏设置：按键选择换页签 / 封面换图种
         if (_ccOpen && _shOpen) { if (!MorphIntercept()) ShSwitchTab(delta); return; }   // 截图页换游戏
-        if (_stack.Count > 1 || _ccOpen || MorphIntercept()) return;
-        SoundFx.Play(Sfx.Switch);
+        if (_stack.Count > 1 || _ccOpen || MorphIntercept()) { Cue(Sfx.Bump); return; }
         if (_expandedKey != null) Collapse(false);
         if (_searchOpen) CloseSearch();
         _tabIndex = (_tabIndex + delta + _lib.HomeTabs.Count) % _lib.HomeTabs.Count;
@@ -1129,6 +1181,7 @@ public sealed partial class WallStage : IDisposable
         target.Size = art.Size;
         // 内容在缝里水平居中（left: 50%; translate: -50%），以转轴（缝内容中心）为原点
         target.Offset = new Vector3(-art.Size.X / 2, -art.Size.Y / 2, 0);
+        UpdateSeamLights();
     }
 
     private void RenderSeamContent()
@@ -1160,29 +1213,56 @@ public sealed partial class WallStage : IDisposable
 
     // ---------------- 其他 ----------------
 
-    private DispatcherQueueTimer? _toastTimer;
-
     public void Toast(string text)
     {
-        var art = Chrome.Toast(text);
-        var brush = (CompositionSurfaceBrush)_toast.Brush;
-        (brush.Surface as IDisposable)?.Dispose();
-        brush.Surface = art.Surface;
-        _toast.Size = art.Size;
-        _toast.Offset = new Vector3((float)View.Width / 2 - art.Size.X / 2, 24, 0);
-        _toast.StartAnimation("Opacity", G.Scalar(_toast.Opacity, 1, Motion.ToastFadeMs, Bezier.Ease_));
-        _toast.Opacity = 1;
-        _toastTimer?.Stop();
-        _toastTimer = After(Motion.ToastHoldMs, () => { _toast.StartAnimation("Opacity", G.Scalar(1, 0, Motion.ToastFadeMs, Bezier.Ease_)); _toast.Opacity = 0; });
+        if (_cueDepth == 0) SoundFx.Play(Sfx.Toast);   // 输入引起的提示已经有那次输入的声音
+        _ = ShowGlobalNotice(text);
         Log.Info($"toast: {text}");
     }
 
-    public void ToggleTitleStyle()
+    private async Task ShowGlobalNotice(string text)
     {
-        if (_ccOpen || MorphBusy) return;
-        Style = Style == TitleStyle.B ? TitleStyle.D : TitleStyle.B;
-        foreach (var t in _tiles.Values) t.Show(t.Target);
-        Toast(Style == TitleStyle.B ? "标题样式：极简黑体" : "标题样式：电影字幕");
+        string kind = NoticeKind(text);
+        try
+        {
+            _agent ??= new AgentClient();
+            await _agent.Call("show_notice", JsonValue.Create(text), JsonValue.Create(kind));
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"global notice: {ex.Message}");
+            // The same renderer remains available while the agent is restarting.
+            try
+            {
+                string app = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClawToolbox", "app");
+                string version = JsonNode.Parse(File.ReadAllText(Path.Combine(app, "plugin.json")))?["version"]?.GetValue<string>() ?? "";
+                if (version.Length == 0 || version.Any(c => !char.IsAsciiDigit(c) && c != '.')) return;
+                var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(app, "bin", $"ClawInput-{version}.exe")) { UseShellExecute = false, CreateNoWindow = true };
+                start.ArgumentList.Add("--notice");
+                start.ArgumentList.Add(new JsonObject { ["kind"] = kind, ["title"] = text.Length > 300 ? text[..300] : text, ["detail"] = "" }.ToJsonString());
+                System.Diagnostics.Process.Start(start)?.Dispose();
+            }
+            catch (Exception fallback) { Log.Warn($"notice renderer: {fallback.Message}"); }
+        }
+    }
+
+    private static string NoticeKind(string text)
+    {
+        bool Has(params string[] words) => words.Any(text.Contains);
+        if (Has("失败", "错误", "没能", "没有保存", "没有写进", "连不上", "无法", "不支持", "未连接")) return "error";
+        if (Has("请先", "至少", "最多", "不能", "再按一次", "请稍", "需要", "未安装", "没有找到")) return "warning";
+        if (Has("更新", "下载", "安装")) return "update";
+        if (Has("账户", "连接 Steam", "连接 Xbox", "密钥", "API Key", "绑定", "登录")) return "account";
+        if (Has("封面", "截图", "图片")) return "image";
+        if (Has("音量", "声音", "麦克风", "静音")) return "sound";
+        if (Has("游戏库", "识别", "文件夹", "集合", "列表")) return "library";
+        if (Has("功耗", "电源", "充电", "电池", "休眠", "睡眠")) return "power";
+        if (Has("桌面模式")) return "desktop";
+        if (Has("手柄", "摇杆", "背键", "扳机", "映射", "震动")) return "gamepad";
+        if (Has("游戏", "启动")) return "game";
+        if (Has("设置", "恢复", "动态", "还原", "后台")) return "settings";
+        if (Has("已", "完成", "成功")) return "success";
+        return "info";
     }
 
     public void ToggleReducedMotion()
@@ -1195,6 +1275,14 @@ public sealed partial class WallStage : IDisposable
     /// <summary>鼠标：点卡 = 聚焦并激活。</summary>
     public void ClickAt(double sx, double sy)
     {
+        if (ConsumeScreensaverWake()) return;
+        MarkInput();
+        if (_wsOpen) { WsClick(sx, sy); return; }
+        if (TouchNavigationClick(sx, sy)) return;
+        if (_qsOpen) { QsClick(sx, sy); return; }
+        if (_ob != null) { ObClick(sx, sy); return; }
+        // 启动 / 正在游戏画面开着：点它自己的按钮，别的地方吞掉（以前会点穿到下面的墙，点到这款游戏的卡就反复「继续游戏」）
+        if (_lm is { Leaving: false }) { LaunchMotionClick(sx, sy); return; }
         if (_backgroundSettingsOpen) { MarkInput(); RailClick(sx, sy); return; }
         if (MorphIntercept()) return;
         if (_ccOpen) { CcClick(sx, sy); return; }
@@ -1211,11 +1299,20 @@ public sealed partial class WallStage : IDisposable
             if (t.CurrentRect(now).Contains(wx, wy) && (hit == null || t.Expanded || (t.Focused && !hit.Expanded))) hit = t;
         if (hit == null || !HasContent(hit.Slot)) return;
         var key = hit.Slot.Key;
+        bool fromRail = _railFocused;
+        if (fromRail)
+        {
+            // A card hit transfers input ownership before Activate dispatches the action.
+            _railFocused = false;
+            _railFocus = -1;
+            RepaintRail();
+        }
         if (FocusKey != key)
         {
             if (_expandedKey is { } ek && ek != key) Collapse(false);
             Focus(key);
         }
+        else if (fromRail) Focus(key);
         Activate();
     }
 
@@ -1263,15 +1360,19 @@ public sealed partial class WallStage : IDisposable
         {
             try { OnKey(e); } catch (Exception ex) { Log.Error("key", ex); }
         };
+        _rootEl.KeyUp += (_, e) => { if (_screensaverWakeKey == e.Key) { _screensaverWakeKey = null; e.Handled = true; } };
         _rootEl.PointerPressed += OnPointerPressed;
         _rootEl.PointerMoved += OnPointerMoved;
         _rootEl.PointerReleased += OnPointerReleased;
         _rootEl.PointerCanceled += OnPointerCanceled;
         _rootEl.PointerCaptureLost += OnPointerCanceled;
+        CompositionTarget.Rendering += TouchNavigationFrame;
         _rootEl.PointerWheelChanged += (_, e) =>
         {
+            if (ConsumeScreensaverWake()) { e.Handled = true; return; }
+            MarkInput();
             var p = e.GetCurrentPoint(_rootEl).Properties;
-            if (SettingsPageOpen && !_agOpen)
+            if (SettingsPageOpen && !_agOpen && !_shOpen && !_wsOpen && !GsArtMode)
             {
                 if (!p.IsHorizontalMouseWheel) SettingsWheel(p.MouseWheelDelta);
                 e.Handled = true;
@@ -1298,7 +1399,10 @@ public sealed partial class WallStage : IDisposable
 
     private void OnKey(KeyRoutedEventArgs e)
     {
-        if (e.OriginalSource is Microsoft.UI.Xaml.Controls.TextBox) return;   // 搜索框里打字不当快捷键
+        if (_screensaverWakeKey != null) { e.Handled = true; return; }
+        if (ConsumeScreensaverWake()) { _screensaverWakeKey = e.Key; e.Handled = true; return; }
+        MarkInput();
+        if (!_wsOpen && !_qsOpen && e.OriginalSource is Microsoft.UI.Xaml.Controls.TextBox) return;   // 搜索框里打字不当快捷键
         bool repeat = e.KeyStatus.RepeatCount > 1 || e.KeyStatus.WasKeyDown;
         switch (e.Key)
         {
@@ -1318,8 +1422,9 @@ public sealed partial class WallStage : IDisposable
                     case VirtualKey.E: case VirtualKey.PageDown: SwitchTab(1); break;
                     case VirtualKey.F: ToggleHud(); break;
                     case VirtualKey.V: PadView(); break;
-                    case VirtualKey.T: ToggleTitleStyle(); break;
+                    case VirtualKey.X: PadX(); break;
                     case VirtualKey.R: ToggleReducedMotion(); break;
+            case VirtualKey.L: ToggleLights(); break;
                     default: return;
                 }
                 break;
@@ -1332,21 +1437,34 @@ public sealed partial class WallStage : IDisposable
     private (double x, double y) _dragFrom;
     /// <summary>手指从屏幕左边 64 DIP 以内往右划 = 返回（控制中心各页，和 B 一样）。贴着边框划会被 Windows 拿去开小组件，所以区域放宽一些。</summary>
     private (double x, double y, uint id)? _edge;
+    private TouchSurface _edgeSurface;
     private const double EdgeBackPx = 64, EdgeBackMin = 80;
 
     private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
     {
         var pt = e.GetCurrentPoint(_rootEl);
-        if (_ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx)
+        if (PointerEditor(e.OriginalSource)) return;
+        if (_pagePointer.Active || _settingsGesture.Active || _edge != null) { e.Handled = true; return; }
+        if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;
+        if (ConsumeScreensaverWake())
         {
-            MarkInput();
-            _edge = (pt.Position.X, pt.Position.Y, pt.PointerId);
+            _screensaverWakePointers.Add(pt.PointerId);
             _rootEl.CapturePointer(e.Pointer);
             e.Handled = true;
             return;
         }
+        MarkInput();
+        if (!_wsOpen && _ob == null && !_qsOpen && _ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx && !TouchNavigationHit(pt.Position.X, pt.Position.Y))
+        {
+            MarkInput();
+            _edge = (pt.Position.X, pt.Position.Y, pt.PointerId);
+            _edgeSurface = PointerSurface;
+            if (!_rootEl.CapturePointer(e.Pointer)) _edge = null;
+            e.Handled = true;
+            return;
+        }
         // 添加游戏页叠在设置页上面：它的点按、拖动走下面通用那条（AgClick），不能让设置页的手势接走
-        if (SettingsPageOpen && !_agOpen)
+        if (!_wsOpen && _ob == null && !_qsOpen && _lm is not { Leaving: false } && UseSettingsPointer(pt.Position.X, pt.Position.Y))
         {
             e.Handled = true;
             if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;
@@ -1358,15 +1476,35 @@ public sealed partial class WallStage : IDisposable
             }
             return;
         }
+        if (!_pagePointer.Begin(pt.PointerId, pt.Position.X, pt.Position.Y, PointerSurface)) return;
+        _quickTouchId = _qsOpen ? QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id : null;
+        _shFilterDragRemainder = 0;
         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, 0, 0, 0, pt.PointerId);
         _dragFrom = (pt.Position.X, pt.Position.Y);
         _glide = Vector2.Zero;
-        _rootEl.CapturePointer(e.Pointer);
+        if (!_rootEl.CapturePointer(e.Pointer)) { _pagePointer.Reset(); _drag = null; return; }
         _rootEl.Focus(FocusState.Pointer);
+        e.Handled = true;
     }
 
     private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
     {
+        var current = e.GetCurrentPoint(_rootEl);
+        bool pointerMoved = _lastPointerPosition is not { } last ||
+            (Math.Abs(current.Position.X - last.x) + Math.Abs(current.Position.Y - last.y) > 2);
+        _lastPointerPosition = (current.Position.X, current.Position.Y);
+        if (_screensaverWakePointers.Contains(current.PointerId)) { e.Handled = true; return; }
+        if (pointerMoved)
+        {
+            if (ConsumeScreensaverWake())
+            {
+                if (current.IsInContact || current.Properties.IsLeftButtonPressed) _screensaverWakePointers.Add(current.PointerId);
+                e.Handled = true; return;
+            }
+            MarkInput();
+        }
+        if (_ob != null) ObHover(current.Position.X, current.Position.Y);
+        if (_lm is { Leaving: false }) LaunchMotionHover(current.Position.X, current.Position.Y);
         if (_edge?.id == e.Pointer.PointerId) { e.Handled = true; return; }
         if (_settingsGesture.Owns(e.Pointer.PointerId))
         {
@@ -1378,21 +1516,38 @@ public sealed partial class WallStage : IDisposable
         if (_drag is not { } d) return;
         var pt = e.GetCurrentPoint(_rootEl);
         if (pt.PointerId != d.id) return;
+        var intent = _pagePointer.Move(pt.PointerId, pt.Position.X, pt.Position.Y, PointerSurface);
+        if (intent is TouchResult.Canceled or TouchResult.None) { e.Handled = true; return; }
         double dx = pt.Position.X - d.x, dy = pt.Position.Y - d.y;
         double dt = Math.Max(1, (pt.Timestamp - d.t) / 1000.0);
-        double moved = d.moved + Math.Abs(dx) + Math.Abs(dy);
+        double moved = Math.Max(d.moved, Math.Max(Math.Abs(pt.Position.X - _dragFrom.x), Math.Abs(pt.Position.Y - _dragFrom.y)));
         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, dx / dt * 1000, dy / dt * 1000, moved, d.id);
-        if (moved > 4) { if (_ccOpen) CcDrag(dx, dy); else PanBy(dx, dy); }
+        if (intent != TouchResult.Tap)
+        {
+            if (_wsOpen) { }
+            else if (_qsOpen) { if (intent == TouchResult.Horizontal && _quickTouchId != null) QsTouchDrag(_quickTouchId, pt.Position.X); }
+            else if (_ob != null || _lm is { Leaving: false } || _searchOpen || _backgroundSettingsOpen || TouchNavigationHit(_dragFrom.x, _dragFrom.y)) { }
+            else if (_ccOpen) { if (intent == TouchResult.Vertical) CcDrag(dx, dy); }
+            else PanBy(dx, dy);
+        }
+        e.Handled = true;
     }
 
     private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
     {
+        if (_screensaverWakePointers.Remove(e.Pointer.PointerId))
+        {
+            _rootEl.ReleasePointerCapture(e.Pointer);
+            e.Handled = true;
+            return;
+        }
         if (_edge is { } edge && edge.id == e.Pointer.PointerId)
         {
             var at = e.GetCurrentPoint(_rootEl).Position;
             _edge = null;
             _rootEl.ReleasePointerCapture(e.Pointer);
             e.Handled = true;
+            if (PointerSurface != _edgeSurface) return;
             double ex = at.X - edge.x, ey = at.Y - edge.y;
             if (ex >= EdgeBackMin && Math.Abs(ey) < ex) Back();
             else if (Math.Abs(ex) + Math.Abs(ey) <= 8) ClickAt(at.X, at.Y);
@@ -1409,10 +1564,25 @@ public sealed partial class WallStage : IDisposable
         if (_drag is not { } d) return;
         var pt = e.GetCurrentPoint(_rootEl);
         if (pt.PointerId != d.id) return;
+        var result = _pagePointer.End(pt.PointerId, pt.Position.X, pt.Position.Y, PointerSurface);
         _drag = null;
         _rootEl.ReleasePointerCapture(e.Pointer);
-        if (d.moved <= 4) { ClickAt(pt.Position.X, pt.Position.Y); return; }
-        if (_ccOpen) { CcSwipe(pt.Position.X - _dragFrom.x, pt.Position.Y - _dragFrom.y); return; }
+        e.Handled = true;
+        if (result is TouchResult.None or TouchResult.Canceled) return;
+        if (_wsOpen)
+        {
+            if (result == TouchResult.Tap) WsClick(pt.Position.X, pt.Position.Y);
+            else if (result == TouchResult.Horizontal) WsMove(pt.Position.X < _dragFrom.x ? Direction.Right : Direction.Left);
+            return;
+        }
+        if (_qsOpen)
+        {
+            if (result == TouchResult.Tap && _quickTouchId == QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id) ClickAt(pt.Position.X, pt.Position.Y);
+            return;
+        }
+        if (result == TouchResult.Tap) { ClickAt(pt.Position.X, pt.Position.Y); return; }
+        if (_ob != null || _lm is { Leaving: false } || _searchOpen || _backgroundSettingsOpen || TouchNavigationHit(_dragFrom.x, _dragFrom.y)) return;
+        if (_ccOpen) { if (result == TouchResult.Horizontal) CcSwipe(pt.Position.X - _dragFrom.x, pt.Position.Y - _dragFrom.y); return; }
         if ((pt.Timestamp - d.t) / 1000.0 > 80) return;
         // 惯性：滑行距离 = 松手速度 × 0.3（power），按时间常数 280ms 指数衰减；速度上限 4000 px/s
         double speed = Math.Sqrt(d.vx * d.vx + d.vy * d.vy);
@@ -1427,6 +1597,8 @@ public sealed partial class WallStage : IDisposable
 
     private void OnPointerCanceled(object sender, PointerRoutedEventArgs e)
     {
+        _screensaverWakePointers.Remove(e.Pointer.PointerId);
+        _pagePointer.Cancel(e.Pointer.PointerId);
         SettingsPointerCancel(e.Pointer.PointerId);
         if (_drag?.id == e.Pointer.PointerId) _drag = null;
         if (_edge?.id == e.Pointer.PointerId) _edge = null;
@@ -1453,9 +1625,15 @@ public sealed partial class WallStage : IDisposable
 
     public void Dispose()
     {
+        CompositionTarget.Rendering -= TouchNavigationFrame;
+        _pagePointer.Reset();
         DisposeStartupReadiness();
         DisposeShortcutMotion();
-        foreach (var timer in new[] { _ccTimer, _stTimer, _perfTimer, _dsTimer, _syTimer, _gpLive, _railTimer, _toastTimer, _morphTimer }) timer?.Stop();
+        _servicesDisposed = true;
+        _connectCancel?.Cancel();
+        _steamCloudLifetime.Cancel();
+        StopScreensaver();
+        foreach (var timer in new[] { _ccTimer, _stTimer, _perfTimer, _dsTimer, _syTimer, _gpLive, _railTimer, _morphTimer }) timer?.Stop();
         _trayTimers.Clear();
         // 先取消帧回调，再释放背景资源；显式退出不能留下轮询去访问已销毁的窗口。
         if (_backdropLoop) { CompositionTarget.Rendering -= OnBackdropFrame; _backdropLoop = false; }

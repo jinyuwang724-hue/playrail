@@ -20,6 +20,8 @@ public sealed class AgentClient : IDisposable
     private StreamWriter? _writer;
     private int _id;
     private bool _disposed;
+    public event Action<bool>? ConnectionChanged;
+    public event Action<string, JsonNode?>? EventReceived;
 
     public Task<JsonNode?> Call(string method, params JsonNode?[] args) => CallLong(method, 10, args);
 
@@ -69,6 +71,7 @@ public sealed class AgentClient : IDisposable
             _writer = writer;
             _ = Task.Run(() => ReadLoop(tcp, reader));
             Log.Info($"agent connected (port {port}, version {(string?)hello?["version"]})");
+            ConnectionChanged?.Invoke(true);
         }
         finally { _gate.Release(); }
     }
@@ -83,6 +86,11 @@ public sealed class AgentClient : IDisposable
                 if (line == null) break;
                 JsonNode? msg;
                 try { msg = JsonNode.Parse(line); } catch { continue; }
+                if (msg?["event"] is JsonValue eventName && eventName.TryGetValue(out string? name) && name != null)
+                {
+                    EventReceived?.Invoke(name, msg["value"]?.DeepClone());
+                    continue;
+                }
                 if (msg?["id"] is not JsonValue idv || !idv.TryGetValue(out int id)) continue;
                 TaskCompletionSource<JsonNode?>? tcs;
                 lock (_pending) { if (_pending.Remove(id, out tcs) == false) continue; }
@@ -96,12 +104,14 @@ public sealed class AgentClient : IDisposable
 
     private void Drop()
     {
+        bool connected = _tcp != null;
         try { _tcp?.Dispose(); } catch { }
         _tcp = null;
         _writer = null;
         List<TaskCompletionSource<JsonNode?>> fail;
         lock (_pending) { fail = _pending.Values.ToList(); _pending.Clear(); }
         foreach (var t in fail) t.TrySetException(new IOException("与 agent 的连接断开了"));
+        if (connected && !_disposed) ConnectionChanged?.Invoke(false);
     }
 
     public void Dispose()

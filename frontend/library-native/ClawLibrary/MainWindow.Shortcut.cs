@@ -23,9 +23,12 @@ public sealed partial class MainWindow
         _shortcutWindow.RememberReturnWindow(previous);
         Activated += (_, e) =>
         {
+            if (_overlayActive) return;
             if (e.WindowActivationState == WindowActivationState.Deactivated)
             {
-                _shortcutWindow?.SetTopmost(false);
+                // Foreground may still be in transit during deactivation: re-check once the switch has settled.
+                if (_shortcutWindow?.SetTopmost(false) == true)
+                    DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => _shortcutWindow?.StayBehindForeground());
                 // An explicit switch away must also cancel pending focus retries.
                 if (!_shortcutHiding)
                 {
@@ -46,6 +49,9 @@ public sealed partial class MainWindow
         };
     }
 
+    /// <summary>A game (or Steam's install dialog) is about to open: let it come in front of the library.</summary>
+    internal void HandOffForeground() { ReleaseOverlay(); _shortcutWindow?.HandOffForeground(); }
+
     private void StopShortcutTimers()
     {
         foreach (var timer in _shortcutTimers) timer.Stop();
@@ -61,6 +67,10 @@ public sealed partial class MainWindow
     {
         bool visible = AppWindow.IsVisible && !ToolboxWindow.IsIconic(WinRT.Interop.WindowNative.GetWindowHandle(this));
         var entrance = _shortcutMotion.Show(initial, visible, _shortcutWindow?.IsForeground == true);
+        // 游戏中唤出：直接是「正在游戏」画面，不做从透明开始的进场（透明那几帧露出的是窗口黑底）
+        if (entrance == ShortcutEntrance.Reveal && _stage?.NowPlayingShown == true) { _shortcutMotion.Cancel(); entrance = ShortcutEntrance.None; }
+        // 快捷设置：第一帧就是游戏画面（缩略图）+ 面板自己滑进来，也不做整窗淡入
+        if (entrance is ShortcutEntrance.Reveal or ShortcutEntrance.KeepCurrent && _stage?.SpecialSurfaceOpen == true) { _shortcutMotion.Cancel(); entrance = ShortcutEntrance.None; }
         int motionVersion = _shortcutMotion.Version;
         CancelShortcutTransition();
         _shortcutInTray = false;
@@ -77,6 +87,7 @@ public sealed partial class MainWindow
             visual.StopAnimation("Opacity"); visual.StopAnimation("Scale");
             visual.Opacity = 0; visual.Scale = new Vector3(1.02f, 1.02f, 1);
         }
+        RestoreOrdinaryPresenter();
         if (!initial) RestoreShortcutContent(route);
         nint previous = LibraryWindow.Foreground;
         bool started = entrance is ShortcutEntrance.None or ShortcutEntrance.KeepCurrent;
@@ -86,6 +97,13 @@ public sealed partial class MainWindow
             started = true;
             Log.Info($"shortcut show mode={entrance} version={motionVersion}");
             AnimateShortcut(true, entrance == ShortcutEntrance.Reveal, motionVersion, () => { });
+        }
+        if (_overlayActive)
+        {
+            _shortcutWindow?.ShowOverlay();
+            if (!started) AnimateShortcut(true, entrance == ShortcutEntrance.Reveal, motionVersion, () => { });
+            Log.Info($"shortcut shown without activation target={_overlayTarget}");
+            return;
         }
         TryShortcutFocus();
         StartWhenForeground();
@@ -118,6 +136,7 @@ public sealed partial class MainWindow
     private void TryShortcutFocus()
     {
         nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        _shortcutWindow?.EnsureFullscreenBounds();
         // The initial fullscreen presenter can rewrite z-order while the first
         // frame is loading; include it in the same bounded focus handoff.
         bool active = _shortcutWindow?.IsForeground == true || LibraryWindow.BringForward(hwnd);
@@ -129,8 +148,12 @@ public sealed partial class MainWindow
         Log.Info($"shortcut foreground={active} hwnd={hwnd} current={LibraryWindow.Foreground}");
     }
 
+    /// <summary>快捷设置收起后：窗口照 Claw 键收起游戏库那样退下去（游戏已经回到前台）。</summary>
+    internal void HideAfterQuickPanel() => EndSpecialSurface();
+
     private void HideShortcutWindow()
     {
+        if (Stage.ShellMode.GameMode && !_desktopHandoff) { CancelShortcutTransition(); CompleteShortcutHide(); return; }
         if (_shortcutHiding)
         {
             ShowShortcutWindow("restore-" + ToolboxActivation.Target(_pendingRoute));
@@ -139,7 +162,7 @@ public sealed partial class MainWindow
         CancelShortcutTransition(); _shortcutHiding = true;
         int version = _shortcutVersion;
         int motionVersion = _shortcutMotion.Hide();
-        if (_shortcutWindow?.IsForeground != true)
+        if (!_overlayActive && _shortcutWindow?.IsForeground != true)
         {
             _shortcutMotion.Cancel(); _stage?.EndShortcutSoftFocus();
             CompleteShortcutHide(); return;
@@ -151,10 +174,12 @@ public sealed partial class MainWindow
         });
     }
 
-    private void CompleteShortcutHide()
+    private void CompleteShortcutHide(bool returnToPrevious = true)
     {
+        if (Stage.ShellMode.GameMode && !_desktopHandoff) { ParkGameShell(returnToPrevious); return; }
+        _surfaceSession = false;
         _shortcutMotion.Cancel();
-        bool returnFocus = _shortcutWindow?.IsForeground == true;
+        bool returnFocus = returnToPrevious && _shortcutWindow?.IsForeground == true;
         _shortcutHiding = true;
         _shortcutVisible = false;
         _shortcutWindow?.SetTopmost(false);
@@ -165,6 +190,7 @@ public sealed partial class MainWindow
         if (tray) AppWindow.Hide();
         else ToolboxWindow.Minimize(WinRT.Interop.WindowNative.GetWindowHandle(this));
         _stage?.SuspendToTray();
+        ReleaseOverlay();
         _shortcutHiding = false;
         ResetShortcutVisual();
         _shortcutWindow?.ReturnToPreviousWindow(returnFocus);
@@ -223,6 +249,8 @@ public sealed partial class MainWindow
 
     private void DisposeShortcutWindow()
     {
+        _gameShellTimer?.Stop();
+        ReleaseOverlay();
         _shortcutClosed = true; _shortcutMotion.Cancel(); CancelShortcutTransition();
         _stage?.EndShortcutSoftFocus(); _shortcutWindow?.Dispose();
     }

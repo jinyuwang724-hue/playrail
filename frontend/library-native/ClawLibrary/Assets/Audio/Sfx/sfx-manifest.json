@@ -1,0 +1,332 @@
+{
+ "soft/nav": {
+  "seconds": 0.06,
+  "peak": 0.15,
+  "rms": 0.036603
+ },
+ "soft/bump": {
+  "seconds": 0.15,
+  "peak": 0.24,
+  "rms": 0.0569
+ },
+ "soft/activate": {
+  "seconds": 0.23,
+  "peak": 0.29,
+  "rms": 0.073294
+ },
+ "soft/back": {
+  "seconds": 0.22,
+  "peak": 0.25,
+  "rms": 0.06593
+ },
+ "soft/detail_in": {
+  "seconds": 0.36,
+  "peak": 0.27,
+  "rms": 0.056464
+ },
+ "soft/detail_out": {
+  "seconds": 0.32,
+  "peak": 0.24,
+  "rms": 0.054053
+ },
+ "soft/launch": {
+  "seconds": 1.5,
+  "peak": 0.4,
+  "rms": 0.069187
+ },
+ "soft/tab": {
+  "seconds": 0.12,
+  "peak": 0.21,
+  "rms": 0.048779
+ },
+ "soft/menu_in": {
+  "seconds": 0.38,
+  "peak": 0.26,
+  "rms": 0.061018
+ },
+ "soft/menu_out": {
+  "seconds": 0.35,
+  "peak": 0.23,
+  "rms": 0.053661
+ },
+ "soft/modal_show": {
+  "seconds": 0.25,
+  "peak": 0.26,
+  "rms": 0.066015
+ },
+ "soft/modal_hide": {
+  "seconds": 0.23,
+  "peak": 0.22,
+  "rms": 0.052779
+ },
+ "soft/toggle_on": {
+  "seconds": 0.14,
+  "peak": 0.24,
+  "rms": 0.05904
+ },
+ "soft/toggle_off": {
+  "seconds": 0.14,
+  "peak": 0.21,
+  "rms": 0.055637
+ },
+ "soft/slider_up": {
+  "seconds": 0.06,
+  "peak": 0.16,
+  "rms": 0.038033
+ },
+ "soft/slider_down": {
+  "seconds": 0.06,
+  "peak": 0.15,
+  "rms": 0.034797
+ },
+ "soft/toast": {
+  "seconds": 0.68,
+  "peak": 0.26,
+  "rms": 0.05747
+ },
+ "soft/positive": {
+  "seconds": 0.54,
+  "peak": 0.29,
+  "rms": 0.06785
+ },
+ "soft/error": {
+  "seconds": 0.35,
+  "peak": 0.25,
+  "rms": 0.058639
+ },
+ "soft/typing": {
+  "seconds": 0.035,
+  "peak": 0.105,
+  "rms": 0.021963
+ },
+ "soft/startup": {
+  "seconds": 2.2,
+  "peak": 0.36,
+  "rms": 0.071416
+ },
+ "soft/shutter": {
+  "seconds": 0.18,
+  "peak": 0.27,
+  "rms": 0.033514
+ },
+ "crystal/nav": {
+  "seconds": 0.06,
+  "peak": 0.15,
+  "rms": 0.038076
+ },
+ "crystal/bump": {
+  "seconds": 0.15,
+  "peak": 0.24,
+  "rms": 0.056688
+ },
+ "crystal/activate": {
+  "seconds": 0.23,
+  "peak": 0.29,
+  "rms": 0.075504
+ },
+ "crystal/back": {
+  "seconds": 0.22,
+  "peak": 0.25,
+  "rms": 0.059938
+ },
+ "crystal/detail_in": {
+  "seconds": 0.36,
+  "peak": 0.27,
+  "rms": 0.057668
+ },
+ "crystal/detail_out": {
+  "seconds": 0.32,
+  "peak": 0.24,
+  "rms": 0.05617
+ },
+ "crystal/launch": {
+  "seconds": 1.5,
+  "peak": 0.4,
+  "rms": 0.070261
+ },
+ "crystal/tab": {
+  "seconds": 0.12,
+  "peak": 0.21,
+  "rms": 0.04926
+ },
+ "crystal/menu_in": {
+  "seconds": 0.38,
+  "peak": 0.26,
+  "rms": 0.064894
+ },
+ "crystal/menu_out": {
+  "seconds": 0.35,
+  "peak": 0.23,
+  "rms": 0.051376
+ },
+ "crystal/modal_show": {
+  "seconds": 0.25,
+  "peak": 0.26,
+  "rms": 0.064904
+ },
+ "crystal/modal_hide": {
+  "seconds": 0.23,
+  "peak": 0.22,
+  "rms": 0.051323
+ },
+ "crystal/toggle_on": {
+  "seconds": 0.14,
+  "peak": 0.24,
+  "rms": 0.061137
+ },
+ "crystal/toggle_off": {
+  "seconds": 0.14,
+  "peak": 0.21,
+  "rms": 0.055494
+ },
+ "crystal/slider_up": {
+  "seconds": 0.06,
+  "peak": 0.16,
+  "rms": 0.035608
+ },
+ "crystal/slider_down": {
+  "seconds": 0.06,
+  "peak": 0.15,
+  "rms": 0.03392
+ },
+ "crystal/toast": {
+  "seconds": 0.68,
+  "peak": 0.26,
+  "rms": 0.060002
+ },
+ "crystal/positive": {
+  "seconds": 0.54,
+  "peak": 0.29,
+  "rms": 0.060146
+ },
+ "crystal/error": {
+  "seconds": 0.35,
+  "peak": 0.25,
+  "rms": 0.053869
+ },
+ "crystal/typing": {
+  "seconds": 0.035,
+  "peak": 0.105,
+  "rms": 0.02602
+ },
+ "crystal/startup": {
+  "seconds": 2.2,
+  "peak": 0.36,
+  "rms": 0.074398
+ },
+ "crystal/shutter": {
+  "seconds": 0.18,
+  "peak": 0.27,
+  "rms": 0.028458
+ },
+ "digital/nav": {
+  "seconds": 0.06,
+  "peak": 0.15,
+  "rms": 0.030865
+ },
+ "digital/bump": {
+  "seconds": 0.15,
+  "peak": 0.24,
+  "rms": 0.055975
+ },
+ "digital/activate": {
+  "seconds": 0.23,
+  "peak": 0.29,
+  "rms": 0.059059
+ },
+ "digital/back": {
+  "seconds": 0.22,
+  "peak": 0.25,
+  "rms": 0.055439
+ },
+ "digital/detail_in": {
+  "seconds": 0.36,
+  "peak": 0.27,
+  "rms": 0.049464
+ },
+ "digital/detail_out": {
+  "seconds": 0.32,
+  "peak": 0.24,
+  "rms": 0.049399
+ },
+ "digital/launch": {
+  "seconds": 1.5,
+  "peak": 0.4,
+  "rms": 0.06141
+ },
+ "digital/tab": {
+  "seconds": 0.12,
+  "peak": 0.21,
+  "rms": 0.046016
+ },
+ "digital/menu_in": {
+  "seconds": 0.38,
+  "peak": 0.26,
+  "rms": 0.05974
+ },
+ "digital/menu_out": {
+  "seconds": 0.35,
+  "peak": 0.23,
+  "rms": 0.047565
+ },
+ "digital/modal_show": {
+  "seconds": 0.25,
+  "peak": 0.26,
+  "rms": 0.060172
+ },
+ "digital/modal_hide": {
+  "seconds": 0.23,
+  "peak": 0.22,
+  "rms": 0.04714
+ },
+ "digital/toggle_on": {
+  "seconds": 0.14,
+  "peak": 0.24,
+  "rms": 0.052874
+ },
+ "digital/toggle_off": {
+  "seconds": 0.14,
+  "peak": 0.21,
+  "rms": 0.047787
+ },
+ "digital/slider_up": {
+  "seconds": 0.06,
+  "peak": 0.16,
+  "rms": 0.032922
+ },
+ "digital/slider_down": {
+  "seconds": 0.06,
+  "peak": 0.15,
+  "rms": 0.032614
+ },
+ "digital/toast": {
+  "seconds": 0.68,
+  "peak": 0.26,
+  "rms": 0.055307
+ },
+ "digital/positive": {
+  "seconds": 0.54,
+  "peak": 0.29,
+  "rms": 0.056875
+ },
+ "digital/error": {
+  "seconds": 0.35,
+  "peak": 0.25,
+  "rms": 0.053257
+ },
+ "digital/typing": {
+  "seconds": 0.035,
+  "peak": 0.105,
+  "rms": 0.021875
+ },
+ "digital/startup": {
+  "seconds": 2.2,
+  "peak": 0.36,
+  "rms": 0.070258
+ },
+ "digital/shutter": {
+  "seconds": 0.18,
+  "peak": 0.27,
+  "rms": 0.028017
+ }
+}

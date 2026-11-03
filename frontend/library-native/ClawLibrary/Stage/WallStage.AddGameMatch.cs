@@ -96,7 +96,7 @@ public sealed partial class WallStage
         ds.FillRoundedRectangle(field, 12, 12, Gfx.WithAlpha(CcText, 0.05));
         ds.DrawRoundedRectangle(new Rect(field.X + 0.5, field.Y + 0.5, field.Width - 1, field.Height - 1), 11.5f, 11.5f,
             typing ? PerfAccent : Gfx.WithAlpha(CcText, 0.24), 1);
-        PText(ds, "", AgIcons, 16, Gfx.WithAlpha(CcText, 0.7), (float)field.X + 12, fcy, 24);
+        LineIcons.Draw(ds, "", (float)field.X + 12 + 8, fcy, 16, Gfx.WithAlpha(CcText, 0.7));
         if (!typing)
         {
             bool empty = d.Query.Length == 0;
@@ -105,7 +105,7 @@ public sealed partial class WallStage
         }
         if (d.Query.Length > 0 || typing)
         {
-            PText(ds, "", AgIcons, 14, Gfx.WithAlpha(CcText, 0.8), (float)AgFieldClear.X, (float)(AgFieldClear.Y + 16), 32, CanvasHorizontalAlignment.Center);
+            LineIcons.Draw(ds, "", (float)AgFieldClear.X + 16, (float)(AgFieldClear.Y + 16), 14, Gfx.WithAlpha(CcText, 0.8));
             _agHits.Add((AgFieldClear, 0, 0, () => AgMatchClear(d)));
         }
         _agHits.Add((field, 0, 0, () => AgBeginEdit("query")));
@@ -119,7 +119,7 @@ public sealed partial class WallStage
         ds.FillRoundedRectangle(_agSubmit, 12, 12, Gfx.WithAlpha(CcText, sf ? 0.22 : 0.16));
         if (sf) ds.DrawRoundedRectangle(_agSubmit, 12, 12, Gfx.WithAlpha(CcText, 0.26), 1);
         float scy = (float)(_agSubmit.Y + 22);
-        PText(ds, "", AgIcons, 18, CcText, sx, scy, 24);
+        LineIcons.Draw(ds, "", sx + 9, scy, 18, CcText);
         PText(ds, label, bf, 15, CcText, sx + 18 + 8, scy, lw + 4);
         _agHits.Add((_agSubmit, 0, 1, () => AgMatchSubmit(d)));
 
@@ -138,14 +138,25 @@ public sealed partial class WallStage
             Changed = i == d.Match,
         }).ToList();
         var old = ds.Transform;
+        float viewH = AgMatchOy + (760 - AgMatchOy) / AgMatchS - AgMatchTop;
+        if (!_agManualScroll && _agZone == 1)
+            _agMatchScroll = RowScroll(rows, _agIndex, _agMatchScroll, viewH);
+        _agMatchScroll = Math.Clamp(_agMatchScroll, 0, Math.Max(0, RowsHeight(rows) - viewH));
         // 和分类页一样的整宽设置行：行号 / 焦点三角在左头，名称缩进 36
-        ds.Transform = Matrix3x2.CreateTranslation(AgMatchX, AgMatchTop) * old;
-        PaintRowList(ds, rows, _agZone == 1 ? _agIndex : -1, null, false, AgMatchW);
+        using (ds.CreateLayer(1, new Rect(AgMatchX - 8, AgMatchTop, AgMatchW + 16, viewH)))
+        {
+            ds.Transform = Matrix3x2.CreateTranslation(AgMatchX, AgMatchTop - _agMatchScroll) * old;
+            PaintRowList(ds, rows, _agZone == 1 ? _agIndex : -1, null, false, AgMatchW);
+            ds.Transform = old;
+        }
         ds.Transform = old;
         for (int i = 0; i < n; i++)
         {
             int at = i;
-            _agHits.Add((new Rect(AgMatchX, AgMatchTop + i * PerfRowH, AgMatchW, PerfRowH), 1, i, () => { if (!d.Searching) AgChooseMatch(d, at); }));
+            float y0 = AgMatchTop + i * PerfRowH - _agMatchScroll;
+            float y1 = Math.Min(AgMatchTop + viewH, y0 + PerfRowH);
+            y0 = Math.Max(AgMatchTop, y0);
+            if (y1 > y0) _agHits.Add((new Rect(AgMatchX, y0, AgMatchW, y1 - y0), 1, i, () => { if (!d.Searching) AgChooseMatch(d, at); }));
         }
         if (n == 0 && !d.Searching && d.Status.Length > 0)
             PText(ds, d.Status, TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, 0.45), AgMatchX + 36, AgMatchTop + PerfRowH / 2, AgMatchW);

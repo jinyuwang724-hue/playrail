@@ -42,6 +42,9 @@ public sealed class LibraryItem
     public bool Installed = true;
     /// <summary>手动加的文件夹里的游戏：直接启动这个 exe。</summary>
     public string? ExePath;
+    public string? ExeStartDir, ExeArgs;
+    /// <summary>本地条目的稳定程序身份；同步后即使改用 Steam 启动也保留，供原位刷新匹配。</summary>
+    public string? LocalExePath;
     public string? XboxAumid;
     public string? Series;
     public double SeedFx;
@@ -56,6 +59,51 @@ public sealed class Library
     public List<LibraryItem> Collections = new();
     public Dictionary<string, LibraryItem> ById = new();
     public List<HomeTab> HomeTabs = new();
+    private List<LibraryItem> _sourceGames = new();
+    private List<SteamCollection> _sourceCollections = new();
+
+    public int IdentifiedCount(string platform) => _sourceGames.Count(g => g.Platform == platform);
+
+    /// <summary>只替换本次刷新的平台，保留其他平台和本地条目，以及完整的筛选前来源。</summary>
+    public Library ReplacePlatform(string platform, Library replacement)
+    {
+        var incoming = replacement._sourceGames.Where(g => g.Platform == platform).ToList();
+        foreach (var game in incoming)
+            if (ById.TryGetValue(game.Id, out var previous)) game.OwnArt ??= previous.OwnArt;
+        var games = _sourceGames.Where(g => g.Platform != platform).Concat(incoming).ToList();
+        return Build(games, platform == "steam" ? replacement._sourceCollections : _sourceCollections);
+    }
+
+    /// <summary>本地编辑/同步只更新本地来源，保留云端所有权、安装范围和 Xbox 扫描结果。</summary>
+    public Library ReplaceLocalSources(Library replacement)
+    {
+        static bool Local(LibraryItem game) => game.Platform is not ("steam" or "xbox");
+        return Build(_sourceGames.Where(g => !Local(g)).Concat(replacement._sourceGames.Where(Local)).ToList(),
+            replacement._sourceCollections);
+    }
+
+    internal Library ReplaceXbox(List<XboxGames.Game> entries)
+    {
+        var games = entries.Select(x => new LibraryItem
+        {
+            Id = "xbox-" + x.Aumid, Kind = ItemKind.Game, Title = x.Name, Main = x.Name,
+            Platform = "xbox", Badge = "XBOX", Subtitle = "Xbox / Microsoft Store",
+            XboxAumid = x.Aumid, Hue = HueOf(x.Name), SeedFx = 0.5,
+        }).ToList();
+        return ReplacePlatform("xbox", Build(games, new()));
+    }
+
+    /// <summary>保留完整来源以便即时切换筛选，并恢复刚才被筛掉的游戏。</summary>
+    public Library Refilter(HashSet<string>? installed = null)
+    {
+        if (installed != null)
+            foreach (var game in _sourceGames.Where(g => g.Platform == "steam"))
+            {
+                game.Installed = installed.Contains(game.Id);
+                game.Badge = game.Installed ? "STEAM" : "STEAM · 未安装";
+            }
+        return Build(_sourceGames, _sourceCollections);
+    }
 
     private static int HueOf(string s)
     {
@@ -72,7 +120,7 @@ public sealed class Library
 
     public static Library Load(string seedPath, Dictionary<string, PlayStats> stats, Func<string, ArtKit?> art,
         List<SteamCollection>? steamCollections = null, List<SteamApp>? owned = null, HashSet<string>? installed = null,
-        List<(string AppId, string Name, string Exe, string StartDir)>? shortcuts = null, List<LocalGame>? local = null)
+        List<(string AppId, string Name, string Exe, string StartDir)>? shortcuts = null, List<LocalGame>? local = null, bool steamOwnedOnly = false)
     {
         var games = new List<LibraryItem>();
         steamCollections ??= new();
@@ -153,7 +201,8 @@ public sealed class Library
                 var g = new LibraryItem
                 {
                     Id = lg.Id, Kind = ItemKind.Game, Title = lg.Name, Main = lg.Name, Subtitle = "本地",
-                    Platform = "local", Badge = "PC", SeedFx = 0.5, ExePath = synced ? null : lg.Exe,
+                    Platform = "local", Badge = "PC", SeedFx = 0.5, ExePath = synced ? null : lg.Exe, LocalExePath = lg.Exe,
+                    ExeStartDir = lg.StartDir, ExeArgs = lg.Args,
                     LastPlayed = synced ? st?.Last : played.TryGetValue(lg.Id, out var t) ? t : null,
                     PlaytimeH = synced && st?.Minutes is int m ? Math.Round(m / 60.0) : null,
                 };
@@ -186,6 +235,11 @@ public sealed class Library
                 games.Add(g);
                 seen.Add(id);
             }
+        }
+        if (steamOwnedOnly)
+        {
+            var cloudIds = (owned ?? new()).Select(g => g.Id).ToHashSet();
+            games.RemoveAll(g => g.Platform == "steam" && !cloudIds.Contains(g.Id));
         }
         if (installed != null)
             foreach (var g in games)
@@ -223,20 +277,22 @@ public sealed class Library
     /// 首页三个页签：全部、Steam、本地（非 Steam）。合集只用 Steam 库里用户自己建的分类（收藏夹、自建分类），
     /// 只在 Steam 页签里出现；不自己编分类。Steam 里「已隐藏」的游戏不上墙。空的分类不显示。
     /// </summary>
-    /// <summary>设置页「游戏库」：显示 Steam 里隐藏的游戏、两种来源各自开关（下次载入游戏库时生效）。</summary>
-    public static bool ShowHidden, IncludeSteam = true;
+    /// <summary>设置页「游戏库」：隐藏游戏、Steam 来源及安装范围；安装范围支持即时重新筛选。</summary>
+    public static bool ShowHidden, IncludeSteam = true, SteamInstalledOnly;
     /// <summary>设置页手动加的文件夹里扫出来的游戏（载入前填好）。</summary>
     public static List<(string Title, string Exe, long? Last)> FolderGames = new();
     internal static List<XboxGames.Game> XboxLibrary = new();
 
     public static Library Build(List<LibraryItem> games, List<SteamCollection> steamCollections)
     {
+        GameNames.Apply(games);
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         foreach (var g in games)
             g.LastPlayedDays = g.LastPlayed is long l ? (int)Math.Max(0, (now - l) / Day) : null;
         var hidden = ShowHidden ? new HashSet<string>() : steamCollections.FirstOrDefault(c => c.Id == "hidden")?.Added.ToHashSet() ?? new HashSet<string>();
-        var shown = games.Where(g => !hidden.Contains(g.Id) && (g.Platform != "steam" || IncludeSteam)).ToList();
-        var lib = new Library { Games = shown };
+        var shown = games.Where(g => !hidden.Contains(g.Id)
+            && (g.Platform != "steam" || (IncludeSteam && (!SteamInstalledOnly || g.Installed)))).ToList();
+        var lib = new Library { Games = shown, _sourceGames = games, _sourceCollections = steamCollections };
 
         var recent = shown.Where(g => g.LastPlayed != null).OrderByDescending(g => g.LastPlayed).ToList();
         var rest = shown.Where(g => g.LastPlayed == null).ToList();
@@ -269,7 +325,7 @@ public sealed class Library
             new("xbox", "Xbox", () => ordered.Where(g => g.Platform == "xbox").ToList()),
             new("local", "本地", () => ordered.Where(g => g.Platform != "steam" && g.Platform != "xbox").ToList()),
         };
-        Log.Info($"library: {shown.Count} shown ({games.Count - shown.Count} hidden in Steam), steam collections: {string.Join(", ", lib.Collections.Select(c => $"{c.Title}({c.Children!.Count})"))}");
+        Log.Info($"library: {shown.Count} shown ({games.Count - shown.Count} filtered, Steam installed only={SteamInstalledOnly}), steam collections: {string.Join(", ", lib.Collections.Select(c => $"{c.Title}({c.Children!.Count})"))}");
         return lib;
     }
 }

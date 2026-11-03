@@ -11,7 +11,7 @@ using Microsoft.Win32;
 
 namespace ClawShell
 {
-    public sealed class WindowsShellSystem : IShellSystem, IDesktopSurface
+    public sealed partial class WindowsShellSystem : IShellSystem, IDesktopSurface, IGameSurface
     {
         public const string LibraryAumid = "ClawToolbox.Library_ba3r68zr466za!App";
         public const string LibraryFamily = "ClawToolbox.Library_ba3r68zr466za";
@@ -180,12 +180,12 @@ namespace ClawShell
             {
                 var manager = (IApplicationActivationManager)new ApplicationActivationManager();
                 uint pid;
-                int hr = manager.ActivateApplication(LibraryAumid, "", 0, out pid);
+                int hr = manager.ActivateApplication(LibraryAumid, "--game-shell", 0, out pid);
                 Log("activate library hr=0x" + hr.ToString("x8") + " pid=" + pid);
                 if (hr < 0) return false;
             }
             catch (Exception ex) { Log("activate library: " + ex.Message); return false; }
-            for (int i = 0; i < 100; i++) { if (LibraryRunning()) return true; Thread.Sleep(100); }
+            for (int i = 0; i < 100; i++) { if (FindSurface() != IntPtr.Zero) return true; Thread.Sleep(100); }
             return false;
         }
 

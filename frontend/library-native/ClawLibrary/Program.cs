@@ -19,7 +19,8 @@ public static class Program
         // 单实例：已经开着就把这次启动转给它（它会把窗口提到前台），自己退出
         try
         {
-            var main = Microsoft.Windows.AppLifecycle.AppInstance.FindOrRegisterForKey("main");
+            var instanceKey = args.FirstOrDefault(a => a.StartsWith("--instance-key="))?["--instance-key=".Length..] ?? "main";
+            var main = Microsoft.Windows.AppLifecycle.AppInstance.FindOrRegisterForKey(instanceKey);
             if (!main.IsCurrent)
             {
                 AllowSetForegroundWindow(main.ProcessId);

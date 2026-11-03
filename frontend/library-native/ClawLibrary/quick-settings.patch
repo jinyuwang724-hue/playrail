@@ -1,0 +1,1941 @@
+diff --git a/frontend/library-native/ClawLibrary/App.cs b/frontend/library-native/ClawLibrary/App.cs
+index 4ea8ce2..258d0a2 100644
+--- a/frontend/library-native/ClawLibrary/App.cs
++++ b/frontend/library-native/ClawLibrary/App.cs
+@@ -200,6 +200,15 @@ public sealed partial class MainWindow : Window
+         }
+         if (viaShell) Log.Info($"shell switch arrived ({route}) cloaked={ToolboxWindow.ShellCloaked(hwnd)}");
+         if (ToolboxWindow.SteamHomeRedirect(route, hwnd)) return;
++        // 快速设置键（后台的 controlCenter 动作）= 快捷设置面板：开着就收起，游戏库在前台时直接在它上面开
++        bool quick = ToolboxActivation.Target(route) == "control-center";
++        if (quick && _stage?.QuickPanelOpen == true) { _stage.CloseQuickPanel(); return; }
++        if (!quick && _stage?.QuickPanelOpen == true) _stage.CloseQuickPanel(hideWindow: false, instant: true);
++        if (quick && AppWindow.IsVisible && !ToolboxWindow.IsIconic(hwnd) && route.StartsWith("minimize-", StringComparison.Ordinal))
++        {
++            _stage?.OpenQuickPanel(0);
++            return;
++        }
+         if (AppWindow.IsVisible && !ToolboxWindow.IsIconic(hwnd) && route.StartsWith("minimize-", StringComparison.Ordinal) &&
+             ToolboxActivation.ShouldMinimize(route, ToolboxWindow.XboxFseActive(), ToolboxWindow.SteamBigPictureOpen()))
+         {
+@@ -213,10 +222,34 @@ public sealed partial class MainWindow : Window
+         _pendingRoute = ToolboxActivation.Target(route);
+         // 游戏在跑：窗口出来之前先把「正在游戏」画面放上，进场动画带的就是它，不会先闪一下墙面
+         if (_pendingRoute is "activate" or "library") _stage?.NowPlayingBeforeShow();
++        else if (quick) _stage?.OpenQuickPanel(returnWindow);   // 窗口出来之前先铺好游戏画面和面板
+         else _stage?.NowPlayingYield();   // Claw 键唤控制中心：正在游戏画面让开，不挡控制中心也不抢它的按键
++        if (quick) { ShowAfterFrames(route, 2); return; }
+         ShowShortcutWindow(route);
+     }
+ 
++    /// <summary>
++    /// 快捷设置：先让面板和游戏画面画上两帧再把窗口拿到前台。直接拿到前台的话，DWM 先显示窗口上一次的内容（墙面），闪一两帧。
++    /// </summary>
++    private void ShowAfterFrames(string route, int frames)
++    {
++        bool shown = false;
++        void Show()
++        {
++            if (shown) return;
++            shown = true;
++            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnFrame;
++            ShowShortcutWindow(route);
++        }
++        void OnFrame(object? s, object e) { if (--frames <= 0) Show(); }
++        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += OnFrame;
++        // 藏着的窗口可能不出帧：最多等 100 ms
++        var timer = DispatcherQueue.CreateTimer();
++        timer.IsRepeating = false; timer.Interval = TimeSpan.FromMilliseconds(100);
++        timer.Tick += (_, _) => { timer.Stop(); Show(); };
++        timer.Start();
++    }
++
+     private void RestoreShortcutContent(string route)
+     {
+         if (!AppWindow.IsVisible) AppWindow.Show(false);
+diff --git a/frontend/library-native/ClawLibrary/Data/OpenWindows.cs b/frontend/library-native/ClawLibrary/Data/OpenWindows.cs
+new file mode 100644
+index 0000000..f277afe
+--- /dev/null
++++ b/frontend/library-native/ClawLibrary/Data/OpenWindows.cs
+@@ -0,0 +1,241 @@
++// 窗口切换页的数据：现在打开着的顶层窗口（按 Alt+Tab 的规矩挑）、应用图标、关窗口、DWM 实时缩略图。
++// 挑窗口的规则参考 Playhub v2.1.0 GamingWindowFocusService.IsCandidateWindow / IsAuxiliaryWindow（MIT，
++// Copyright (c) 2026 Andrea Sgarro (LoZazaMastro)），这里还收最小化的窗口，因为它是切换器不是游戏识别。
++using System.Diagnostics;
++using System.Runtime.InteropServices;
++using System.Text;
++
++namespace ClawLibrary.Data;
++
++internal sealed record OpenWindow(nint Hwnd, uint Pid, string Title, string Process, bool Minimized);
++
++internal static class OpenWindows
++{
++    /// <summary>不进列表的进程：自己、Game Bar、系统外壳宿主、输入法 / 触摸键盘。</summary>
++    private static readonly HashSet<string> IgnoredProcesses = new(StringComparer.OrdinalIgnoreCase)
++    {
++        "ClawLibrary", "ClawPerformanceOverlay", "ClawWidget", "GameBar", "GameBarFTServer", "GameBarPresenceWriter",
++        "TextInputHost", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "LockApp", "osk", "TabTip",
++    };
++
++    private static readonly HashSet<string> IgnoredClasses = new(StringComparer.Ordinal)
++    {
++        "Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "#32770", "Windows.UI.Core.CoreWindow",
++        "XamlExplorerHostIslandWindow", "TopLevelWindowForOverflowXamlIsland",
++    };
++
++    /// <summary>按 Z 序（最近用过的在前）列出可以切过去的窗口。</summary>
++    public static List<OpenWindow> List()
++    {
++        var result = new List<OpenWindow>();
++        uint self = (uint)Environment.ProcessId;
++        var names = new Dictionary<uint, string>();
++        EnumWindows((hwnd, _) =>
++        {
++            try { if (Candidate(hwnd, self, names) is { } w) result.Add(w); } catch { }
++            return true;
++        }, 0);
++        return result;
++    }
++
++    private static OpenWindow? Candidate(nint hwnd, uint self, Dictionary<uint, string> names)
++    {
++        if (!IsWindowVisible(hwnd)) return null;
++        if (DwmGetWindowAttribute(hwnd, 14 /* DWMWA_CLOAKED */, out int cloaked, 4) == 0 && cloaked != 0) return null;
++        long style = GetWindowLongPtr(hwnd, -16).ToInt64(), ex = GetWindowLongPtr(hwnd, -20).ToInt64();
++        bool appWindow = (ex & 0x40000) != 0;   // WS_EX_APPWINDOW
++        if (!appWindow)
++        {
++            if ((ex & 0x80) != 0) return null;           // WS_EX_TOOLWINDOW
++            if ((ex & 0x08000000) != 0) return null;     // WS_EX_NOACTIVATE
++            if (GetWindow(hwnd, 4 /* GW_OWNER */) != 0) return null;   // 被拥有的弹窗、对话框
++        }
++        if ((style & 0x40000000) != 0) return null;      // WS_CHILD
++        var cls = new StringBuilder(128);
++        GetClassName(hwnd, cls, cls.Capacity);
++        if (IgnoredClasses.Contains(cls.ToString())) return null;
++        int len = GetWindowTextLength(hwnd);
++        if (len == 0) return null;
++        var title = new StringBuilder(len + 1);
++        GetWindowText(hwnd, title, title.Capacity);
++        bool iconic = IsIconic(hwnd);
++        if (!iconic && GetWindowRect(hwnd, out var r) && (r.Right - r.Left < 2 || r.Bottom - r.Top < 2)) return null;
++        GetWindowThreadProcessId(hwnd, out uint pid);
++        if (pid == 0 || pid == self) return null;
++        if (!names.TryGetValue(pid, out string? name))
++        {
++            try { using var p = Process.GetProcessById((int)pid); name = p.ProcessName; } catch { name = ""; }
++            names[pid] = name;
++        }
++        if (IgnoredProcesses.Contains(name)) return null;
++        return new OpenWindow(hwnd, pid, title.ToString(), name, iconic);
++    }
++
++    /// <summary>像点右上角 × 一样请它自己关（能存档）。以管理员身份运行的窗口收不到（返回 false）。</summary>
++    public static bool Close(nint hwnd) => PostMessage(hwnd, 0x0010 /* WM_CLOSE */, 0, 0);
++
++    public static bool Alive(nint hwnd) => IsWindow(hwnd) && IsWindowVisible(hwnd);
++
++    /// <summary>
++    /// 应用图标的 BGRA 像素（预乘 alpha，正方形 size×size）：先问窗口要大图标，没有就用窗口类的，再没有就从 exe 里取。
++    /// </summary>
++    public static byte[]? IconPixels(nint hwnd, uint pid, out int size)
++    {
++        size = 0;
++        nint icon = 0;
++        bool owned = false;
++        if (SendMessageTimeout(hwnd, 0x007F /* WM_GETICON */, 1 /* ICON_BIG */, 0, 0x0002 /* SMTO_ABORTIFHUNG */, 120, out nint big) != 0) icon = big;
++        if (icon == 0) icon = GetClassLongPtr(hwnd, -14 /* GCLP_HICON */);
++        // 窗口给的大图标常常只有 32 px：exe 里的 256 px 更清楚，取得到就用它
++        if (ExePath(pid) is { } exe)
++        {
++            var large = new nint[1];
++            if (PrivateExtractIcons(exe, 0, 128, 128, large, null, 1, 0) == 1 && large[0] != 0) { icon = large[0]; owned = true; }
++        }
++        if (icon == 0) return null;
++        try { return Pixels(icon, out size); }
++        finally { if (owned) DestroyIcon(icon); }
++    }
++
++    private static string? ExePath(uint pid)
++    {
++        nint h = OpenProcess(0x1000 /* QUERY_LIMITED_INFORMATION */, false, pid);
++        if (h == 0) return null;
++        try
++        {
++            var sb = new StringBuilder(1024);
++            int n = sb.Capacity;
++            return QueryFullProcessImageName(h, 0, sb, ref n) ? sb.ToString() : null;
++        }
++        finally { CloseHandle(h); }
++    }
++
++    private static byte[]? Pixels(nint icon, out int size)
++    {
++        size = 0;
++        if (!GetIconInfo(icon, out var info)) return null;
++        try
++        {
++            if (info.hbmColor == 0) return null;
++            GetObject(info.hbmColor, Marshal.SizeOf<BITMAP>(), out BITMAP bm);
++            int w = bm.bmWidth, h = bm.bmHeight;
++            if (w <= 0 || h <= 0 || w != h) return null;
++            var bmi = new BITMAPINFOHEADER { biSize = 40, biWidth = w, biHeight = -h, biPlanes = 1, biBitCount = 32 };
++            var px = new byte[w * h * 4];
++            nint dc = GetDC(0);
++            try { if (GetDIBits(dc, info.hbmColor, 0, (uint)h, px, ref bmi, 0) == 0) return null; }
++            finally { ReleaseDC(0, dc); }
++            bool anyAlpha = false;
++            for (int i = 3; i < px.Length; i += 4) if (px[i] != 0) { anyAlpha = true; break; }
++            for (int i = 0; i < px.Length; i += 4)
++            {
++                int a = anyAlpha ? px[i + 3] : 255;
++                px[i] = (byte)(px[i] * a / 255); px[i + 1] = (byte)(px[i + 1] * a / 255); px[i + 2] = (byte)(px[i + 2] * a / 255); px[i + 3] = (byte)a;
++            }
++            size = w;
++            return px;
++        }
++        finally
++        {
++            if (info.hbmColor != 0) DeleteObject(info.hbmColor);
++            if (info.hbmMask != 0) DeleteObject(info.hbmMask);
++        }
++    }
++
++    private delegate bool EnumProc(nint hwnd, nint lp);
++    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
++    [StructLayout(LayoutKind.Sequential)] private struct ICONINFO { public bool fIcon; public int xHotspot, yHotspot; public nint hbmMask, hbmColor; }
++    [StructLayout(LayoutKind.Sequential)] private struct BITMAP { public int bmType, bmWidth, bmHeight, bmWidthBytes; public short bmPlanes, bmBitsPixel; public nint bmBits; }
++    [StructLayout(LayoutKind.Sequential)] private struct BITMAPINFOHEADER { public int biSize, biWidth, biHeight; public short biPlanes, biBitCount; public int biCompression, biSizeImage, biXPelsPerMeter, biYPelsPerMeter, biClrUsed, biClrImportant; }
++    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc proc, nint lp);
++    [DllImport("user32.dll")] private static extern bool IsWindowVisible(nint hwnd);
++    [DllImport("user32.dll")] private static extern bool IsWindow(nint hwnd);
++    [DllImport("user32.dll")] private static extern bool IsIconic(nint hwnd);
++    [DllImport("user32.dll")] private static extern nint GetWindow(nint hwnd, uint cmd);
++    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] private static extern nint GetWindowLongPtr(nint hwnd, int index);
++    [DllImport("user32.dll", EntryPoint = "GetClassLongPtrW")] private static extern nint GetClassLongPtr(nint hwnd, int index);
++    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(nint hwnd, StringBuilder s, int n);
++    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(nint hwnd, StringBuilder s, int n);
++    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowTextLength(nint hwnd);
++    [DllImport("user32.dll")] private static extern bool GetWindowRect(nint hwnd, out RECT r);
++    [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
++    [DllImport("user32.dll", SetLastError = true)] private static extern bool PostMessage(nint hwnd, uint msg, nint wp, nint lp);
++    [DllImport("user32.dll")] private static extern nint SendMessageTimeout(nint hwnd, uint msg, nint wp, nint lp, uint flags, uint ms, out nint result);
++    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern uint PrivateExtractIcons(string file, int index, int cx, int cy, nint[] icons, int[]? ids, uint n, uint flags);
++    [DllImport("user32.dll")] private static extern bool DestroyIcon(nint icon);
++    [DllImport("user32.dll")] private static extern bool GetIconInfo(nint icon, out ICONINFO info);
++    [DllImport("user32.dll")] private static extern nint GetDC(nint hwnd);
++    [DllImport("user32.dll")] private static extern int ReleaseDC(nint hwnd, nint dc);
++    [DllImport("gdi32.dll")] private static extern int GetObject(nint h, int size, out BITMAP bm);
++    [DllImport("gdi32.dll")] private static extern int GetDIBits(nint dc, nint bmp, uint start, uint lines, [Out] byte[] bits, ref BITMAPINFOHEADER bmi, uint usage);
++    [DllImport("gdi32.dll")] private static extern bool DeleteObject(nint h);
++    [DllImport("kernel32.dll")] private static extern nint OpenProcess(uint access, bool inherit, uint pid);
++    [DllImport("kernel32.dll")] private static extern bool CloseHandle(nint h);
++    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern bool QueryFullProcessImageName(nint h, int flags, StringBuilder name, ref int size);
++    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint hwnd, int attr, out int value, int size);
++}
++
++/// <summary>DWM 实时缩略图：把别的窗口的画面直接合成到我们窗口里的一块矩形上（物理像素、客户区坐标），压在我们自己的内容上面。</summary>
++internal sealed class DwmThumb : IDisposable
++{
++    private nint _id;
++    public int SourceW { get; }
++    public int SourceH { get; }
++
++    private DwmThumb(nint id, int w, int h) { _id = id; SourceW = w; SourceH = h; }
++
++    public static DwmThumb? Register(nint dest, nint source)
++    {
++        if (DwmRegisterThumbnail(dest, source, out nint id) != 0 || id == 0) return null;
++        if (DwmQueryThumbnailSourceSize(id, out SIZE s) != 0 || s.cx <= 0 || s.cy <= 0) { DwmUnregisterThumbnail(id); return null; }
++        return new DwmThumb(id, s.cx, s.cy);
++    }
++
++    /// <summary>摆到 (x, y, w, h)（物理像素），透明度 0–1；opacity ≤ 0 或面积为 0 就藏起来。</summary>
++    public void Place(int x, int y, int w, int h, double opacity)
++    {
++        if (_id == 0) return;
++        bool visible = opacity > 0.004 && w > 0 && h > 0;
++        var p = new DWM_THUMBNAIL_PROPERTIES
++        {
++            dwFlags = 0x1 | 0x4 | 0x8 | 0x10,   // RECTDESTINATION | OPACITY | VISIBLE | SOURCECLIENTAREAONLY
++            rcDestination = new RECT { Left = x, Top = y, Right = x + w, Bottom = y + h },
++            opacity = (byte)Math.Clamp(Math.Round(opacity * 255), 0, 255),
++            fVisible = visible,
++            fSourceClientAreaOnly = false,
++        };
++        DwmUpdateThumbnailProperties(_id, ref p);
++    }
++
++    /// <summary>只显示源窗口的 (sx, sy, sw, sh) 那一块（源窗口像素），摆到目标矩形上。</summary>
++    public void PlaceCropped(int x, int y, int w, int h, int sx, int sy, int sw, int sh)
++    {
++        if (_id == 0) return;
++        bool visible = w > 0 && h > 0 && sw > 0 && sh > 0;
++        var p = new DWM_THUMBNAIL_PROPERTIES
++        {
++            dwFlags = 0x1 | 0x2 | 0x4 | 0x8 | 0x10,   // RECTDESTINATION | RECTSOURCE | OPACITY | VISIBLE | SOURCECLIENTAREAONLY
++            rcDestination = new RECT { Left = x, Top = y, Right = x + w, Bottom = y + h },
++            rcSource = new RECT { Left = sx, Top = sy, Right = sx + sw, Bottom = sy + sh },
++            opacity = 255,
++            fVisible = visible,
++            fSourceClientAreaOnly = false,
++        };
++        DwmUpdateThumbnailProperties(_id, ref p);
++    }
++
++    public void Dispose() { if (_id != 0) { DwmUnregisterThumbnail(_id); _id = 0; } }
++
++    [StructLayout(LayoutKind.Sequential)] private struct SIZE { public int cx, cy; }
++    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
++    [StructLayout(LayoutKind.Sequential)] private struct DWM_THUMBNAIL_PROPERTIES
++    {
++        public uint dwFlags; public RECT rcDestination, rcSource; public byte opacity;
++        [MarshalAs(UnmanagedType.Bool)] public bool fVisible;
++        [MarshalAs(UnmanagedType.Bool)] public bool fSourceClientAreaOnly;
++    }
++    [DllImport("dwmapi.dll")] private static extern int DwmRegisterThumbnail(nint dest, nint src, out nint id);
++    [DllImport("dwmapi.dll")] private static extern int DwmUnregisterThumbnail(nint id);
++    [DllImport("dwmapi.dll")] private static extern int DwmQueryThumbnailSourceSize(nint id, out SIZE size);
++    [DllImport("dwmapi.dll")] private static extern int DwmUpdateThumbnailProperties(nint id, ref DWM_THUMBNAIL_PROPERTIES p);
++}
+diff --git a/frontend/library-native/ClawLibrary/MainWindow.Shortcut.cs b/frontend/library-native/ClawLibrary/MainWindow.Shortcut.cs
+index 638e2a3..50fd943 100644
+--- a/frontend/library-native/ClawLibrary/MainWindow.Shortcut.cs
++++ b/frontend/library-native/ClawLibrary/MainWindow.Shortcut.cs
+@@ -68,6 +68,8 @@ public sealed partial class MainWindow
+         var entrance = _shortcutMotion.Show(initial, visible, _shortcutWindow?.IsForeground == true);
+         // 游戏中唤出：直接是「正在游戏」画面，不做从透明开始的进场（透明那几帧露出的是窗口黑底）
+         if (entrance == ShortcutEntrance.Reveal && _stage?.NowPlayingShown == true) { _shortcutMotion.Cancel(); entrance = ShortcutEntrance.None; }
++        // 快捷设置：第一帧就是游戏画面（缩略图）+ 面板自己滑进来，也不做整窗淡入
++        if (entrance is ShortcutEntrance.Reveal or ShortcutEntrance.KeepCurrent && _stage?.QuickPanelOpen == true) { _shortcutMotion.Cancel(); entrance = ShortcutEntrance.None; }
+         int motionVersion = _shortcutMotion.Version;
+         CancelShortcutTransition();
+         _shortcutInTray = false;
+@@ -136,6 +138,9 @@ public sealed partial class MainWindow
+         Log.Info($"shortcut foreground={active} hwnd={hwnd} current={LibraryWindow.Foreground}");
+     }
+ 
++    /// <summary>快捷设置收起后：窗口照 Claw 键收起游戏库那样退下去（游戏已经回到前台）。</summary>
++    internal void HideAfterQuickPanel() => HideShortcutWindow();
++
+     private void HideShortcutWindow()
+     {
+         if (_shortcutHiding)
+diff --git a/frontend/library-native/ClawLibrary/Package.appxmanifest b/frontend/library-native/ClawLibrary/Package.appxmanifest
+index 804d790..7408e75 100644
+--- a/frontend/library-native/ClawLibrary/Package.appxmanifest
++++ b/frontend/library-native/ClawLibrary/Package.appxmanifest
+@@ -1,54 +1,55 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<Package
+-  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+-  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+-  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+-  xmlns:uap4="http://schemas.microsoft.com/appx/manifest/uap/windows10/4"
+-  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+-  IgnorableNamespaces="uap uap3 uap4 rescap">
+-
+-  <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。主页能力由包根目录的 SCCD 配套声明。 -->
+-  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.166.0" />
+-
+-  <Properties>
+-    <DisplayName>Claw 游戏库</DisplayName>
+-    <PublisherDisplayName>ClawToolbox</PublisherDisplayName>
+-    <Logo>Assets\StoreLogo.png</Logo>
+-  </Properties>
+-
+-  <Dependencies>
+-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+-  </Dependencies>
+-
+-  <Resources>
+-    <Resource Language="zh-CN"/>
+-  </Resources>
+-
+-  <Applications>
+-    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+-      <uap:VisualElements
+-        DisplayName="Claw 游戏库"
+-        Description="Claw 游戏库（原生墙面）"
+-        BackgroundColor="transparent"
+-        Square150x150Logo="Assets\Square150x150Logo.png"
+-        Square44x44Logo="Assets\Square44x44Logo.png">
+-        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+-        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#09090b" />
+-      </uap:VisualElements>
+-      <Extensions>
+-        <uap3:Extension Category="windows.appExtension">
+-          <uap3:AppExtension Name="windows.gamingApp" Id="App" DisplayName="Claw 游戏库"
+-            Description="Claw 全屏游戏库" PublicFolder="Assets" />
+-        </uap3:Extension>
+-        <uap:Extension Category="windows.protocol">
+-          <uap:Protocol Name="claw-library"><uap:DisplayName>Claw 游戏库</uap:DisplayName></uap:Protocol>
+-        </uap:Extension>
+-      </Extensions>
+-    </Application>
+-  </Applications>
+-
+-  <Capabilities>
+-    <rescap:Capability Name="runFullTrust" />
+-    <uap4:CustomCapability Name="Microsoft.appCategory.gamingHome_8wekyb3d8bbwe" />
+-  </Capabilities>
+-</Package>
++<?xml version="1.0" encoding="utf-8"?>
++<Package
++  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
++  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
++  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
++  xmlns:uap4="http://schemas.microsoft.com/appx/manifest/uap/windows10/4"
++  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
++  IgnorableNamespaces="uap uap3 uap4 rescap">
++
++  <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。主页能力由包根目录的 SCCD 配套声明。 -->
++  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.173.0" />
++
++  <Properties>
++    <DisplayName>Claw 游戏库</DisplayName>
++    <PublisherDisplayName>ClawToolbox</PublisherDisplayName>
++    <Logo>Assets\StoreLogo.png</Logo>
++  </Properties>
++
++  <Dependencies>
++    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
++  </Dependencies>
++
++  <Resources>
++    <Resource Language="zh-CN"/>
++  </Resources>
++
++  <Applications>
++    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
++      <uap:VisualElements
++        DisplayName="Claw 游戏库"
++        Description="Claw 游戏库（原生墙面）"
++        BackgroundColor="transparent"
++        Square150x150Logo="Assets\Square150x150Logo.png"
++        Square44x44Logo="Assets\Square44x44Logo.png">
++        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
++        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#09090b" />
++      </uap:VisualElements>
++      <Extensions>
++        <uap3:Extension Category="windows.appExtension">
++          <uap3:AppExtension Name="windows.gamingApp" Id="App" DisplayName="Claw 游戏库"
++            Description="Claw 全屏游戏库" PublicFolder="Assets" />
++        </uap3:Extension>
++        <uap:Extension Category="windows.protocol">
++          <uap:Protocol Name="claw-library"><uap:DisplayName>Claw 游戏库</uap:DisplayName></uap:Protocol>
++        </uap:Extension>
++      </Extensions>
++    </Application>
++  </Applications>
++
++  <Capabilities>
++    <rescap:Capability Name="runFullTrust" />
++    <uap4:CustomCapability Name="Microsoft.appCategory.gamingHome_8wekyb3d8bbwe" />
++    <DeviceCapability Name="radios" />
++  </Capabilities>
++</Package>
+diff --git a/frontend/library-native/ClawLibrary/Payload/shell/ClawShell.exe b/frontend/library-native/ClawLibrary/Payload/shell/ClawShell.exe
+index b82ff7f4487152712414367b0fae1533ad9b4a17..58050b0203d2cacb7ed2b99f2393b771aaf97c30 100644
+GIT binary patch
+delta 766
+zcmb`^&1(}u00r<jlTDhGHrY~%EiqzHp-qh0=3_S-wKO5s_Mlj>2M->U2p+^Qj0FXg
+zB9x+HT^A#0!E4kWl&#Q04tnw6MU;XbA}J`fdQuS-EY{iC0sjFn%l_ug%$wP*u9E61
+zxj9Ye*PmSV5K=V_GC_)#kN)n6jRFV&UFXiW;Y^<jw08tMV~W>zx82h%c}~aK2)z^n
+zq?D-zBAZ_Zqis>PhHPRF1hF9s7iFaEy*FW92pk~)_MGtkk3H3{p>X9qI|#5s%A^-E
+zhIZOAAW8eFj5^l}xx%vrp<7%#63)8&T)%`Ka><I5&2!BPJ?E+my(SUX_pCDD6!uHw
+ztZ-Y>)+CbB5!#JIDMy3SaT<h@wpGK3bdvU<$u)&>DS{BDGd%N_*s(*H<(fp9XFu4t
+zw=cNN3PWgUj=quYOeb{q1Ar-9V^hPZ=4=_bBb8|wO>-u3G;n<vpV6~OBZvX!dZND~
+z@3zNkc;$XW6X@Gx%fOQR9aYc}YOySdX5Ps@Fr~1i=;)KXMblUl`s)5jGf;+|jCej%
+z6_0tVf!lu5rJ^D9#edABp`H~L&4B6B@l>c&9-}!d2n}-0iTa=NoGXW{)l$|rZq-%2
+zpbh5>@r+W`;%QAy$FqAgdc2?)i^+k!uI01VpOF_K`O)QjwYLXL`(_R=zK=Y(c*9yM
+O<$R_>WXpf*yZbK>-<HY%
+
+delta 778
+zcmb`^&1(}u00r<jlgTzIX|kmdD`})r6x*^*vb*_ctR)Fa$wi@Hj~*=PO<EO01%;#t
+zMeHSUv5E-dRdP^PA%cf0Djot=@gP{Jpwud%ejPlh;Oy**|A3cefAePM&Ft2;NNtPM
+zFVOY&or@A7b)!KR$Pv>^fBLj300E%))X6TK*q;QteZiiQw8wj`Tk2!dyuwH5*$}`q
+zpERH1QjBOIvg=WBxNDfNB?J6{AO=*pC@1Cbk(4<XI86TSz2Nzud++PbhO6iJ!GKLt
+zAv+<XG-{~<#tu;#w}m#zd6BI;x+F9nwb$Jc^2BW25*l=LSE%Xep-{`w3liad&#Q5}
+zaEMLwLS41A2$dbBeJE?TCfF<uBCA_kL5Urw{pbiSVVXq{!qtSxJY|0D5Sl`ZsECa5
+zZ*5)hEiVkA?dU7n%XMaq{}5ma%Y14W^^BzkuCNLXqhnN~#{$<6h#CF&X#^vXjnC1c
+z>fpFFwt_YHOBzM`prr<0xnI*5+Kx7OrlOOxvv*t?Vg*|t+#6JfuW0Lw`#nt{>xf7n
+zX%efVwSmii!<9ta(I@|mltSxo;d;Pujp2z?*dtHT44yff5PIO$|B#!m3`*u&?AMMx
+zNj0A+<R>*HpHAtD9-k~I>Aa>Xs+x-@6X{s7sG8fQry=?Kn|m{-TfcM5+U}dPwe3;!
+NaXI5P{d3>ke*h{Xmo@+Z
+
+diff --git a/frontend/library-native/ClawLibrary/Stage/Bench.cs b/frontend/library-native/ClawLibrary/Stage/Bench.cs
+index cfc3b99..990a2fd 100644
+--- a/frontend/library-native/ClawLibrary/Stage/Bench.cs
++++ b/frontend/library-native/ClawLibrary/Stage/Bench.cs
+@@ -622,6 +622,52 @@ public static class Bench
+                     if (state == "gsb") { s.Activate(); await Task.Delay(1200); }
+                     break;
+                 }
++                case "qsapply":
++                {
++                    // 快捷设置：性能显示磁贴按 5 次（关 → 1 → 2 → 3 → 4 → 关 一整圈，回到原值），每次等后台回读
++                    await Task.Delay(1500);
++                    s.QuickPanelTest(0);
++                    await Task.Delay(2500);
++                    string start = s.QuickPanelTestValue("osd");
++                    for (int i = 0; i < 5; i++) { s.QuickPanelTestPress("osd"); await Task.Delay(2200); Log.Info($"quick panel test osd readback {i + 1}: {s.QuickPanelTestValue("osd")}"); }
++                    Log.Info($"quick panel test osd start={start} end={s.QuickPanelTestValue("osd")}");
++                    s.QuickPanelTestClose();
++                    break;
++                }
++                case "qs" or "qsnav":
++                {
++                    // 快捷设置：qs = 打开停住，qsnav = 走 12 步焦点后收起（游戏库里开，没有游戏画面）
++                    await Task.Delay(1500);
++                    s.QuickPanelTest(state == "qsnav" ? 12 : 0);
++                    if (state == "qsnav") { await Task.Delay(4600); s.QuickPanelTestClose(); await Task.Delay(1000); }
++                    break;
++                }
++                case "wsgo" or "wsx":
++                {
++                    // 窗口切换页：焦点停在标题含 --window= 的窗口上，wsgo = A 切过去，wsx = X 请它关
++                    string want = Program.Args.FirstOrDefault(a => a.StartsWith("--window="))?[9..] ?? "";
++                    s.ToggleControlCenter();
++                    await Task.Delay(1500);
++                    s.SwitcherTestState();
++                    await Task.Delay(1200);
++                    s.SwitcherTestPick(want, close: state == "wsx");
++                    await Task.Delay(1500);
++                    break;
++                }
++                case "ws" or "wsnav":
++                {
++                    // 窗口切换页：ws = 打开停住，wsnav = 打开、往右走两格、往回一格、B 出场
++                    s.ToggleControlCenter();
++                    await Task.Delay(1500);
++                    s.SwitcherTestState();
++                    await Task.Delay(1200);
++                    if (state == "wsnav")
++                    {
++                        s.Move(Direction.Right); await Task.Delay(500); s.Move(Direction.Right); await Task.Delay(500);
++                        s.Move(Direction.Left); await Task.Delay(800); s.SwitcherTestBack(); await Task.Delay(900);
++                    }
++                    break;
++                }
+                 case "shots0" or "shots1" or "shots2" or "shotsv" or "shotsnav" or "shotsf":
+                 {
+                     // 截图页：shots0 / 1 / 2 = 日历 / 放映 / 冲印（焦点往右挪一格），shotsv = 大图，shotsnav = 日历里走一圈，shotsf = Steam 页签 + 筛选面板
+diff --git a/frontend/library-native/ClawLibrary/Stage/LineIcons.cs b/frontend/library-native/ClawLibrary/Stage/LineIcons.cs
+index aeae163..e593bc1 100644
+--- a/frontend/library-native/ClawLibrary/Stage/LineIcons.cs
++++ b/frontend/library-native/ClawLibrary/Stage/LineIcons.cs
+@@ -30,6 +30,7 @@ public static class LineIcons
+         [""] = "M7.5 7h9a4.5 4.5 0 0 1 4.4 5.4l-.9 4.6a2.5 2.5 0 0 1-4.3 1.2L13.6 16h-3.2l-2.1 2.2A2.5 2.5 0 0 1 4 17l-.9-4.6A4.5 4.5 0 0 1 7.5 7z M7.5 10v3.5M5.75 11.75h3.5 M15.5 10.5h.01M17.5 12.5h.01", // 手柄
+         [""] = "M5,4 H19 A2,2 0 0 1 21,6 V14 A2,2 0 0 1 19,16 H5 A2,2 0 0 1 3,14 V6 A2,2 0 0 1 5,4 Z M8 20h8M12 16v4", // 显示器
+         [""] = "M8,6 H16 A2,2 0 0 1 18,8 V16 A2,2 0 0 1 16,18 H8 A2,2 0 0 1 6,16 V8 A2,2 0 0 1 8,6 Z M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3", // 系统（芯片）
++        [""] ="M5,9 H15 A2,2 0 0 1 17,11 V18 A2,2 0 0 1 15,20 H5 A2,2 0 0 1 3,18 V11 A2,2 0 0 1 5,9 Z M7,9 V6 A2,2 0 0 1 9,4 H19 A2,2 0 0 1 21,6 V13 A2,2 0 0 1 19,15 H17", // 窗口（任务切换）
+     };
+ 
+     private static readonly Dictionary<(string, bool, float), CanvasSvgDocument> Docs = new();
+diff --git a/frontend/library-native/ClawLibrary/Stage/WallStage.CcChrome.cs b/frontend/library-native/ClawLibrary/Stage/WallStage.CcChrome.cs
+index 25cb505..ea2b247 100644
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.CcChrome.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.CcChrome.cs
+@@ -62,7 +62,7 @@ public sealed partial class WallStage
+         foreach (var (id, glyph, label) in new[]
+         {
+             ("power", "", "电源"), ("files", "", "文件管理器"), ("browser", "", "浏览器"),
+-            ("shots", "", "截图"), ("avatar", "", ""),
++            ("windows", "", "窗口"), ("shots", "", "截图"), ("avatar", "", ""),
+         })
+             _ccDock.Add(CcMakeButton(id, glyph, label, _ccChrome));
+         _ccPowerLayer = G.Container();
+@@ -82,7 +82,7 @@ public sealed partial class WallStage
+     private static readonly Dictionary<string, string> CcChromeDesc = new()
+     {
+         ["power"] = "睡眠、休眠、重启、关机", ["files"] = "打开资源管理器", ["browser"] = "打开默认浏览器",
+-        ["shots"] = "截图管理", ["avatar"] = "打开 Windows 设置",
++        ["windows"] = "切换和关闭打开的窗口", ["shots"] = "截图管理", ["avatar"] = "打开 Windows 设置",
+         ["sleep"] = "关屏，进入低电量待机", ["hibernate"] = "保存现场后断电，下次开机原样恢复",
+         ["restart"] = "立即重启", ["shutdown"] = "立即关机",
+     };
+@@ -118,13 +118,13 @@ public sealed partial class WallStage
+         _ccUser ??= SystemInfo.UserName();
+         float y = vh - (CcEdgeBottom + CcDockBtn) * k;
+         float x = CcEdgeX * k;
+-        for (int i = 0; i < 4; i++)
++        for (int i = 0; i < _ccDock.Count - 1; i++)
+         {
+             _ccDock[i].Size = new Vector2(CcDockBtn * k);
+             _ccDock[i].Pos = new Vector2(x, y);
+             x += (CcDockBtn + CcDockGap) * k;
+         }
+-        var av = _ccDock[4];
++        var av = _ccDock[^1];
+         float pillW = CcAvatarPillW();
+         av.Size = new Vector2(pillW * k, CcDockBtn * k);
+         av.Pos = new Vector2(vw - (CcEdgeX + pillW) * k, y);
+@@ -568,6 +568,7 @@ public sealed partial class WallStage
+         if (_syOpen) { SyBack(); return true; }
+         if (_stOpen) { StBack(); return true; }
+         if (_shOpen) { ShBack(); return true; }
++        if (_wsOpen) { WsBack(); return true; }
+         if (_ccZone == CcZone.Power) { CcPowerClose(); return true; }
+         if (_ccZone == CcZone.Dock) { _ccZone = CcZone.Row; CcChromeFocus(); return true; }
+         return false;
+@@ -618,6 +619,9 @@ public sealed partial class WallStage
+                 _ = Task.Run(SystemInfo.OpenBrowser);
+                 Toast("正在打开浏览器");
+                 break;
++            case "windows":
++                OpenSwitcher();
++                break;
+             case "shots":
+                 OpenShots();
+                 break;
+diff --git a/frontend/library-native/ClawLibrary/Stage/WallStage.ControlCenter.cs b/frontend/library-native/ClawLibrary/Stage/WallStage.ControlCenter.cs
+index 1995266..8d4c006 100644
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.ControlCenter.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.ControlCenter.cs
+@@ -259,6 +259,7 @@ public sealed partial class WallStage
+         CloseSystem(instant: true);
+         CloseSettingsPage(instant: true);
+         CloseShots(instant: true);
++        CloseSwitcher(instant: true);
+         _stFromLibrary = false;
+         _ccOpen = false;
+         int v = ++_ccVersion;
+@@ -283,6 +284,7 @@ public sealed partial class WallStage
+         CloseSystem(instant: true);
+         CloseSettingsPage(instant: true);
+         CloseShots(instant: true);
++        CloseSwitcher(instant: true);
+         _cc.IsVisible = false;
+         _cc.StopAnimation("Opacity");
+         _cc.Opacity = 1;
+@@ -310,6 +312,7 @@ public sealed partial class WallStage
+         if (_syOpen) { SyMove(dir); return; }
+         if (_stOpen) { StMove(dir); return; }
+         if (_shOpen) { ShMove(dir); return; }
++        if (_wsOpen) { WsMove(dir); return; }
+         if (CcChromeMove(dir)) return;
+         if (dir is not (Direction.Left or Direction.Right)) return;
+         // 不再限制「200 ms 一步」：滚动是弹簧，连按就直接换终点接着滚（可打断）
+@@ -335,6 +338,7 @@ public sealed partial class WallStage
+         if (_syOpen) { SyActivate(); return; }
+         if (_stOpen) { StActivate(); return; }
+         if (_shOpen) { ShActivate(); return; }
++        if (_wsOpen) { WsActivate(); return; }
+         if (CcChromeActivate()) return;
+         var b = _ccBlocks[_ccFocus];
+         if (_ccFocus > 0) Cue(Sfx.ModalShow);   // 进性能 / 手柄 / 显示与声音 / 系统 / 设置 / 截图页
+@@ -374,6 +378,7 @@ public sealed partial class WallStage
+         if (_ccOpen && _agOpen) { AgY(); return; }
+         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
+         if (_ccOpen && _stOpen) { StResetFocused(); return; }
++        if (_qsOpen || (_ccOpen && _wsOpen)) return;
+         if (_ccOpen && _shOpen) { ShY(); return; }
+         if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
+         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
+@@ -387,6 +392,7 @@ public sealed partial class WallStage
+         MarkInput();
+         if (_ob != null) return;
+         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShToggleFilter(); return; }
++        if (_qsOpen) return;
+         ToggleHud();
+     }
+ 
+@@ -399,6 +405,8 @@ public sealed partial class WallStage
+         if (_ccOpen && _agOpen) { MarkInput(); AgX(); return; }
+         if (_ccOpen && _gpOpen) { MarkInput(); GpPadButton(isY: false); return; }
+         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShX(); return; }
++        if (_ccOpen && _wsOpen) { MarkInput(); WsCloseFocused(); return; }
++        if (_qsOpen) return;
+         if (!_ccOpen) ToggleLibraryRail();
+     }
+ 
+@@ -419,6 +427,7 @@ public sealed partial class WallStage
+     {
+         if (_agOpen) { AgClick(sx, sy); return; }
+         if (_shOpen) { ShClick(sx, sy); return; }
++        if (_wsOpen) { WsClick(sx, sy); return; }
+         if (_stOpen && GsOverlayClick(sx, sy)) return;
+         if (_stOpen && StCategoryClick(sx, sy)) return;
+         if (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen) { SettingsClick(sx, sy); return; }
+diff --git a/frontend/library-native/ClawLibrary/Stage/WallStage.LaunchMotion.cs b/frontend/library-native/ClawLibrary/Stage/WallStage.LaunchMotion.cs
+index 6fd8de2..6e35422 100644
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.LaunchMotion.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.LaunchMotion.cs
+@@ -33,7 +33,7 @@ public sealed partial class WallStage
+         public readonly List<(float X, float W)> Buttons = new();
+         public int Version;
+         public LmMode Mode;
+-        /// <summary>正在游戏面板：聚焦的按钮（0 继续游戏 / 1 退出游戏 / 2 游戏库）。</summary>
++        /// <summary>正在游戏面板：聚焦的按钮（0 继续游戏 / 1 退出游戏 / 2 游戏库 / 3 窗口）。</summary>
+         public int Btn;
+         public string? Note;
+     }
+@@ -55,7 +55,7 @@ public sealed partial class WallStage
+             if (back) { BrowseFromNowPlaying(); return true; }
+             if (dir is Direction.Left or Direction.Right)
+             {
+-                int next = Math.Clamp(_lm.Btn + (dir == Direction.Left ? -1 : 1), 0, 2);
++                int next = Math.Clamp(_lm.Btn + (dir == Direction.Left ? -1 : 1), 0, 3);
+                 if (next != _lm.Btn) { _lm.Btn = next; PaintLaunchCopy(_lm); } else Cue(Sfx.Bump);
+             }
+             if (activate) NowPlayingPress(_lm.Btn);
+@@ -288,7 +288,7 @@ public sealed partial class WallStage
+             float y = buttons ? ch - 110 : ch - 64;   // 状态行基线之上是标题区
+             if (buttons)
+             {
+-                string[] labels = { "继续游戏", _game?.ForceArmed == true ? "强制结束" : "退出游戏", "游戏库" };
++                string[] labels = { "继续游戏", _game?.ForceArmed == true ? "强制结束" : "退出游戏", "游戏库", "窗口" };
+                 float bx = 0; lm.Buttons.Clear();
+                 for (int i = 0; i < labels.Length; i++)
+                 {
+diff --git a/frontend/library-native/ClawLibrary/Stage/WallStage.NowPlaying.cs b/frontend/library-native/ClawLibrary/Stage/WallStage.NowPlaying.cs
+index 6bfa5a1..0663c59 100644
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.NowPlaying.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.NowPlaying.cs
+@@ -269,6 +269,7 @@ public sealed partial class WallStage
+                 if (g.ForceArmed) { _ = ForceQuitAsync(g); break; }
+                 QuitGame(g);
+                 break;
++            case 3: OpenSwitcherFromAnywhere(); break;
+             default: BrowseFromNowPlaying(); break;
+         }
+     }
+diff --git a/frontend/library-native/ClawLibrary/Stage/WallStage.QuickPanel.cs b/frontend/library-native/ClawLibrary/Stage/WallStage.QuickPanel.cs
+new file mode 100644
+index 0000000..fd07eb7
+--- /dev/null
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.QuickPanel.cs
+@@ -0,0 +1,732 @@
++// 快捷设置（快速设置键）：从左边滑出一列，像 Steam 大屏幕左边的主菜单那样竖着排；内容是 Game Bar 小组件那一套（同样的磁贴和后台调用）。
++// 游戏不切走：游戏库窗口到前台，但游戏的画面用 DWM 实时缩略图铺在面板右边（按游戏窗口原来的位置裁），看上去面板压在游戏上。
++// 面板（宽 464，#25282C，磁贴 #3E434B，强调 #4CC2FF）：
++//   标题（当前游戏名 / 快捷设置）
++//   亮度、音量（A 静音）、手动功耗时多一条功耗
++//   磁贴 3 列：性能、风扇、限帧、刷新率、性能显示、画面缩放 / 小黄鸭（只在游戏里）、震动、键盘、截图、Wi-Fi、蓝牙
++//   底部一排：窗口、切换到桌面 / 返回游戏模式、睡眠
++// 方向键按位置走（磁贴是网格），A 立即生效，滑条 ← → 调，B 或再按快速设置键收起。进出场是同一个逐帧趋近（可打断），缩略图同一帧跟着面板边缘走。
++using System.Numerics;
++using System.Runtime.InteropServices;
++using System.Text.Json.Nodes;
++using ClawLibrary.Data;
++using ClawLibrary.Engine;
++using Microsoft.Graphics.Canvas;
++using Microsoft.Graphics.Canvas.Text;
++using Microsoft.UI.Composition;
++using Windows.Devices.Radios;
++using Windows.UI;
++
++namespace ClawLibrary.Stage;
++
++public sealed partial class WallStage
++{
++    private enum QsKind { Slider, Tile, Entry }
++
++    private sealed class QsItem
++    {
++        public required string Id;
++        public required QsKind Kind;
++        public string Name = "", Value = "", Glyph = "";
++        public bool On, Disabled;
++        public float X, Y, W, H;
++        /// <summary>滑条 0–1。</summary>
++        public float Level;
++    }
++
++    private const float QsW = 464, QsPad = 24, QsTileH = 84, QsTileGap = 10, QsSliderH = 50, QsEntryH = 56;
++    private static readonly Color QsBg = Gfx.Rgba(0x25, 0x28, 0x2c), QsChip = Gfx.Rgba(0x3e, 0x43, 0x4b), QsChipFocus = Gfx.Rgba(0x4c, 0x52, 0x5c), QsAccent = Gfx.Rgba(0x4c, 0xc2, 0xff);
++    private static readonly int[] QsFps = { 0, 30, 40, 45, 60, 90, 120 };
++    private static readonly (int V, string N)[] QsRumble = { (0, "关"), (35, "弱"), (70, "中"), (100, "强") };
++    private static readonly (string Id, string N)[] QsFan = { ("quiet", "静音"), ("balanced", "均衡"), ("performance", "性能") };
++
++    private ContainerVisual? _qs;
++    private SpriteVisual _qsScrim = null!, _qsPanel = null!;
++    private bool _qsOpen, _qsTicking, _qsHideWindowAfter;
++    private float _qsShow, _qsShowTo;
++    private long _qsFrameAt;
++    private int _qsFocus, _qsVersion;
++    private string? _qsFocusId;
++    private readonly List<QsItem> _qsItems = new();
++    private JsonObject? _qsState;
++    private JsonObject? _qsDraft;
++    private bool? _qsWifi, _qsBt, _qsLossless;
++    private bool _qsLosslessKnown;
++    private DwmThumb? _qsThumb;
++    private nint _qsGame;
++    private (int L, int T, int W, int H) _qsGameRect;
++    private string? _qsNote;
++    private float _qsEntryY;
++    private long _qsNoteAt;
++    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _qsPoll;
++
++    internal bool QuickPanelOpen => _qsOpen;
++
++    // ---------------- 开 / 关 ----------------
++
++    /// <summary>窗口出来之前调用：把游戏画面先铺满（第一帧就是游戏，不闪墙面 / 黑底），面板从左边外面开始滑。</summary>
++    internal void OpenQuickPanel(nint returnWindow)
++    {
++        EnsureQsVisuals();
++        bool again = _qsOpen;
++        _qsOpen = true;
++        ++_qsVersion;
++        _qsHideWindowAfter = false;
++        if (!again)
++        {
++            _qsFocusId = null;
++            _qsThumb?.Dispose(); _qsThumb = null;
++            nint self = WinRT.Interop.WindowNative.GetWindowHandle(_window);
++            _qsGame = returnWindow != 0 && returnWindow != self && OpenWindows.Alive(returnWindow) ? returnWindow : 0;
++            if (_qsGame != 0 && GetWindowRect(_qsGame, out var r))
++            {
++                _qsGameRect = (r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
++                _qsThumb = DwmThumb.Register(self, _qsGame);
++            }
++            _qsShow = 0;
++            if (_ccOpen) CloseControlCenter();
++        }
++        _qsShowTo = 1;
++        // 有游戏画面时底下铺黑（缩略图盖住右边）；没有（在游戏库里按的）就压暗当前画面
++        _qsScrim.Brush = G.C.CreateColorBrush(_qsThumb != null ? Gfx.Rgba(0, 0, 0) : Gfx.Rgba(0, 0, 0, 0.45));
++        _qs!.IsVisible = true;
++        _top.Children.Remove(_qs); _top.Children.InsertAtTop(_qs);
++        QsBuild();
++        QsPaint();
++        if (Reduced) _qsShow = 1;
++        QsStartTicking();
++        _ = QsRefresh(_qsVersion);
++        _qsPoll ??= _dq.CreateTimer();
++        _qsPoll.Interval = TimeSpan.FromMilliseconds(1500);
++        _qsPoll.Tick -= QsPollTick; _qsPoll.Tick += QsPollTick;
++        _qsPoll.Start();
++        Cue(Sfx.MenuIn);
++        Log.Info($"quick panel open game={_qsGame} thumb={_qsThumb != null}");
++    }
++
++    /// <summary>收起：面板滑回去，缩略图跟着铺满；走完再把窗口收起来（游戏原样露出来，和缩略图同一幅画面）。</summary>
++    internal void CloseQuickPanel(bool hideWindow = true, bool instant = false)
++    {
++        if (!_qsOpen || _qs == null) return;
++        _qsOpen = false;
++        _qsPoll?.Stop();
++        _qsHideWindowAfter = hideWindow;
++        Cue(Sfx.MenuOut);
++        _qsShowTo = 0;
++        if (instant || Reduced) { _qsShow = 0; QsFinishClose(); return; }
++        QsStartTicking();
++        int v = ++_qsVersion;
++        After(800, () => { if (v == _qsVersion && !_qsOpen && _qs.IsVisible) QsFinishClose(); });
++        Log.Info("quick panel close");
++    }
++
++    private void QsFinishClose()
++    {
++        if (_qs == null) return;
++        bool hide = _qsHideWindowAfter;
++        _qsHideWindowAfter = false;
++        if (hide && _qsGame != 0) LibraryWindow.BringForward(_qsGame);
++        if (hide) (_window as MainWindow)?.HideAfterQuickPanel();
++        // 窗口收起之后再拆缩略图，免得最后一帧露出黑底
++        After(hide ? 260 : 0, () =>
++        {
++            if (_qsOpen) return;
++            _qsThumb?.Dispose(); _qsThumb = null;
++            if (_qs != null) _qs.IsVisible = false;
++        });
++    }
++
++    private void EnsureQsVisuals()
++    {
++        if (_qs != null) return;
++        _qs = G.Container();
++        _qs.IsVisible = false;
++        _qsScrim = G.C.CreateSpriteVisual();
++        _qsScrim.RelativeSizeAdjustment = Vector2.One;
++        _qsPanel = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
++        _qs.Children.InsertAtTop(_qsScrim);
++        _qs.Children.InsertAtTop(_qsPanel);
++        _top.Children.InsertAtTop(_qs);
++    }
++
++    // ---------------- 数据 ----------------
++
++    private async Task QsRefresh(int v)
++    {
++        try
++        {
++            _agent ??= new AgentClient();
++            if (await _agent.Call("widget_state") is JsonObject s && v == _qsVersion && _qsOpen)
++            {
++                _qsState = s;
++                if (_qsDraft == null || !_qsSaving) _qsDraft = s["power"]?["settings"]?.DeepClone() as JsonObject;
++            }
++        }
++        catch (Exception ex) { Log.Warn($"quick panel state: {ex.Message}"); }
++        try
++        {
++            foreach (var r in await Radio.GetRadiosAsync())
++            {
++                if (r.Kind == RadioKind.WiFi) _qsWifi = r.State == RadioState.On;
++                if (r.Kind == RadioKind.Bluetooth) _qsBt = r.State == RadioState.On;
++            }
++        }
++        catch (Exception ex) { Log.Warn($"quick panel radios: {ex.Message}"); }
++        if (!_qsLosslessKnown)
++        {
++            try
++            {
++                if (await _agent!.Call("get_lossless_settings") is JsonObject ls)
++                {
++                    _qsLosslessKnown = true;
++                    _qsLossless = Str(ls["exe"]) != null ? Bool(ls["running"]) : null;
++                }
++            }
++            catch { _qsLosslessKnown = true; _qsLossless = null; }
++        }
++        if (v != _qsVersion || !_qsOpen) return;
++        QsBuild();
++        QsPaint();
++    }
++
++    private void QsPollTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object e)
++    {
++        if (!_qsOpen) { sender.Stop(); return; }
++        _ = QsRefresh(_qsVersion);
++    }
++
++    private JsonNode? QsGet(string path, JsonNode? root = null)
++    {
++        JsonNode? n = root ?? _qsState;
++        foreach (var part in path.Split('.')) { if (n is not JsonObject o) return null; n = o[part]; }
++        return n;
++    }
++
++    private double QsNum(string path, double fallback = 0, JsonNode? root = null) =>
++        QsGet(path, root) is JsonValue v && (v.TryGetValue(out double d) || (v.TryGetValue(out int i) && (d = i) == i) || (v.TryGetValue(out long l) && (d = l) == l)) ? d : fallback;   // 本地写进去的是 int，后台回来的是 double
++
++    private bool _qsSaving;
++
++    /// <summary>功耗 / 风扇 / 性能显示：改草稿、存回后台（save_power 收整份设置）。</summary>
++    private async Task QsSavePower(string note)
++    {
++        if (_qsDraft == null) return;
++        _qsSaving = true;
++        QsFlash(note);
++        try { _agent ??= new AgentClient(); await _agent.Call("save_power", _qsDraft.DeepClone()); }
++        catch (Exception ex) { QsFlash("没有做成：" + ex.Message); }
++        finally { _qsSaving = false; }
++        _ = QsRefresh(_qsVersion);
++    }
++
++    private async Task QsCall(string note, string method, params JsonNode?[] args)
++    {
++        QsFlash(note);
++        try { _agent ??= new AgentClient(); await _agent.Call(method, args); }
++        catch (Exception ex) { QsFlash("没有做成：" + ex.Message); }
++        _ = QsRefresh(_qsVersion);
++    }
++
++    private void QsFlash(string text)
++    {
++        _qsNote = text;
++        _qsNoteAt = NowMs;
++        QsPaint();
++        long at = _qsNoteAt;
++        After(1800, () => { if (_qsNoteAt == at) { _qsNote = null; if (_qsOpen) QsPaint(); } });
++    }
++
++    // ---------------- 排版 ----------------
++
++    private string QsTitle() => Str(QsGet("system.game.title")) ?? "快捷设置";
++    private bool QsInGame => QsGet("system.game") is JsonObject;
++
++    private void QsBuild()
++    {
++        string? keep = _qsFocusId ?? (_qsFocus < _qsItems.Count ? _qsItems[_qsFocus].Id : null);
++        _qsItems.Clear();
++        float y = 84;
++        var d = _qsDraft;
++        // 滑条
++        double bright = QsNum("system.brightness", -1), vol = QsNum("system.volume", -1);
++        bool muted = Bool(QsGet("system.muted"));
++        QsSlider("brightness", "", bright < 0 ? "--" : $"{bright:0}", (float)Math.Max(0, bright) / 100, bright < 0, ref y);
++        QsSlider("volume", muted ? "" : "", vol < 0 ? "--" : muted ? "静音" : $"{vol:0}", (float)Math.Max(0, vol) / 100, vol < 0, ref y);
++        bool manual = d != null && Bool(d["enabled"]) && Str(d["mode"]) == "manual";
++        if (manual)
++        {
++            var (lo, hi) = QsTdpRange();
++            double tdp = QsNum("manual.tdp", lo, d);
++            QsSlider("tdp", "", $"{tdp:0} W", (float)((tdp - lo) / Math.Max(1, hi - lo)), false, ref y);
++        }
++        y += 8;
++        // 磁贴
++        var tiles = new List<QsItem>();
++        void Tile(string id, string glyph, string name, string value, bool on = false, bool disabled = false) =>
++            tiles.Add(new QsItem { Id = id, Kind = QsKind.Tile, Glyph = glyph, Name = name, Value = value, On = on, Disabled = disabled });
++        if (d != null)
++        {
++            bool enabled = Bool(d["enabled"]);
++            string mode = Str(d["mode"]) ?? "";
++            Tile("power", "", "性能", !enabled ? "系统控制" : mode == "autotdp" ? "智能" : mode == "manual" ? $"{QsNum("manual.tdp", 0, d):0} W" : $"预设 {QsNum("power.target.pl1"):0} W", enabled);
++            string fan = Str(QsGet("fan.mode", d)) ?? "";
++            Tile("fan", "", "风扇", QsFan.FirstOrDefault(f => f.Id == fan).N ?? "自动", fan is "quiet" or "balanced" or "performance");
++            int osd = Bool(QsGet("osd.enabled", d)) ? (int)QsNum("osd.level", 1, d) : 0;
++            Tile("osd", "", "性能显示", osd == 0 ? "关" : $"{osd} 档", osd > 0);
++        }
++        double fps = QsNum("system.fpsLimit");
++        Tile("fps", "", "限帧", fps > 0 ? $"{fps:0} 帧" : "不限", fps > 0, QsGet("system.fpsLimit") == null);
++        double hz = QsNum("system.refresh");
++        Tile("refresh", "", "刷新率", hz > 0 ? $"{hz:0} Hz" : "--", false, QsRefreshRates().Count < 2);
++        if (QsInGame)
++        {
++            if (Bool(QsGet("magpie.available"))) Tile("magpie", "", "画面缩放", Bool(QsGet("magpie.enabled")) ? "开" : "关", Bool(QsGet("magpie.enabled")));
++            if (_qsLossless is bool ls) Tile("lossless", "", "小黄鸭", ls ? "开" : "关", ls);
++        }
++        double rumble = QsGet("rumble.strength") != null ? QsNum("rumble.strength") : 100;
++        var rs = QsRumble.OrderBy(r => Math.Abs(r.V - rumble)).First();
++        Tile("rumble", "", "震动", rs.N, rs.V > 0);
++        Tile("keyboard", "", "键盘", "打开");
++        Tile("screenshot", "", "截图", "保存");
++        if (_qsWifi is bool wifi) Tile("wifi", "", "Wi-Fi", wifi ? "开" : "关", wifi);
++        if (_qsBt is bool bt) Tile("bluetooth", "", "蓝牙", bt ? "开" : "关", bt);
++        float tw = (QsW - 2 * QsPad - 2 * QsTileGap) / 3;
++        for (int i = 0; i < tiles.Count; i++)
++        {
++            var t = tiles[i];
++            t.X = QsPad + (i % 3) * (tw + QsTileGap);
++            t.Y = y + (i / 3) * (QsTileH + QsTileGap);
++            t.W = tw; t.H = QsTileH;
++            _qsItems.Add(t);
++        }
++        // 底部一排
++        bool desktop = ShellMode.ExplorerRunning();
++        var entries = new List<(string Id, string Glyph, string Name)> { ("windows", "", "窗口") };
++        if (ShellMode.Available) entries.Add(("mode", desktop ? "" : "", desktop ? "游戏模式" : "桌面"));
++        entries.Add(("sleep", "", "睡眠"));
++        float ew = (QsW - 2 * QsPad - (entries.Count - 1) * QsTileGap) / entries.Count, ey = (tiles.Count == 0 ? y : tiles[^1].Y + QsTileH) + 22;   // 紧接磁贴下面（桌面模式下面有任务栏，不能贴底）
++        _qsEntryY = ey;
++        for (int i = 0; i < entries.Count; i++)
++            _qsItems.Add(new QsItem { Id = entries[i].Id, Kind = QsKind.Entry, Glyph = entries[i].Glyph, Name = entries[i].Name, X = QsPad + i * (ew + QsTileGap), Y = ey, W = ew, H = QsEntryH });
++        int found = keep == null ? -1 : _qsItems.FindIndex(it => it.Id == keep);
++        _qsFocus = found >= 0 ? found : Math.Clamp(_qsFocus, 0, _qsItems.Count - 1);
++        _qsFocusId = _qsItems[_qsFocus].Id;
++    }
++
++    private void QsSlider(string id, string glyph, string value, float level, bool disabled, ref float y)
++    {
++        _qsItems.Add(new QsItem { Id = id, Kind = QsKind.Slider, Glyph = glyph, Value = value, Level = Math.Clamp(level, 0, 1), Disabled = disabled, X = QsPad - 8, Y = y, W = QsW - 2 * QsPad + 16, H = QsSliderH });
++        y += QsSliderH + 4;
++    }
++
++    private (double Lo, double Hi) QsTdpRange()
++    {
++        var quick = (QsGet("quick", _qsDraft) as JsonArray)?.Select(n => n is JsonValue v && v.TryGetValue(out double x) ? x : 0).Where(x => x > 0).ToList() ?? new();
++        double lo = quick.Count > 0 ? Math.Min(5, quick.Min()) : 5, hi = quick.Count > 0 ? Math.Max(35, quick.Max()) : 35;
++        return (lo, hi);
++    }
++
++    private List<double> QsRefreshRates() =>
++        (QsGet("system.refreshRates") as JsonArray)?.Select(n => n is JsonValue v && v.TryGetValue(out double x) ? x : 0).Where(x => x >= 60).Distinct().ToList() ?? new();
++
++    // ---------------- 绘制 ----------------
++
++    private void QsPaint()
++    {
++        if (_qs == null) return;
++        float k = _ccK > 0 ? _ccK : (float)(View.Width / 1280), raster = k * Chrome.Dpi;
++        float H = (float)(View.Height / k);
++        CcSet(_qsPanel, CcDraw(QsW, H, raster, ds =>
++        {
++            ds.FillRectangle(0, 0, QsW, H, QsBg);
++            ds.FillRectangle(QsW - 1, 0, 1, H, Gfx.Rgba(255, 255, 255, 0.06));
++            using (var tl = TextKit.Layout(ds, QsTitle(), TextKit.Ui(700), 22, QsW - 2 * QsPad, CanvasHorizontalAlignment.Left))
++            {
++                tl.Options = CanvasDrawTextOptions.Clip;
++                tl.TrimmingSign = CanvasTrimmingSign.Ellipsis;
++                tl.TrimmingGranularity = CanvasTextTrimmingGranularity.Character;
++                ds.DrawTextLayout(tl, QsPad - (float)tl.LayoutBounds.X, 34 - (float)tl.LayoutBounds.Y, CcText);
++            }
++            for (int i = 0; i < _qsItems.Count; i++) QsDrawItem(ds, _qsItems[i], i == _qsFocus);
++            if (_qsNote != null)
++            {
++                using var nl = TextKit.Layout(ds, _qsNote, TextKit.Ui(500), 14, QsW - 2 * QsPad, CanvasHorizontalAlignment.Left);
++                float nw = (float)nl.LayoutBounds.Width + 28, ny = _qsEntryY + QsEntryH + 18;
++                ds.FillRoundedRectangle(QsPad, ny, nw, 32, 16, 16, Gfx.Rgba(0x4c, 0xc2, 0xff, 0.16));
++                ds.DrawTextLayout(nl, QsPad + 14 - (float)nl.LayoutBounds.X, ny + 16 - (float)nl.LayoutBounds.Height / 2 - (float)nl.LayoutBounds.Y, QsAccent);
++            }
++        }));
++        _qsPanel.Size = new Vector2(QsW * k, H * k);
++        QsLayout();
++    }
++
++    private void QsDrawItem(CanvasDrawingSession ds, QsItem it, bool focus)
++    {
++        var text = it.Disabled ? Gfx.WithAlpha(CcText, 0.35) : CcText;
++        switch (it.Kind)
++        {
++            case QsKind.Slider:
++            {
++                if (focus) ds.FillRoundedRectangle(it.X, it.Y, it.W, it.H, 10, 10, QsChip);
++                float cy = it.Y + it.H / 2, x0 = it.X + 52, x1 = it.X + it.W - 70;
++                CcGlyph(ds, it.Glyph, it.X + 26, cy, 20, text);
++                ds.FillRoundedRectangle(x0, cy - 3, x1 - x0, 6, 3, 3, focus ? Gfx.Rgba(0x5a, 0x60, 0x6a) : QsChip);
++                if (!it.Disabled)
++                {
++                    float fx = x0 + (x1 - x0) * it.Level;
++                    ds.FillRoundedRectangle(x0, cy - 3, Math.Max(6, fx - x0), 6, 3, 3, QsAccent);
++                    ds.FillCircle(fx, cy, focus ? 9 : 7, CcText);
++                }
++                using var vl = TextKit.Layout(ds, it.Value, TextKit.Num(600), 15, 56, CanvasHorizontalAlignment.Right);
++                ds.DrawTextLayout(vl, it.X + it.W - 12 - 56, cy - (float)vl.LayoutBounds.Height / 2 - (float)vl.LayoutBounds.Y, text);
++                break;
++            }
++            case QsKind.Tile:
++            {
++                ds.FillRoundedRectangle(it.X, it.Y, it.W, it.H, 12, 12, focus ? QsChipFocus : QsChip);
++                if (focus) ds.DrawRoundedRectangle(it.X + 1, it.Y + 1, it.W - 2, it.H - 2, 11, 11, CcText, 2);
++                var icon = it.Disabled ? text : it.On ? QsAccent : CcText;
++                CcGlyph(ds, it.Glyph, it.X + 24, it.Y + 24, 20, icon);
++                using (var nl = TextKit.Layout(ds, it.Name, TextKit.Ui(500), 13, it.W - 24, CanvasHorizontalAlignment.Left))
++                    ds.DrawTextLayout(nl, it.X + 14 - (float)nl.LayoutBounds.X, it.Y + 44 - (float)nl.LayoutBounds.Y, Gfx.WithAlpha(text, 0.7));
++                using (var vl = TextKit.Layout(ds, it.Value, TextKit.Ui(600), 15, it.W - 24, CanvasHorizontalAlignment.Left))
++                {
++                    vl.Options = CanvasDrawTextOptions.Clip;
++                    vl.TrimmingSign = CanvasTrimmingSign.Ellipsis;
++                    vl.TrimmingGranularity = CanvasTextTrimmingGranularity.Character;
++                    ds.DrawTextLayout(vl, it.X + 14 - (float)vl.LayoutBounds.X, it.Y + 62 - (float)vl.LayoutBounds.Y, it.Disabled ? text : it.On ? QsAccent : CcText);
++                }
++                break;
++            }
++            default:
++            {
++                ds.FillRoundedRectangle(it.X, it.Y, it.W, it.H, it.H / 2, it.H / 2, focus ? CcText : QsChip);
++                var fg = focus ? Gfx.Rgba(0x12, 0x14, 0x17) : CcText;
++                using var nl = TextKit.Layout(ds, it.Name, TextKit.Ui(600), 15, it.W, CanvasHorizontalAlignment.Left);
++                float total = 20 + 8 + (float)nl.LayoutBounds.Width, sx = it.X + (it.W - total) / 2, cy = it.Y + it.H / 2;
++                CcGlyph(ds, it.Glyph, sx + 10, cy, 18, fg);
++                ds.DrawTextLayout(nl, sx + 28 - (float)nl.LayoutBounds.X, cy - (float)nl.LayoutBounds.Height / 2 - (float)nl.LayoutBounds.Y, fg);
++                break;
++            }
++        }
++    }
++
++    // ---------------- 逐帧：进出场 + 缩略图 ----------------
++
++    private void QsStartTicking()
++    {
++        _qsFrameAt = NowMs;
++        if (_qsTicking) { QsLayout(); return; }
++        _qsTicking = true;
++        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += QsFrame;
++        QsLayout();
++    }
++
++    private void QsFrame(object? sender, object e)
++    {
++        long now = NowMs;
++        float dt = Math.Clamp((now - _qsFrameAt) / 1000f, 0, 0.05f);
++        _qsFrameAt = now;
++        _qsShow += (_qsShowTo - _qsShow) * (1 - MathF.Exp(-dt * (_qsShowTo > _qsShow ? 13 : 16)));
++        bool settled = MathF.Abs(_qsShowTo - _qsShow) < 0.002f;
++        if (settled) _qsShow = _qsShowTo;
++        QsLayout();
++        if (!settled) return;
++        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= QsFrame;
++        _qsTicking = false;
++        if (!_qsOpen && _qsShow <= 0) QsFinishClose();
++    }
++
++    /// <summary>面板 X（设计 px）= -464 → 0；游戏缩略图只画面板右边那一块，位置和游戏窗口原来一样。</summary>
++    private void QsLayout()
++    {
++        if (_qs == null) return;
++        float k = _ccK > 0 ? _ccK : (float)(View.Width / 1280), dpi = Chrome.Dpi;
++        float ease = 1 - MathF.Pow(1 - _qsShow, 3);
++        float x = -QsW + QsW * ease;
++        _qsPanel.Offset = new Vector3(x * k, 0, 0);
++        _qsPanel.Opacity = _qsShow > 0.001f ? 1 : 0;   // 从屏幕外滑进来，不淡入（淡入那几帧露出的是黑底）
++        _qsScrim.Opacity = _qsThumb != null ? 1 : ease;
++        if (_qsThumb is not { } th) return;
++        int edge = (int)MathF.Round((x + QsW) * k * dpi);
++        var (gl, gt, gw, gh) = _qsGameRect;
++        int left = Math.Max(edge, gl), right = gl + gw;
++        if (right <= left) { th.PlaceCropped(0, 0, 0, 0, 0, 0, 0, 0); return; }
++        double sx = (double)th.SourceW / gw, sy = (double)th.SourceH / gh;
++        th.PlaceCropped(left, gt, right - left, gh, (int)Math.Round((left - gl) * sx), 0, (int)Math.Round((right - left) * sx), (int)Math.Round(gh * sy));
++    }
++
++    // ---------------- 输入 ----------------
++
++    private void QsMove(Direction dir)
++    {
++        var cur = _qsItems[_qsFocus];
++        if (cur.Kind == QsKind.Slider && dir is Direction.Left or Direction.Right) { QsNudge(cur, dir == Direction.Right ? 1 : -1); return; }
++        // 按位置找：这个方向上中心最近的一项（横向走同一行，竖向走离得最近的一行）
++        float cx = cur.X + cur.W / 2, cy = cur.Y + cur.H / 2;
++        int best = -1; float bestScore = float.MaxValue;
++        for (int i = 0; i < _qsItems.Count; i++)
++        {
++            if (i == _qsFocus) continue;
++            var it = _qsItems[i];
++            float ix = it.X + it.W / 2, iy = it.Y + it.H / 2, dx = ix - cx, dy = iy - cy;
++            bool ok = dir switch { Direction.Up => dy < -1, Direction.Down => dy > 1, Direction.Left => dx < -1 && MathF.Abs(dy) < 4, _ => dx > 1 && MathF.Abs(dy) < 4 };
++            if (!ok) continue;
++            float score = dir is Direction.Up or Direction.Down ? MathF.Abs(dy) * 4 + MathF.Abs(dx) : MathF.Abs(dx);
++            if (score < bestScore) { bestScore = score; best = i; }
++        }
++        if (best < 0) { Cue(Sfx.Bump); return; }
++        _qsFocus = best;
++        _qsFocusId = _qsItems[best].Id;
++        Cue(Sfx.Nav);
++        QsPaint();
++    }
++
++    /// <summary>滑条 ← →：亮度、音量 5 一格，功耗 1 W 一格。马上发给后台，本地先动。</summary>
++    private void QsNudge(QsItem it, int d)
++    {
++        if (it.Disabled) { Cue(Sfx.Bump); return; }
++        switch (it.Id)
++        {
++            case "brightness" or "volume":
++            {
++                string path = it.Id == "brightness" ? "brightness" : "volume";
++                double v = Math.Clamp(Math.Round(QsNum("system." + path) / 5) * 5 + d * 5, 0, 100);
++                if (_qsState?["system"] is JsonObject sys) { sys[path] = v; if (it.Id == "volume") sys["muted"] = false; }
++                Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown);
++                _ = QsCall("", it.Id == "brightness" ? "set_brightness" : "set_volume", JsonValue.Create(v));
++                _qsNote = null;
++                break;
++            }
++            case "tdp":
++            {
++                if (_qsDraft?["manual"] is not JsonObject manual) return;
++                var (lo, hi) = QsTdpRange();
++                double v = Math.Clamp(QsNum("tdp", lo, manual) + d, lo, hi);
++                manual["tdp"] = v;
++                Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown);
++                _ = QsSavePower($"功耗 {v:0} W");
++                break;
++            }
++        }
++        QsBuild();
++        QsPaint();
++    }
++
++    private void QsActivate()
++    {
++        var it = _qsItems[_qsFocus];
++        if (it.Disabled) { Cue(Sfx.Bump); return; }
++        var d = _qsDraft;
++        switch (it.Id)
++        {
++            case "volume":
++            {
++                bool muted = !Bool(QsGet("system.muted"));
++                if (_qsState?["system"] is JsonObject sys) sys["muted"] = muted;
++                _ = QsCall(muted ? "已静音" : "取消静音", "set_mute", JsonValue.Create(muted));
++                break;
++            }
++            case "brightness" or "tdp": QsNudge(it, 1); return;
++            case "power" when d != null:
++            {
++                // 系统控制 → 智能 → 快捷档位（几瓦）… → 系统控制，和小组件的「功耗」磁贴同一个循环
++                var quick = (d["quick"] as JsonArray)?.Select(n => n is JsonValue v && v.TryGetValue(out double x) ? x : 0).Where(x => x > 0).ToList() ?? new();
++                bool enabled = Bool(d["enabled"]);
++                string mode = Str(d["mode"]) ?? "";
++                double tdp = QsNum("manual.tdp", 0, d);
++                int at = quick.IndexOf(tdp);
++                int index = !enabled ? 0 : mode == "autotdp" ? 1 : mode == "manual" && at >= 0 ? 2 + at : 1;
++                int next = (index + 1) % (quick.Count + 2);
++                string note;
++                if (next == 0) { d["enabled"] = false; note = "性能：系统控制"; }
++                else if (next == 1) { d["enabled"] = true; d["mode"] = "autotdp"; note = "性能：智能"; }
++                else
++                {
++                    d["enabled"] = true; d["mode"] = "manual";
++                    if (d["manual"] is not JsonObject m) { m = new JsonObject(); d["manual"] = m; }
++                    m["tdp"] = quick[next - 2];
++                    note = $"性能：{quick[next - 2]:0} W";
++                }
++                _ = QsSavePower(note);
++                break;
++            }
++            case "fan" when d != null:
++            {
++                string cur = Str(QsGet("fan.mode", d)) ?? "";
++                int i = Array.FindIndex(QsFan, f => f.Id == cur);
++                var next = QsFan[(i + 1) % QsFan.Length];
++                if (d["fan"] is not JsonObject fan) { fan = new JsonObject(); d["fan"] = fan; }
++                fan["mode"] = next.Id;
++                _ = QsSavePower("风扇：" + next.N);
++                break;
++            }
++            case "osd" when d != null:
++            {
++                int cur = Bool(QsGet("osd.enabled", d)) ? (int)QsNum("osd.level", 1, d) : 0, next = (cur + 1) % 5;
++                if (d["osd"] is not JsonObject osd) { osd = new JsonObject(); d["osd"] = osd; }
++                osd["enabled"] = next > 0;
++                if (next > 0) osd["level"] = next;
++                _ = QsSavePower(next == 0 ? "性能显示：关" : $"性能显示：{next} 档");
++                break;
++            }
++            case "fps":
++            {
++                double cur = QsNum("system.fpsLimit");
++                int i = Array.FindIndex(QsFps, f => f == (int)cur);
++                int next = QsFps[(i + 1) % QsFps.Length];
++                if (_qsState?["system"] is JsonObject sys) sys["fpsLimit"] = next;
++                _ = QsCall(next > 0 ? $"限帧：{next} 帧" : "限帧：不限", "set_fps_limit", JsonValue.Create(next));
++                break;
++            }
++            case "refresh":
++            {
++                var rates = QsRefreshRates();
++                double cur = QsNum("system.refresh");
++                double next = rates[(rates.IndexOf(cur) + 1) % rates.Count];
++                if (_qsState?["system"] is JsonObject sys) sys["refresh"] = next;
++                _ = QsCall($"刷新率：{next:0} Hz", "set_refresh_rate", JsonValue.Create(next));
++                break;
++            }
++            case "magpie":
++            {
++                bool on = !Bool(QsGet("magpie.enabled"));
++                if (_qsState?["magpie"] is JsonObject mg) mg["enabled"] = on;
++                _ = QsCall(on ? "画面缩放：开" : "画面缩放：关", "toggle_magpie");
++                break;
++            }
++            case "lossless":
++            {
++                bool on = _qsLossless != true;
++                _qsLossless = on;
++                _ = QsCall(on ? "小黄鸭：开" : "小黄鸭：关", "set_lossless_running", JsonValue.Create(on));
++                break;
++            }
++            case "rumble":
++            {
++                double cur = QsGet("rumble.strength") != null ? QsNum("rumble.strength") : 100;
++                int i = Array.FindIndex(QsRumble, r => r.V == QsRumble.OrderBy(x => Math.Abs(x.V - cur)).First().V);
++                var next = QsRumble[(i + 1) % QsRumble.Length];
++                if (_qsState?["rumble"] is JsonObject ru) ru["strength"] = next.V;
++                _ = QsCall("震动：" + next.N, "set_rumble_strength", JsonValue.Create(next.V));
++                break;
++            }
++            case "keyboard":
++                CloseQuickPanel();
++                _ = QsCall("", "toggle_keyboard");
++                return;
++            case "screenshot":
++                // 先收起面板再截，截到的是游戏
++                CloseQuickPanel();
++                After(500, () => _ = QsCall("", "screenshot"));
++                return;
++            case "wifi" or "bluetooth":
++                _ = QsRadio(it.Id == "wifi" ? RadioKind.WiFi : RadioKind.Bluetooth);
++                break;
++            case "windows":
++                CloseQuickPanel(hideWindow: false, instant: true);
++                OpenSwitcherFromAnywhere();
++                return;
++            case "mode":
++                CloseQuickPanel(hideWindow: false, instant: true);
++                _ = CcSwitchMode();
++                return;
++            case "sleep":
++                CloseQuickPanel(hideWindow: false, instant: true);
++                After(300, () => SystemInfo.Sleep(WinRT.Interop.WindowNative.GetWindowHandle(_window)));
++                return;
++        }
++        Cue(Sfx.Activate);
++        QsBuild();
++        QsPaint();
++    }
++
++    private async Task QsRadio(RadioKind kind)
++    {
++        string name = kind == RadioKind.WiFi ? "Wi-Fi" : "蓝牙";
++        try
++        {
++            if (await Radio.RequestAccessAsync() != RadioAccessStatus.Allowed) { QsFlash($"{name}：没有权限"); return; }
++            foreach (var r in await Radio.GetRadiosAsync())
++            {
++                if (r.Kind != kind) continue;
++                bool on = r.State != RadioState.On;
++                if (kind == RadioKind.WiFi) _qsWifi = on; else _qsBt = on;
++                QsBuild(); QsPaint();
++                var result = await r.SetStateAsync(on ? RadioState.On : RadioState.Off);
++                QsFlash(result == RadioAccessStatus.Allowed ? $"{name}：{(on ? "开" : "关")}" : $"{name}：没有切换");
++                break;
++            }
++        }
++        catch (Exception ex) { QsFlash($"{name}：{ex.Message}"); }
++        _ = QsRefresh(_qsVersion);
++    }
++
++    private void QsClick(double sx, double sy)
++    {
++        float k = _ccK > 0 ? _ccK : (float)(View.Width / 1280);
++        double x = sx / k, y = sy / k;
++        if (x > QsW) { CloseQuickPanel(); return; }   // 点到游戏那边 = 收起
++        for (int i = 0; i < _qsItems.Count; i++)
++        {
++            var it = _qsItems[i];
++            if (x < it.X || x > it.X + it.W || y < it.Y || y > it.Y + it.H) continue;
++            _qsFocus = i; _qsFocusId = it.Id;
++            if (it.Kind == QsKind.Slider && !it.Disabled && it.Id != "volume")
++            {
++                // 点滑条：直接定到点的位置
++                float x0 = it.X + 52, x1 = it.X + it.W - 70;
++                float level = (float)Math.Clamp((x - x0) / (x1 - x0), 0, 1);
++                QsSetLevel(it, level);
++                return;
++            }
++            QsActivate();
++            return;
++        }
++    }
++
++    private void QsSetLevel(QsItem it, float level)
++    {
++        if (it.Id is "brightness")
++        {
++            double v = Math.Round(level * 100);
++            if (_qsState?["system"] is JsonObject sys) sys["brightness"] = v;
++            _ = QsCall("", "set_brightness", JsonValue.Create(v));
++        }
++        else if (it.Id == "tdp" && _qsDraft?["manual"] is JsonObject manual)
++        {
++            var (lo, hi) = QsTdpRange();
++            double v = Math.Round(lo + (hi - lo) * level);
++            manual["tdp"] = v;
++            _ = QsSavePower($"功耗 {v:0} W");
++        }
++        QsBuild(); QsPaint();
++    }
++
++    /// <summary>自测用（--state=qs）：在游戏库里打开快捷设置，挨个走一遍焦点。</summary>
++    internal void QuickPanelTest(int steps)
++    {
++        if (!_qsOpen) OpenQuickPanel(0);
++        for (int i = 0; i < steps; i++) { int s = i; After(300 * (s + 1), () => { if (_qsOpen) QsMove(s % 6 < 3 ? Direction.Down : Direction.Right); }); }
++    }
++
++    internal void QuickPanelTestClose() => CloseQuickPanel(hideWindow: false);
++
++    /// <summary>自测用（--state=qsapply）：焦点放到某个磁贴上按一次 A，日志里记下按之前 / 之后后台报的值。</summary>
++    internal void QuickPanelTestPress(string id)
++    {
++        int i = _qsItems.FindIndex(it => it.Id == id);
++        if (i < 0) { Log.Info($"quick panel test: no {id}"); return; }
++        string before = _qsItems[i].Value;
++        _qsFocus = i; _qsFocusId = id;
++        QsActivate();
++        int j = _qsItems.FindIndex(it => it.Id == id);
++        Log.Info($"quick panel test press {id}: {before} -> {(j >= 0 ? _qsItems[j].Value : "?")}");
++    }
++
++    internal string QuickPanelTestValue(string id) => _qsItems.FirstOrDefault(it => it.Id == id)?.Value ?? "?";
++
++    [StructLayout(LayoutKind.Sequential)] private struct QsRect { public int Left, Top, Right, Bottom; }
++    [DllImport("user32.dll")] private static extern bool GetWindowRect(nint hwnd, out QsRect r);
++
++}
+diff --git a/frontend/library-native/ClawLibrary/Stage/WallStage.ShortcutActivation.cs b/frontend/library-native/ClawLibrary/Stage/WallStage.ShortcutActivation.cs
+index 055565c..e4c867a 100644
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.ShortcutActivation.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.ShortcutActivation.cs
+@@ -5,6 +5,7 @@ public sealed partial class WallStage
+     public void ActivateShortcut(string route)
+     {
+         Log.Info($"shortcut activation: {route}");
++        if (_qsOpen) return;   // 快速设置键开的是快捷设置面板，不进控制中心
+         if (route is "control-center" or "library")
+         {
+             if (MorphBusy) RushMorph();
+diff --git a/frontend/library-native/ClawLibrary/Stage/WallStage.Switcher.cs b/frontend/library-native/ClawLibrary/Stage/WallStage.Switcher.cs
+new file mode 100644
+index 0000000..b1eb5e8
+--- /dev/null
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.Switcher.cs
+@@ -0,0 +1,427 @@
++// 控制中心 → 窗口（功能坞的「窗口」）：游戏模式没有任务栏，这一页就是任务切换。
++// 底子和截图页一样（控制中心的动态背景、左上 24 px 粗标题）。一排卡片横着走，焦点卡停在正中：
++// 卡面 = DWM 实时缩略图（最小化的窗口没有画面，放大号应用图标），卡下一行 = 应用图标 + 窗口标题。
++// 正在玩的游戏排第一，其余按最近用过的顺序（Z 序）。← → 选，A 切过去，X 请它关（WM_CLOSE，不强杀），B 返回；点卡 = 选 / 切，左右滑 = 换。
++// 进出场：卡片一张接一张淡入、从下面浮上来，出场倒着走；滚动和进出场都是逐帧趋近（可打断），缩略图跟着同一帧挪。
++// DWM 缩略图压在我们窗口内容的上面，所以焦点描边画在卡框外面一圈。
++using System.Numerics;
++using ClawLibrary.Data;
++using Microsoft.Graphics.Canvas;
++using Microsoft.Graphics.Canvas.Text;
++using Microsoft.UI.Composition;
++using ClawLibrary.Engine;
++using DispatcherQueueTimer = Microsoft.UI.Dispatching.DispatcherQueueTimer;
++
++namespace ClawLibrary.Stage;
++
++public sealed partial class WallStage
++{
++    private sealed class WsCard
++    {
++        public required OpenWindow Win;
++        public ContainerVisual El = null!;
++        public SpriteVisual Box = null!, Ring = null!, Label = null!;
++        public DwmThumb? Thumb;
++        public bool Closing;
++        /// <summary>入场次序（出场倒过来），和列表下标无关：新出现的窗口不重放入场。</summary>
++        public int Order;
++    }
++
++    private const float WsBoxW = 512, WsBoxH = 320, WsGap = 40, WsBoxY = 196, WsRadius = 14, WsRingGap = 5, WsLabelY = 22, WsIcon = 24;
++
++    private ContainerVisual? _ws;
++    private SpriteVisual _wsTitle = null!, _wsEmpty = null!;
++    private readonly List<WsCard> _wsCards = new();
++    private bool _wsOpen, _wsTicking;
++    private int _wsFocus, _wsVersion;
++    /// <summary>横向滚动（设计 px）与进出场进度（0 = 没出来，1 = 到位）：当前值 → 目标值逐帧趋近。</summary>
++    private float _wsScroll, _wsScrollTo, _wsShow, _wsShowTo;
++    private long _wsFrameAt;
++    private DispatcherQueueTimer? _wsPoll;
++    private readonly Dictionary<uint, CanvasBitmap?> _wsIcons = new();
++
++    private float WsPitch => WsBoxW + WsGap;
++
++    // ---------------- 开 / 关 ----------------
++
++    /// <summary>从墙上 / 正在游戏画面直接进：先开控制中心，等它的形变走完再进这一页。</summary>
++    internal void OpenSwitcherFromAnywhere()
++    {
++        if (_ccOpen) { if (!_wsOpen) OpenSwitcher(); return; }
++        OpenControlCenter();
++        void Enter(int tries)
++        {
++            if (!_ccOpen) return;
++            if (MorphBusy && tries > 0) { After(50, () => Enter(tries - 1)); return; }
++            OpenSwitcher();
++        }
++        Enter(60);
++    }
++
++    private void OpenSwitcher()
++    {
++        if (_cc == null) return;
++        EnsureWsVisuals();
++        _wsOpen = true;
++        ++_wsVersion;
++        WsReleaseAll();
++        var list = OpenWindows.List();
++        // 正在玩的游戏排第一
++        if (_game is { Pid: > 0 } g)
++        {
++            var mine = list.Where(w => w.Pid == g.Pid || w.Hwnd == g.Hwnd).ToList();
++            list = mine.Concat(list.Except(mine)).ToList();
++        }
++        for (int i = 0; i < list.Count; i++) _wsCards.Add(WsMakeCard(list[i], i));
++        _wsFocus = 0;
++        _wsScroll = _wsScrollTo = 0;
++        _wsShow = 0; _wsShowTo = 1;
++        WsPaintTitle();
++        WsPaintEmpty();
++        foreach (var vis in CcPageParts()) vis.StartAnimation("Opacity", ToScalar(0, 160, EaseOutCss));
++        _ws!.IsVisible = true;
++        _ws.StopAnimation("Opacity"); _ws.Opacity = 1;
++        _wsTitle.Opacity = 0;
++        _wsTitle.StartAnimation("Opacity", ToScalar(1, 220, EaseOutCss, 60));
++        WsRing(instant: true);
++        if (Reduced) _wsShow = 1;
++        WsStartTicking();
++        _wsPoll ??= _dq.CreateTimer();
++        _wsPoll.Interval = TimeSpan.FromMilliseconds(1000);
++        _wsPoll.Tick -= WsPollTick;
++        _wsPoll.Tick += WsPollTick;
++        _wsPoll.Start();
++        Log.Info($"window switcher open ({_wsCards.Count})");
++    }
++
++    private void CloseSwitcher(bool instant = false)
++    {
++        if (!_wsOpen || _ws == null) return;
++        if (!instant) Cue(Sfx.ModalHide);
++        _wsOpen = false;
++        _wsPoll?.Stop();
++        int v = ++_wsVersion;
++        foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); if (instant) vis.Opacity = 1; else vis.StartAnimation("Opacity", ToScalar(1, 220, EaseOutCss, 120)); }
++        if (instant || Reduced) { WsFinishClose(); return; }
++        _wsTitle.StartAnimation("Opacity", ToScalar(0, 140, EaseOutCss));
++        _wsEmpty.StartAnimation("Opacity", ToScalar(0, 140, EaseOutCss));
++        _wsShowTo = 0;   // 出场：卡片倒着沉下去，走到 0 时在逐帧里收尾
++        WsStartTicking();
++        After(700, () => { if (v == _wsVersion && !_wsOpen) WsFinishClose(); });
++        Log.Info("window switcher close");
++    }
++
++    private void WsFinishClose()
++    {
++        if (_ws == null) return;
++        WsReleaseAll();
++        _ws.IsVisible = false;
++        _wsShow = _wsShowTo = 0;
++    }
++
++    private void WsReleaseAll()
++    {
++        foreach (var c in _wsCards) { c.Thumb?.Dispose(); _ws?.Children.Remove(c.El); }
++        _wsCards.Clear();
++        foreach (var b in _wsIcons.Values) b?.Dispose();
++        _wsIcons.Clear();
++    }
++
++    private void EnsureWsVisuals()
++    {
++        if (_ws != null) return;
++        _ws = G.Container();
++        _ws.IsVisible = false;
++        _wsTitle = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
++        _wsEmpty = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
++        _ws.Children.InsertAtTop(_wsTitle);
++        _ws.Children.InsertAtTop(_wsEmpty);
++        _cc!.Children.InsertAtTop(_ws);
++    }
++
++    // ---------------- 卡片 ----------------
++
++    private WsCard WsMakeCard(OpenWindow w, int order)
++    {
++        var c = new WsCard { Win = w, Order = order };
++        c.El = G.Container();
++        c.Box = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
++        c.Ring = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
++        c.Label = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
++        c.Ring.Opacity = 0;
++        c.El.Children.InsertAtTop(c.Ring);
++        c.El.Children.InsertAtTop(c.Box);
++        c.El.Children.InsertAtTop(c.Label);
++        c.El.Opacity = 0;
++        _ws!.Children.InsertAtTop(c.El);
++        if (!w.Minimized) c.Thumb = DwmThumb.Register(WinRT.Interop.WindowNative.GetWindowHandle(_window), w.Hwnd);
++        WsPaintCard(c);
++        return c;
++    }
++
++    private CanvasBitmap? WsAppIcon(OpenWindow w)
++    {
++        if (_wsIcons.TryGetValue(w.Pid, out var cached)) return cached;
++        CanvasBitmap? bmp = null;
++        try
++        {
++            if (OpenWindows.IconPixels(w.Hwnd, w.Pid, out int size) is { } px)
++                bmp = CanvasBitmap.CreateFromBytes(G.Device, px, size, size, Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized);
++        }
++        catch (Exception ex) { Log.Warn($"window icon {w.Process}: {ex.Message}"); }
++        _wsIcons[w.Pid] = bmp;
++        return bmp;
++    }
++
++    /// <summary>卡框（zinc-900 半透，最小化的窗口中间放大号图标）、外圈焦点描边、下面一行图标 + 标题。</summary>
++    private void WsPaintCard(WsCard c)
++    {
++        float k = _ccK, raster = _ccK * Chrome.Dpi;
++        var icon = WsAppIcon(c.Win);
++        CcSet(c.Box, CcDraw(WsBoxW, WsBoxH, raster, ds =>
++        {
++            ds.FillRoundedRectangle(0, 0, WsBoxW, WsBoxH, WsRadius, WsRadius, Gfx.Rgba(0x18, 0x18, 0x1b, 0.78));
++            if (c.Thumb == null)
++            {
++                if (icon != null) ds.DrawImage(icon, new Windows.Foundation.Rect(WsBoxW / 2 - 48, WsBoxH / 2 - 48, 96, 96), icon.Bounds, 1, CanvasImageInterpolation.HighQualityCubic);
++                else LineIcons.Draw(ds, "", WsBoxW / 2, WsBoxH / 2, 56, Gfx.WithAlpha(CcText, 0.35f));
++            }
++        }));
++        c.Box.Size = new Vector2(WsBoxW * k, WsBoxH * k);
++        float rw = WsBoxW + 2 * WsRingGap, rh = WsBoxH + 2 * WsRingGap, rr = WsRadius + WsRingGap;
++        CcSet(c.Ring, CcDraw(rw + 4, rh + 4, raster, ds => ds.DrawRoundedRectangle(2, 2, rw, rh, rr, rr, CcText, 2.5f)));
++        c.Ring.Size = new Vector2((rw + 4) * k, (rh + 4) * k);
++        c.Ring.Offset = new Vector3(-(WsRingGap + 2) * k, -(WsRingGap + 2) * k, 0);
++        const float LabelH = 32;
++        CcSet(c.Label, CcDraw(WsBoxW, LabelH, raster, ds =>
++        {
++            float x = 0;
++            if (icon != null) { ds.DrawImage(icon, new Windows.Foundation.Rect(0, (LabelH - WsIcon) / 2, WsIcon, WsIcon), icon.Bounds, 1, CanvasImageInterpolation.HighQualityCubic); x = WsIcon + 10; }
++            using var tl = TextKit.Layout(ds, c.Win.Title, TextKit.Ui(500), 17, WsBoxW - x, CanvasHorizontalAlignment.Left);
++            tl.Options = CanvasDrawTextOptions.Clip;
++            tl.TrimmingSign = CanvasTrimmingSign.Ellipsis;
++            tl.TrimmingGranularity = CanvasTextTrimmingGranularity.Character;
++            var b = tl.LayoutBounds;
++            ds.DrawTextLayout(tl, x - (float)b.X, (LabelH - (float)b.Height) / 2 - (float)b.Y, CcText);
++        }));
++        c.Label.Size = new Vector2(WsBoxW * k, LabelH * k);
++        c.Label.Offset = new Vector3(0, (WsBoxH + WsLabelY) * k, 0);
++    }
++
++    private void WsPaintTitle()
++    {
++        float k = _ccK, raster = _ccK * Chrome.Dpi;
++        using var tl = TextKit.Layout(G.Device, "窗口", TextKit.Ui(700), 24, 400, CanvasHorizontalAlignment.Left);
++        var bb = tl.LayoutBounds;
++        float w = (float)bb.Width + 4, th = (float)bb.Height + 4;
++        CcSet(_wsTitle, CcDraw(w, th, raster, ds => ds.DrawTextLayout(tl, -(float)bb.X, -(float)bb.Y, CcText)));
++        _wsTitle.Size = new Vector2(w * k, th * k);
++        _wsTitle.Offset = new Vector3(40 * k, 32 * k, 0);
++    }
++
++    /// <summary>没有别的窗口：屏幕正中一个淡淡的窗口图标，不写字。</summary>
++    private void WsPaintEmpty()
++    {
++        float k = _ccK, raster = _ccK * Chrome.Dpi;
++        const float S = 96;
++        CcSet(_wsEmpty, CcDraw(S, S, raster, ds => LineIcons.Draw(ds, "", S / 2, S / 2, 64, Gfx.WithAlpha(CcText, 0.3f))));
++        _wsEmpty.Size = new Vector2(S * k, S * k);
++        _wsEmpty.Offset = new Vector3((640 - S / 2) * k, (WsBoxY + WsBoxH / 2 - S / 2) * k, 0);
++        _wsEmpty.StopAnimation("Opacity");
++        _wsEmpty.Opacity = 0;
++        if (_wsCards.Count == 0) _wsEmpty.StartAnimation("Opacity", ToScalar(1, 240, EaseOutCss, 120));
++    }
++
++    /// <summary>焦点描边：焦点卡淡入，其余淡出。</summary>
++    private void WsRing(bool instant = false)
++    {
++        for (int i = 0; i < _wsCards.Count; i++)
++        {
++            var c = _wsCards[i];
++            float to = i == _wsFocus ? 1 : 0;
++            c.Ring.StopAnimation("Opacity");
++            if (instant || Reduced) c.Ring.Opacity = to;
++            else c.Ring.StartAnimation("Opacity", ToScalar(to, 140, EaseOutCss));
++            c.Label.Opacity = i == _wsFocus ? 1 : 0.55f;
++        }
++    }
++
++    // ---------------- 逐帧：滚动、进出场、缩略图 ----------------
++
++    private void WsStartTicking()
++    {
++        _wsFrameAt = NowMs;
++        if (_wsTicking) return;
++        _wsTicking = true;
++        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += WsFrame;
++        WsLayout();
++    }
++
++    private void WsFrame(object? sender, object e)
++    {
++        long now = NowMs;
++        float dt = Math.Clamp((now - _wsFrameAt) / 1000f, 0, 0.05f);
++        _wsFrameAt = now;
++        // 临界阻尼式趋近：每帧往目标走一段，目标中途改了就从当前位置接着走（可打断）
++        _wsScroll += (_wsScrollTo - _wsScroll) * (1 - MathF.Exp(-dt * 14));
++        _wsShow += (_wsShowTo - _wsShow) * (1 - MathF.Exp(-dt * (_wsShowTo > _wsShow ? 9 : 13)));
++        bool settled = MathF.Abs(_wsScrollTo - _wsScroll) < 0.3f && MathF.Abs(_wsShowTo - _wsShow) < 0.003f;
++        if (settled) { _wsScroll = _wsScrollTo; _wsShow = _wsShowTo; }
++        WsLayout();
++        if (!settled) return;
++        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= WsFrame;
++        _wsTicking = false;
++        if (!_wsOpen && _wsShow <= 0) WsFinishClose();
++    }
++
++    /// <summary>每张卡的位置 / 透明度，缩略图同一帧摆到卡框里（按源窗口比例居中放下）。</summary>
++    private void WsLayout()
++    {
++        if (_ws == null) return;
++        float k = _ccK, dpi = Chrome.Dpi;
++        int n = _wsCards.Count;
++        for (int i = 0; i < n; i++)
++        {
++            var c = _wsCards[i];
++            float x = 640 - WsBoxW / 2 + i * WsPitch - _wsScroll;
++            // 一张接一张：每张晚 0.08 的进度出来；出场倒着收
++            float rank = Math.Min(c.Order, 6) * 0.08f;
++            float t = Math.Clamp((_wsShow - rank) / (1 - 0.48f), 0, 1);
++            float ease = 1 - (1 - t) * (1 - t) * (1 - t);
++            float dy = (1 - ease) * 40;
++            float alpha = ease * (c.Closing ? 0.4f : 1);
++            c.El.Offset = new Vector3(x * k, (WsBoxY + dy) * k, 0);
++            c.El.Opacity = alpha;
++            if (c.Thumb is not { } th) continue;
++            float bx = x, by = WsBoxY + dy;
++            float s = MathF.Min(WsBoxW / th.SourceW, WsBoxH / th.SourceH);
++            float tw = th.SourceW * s, tht = th.SourceH * s;
++            float tx = bx + (WsBoxW - tw) / 2, ty = by + (WsBoxH - tht) / 2;
++            bool onScreen = tx + tw > -40 && tx < 1320;
++            double focusDim = i == _wsFocus ? 1 : 0.6;
++            th.Place((int)MathF.Round(tx * k * dpi), (int)MathF.Round(ty * k * dpi), (int)MathF.Round(tw * k * dpi), (int)MathF.Round(tht * k * dpi),
++                onScreen ? alpha * focusDim : 0);
++        }
++    }
++
++    // ---------------- 刷新 ----------------
++
++    /// <summary>每秒对一次：关掉的窗口拿走，新开的接在后面；焦点跟着原来那个窗口。</summary>
++    private void WsPollTick(DispatcherQueueTimer sender, object e)
++    {
++        if (!_wsOpen) { sender.Stop(); return; }
++        var now = OpenWindows.List();
++        var alive = new HashSet<nint>(now.Select(w => w.Hwnd));
++        nint focused = _wsFocus < _wsCards.Count ? _wsCards[_wsFocus].Win.Hwnd : 0;
++        bool changed = false;
++        foreach (var c in _wsCards.Where(c => !alive.Contains(c.Win.Hwnd)).ToList())
++        {
++            c.Thumb?.Dispose();
++            _ws!.Children.Remove(c.El);
++            _wsCards.Remove(c);
++            changed = true;
++        }
++        foreach (var w in now)
++        {
++            var have = _wsCards.FirstOrDefault(c => c.Win.Hwnd == w.Hwnd);
++            if (have == null) { _wsCards.Add(WsMakeCard(w, 0)); changed = true; }
++            else if (have.Win.Minimized != w.Minimized || have.Win.Title != w.Title)
++            {
++                // 最小化 / 还原、改了标题：重做这张（最小化的没有画面，换成大图标）
++                have.Win = w;
++                have.Thumb?.Dispose();
++                have.Thumb = w.Minimized ? null : DwmThumb.Register(WinRT.Interop.WindowNative.GetWindowHandle(_window), w.Hwnd);
++                WsPaintCard(have);
++                changed = true;
++            }
++        }
++        if (!changed) return;
++        int keep = _wsCards.FindIndex(c => c.Win.Hwnd == focused);
++        _wsFocus = keep >= 0 ? keep : Math.Clamp(_wsFocus, 0, Math.Max(0, _wsCards.Count - 1));
++        _wsScrollTo = _wsFocus * WsPitch;
++        WsRing();
++        _wsEmpty.StopAnimation("Opacity");
++        _wsEmpty.StartAnimation("Opacity", ToScalar(_wsCards.Count == 0 ? 1 : 0, 200, EaseOutCss));
++        WsStartTicking();
++    }
++
++    // ---------------- 输入 ----------------
++
++    private void WsMove(Direction dir)
++    {
++        if (dir is not (Direction.Left or Direction.Right) || _wsCards.Count == 0) return;
++        int next = Math.Clamp(_wsFocus + (dir == Direction.Left ? -1 : 1), 0, _wsCards.Count - 1);
++        if (next == _wsFocus) { Cue(Sfx.Bump); return; }
++        WsSetFocus(next);
++    }
++
++    private void WsSetFocus(int i)
++    {
++        _wsFocus = i;
++        _wsScrollTo = i * WsPitch;
++        Cue(Sfx.Nav);
++        WsRing();
++        WsStartTicking();
++    }
++
++    /// <summary>A：切过去。正在玩的游戏走「继续游戏」那条路；其余：我们还在前台时把它送到前台，然后收起控制中心（游戏库留在它后面）。</summary>
++    private void WsActivate()
++    {
++        if (_wsFocus >= _wsCards.Count) return;
++        var w = _wsCards[_wsFocus].Win;
++        if (_game is { Pending: false } g && (w.Pid == g.Pid || w.Hwnd == g.Hwnd))
++        {
++            CloseSwitcher(instant: true);
++            CloseControlCenter();
++            ResumeGame(g);
++            return;
++        }
++        bool ok = LibraryWindow.BringForward(w.Hwnd);
++        Log.Info($"switch to {w.Process} hwnd={w.Hwnd} foreground={ok}");
++        if (!ok) { Cue(Sfx.Error); Toast("没能切过去"); return; }
++        Cue(Sfx.Activate);
++        CloseSwitcher(instant: true);
++        CloseControlCenter();
++    }
++
++    /// <summary>X：请焦点窗口自己关（和点 × 一样，能存档）。管理员窗口收不到这个请求。</summary>
++    private void WsCloseFocused()
++    {
++        if (_wsFocus >= _wsCards.Count) return;
++        var c = _wsCards[_wsFocus];
++        if (!OpenWindows.Close(c.Win.Hwnd)) { Cue(Sfx.Error); Toast("这个窗口以管理员身份运行，关不掉"); return; }
++        Log.Info($"close window {c.Win.Process} hwnd={c.Win.Hwnd}");
++        Cue(Sfx.Activate);
++        c.Closing = true;   // 变淡，等它真的关了，下一次刷新拿走
++        WsStartTicking();
++    }
++
++    private void WsBack() => CloseSwitcher();
++
++    /// <summary>自测用（--state=ws|wsnav）。</summary>
++    internal void SwitcherTestState() { if (_ccOpen && !_wsOpen) OpenSwitcher(); }
++    internal void SwitcherTestBack() { if (_wsOpen) WsBack(); }
++    internal void SwitcherTestPick(string title, bool close)
++    {
++        int i = _wsCards.FindIndex(c => c.Win.Title.Contains(title, StringComparison.OrdinalIgnoreCase));
++        Log.Info($"switcher test pick '{title}' -> {i}");
++        if (i < 0) return;
++        WsSetFocus(i);
++        if (close) WsCloseFocused(); else WsActivate();
++    }
++
++    /// <summary>点卡：点到焦点卡 = A，点到别的卡 = 把它移到中间。</summary>
++    private void WsClick(double sx, double sy)
++    {
++        float k = _ccK;
++        double x = sx / k, y = sy / k;
++        if (y < WsBoxY || y > WsBoxY + WsBoxH + WsLabelY + 32) return;
++        for (int i = 0; i < _wsCards.Count; i++)
++        {
++            float cx = 640 - WsBoxW / 2 + i * WsPitch - _wsScroll;
++            if (x < cx || x > cx + WsBoxW) continue;
++            if (i == _wsFocus) WsActivate(); else WsSetFocus(i);
++            return;
++        }
++    }
++}
+diff --git a/frontend/library-native/ClawLibrary/Stage/WallStage.cs b/frontend/library-native/ClawLibrary/Stage/WallStage.cs
+index 903530e..de5718c 100644
+--- a/frontend/library-native/ClawLibrary/Stage/WallStage.cs
++++ b/frontend/library-native/ClawLibrary/Stage/WallStage.cs
+@@ -804,6 +804,7 @@ public sealed partial class WallStage : IDisposable
+         MarkInput();
+         NavHaptic(dir switch { Direction.Up => "moveUp", Direction.Down => "moveDown", Direction.Left => "moveLeft", _ => "moveRight" });
+         if (_ob != null) { ObMove(dir); return; }
++        if (_qsOpen) { QsMove(dir); return; }
+         if (LaunchMotionIntercept(false, dir)) { if (_lm?.Mode != LmMode.Playing) Cue(Sfx.None); return; }
+         if (MorphIntercept()) return;
+         if (_ccOpen) { CcMove(dir); return; }
+@@ -825,6 +826,7 @@ public sealed partial class WallStage : IDisposable
+         MarkInput();
+         NavHaptic("confirm");
+         if (_ob != null) { ObActivate(); return; }
++        if (_qsOpen) { QsActivate(); return; }
+         if (LaunchMotionIntercept(false, activate: true)) { if (_lm?.Mode != LmMode.Playing) Cue(Sfx.None); return; }
+         if (MorphIntercept()) return;
+         if (_ccOpen) { CcActivate(); return; }
+@@ -909,6 +911,7 @@ public sealed partial class WallStage : IDisposable
+         MarkInput();
+         NavHaptic("back");
+         if (_ob != null) { ObBack(); return; }
++        if (_qsOpen) { CloseQuickPanel(); return; }
+         if (LaunchMotionIntercept(true)) return;
+         if (MorphIntercept()) return;
+         if (_ccOpen) { if (!CcChromeBack()) CloseControlCenter(); return; }
+@@ -1124,7 +1127,7 @@ public sealed partial class WallStage : IDisposable
+     }
+ 
+     /// <summary>LB / RB：首页换页签，整墙出场 → 入场。</summary>
+-    public void SwitchTab(int delta) => WithCue(Sfx.Tab, () => { if (_ob != null || LaunchMotionIntercept(false)) { Cue(Sfx.None); return; } SwitchTabCore(delta); });
++    public void SwitchTab(int delta) => WithCue(Sfx.Tab, () => { if (_ob != null || _qsOpen || LaunchMotionIntercept(false)) { Cue(Sfx.None); return; } SwitchTabCore(delta); });
+ 
+     private void SwitchTabCore(int delta)
+     {
+@@ -1269,6 +1272,7 @@ public sealed partial class WallStage : IDisposable
+         if (ConsumeScreensaverWake()) return;
+         MarkInput();
+         if (_ob != null) { ObClick(sx, sy); return; }
++        if (_qsOpen) { QsClick(sx, sy); return; }
+         // 启动 / 正在游戏画面开着：点它自己的按钮，别的地方吞掉（以前会点穿到下面的墙，点到这款游戏的卡就反复「继续游戏」）
+         if (_lm is { Leaving: false }) { LaunchMotionClick(sx, sy); return; }
+         if (_backgroundSettingsOpen) { MarkInput(); RailClick(sx, sy); return; }
+@@ -1429,6 +1433,7 @@ public sealed partial class WallStage : IDisposable
+         }
+         MarkInput();
+         if (_ob != null) { ObClick(pt.Position.X, pt.Position.Y); e.Handled = true; return; }
++        if (_qsOpen) { QsClick(pt.Position.X, pt.Position.Y); e.Handled = true; return; }
+         if (_lm is { Leaving: false }) { LaunchMotionClick(pt.Position.X, pt.Position.Y); e.Handled = true; return; }
+         if (_ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx)
+         {

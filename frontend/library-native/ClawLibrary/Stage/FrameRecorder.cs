@@ -17,6 +17,8 @@ public sealed class FrameRecorder
     private CanvasDevice _dev = null!;
     private bool _on;
     public long StartQpc;
+    /// <summary>原分辨率（看清晰度用）；默认半分辨率。</summary>
+    public bool Full;
 
     public static double QpcMs(long qpc) => qpc * 1000.0 / Stopwatch.Frequency;
 
@@ -49,9 +51,10 @@ public sealed class FrameRecorder
             long qpc = (long)(frame.SystemRelativeTime.TotalSeconds * Stopwatch.Frequency);
             using var bmp = CanvasBitmap.CreateFromDirect3D11Surface(_dev, frame.Surface);
             var sz = bmp.SizeInPixels;
-            var rt = new CanvasRenderTarget(_dev, sz.Width / 2, sz.Height / 2, 96);
+            uint div = Full ? 1u : 2u;
+            var rt = new CanvasRenderTarget(_dev, sz.Width / div, sz.Height / div, 96);
             using (var ds = rt.CreateDrawingSession())
-                ds.DrawImage(bmp, new Windows.Foundation.Rect(0, 0, sz.Width / 2, sz.Height / 2), new Windows.Foundation.Rect(0, 0, sz.Width, sz.Height));
+                ds.DrawImage(bmp, new Windows.Foundation.Rect(0, 0, sz.Width / div, sz.Height / div), new Windows.Foundation.Rect(0, 0, sz.Width, sz.Height));
             lock (_gate) _frames.Add((rt, qpc));
         }
         catch (Exception ex) { Log.Error("recorder frame", ex); }
@@ -73,7 +76,7 @@ public sealed class FrameRecorder
         {
             double ms = QpcMs(qpc - markQpc);
             string name = $"f{i:D3}_{ms:+0000;-0000}ms.jpg";
-            await rt.SaveAsync(Path.Combine(dir, name), CanvasBitmapFileFormat.Jpeg, 0.85f);
+            await rt.SaveAsync(Path.Combine(dir, Full ? Path.ChangeExtension(name, ".png") : name), Full ? CanvasBitmapFileFormat.Png : CanvasBitmapFileFormat.Jpeg, 0.85f);
             lines.Add($"{i}\t{ms:F1}");
             rt.Dispose();
             i++;

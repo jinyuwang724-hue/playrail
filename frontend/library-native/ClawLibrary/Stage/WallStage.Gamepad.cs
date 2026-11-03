@@ -104,6 +104,7 @@ public sealed partial class WallStage
         /// <summary>按键映射页的格子（WallStage.GamepadMap.cs）：Col -1 = 左侧、-2 = 右侧、0…3 = 底部四栏；Cx / Cy 是找焦点用的中心；Tokens = 映射值的图标块。</summary>
         public bool Map;
         public int Col;
+        public float MapW, MapH;
         public float Cx, Cy;
         public List<GpTok>? Tokens;
         public bool Adjustable => !Disabled && (Choices != null || Number != null);
@@ -125,6 +126,7 @@ public sealed partial class WallStage
     private JsonNode? _gpFw;
     /// <summary>软件输入层：全局布局（get_input_layout 的 layout）和开关 / 状态（get_input_layer_state）。后台没有输入层时都是 null。</summary>
     private JsonObject? _gpLayout;
+    private JsonObject? _gpDesktopLayout;
     private JsonNode? _gpLayer;
     /// <summary>上次读到的固件模式（变了就提示）。_gpDesktopHeld = 手柄原本在桌面模式、因为游戏库在前台先切成了手柄模式，离开前台要切回去。</summary>
     private string? _gpLastMode;
@@ -146,6 +148,7 @@ public sealed partial class WallStage
         SettingsResetPointer();
         _gpEditing = false;
         _gpPicker = null;
+        if (_gpGame != null) { _gpGame = null; _gpLayout = null; }   // 游戏设置里编辑过某款游戏的布局：这一页是全局的
         ++_gpVersion;
         _gpInSide = true;
         _gpFocus = 0;
@@ -167,37 +170,15 @@ public sealed partial class WallStage
     }
 
     /// <summary>
-    /// 只编辑某款游戏的按键（游戏设置 › 手柄 › 编辑本游戏按键）：读写软件输入层这款游戏自己的布局（按 exe 名），
-    /// 所有改动都进输入层、不写固件（固件只有一份，是全局的），关掉后回到那款游戏的设置。
+    /// 游戏设置 › 手柄（WallStage.GameSettingsEmbed.cs）编辑的是哪款游戏自己的布局（exe 名）；null = 全局。
+    /// 那里直接用这一页的按键选择（GpPicker*），画在游戏设置页里，不打开这一页。
     /// </summary>
-    private string? _gpGame, _gpGameTitle;
-    private LibraryItem? _gpReturn;
-
-    private void OpenGamepadForGame(LibraryItem item, string exe)
-    {
-        _gpGame = exe;
-        _gpGameTitle = item.Title;
-        _gpReturn = item;
-        _gpLayout = null;
-        CloseSettingsPage(instant: true);
-        OpenGamepad();
-    }
+    private string? _gpGame;
 
     private void CloseGamepad(bool instant = false)
     {
         if (!_gpOpen || _gp == null) return;
-        if (_gpReturn is { } back && !instant)
-        {
-            // 回到这款游戏的设置（手柄分类）
-            _gpReturn = null; _gpGame = null; _gpGameTitle = null; _gpLayout = null;
-            CloseGamepad(instant: true);
-            _gsItem = back; _gsState = null; _stCat = 2;
-            OpenSettingsPage();
-            _stFromLibrary = true;
-            _ = GsLoad();
-            return;
-        }
-        _gpReturn = null; _gpGame = null; _gpGameTitle = null;
+        if (!instant) Cue(Sfx.ModalHide);
         _gpOpen = false;
         SettingsResetPointer();
         _gpEditing = false;
@@ -275,6 +256,7 @@ public sealed partial class WallStage
             foreach (var (face, file) in new[] { ("front", "claw8ex-front-hd"), ("back", "claw8ex-back"), ("tl", "claw8ex-trigger-l"), ("tr", "claw8ex-trigger-r") })
                 _gpBitmaps[face] = await CanvasBitmap.LoadAsync(G.Device, Path.Combine(dir, file + ".png"));
             GpLoadRegions(Path.Combine(dir, "regions.txt"));
+            await GpLoadGlyphs(Path.Combine(dir, "Glyphs"));
             _gpArtLoaded = true;
             _gpArtK = 0;
             if (_gpOpen) PaintGp();
@@ -345,6 +327,9 @@ public sealed partial class WallStage
                 var layout = _gpGame != null ? await _agent.Call("get_input_layout", JsonValue.Create(_gpGame)) : await _agent.Call("get_input_layout");
                 if (GpRefreshObsolete(revision)) return;
                 if (layout?["layout"] is JsonObject lay) _gpLayout = (JsonObject)lay.DeepClone();
+                var desktopLayout = await _agent.Call("get_desktop_layout");
+                if (GpRefreshObsolete(revision)) return;
+                if (desktopLayout?["layout"] is JsonObject dl) _gpDesktopLayout = (JsonObject)dl.DeepClone();
             }
             catch { _gpLayer = null; _gpLayout = null; }
         }
@@ -354,7 +339,7 @@ public sealed partial class WallStage
             _gpError = "连不上工具箱后台";
         }
         finally { _gpBusy = false; }
-        if (!_gpOpen) return;
+        if (!_gpOpen) { if (_stOpen && _gsItem != null) Repaint(); return; }
         BuildGpItems();
         PaintGpBody();
     }
@@ -425,11 +410,52 @@ public sealed partial class WallStage
     }
 
     private bool _gpInputCheckRunning;
+    private int _gpRecoveryVersion;
+
+    private void GpAgentEvent(string name, JsonNode? value)
+    {
+        if (name != "gamepad_mode" || value is not JsonObject mode || !Bool(mode["notify"])) return;
+        _dq.TryEnqueue(() =>
+        {
+            if (_servicesDisposed) return;
+            // An explicit choice in Game Bar supersedes an older deferred
+            // desktop-mode restore owned by this library window.
+            ++_gpHoldVersion;
+            _gpDesktopHeld = _gpDesktopNoticePending = false;
+            if (_windowActive && Str(mode["mode"]) == "desktop") After(250, () => { if (_windowActive) _ = GpCheckDesktopMode(); });
+            _pad?.RequestRescan();
+        });
+    }
+
+    private void GpAgentConnectionChanged(bool connected)
+    {
+        _dq.TryEnqueue(() =>
+        {
+            if (_servicesDisposed) return;
+            _pad?.RequestRescan();
+            int version = ++_gpRecoveryVersion;
+            if (!_windowActive) return;
+            _ = GpRecoverInput(version, connected ? 250 : 700);
+        });
+    }
+
+    private async Task GpRecoverInput(int version, int firstDelay)
+    {
+        for (int attempt = 0; version == _gpRecoveryVersion && !_servicesDisposed && _windowActive; attempt++)
+        {
+            await Task.Delay(attempt == 0 ? firstDelay : 3000);
+            if (version != _gpRecoveryVersion || _servicesDisposed || !_windowActive) return;
+            Log.Info("gamepad: recovering input after backend handoff");
+            if (await GpCheckDesktopMode()) return;
+            // An open socket can precede firmware/input readiness. Continue
+            // after a timed-out check even when the handshake already succeeded.
+        }
+    }
 
     /// <summary>激活时确认手柄模式，并检查当前游戏库是否在输入层白名单里。</summary>
-    private async Task GpCheckDesktopMode()
+    private async Task<bool> GpCheckDesktopMode()
     {
-        if (_gpInputCheckRunning) return;
+        if (_gpInputCheckRunning) return false;
         _gpInputCheckRunning = true;
         try
         {
@@ -437,12 +463,13 @@ public sealed partial class WallStage
             var fw = await _agent.Call("get_gamepad_state");
             if (Str(fw?["mode"]) == "desktop" && _windowActive) await GpHoldGamepadMode();
             if (_windowActive) await GpEnsureInputLayerAllowsLibrary();
+            return true;
         }
-        catch (Exception ex) { Log.Warn($"gamepad mode check: {ex.Message}"); }
+        catch (Exception ex) { Log.Warn($"gamepad mode check: {ex.Message}"); return false; }
         finally { _gpInputCheckRunning = false; }
     }
 
-    /// <summary>MSIX 升级会改可执行文件路径；HidHide 仍放行旧路径时刷新输入层。</summary>
+    /// <summary>MSIX 升级会改可执行文件路径；只刷新放行路径，不停止或重建手柄。</summary>
     private async Task GpEnsureInputLayerAllowsLibrary()
     {
         string package = Path.GetFileName(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory));
@@ -453,15 +480,13 @@ public sealed partial class WallStage
         string current = $"\\{package}\\ClawLibrary.exe";
         if (allowed.Any(path => Str(path)?.EndsWith(current, StringComparison.OrdinalIgnoreCase) == true)) return;
 
-        Log.Warn($"gamepad: current library package missing from input whitelist ({package}); refreshing input layer");
-        JsonNode? previousOverride = state?["override"]?.DeepClone();
-        try { await _agent.Call("set_input_layer_enabled", JsonValue.Create(false)); }
-        finally { await _agent.Call("set_input_layer_enabled", previousOverride); }
+        Log.Warn($"gamepad: current library package missing from input whitelist ({package}); refreshing app paths");
+        await _agent.Call("refresh_input_layer_apps");
     }
 
     private async Task GpHoldGamepadMode()
     {
-        if (_gpDesktopHeld) return;
+        if (_gpDesktopHeld && Str(_gpFw?["mode"]) != "desktop") return;
         _gpDesktopHeld = true;
         Log.Info("gamepad: desktop mode held as gamepad mode while the library is in front");
         try { await _agent!.Call("set_gamepad_mode", JsonValue.Create("xinput"), JsonValue.Create(false)); }
@@ -481,12 +506,17 @@ public sealed partial class WallStage
         if (version != _gpHoldVersion || _windowActive || !_gpDesktopHeld) return;
         _gpDesktopHeld = false;
         Log.Info("gamepad: library left the foreground, back to desktop mode");
-        try { await _agent!.Call("set_gamepad_mode", JsonValue.Create("desktop"), JsonValue.Create(false)); }
+        try
+        {
+            await _agent!.Call("set_gamepad_mode", JsonValue.Create("desktop"), JsonValue.Create(_gpDesktopNoticePending));
+            _gpDesktopNoticePending = false;
+        }
         catch (Exception ex) { Log.Warn($"gamepad release: {ex.Message}"); }
     }
 
     /// <summary>要的是桌面模式：固件已经在桌面模式，或者游戏库在前台、离开后要切回桌面模式。</summary>
     private bool GpWantDesktop => _gpDesktopHeld || Str(_gpFw?["mode"]) == "desktop";
+    private bool _gpDesktopNoticePending;
 
     /// <summary>
     /// 手柄页的模式开关（A）：切到手柄模式立刻写固件、取消「离开后切回桌面」；切到桌面模式时游戏库在前台，
@@ -502,15 +532,17 @@ public sealed partial class WallStage
             if (!toDesktop)
             {
                 _gpDesktopHeld = false;
-                if (Str(_gpFw?["mode"]) == "desktop") await _agent.Call("set_gamepad_mode", JsonValue.Create("xinput"), JsonValue.Create(false));
+                _gpDesktopNoticePending = false;
+                await _agent.Call("set_gamepad_mode", JsonValue.Create("xinput"));
                 Log.Info("gamepad: mode set to gamepad from the gamepad page");
             }
             else if (_windowActive)
             {
                 _gpDesktopHeld = true;
+                _gpDesktopNoticePending = true;
                 Log.Info("gamepad: desktop mode chosen, applied when the library leaves the foreground");
             }
-            else await _agent.Call("set_gamepad_mode", JsonValue.Create("desktop"), JsonValue.Create(false));
+            else await _agent.Call("set_gamepad_mode", JsonValue.Create("desktop"));
         }
         catch (Exception ex) { Toast($"没有切过去：{ex.Message}"); }
         if (_gpOpen) { BuildGpItems(); PaintGpBody(); }
@@ -520,6 +552,7 @@ public sealed partial class WallStage
     /// <summary>手柄页里的 X / Y：震动页 X 测试震动、Y 恢复原来的强度；别的页不做事。</summary>
     private void GpPadButton(bool isY)
     {
+        if (isY && GpGroupY()) return;
         if (_gpPicker != null || _gpEditing || GpCatId != "rumble") return;
         if (isY) _ = GpWrite("restore_rumble");
         else _ = GpTestRumble();
@@ -615,23 +648,8 @@ public sealed partial class WallStage
         var cur = _gpItems[_gpFocus];
         if (_gpEditing)
         {
-            ++_gpInputRevision;
             if (dir is not (Direction.Left or Direction.Right)) return;
-            int d = dir == Direction.Left ? -1 : 1;
-            if (cur.Choices != null)
-            {
-                int ni = Math.Clamp(cur.Choice + d, 0, cur.Choices.Length - 1);
-                if (ni == cur.Choice) return;
-                cur.SetChoice?.Invoke(ni);
-            }
-            else if (cur.Number is int n)
-            {
-                int nv = Math.Clamp(n + d * cur.StepBy, cur.Min, cur.Max);
-                if (nv == n) return;
-                cur.SetNumber?.Invoke(nv);
-            }
-            BuildGpItems();
-            PaintGpBody();
+            GpStepItem(cur, dir == Direction.Left ? -1 : 1);
             return;
         }
         // 按方位：前方 45° 扇形里最近的（横向偏离算两倍）；扇形里没有就放宽到整个半平面；往左再没有 = 回到分类
@@ -696,8 +714,8 @@ public sealed partial class WallStage
     /// <summary>B：映射选择 → 关掉它；调节中 → 退出调节；在设置上 → 回到分类；在分类上 → 回控制中心。</summary>
     private void GpBack()
     {
-        SettingsResetPointer();
         if (_gpPicker != null) { GpPickerBack(); return; }
+        SettingsResetPointer();
         if (_gpEditing) { _gpEditing = false; PaintGpBody(); return; }
         if (!_gpInSide) { GpLeaveContent(); return; }
         CloseGamepad();
@@ -750,7 +768,10 @@ public sealed partial class WallStage
     /// </summary>
     private void PaintGpBody()
     {
+        // 游戏设置里的按键选择：画在设置页上
+        if (!_gpOpen) { if (_stOpen && _gsItem != null) Repaint(); return; }
         if (_gp == null) return;
+        GpUpdateMapScroll();
         float k = _ccK, raster = k * Chrome.Dpi;
         _gpTargets.Clear();
         CcSet(_gpBody, CcDraw(1280, 800, raster, PaintGpUi));
@@ -780,16 +801,21 @@ public sealed partial class WallStage
         bool connected = _pad?.Connected ?? false;
 
         // 标题：和控制中心的「控制中心」同一个位置、同一个字；下面一行小字是机型、连接状态和模式
-        PText(ds, _gpGameTitle != null ? $"手柄 · {_gpGameTitle}" : "手柄", TextKit.Ui(700), 24, CcText, 40, 48, 900);
+        PText(ds, "手柄", TextKit.Ui(700), 24, CcText, 40, 48, 900);
         string mode = _gpDesktopHeld ? "桌面模式（游戏库里先用手柄模式）"
             : Str(_gpFw?["mode"]) switch { "desktop" => "桌面模式", "xinput" => "手柄模式", "dinput" => "DInput 模式", _ => "" };
         string sub = !connected ? "Claw 8 EX · 没有检测到手柄" : $"Claw 8 EX · 已连接{(mode.Length > 0 ? " · " + mode : "")}";
         PText(ds, sub, ui, 13, muted, 40, 82, 900);
 
-        PaintGpSidebar(ds);
+        if (_gpPicker?.Level == GpSubLevel.Group) PaintGpGroupList(ds, _gpPicker); else PaintGpSidebar(ds);
         if (_gpPicker != null) { PaintGpPicker(ds, accent); return; }
         if (!_gpArtLoaded) PText(ds, "正在载入线稿…", ui, 13, muted, GpCx - 40, GpIsMapPage ? GpMapCy : GpCy, 300);
-        if (GpIsMapPage) PaintGpMapHeads(ds);
+        // 映射页滚动：设置和格子跟线稿一起往上走，裁在标题下面、按键提示上面
+        float scroll = GpIsMapPage ? _gpMapScroll : 0;
+        var unscrolled = ds.Transform;
+        var scrollClip = GpIsMapPage ? ds.CreateLayer(1, new Windows.Foundation.Rect(0, 96, 1280, 626)) : null;
+        ds.Transform = Matrix3x2.CreateTranslation(0, -scroll) * unscrolled;
+        if (GpIsMapPage) { GpMapCenterColumns(ds, _gpItems, _gpMapHeads); PaintGpMapHeads(ds); }
 
         var focus = GpFocusItem;
         // 两侧的设置：焦点那项拉一根细线到它管的键（摇杆映射那种没有 Key 的，连到它点亮的那块）
@@ -811,10 +837,12 @@ public sealed partial class WallStage
         for (int i = 0; i < _gpItems.Count; i++)
         {
             var it = _gpItems[i];
+            GpAddItemTargets(ds, it, i);
             if (it.Map) PaintGpMapRow(ds, it, it == focus);
             else PaintGpItem(ds, it, it == focus);
-            GpAddItemTargets(ds, it, i);
         }
+        ds.Transform = unscrolled;
+        scrollClip?.Dispose();
 
         // 底部的按键提示（按键图标 + 字）
         if (focus != null && focus.Title == "模式" && focus.Side == 0) GpHints(ds, ("A", GpWantDesktop ? "切到手柄模式" : "切到桌面模式"));
@@ -833,6 +861,7 @@ public sealed partial class WallStage
     /// </summary>
     private void GpHints(CanvasDrawingSession ds, params (string Key, string Text)[] hints)
     {
+        if (!_gpOpen) return;   // 游戏设置里不画按键提示
         var ui = TextKit.Ui(400);
         var keyFont = TextKit.Ui(600);
         const float y = 732, h = 22, gap = 28;
@@ -1003,6 +1032,7 @@ public sealed partial class WallStage
         {
             DrawChevron(ds, vx - chev + 6, it.Y + valueDy, true, valueCol);
             DrawChevron(ds, vx + vw + chev - 6, it.Y + valueDy, false, valueCol);
+            GpAddArrowTargets(vx - chev + 6, vx + vw + chev - 6, it.Y + valueDy);
             if (it.Compact || it.Number != null) return;
             const string hint = "← → 改  ·  A 完成";
             float hw = PWidth(ds, hint, ui, 11);

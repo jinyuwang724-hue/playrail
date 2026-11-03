@@ -65,7 +65,8 @@ public sealed partial class WallStage
                 else if (hit.Row == 2) GpPadButton(true);
                 return;
             case SettingsTargetKind.Tab:
-                if (_gpPicker is { } tab) { GpSwitchTab(hit.Row - tab.Tab); tab.InTabs = false; PaintGpBody(); }
+                if (_gpPicker is { Level: GpSubLevel.Group } gp) GpGroupSwitch(gp, hit.Row - gp.Group);
+                else if (_gpPicker is { } tab) { GpSwitchTab(hit.Row - tab.Tab); tab.InTabs = false; PaintGpBody(); }
                 return;
             case SettingsTargetKind.Cell:
                 if (_gpPicker is { } picker) { picker.Cell = hit.Row; picker.InTabs = false; GpPickerActivate(); }
@@ -73,24 +74,51 @@ public sealed partial class WallStage
             case SettingsTargetKind.Slider: GpSliderAt(hit, x); return;
         }
         if (hit.Row < 0 || hit.Row >= _gpItems.Count) return;
-        _gpInSide = false; _gpEditing = false; _gpFocus = hit.Row;
         var item = _gpItems[hit.Row];
-        if (item.Disabled) Toast(item.Why ?? "现在改不了");
-        else
+        if (hit.Kind is SettingsTargetKind.Decrease or SettingsTargetKind.Increase)
         {
+            if (_gpEditing && !_gpInSide && _gpFocus == hit.Row) GpStepItem(item, hit.Kind == SettingsTargetKind.Decrease ? -1 : 1);
+            return;
+        }
+        if (_gpFocus != hit.Row || _gpInSide) _gpEditing = false;
+        _gpInSide = false; _gpFocus = hit.Row;
+        if (!_gpEditing && !item.Disabled && item.Press != null) ++_gpInputRevision;
+        GpActivate();
+        GpShowFaces(GpPageFaces()); PaintGpBody();
+    }
+
+    private void GpStepItem(GpItem item, int delta)
+    {
+        if (!_gpEditing || item.Disabled) return;
+        if (item.Choices is { Length: > 0 } choices)
+        {
+            int next = Math.Clamp(item.Choice + delta, 0, choices.Length - 1);
+            if (next == item.Choice) return;
             ++_gpInputRevision;
-            if (item.Press != null) item.Press();
-            else if (item.Choices is { Length: > 0 } choices) item.SetChoice?.Invoke((item.Choice + 1) % choices.Length);
+            item.SetChoice?.Invoke(next);
+        }
+        else if (item.Number is int number)
+        {
+            int next = Math.Clamp(number + delta * item.StepBy, item.Min, item.Max);
+            if (next == number) return;
+            ++_gpInputRevision;
+            item.SetNumber?.Invoke(next);
         }
         BuildGpItems(); GpShowFaces(GpPageFaces()); PaintGpBody();
+    }
+
+    private void GpAddArrowTargets(float left, float right, float y)
+    {
+        y -= GpIsMapPage ? _gpMapScroll : 0;
+        _gpTargets.Add(new(_gpFocus, SettingsTargetKind.Decrease, left - 20, y - 22, 44, 44));
+        _gpTargets.Add(new(_gpFocus, SettingsTargetKind.Increase, right - 24, y - 22, 44, 44));
     }
 
     private void GpSliderAt(SettingsPointerTarget hit, double x)
     {
         if (hit.Row < 0 || hit.Row >= _gpItems.Count) return;
         var item = _gpItems[hit.Row];
-        if (item.Disabled || item.Number is not int current || item.SetNumber == null) return;
-        _gpInSide = false; _gpEditing = false; _gpFocus = hit.Row;
+        if (item.Disabled || item.Number is not int current || item.SetNumber == null || !_gpEditing || _gpInSide || _gpFocus != hit.Row) return;
         int value = SettingsPointerGesture.SliderValue(x, hit.X, hit.Width, item.Min, item.Max, item.StepBy);
         if (value == current) return;
         ++_gpInputRevision;
@@ -102,15 +130,12 @@ public sealed partial class WallStage
     {
         if (item.Map)
         {
-            float left = item.Col == -1 ? item.X - 148 : item.X;
-            float width = item.Col >= 0 ? GpMapSubW : item.Col == -1 ? 148 : 138;
-            float height = item.Col >= 0 ? GpMapColStep : GpMapSideStep;
-            _gpTargets.Add(new(index, SettingsTargetKind.Item, left, item.Y - height / 2, width, height));
+            _gpTargets.Add(new(index, SettingsTargetKind.Item, item.Col == -1 ? item.X - item.MapW : item.X, item.Y - item.MapH / 2 - _gpMapScroll, item.MapW, item.MapH));
             return;
         }
         float x = item.Side < 0 ? item.X - 140 : item.Side > 0 ? item.X - 10 : item.X - 190;
-        _gpTargets.Add(new(index, SettingsTargetKind.Item, x, item.Y - 18, item.Side == 0 ? 380 : 150, 88));
-        if (item.Disabled || item.Number is not int value || item.SetNumber == null) return;
+        _gpTargets.Add(new(index, SettingsTargetKind.Item, x, item.Y - 18 - (GpIsMapPage ? _gpMapScroll : 0), item.Side == 0 ? 380 : 150, 88));
+        if (item.Disabled || item.Number is not int value || item.SetNumber == null || !_gpEditing || _gpInSide || _gpFocus != index) return;
         const float widthSlider = 110;
         float leftSlider = item.Side < 0 ? item.X - widthSlider : item.X;
         float cy = item.Y + 56;

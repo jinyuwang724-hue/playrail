@@ -1,6 +1,6 @@
 // 手柄：XInput 在独立线程上 250 Hz 轮询（照 src/input.ts 的映射与手感参数）。
 // 十字键 / 左摇杆 = 方向导航（按住按间隔连走），右摇杆 = 平移相机，A 打开，B 返回，LB / RB 换页签，
-// X 切换标题样式，Y 游戏设置（占位；控制中心里 = 设为主页），≡ 开关控制中心，视图键开性能读数。只在本窗口在前台时响应。
+// X 显示 / 隐藏信息栏，Y 游戏设置，≡ 开关控制中心，视图键开性能读数。只在本窗口在前台时响应。
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
@@ -43,6 +43,8 @@ public sealed unsafe class GamepadPoller : IDisposable
     private readonly DispatcherQueue _dq;
     private readonly WallStage _stage;
     private readonly Func<bool> _foreground;
+    private readonly Func<uint, Snapshot?>? _readState;
+    private int _rescan;
     private Thread? _thread;
     private volatile bool _stop;
     private readonly EventWaitHandle _sleepStop = new(false, EventResetMode.ManualReset);
@@ -67,10 +69,28 @@ public sealed unsafe class GamepadPoller : IDisposable
     private Snapshot _last;
     public Snapshot Last { get { lock (_gate) return _last; } }
 
-    public GamepadPoller(DispatcherQueue dq, WallStage stage, Func<bool> foreground)
+    public GamepadPoller(DispatcherQueue dq, WallStage stage, Func<bool> foreground, Func<uint, Snapshot?>? readState = null)
     {
-        _dq = dq; _stage = stage; _foreground = foreground;
+        _dq = dq; _stage = stage; _foreground = foreground; _readState = readState;
     }
+
+    public void RequestRescan() => Interlocked.Exchange(ref _rescan, 1);
+
+    private XInputGamepad? Read(uint index)
+    {
+        if (_readState != null)
+        {
+            var sample = _readState(index);
+            return sample is { } s ? new XInputGamepad { Buttons = s.Buttons, LeftTrigger = s.LT, RightTrigger = s.RT,
+                ThumbLX = s.LX, ThumbLY = s.LY, ThumbRX = s.RX, ThumbRY = s.RY } : null;
+        }
+        XInputState state;
+        return XInputGetState(index, &state) == 0 ? state.Gamepad : null;
+    }
+
+    private static bool Active(XInputGamepad g) => g.Buttons != 0 || g.LeftTrigger > 30 || g.RightTrigger > 30
+        || Math.Abs(Axis(g.ThumbLX)) > StickDead || Math.Abs(Axis(g.ThumbLY)) > StickDead
+        || Math.Abs(Axis(g.ThumbRX)) > PanDead || Math.Abs(Axis(g.ThumbRY)) > PanDead;
 
     public void Start()
     {
@@ -81,13 +101,24 @@ public sealed unsafe class GamepadPoller : IDisposable
     /// <summary>UI 线程每帧取一次平滑后的右摇杆速度。</summary>
     public void ApplyPan(WallStage stage)
     {
+        if (stage.GamepadInputBlocked) { stage.PanVelocity = Vector2.Zero; return; }
         Vector2 v;
         lock (_gate) v = _smooth;
         if (Panning || _wasPanning) stage.PanVelocity = v;
         _wasPanning = Panning;
     }
 
-    private void Post(Action a) => _dq.TryEnqueue(() => { try { if (!_stop && _foreground()) a(); } catch (Exception ex) { Log.Error("pad action", ex); } });
+    private void Post(Action a) => _dq.TryEnqueue(() => { try { if (!_stop && _foreground() && !_stage.GamepadInputBlocked) a(); } catch (Exception ex) { Log.Error("pad action", ex); } });
+
+    private bool _activityActive;
+    private long _activityNext;
+    private void ReportActivity(bool active, long now)
+    {
+        if (active == _activityActive && (!active || now < _activityNext)) return;
+        _activityActive = active;
+        _activityNext = now + 250;
+        _dq.TryEnqueue(() => _stage.GamepadActivity(active));
+    }
 
     private void Loop()
     {
@@ -95,6 +126,8 @@ public sealed unsafe class GamepadPoller : IDisposable
         long last = 0;
         bool fg = true;
         long nextFg = 0;
+        int connected = 0;
+        var pads = new XInputGamepad[4];
         SafeWaitHandle? awake = null; long nextSleepCheck = 0;
         try
         {
@@ -118,22 +151,32 @@ public sealed unsafe class GamepadPoller : IDisposable
                     continue;
                 }
                 if (now >= nextFg) { fg = _foreground(); nextFg = now + 16; }
-                XInputState st;
-                bool ok = false;
-                if (_index >= 0) ok = XInputGetState((uint)_index, &st) == 0;
-                else st = default;
-                if (!ok)
+                if (Interlocked.Exchange(ref _rescan, 0) != 0)
                 {
-                    _index = -1;
-                    // 没连着的槽查询很慢，所以两秒才扫一次
-                    if (now >= _nextScan)
-                    {
-                        _nextScan = now + 2000;
-                        for (uint i = 0; i < 4; i++)
-                            if (XInputGetState(i, &st) == 0) { _index = (int)i; ok = true; Log.Info($"gamepad on slot {i}"); break; }
-                    }
+                    connected = 0; _index = -1; _nextScan = 0;
+                    Release(dt);
+                    Log.Info("gamepad: refreshing XInput slots after backend reconnect");
                 }
-                if (ok && fg) Handle(st.Gamepad, now, dt);
+                bool scan = now >= _nextScan;
+                if (scan) _nextScan = now + 2000;
+                int active = 0;
+                for (int i = 0; i < 4; i++)
+                {
+                    if (!scan && (connected & (1 << i)) == 0) continue;
+                    if (Read((uint)i) is { } pad)
+                    {
+                        connected |= 1 << i; pads[i] = pad;
+                        if (Active(pad)) active |= 1 << i;
+                    }
+                    else connected &= ~(1 << i);
+                }
+                int selected = GamepadSourceChoice.Select(connected, active, _index);
+                if (selected != _index)
+                {
+                    Release(dt); _index = selected;
+                    Log.Info($"gamepad source slot {selected}, connected=0x{connected:X}, active=0x{active:X}");
+                }
+                if (_index >= 0 && fg) Handle(pads[_index], now, dt);
                 else Release(dt);
             }
             catch (Exception ex) { Log.Error("gamepad", ex); Thread.Sleep(500); }
@@ -145,6 +188,7 @@ public sealed unsafe class GamepadPoller : IDisposable
 
     private void Release(double dt)
     {
+        ReportActivity(false, 0);
         lock (_gate) _last = default;
         _held.Clear();
         _prev = 0;
@@ -157,6 +201,8 @@ public sealed unsafe class GamepadPoller : IDisposable
     {
         double lx = Axis(g.ThumbLX), ly = -Axis(g.ThumbLY), rx = Axis(g.ThumbRX), ry = -Axis(g.ThumbRY);
         ushort b = g.Buttons;
+        ReportActivity(b != 0 || g.LeftTrigger > 30 || g.RightTrigger > 30 ||
+            Math.Abs(lx) > StickDead || Math.Abs(ly) > StickDead || Math.Abs(rx) > PanDead || Math.Abs(ry) > PanDead, now);
         lock (_gate) _last = new Snapshot(b, g.LeftTrigger, g.RightTrigger, g.ThumbLX, g.ThumbLY, g.ThumbRX, g.ThumbRY);
         bool stick = StickNavigates;
         Repeat(Direction.Up, (b & DpadUp) != 0 || stick && ly < -StickDead, now);
@@ -207,9 +253,10 @@ public sealed unsafe class GamepadPoller : IDisposable
         else if (button == B) Post(_stage.Back);
         else if (button == Y) Post(_stage.PadY);
         else if (button == Menu) Post(_stage.ToggleControlCenter);
+        else if (button == X) Post(_stage.PadX);
     }
 
-    public const ushort PadA = A, PadB = B, PadMenu = Menu;
+    public const ushort PadA = A, PadB = B, PadMenu = Menu, PadXButton = X;
 
     public void Dispose()
     {

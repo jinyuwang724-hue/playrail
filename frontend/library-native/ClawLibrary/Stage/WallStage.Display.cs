@@ -66,6 +66,7 @@ public sealed partial class WallStage
     private void CloseDisplay(bool instant = false)
     {
         if (!_dsOpen || _ds == null) return;
+        if (!instant) Cue(Sfx.ModalHide);
         _dsOpen = false;
         SettingsResetPointer();
         _dsTimer?.Stop();
@@ -296,16 +297,12 @@ public sealed partial class WallStage
                 var names = fso.Select(o => Str(o?["name"]) ?? "").ToArray();
                 _dsRows.Add(Pick("帧同步", names, Math.Max(0, Array.IndexOf(ids, fs)), i => SetGpu("frameSync", JsonValue.Create(ids[i]))));
             }
-            if (gpu["xessFg"] is JsonValue)
+            if (Str(gpu["xessFg"]) is string fg && gpu["xessFgOptions"] is JsonArray fgo && fgo.Count > 0)
             {
-                bool fg = Bool(gpu["xessFg"]);
-                _dsRows.Add(new PerfRow
-                {
-                    Title = "XeSS 插帧", Choices = new[] { "关", "开" }, Choice = fg ? 1 : 0,
-                    Step = d => { if ((d > 0) != fg) SetGpu("xessFg", JsonValue.Create(d > 0)); },
-                    Press = () => SetGpu("xessFg", JsonValue.Create(!fg)),
-                    Select = i => SetGpu("xessFg", JsonValue.Create(i == 1)),
-                });
+                var ids = fgo.Select(o => Str(o?["id"]) ?? "").ToArray();
+                var names = fgo.Select(o => Str(o?["name"]) ?? "").ToArray();
+                _dsRows.Add(Pick("XeSS 多帧生成", names, Math.Max(0, Array.IndexOf(ids, fg)), i => SetGpu("xessFg", JsonValue.Create(ids[i]))));
+                _dsRows.Add(new PerfRow { Title = "使用条件", Value = "需在支持的游戏内开启 XeSS 插帧", Disabled = true });
             }
             if (Str(gpu["scaling"]) is string sc)
                 _dsRows.Add(Pick("显卡缩放", DsScalingNames, Math.Max(0, Array.IndexOf(DsScaling, sc)), i => SetGpu("scaling", JsonValue.Create(DsScaling[i]))));
@@ -337,7 +334,7 @@ public sealed partial class WallStage
                 if (!_dsRows[i].Section && !_dsRows[i].Skip) { _dsFocus = i; PaintDs(); return; }
             return;
         }
-        if (_dsFocus >= 0 && _dsFocus < _dsRows.Count && !_dsRows[_dsFocus].Disabled) _dsRows[_dsFocus].Step?.Invoke(dir == Direction.Left ? -1 : 1);
+        if (_dsFocus >= 0 && _dsFocus < _dsRows.Count && !_dsRows[_dsFocus].Disabled) RowStep(_dsRows[_dsFocus], dir == Direction.Left ? -1 : 1);
     }
 
     private void DsActivate()
@@ -346,10 +343,10 @@ public sealed partial class WallStage
         if (_dsFocus < 0 || _dsFocus >= _dsRows.Count) return;
         var r = _dsRows[_dsFocus];
         if (r.Disabled) { if (r.Value == DsLater) Toast($"这一项{DsLater}"); return; }
-        r.Press?.Invoke();
+        RowPress(r);
     }
 
-    private void DsBack() => CloseDisplay();
+    private void DsBack() { if (!SettingsFinishEdit()) CloseDisplay(); }
 
     // ---------------- 绘制 ----------------
 

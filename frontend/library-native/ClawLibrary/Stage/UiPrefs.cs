@@ -5,10 +5,21 @@ namespace ClawLibrary.Stage;
 
 public enum BootTarget { Library, ControlCenter, Perf, Gamepad, Display, System, Settings }
 public enum AfterLaunch { Keep, Hide }
+/// <summary>游戏中回到游戏库：先给「正在游戏」面板，还是直接回墙面（顶上一条「正在游戏」）。</summary>
+public enum NowPlayingStyle { Panel, Bar }
+public enum SteamShortcutTarget { Library, BigPicture }
 
 public sealed record UiPrefs
 {
     public bool StyleB { get; init; }
+    /// <summary>空值沿用旧版 styleB；以后按稳定名称保存标题样式。</summary>
+    public string TitleStyleKey { get; init; } = "";
+    public bool LibraryRail { get; init; } = true;
+    /// <summary>竖条 Steam 按钮的目标；默认打开 Steam 库。</summary>
+    public SteamShortcutTarget SteamShortcut { get; init; }
+    public bool Screensaver { get; init; }
+    public int ScreensaverIdleSeconds { get; init; } = 60;
+    public int ScreensaverIntervalSeconds { get; init; } = 6;
     public bool Backdrop { get; init; } = true;
     public bool Reduced { get; init; }
     public BootTarget Boot { get; init; }
@@ -18,11 +29,14 @@ public sealed record UiPrefs
     public string[] TabsHidden { get; init; } = Array.Empty<string>();
     public bool ShowHiddenGames { get; init; }
     public bool SourceSteam { get; init; } = true;
+    /// <summary>Steam 游戏只显示已安装的；默认 false，沿用完整游戏库。</summary>
+    public bool SteamInstalledOnly { get; init; }
     public bool SourceXbox { get; init; } = true;
     public bool PreloadSteam { get; init; } = true;
     public bool BackgroundRun { get; init; } = true;
     public bool SourceShortcuts { get; init; } = true;
     public AfterLaunch AfterLaunch { get; init; }
+    public NowPlayingStyle NowPlaying { get; init; }
     /// <summary>强调色：-1 = 跟随封面，0… = 固定色（UiPrefs.Accents）。</summary>
     public int Accent { get; init; } = -1;
     public bool Sounds { get; init; }
@@ -42,7 +56,14 @@ public sealed record UiPrefs
     public bool LibraryCover { get; init; }
     /// <summary>截图页的排版：0 日历、1 放映、2 冲印。</summary>
     public int ShotsStyle { get; init; }
-    /// <summary>添加游戏 › 匹配弹窗的搜索栏样子：0 胶囊 / 1 大字 / 2 顶栏。</summary>
+    /// <summary>墙上的灯光（folia「海报灯光」）：关灯时除焦点 / 展开的卡外每张压 82 % 黑，竖条压 60 %。</summary>
+    public bool LightsOn { get; init; } = true;
+    /// <summary>海报叠色（folia latticePosterTint*）：开关、用自定义色、自定义色、强度 0–100 %。</summary>
+    public bool PosterTint { get; init; } = true;
+    public bool PosterTintCustom { get; init; }
+    public string PosterTintColor { get; init; } = DefaultTintColor;
+    public int PosterTintIntensity { get; init; } = 50;
+    public const string DefaultTintColor = "#161419";
 
     public static readonly (string Name, uint Rgb)[] Accents =
     {
@@ -50,6 +71,12 @@ public sealed record UiPrefs
     };
 
     private static string FilePath => Path.Combine(App.CacheDir, "ui.ini");
+    /// <summary>做完的首次启动引导版本（WallStage.OobeVersion）。</summary>
+    public int Oobe { get; init; }
+    /// <summary>界面语言（zh-CN / en-US）；空 = 还没选过，跟系统。目前只有首次启动引导有英文。</summary>
+    public string Lang { get; init; } = "";
+    /// <summary>这次启动之前还没有 ui.ini：新装，首次启动引导自动出现。</summary>
+    public static readonly bool FreshInstall = !File.Exists(FilePath);
 
     public static UiPrefs Load()
     {
@@ -66,6 +93,12 @@ public sealed record UiPrefs
                 p = kv[0] switch
                 {
                     "styleB" when bool.TryParse(v, out var b) => p with { StyleB = b },
+                    "titleStyle" when v is "D" or "B" or "Folia" or "Quiet" or "Editorial" => p with { TitleStyleKey = v },
+                    "libraryRail" when bool.TryParse(v, out var b) => p with { LibraryRail = b },
+                    "steamShortcut" when Enum.TryParse<SteamShortcutTarget>(v, out var e) && Enum.IsDefined(e) => p with { SteamShortcut = e },
+                    "screensaver" when bool.TryParse(v, out var b) => p with { Screensaver = b },
+                    "screensaverIdleSeconds" when int.TryParse(v, out var i) => p with { ScreensaverIdleSeconds = Math.Clamp(i, 15, 900) },
+                    "screensaverIntervalSeconds" when int.TryParse(v, out var i) => p with { ScreensaverIntervalSeconds = Math.Clamp(i, 3, 60) },
                     "backdrop" when bool.TryParse(v, out var b) => p with { Backdrop = b },
                     "reduced" when bool.TryParse(v, out var b) => p with { Reduced = b },
                     "boot" when Enum.TryParse<BootTarget>(v, out var e) && Enum.IsDefined(e) => p with { Boot = e },
@@ -74,11 +107,13 @@ public sealed record UiPrefs
                     "tabsHidden" => p with { TabsHidden = List() },
                     "showHidden" when bool.TryParse(v, out var b) => p with { ShowHiddenGames = b },
                     "sourceSteam" when bool.TryParse(v, out var b) => p with { SourceSteam = b },
+                    "steamInstalledOnly" when bool.TryParse(v, out var b) => p with { SteamInstalledOnly = b },
                     "sourceXbox" when bool.TryParse(v, out var b) => p with { SourceXbox = b },
                     "preloadSteam" when bool.TryParse(v, out var b) => p with { PreloadSteam = b },
                     "backgroundRun" when bool.TryParse(v, out var b) => p with { BackgroundRun = b },
                     "sourceShortcuts" when bool.TryParse(v, out var b) => p with { SourceShortcuts = b },
                     "afterLaunch" when Enum.TryParse<AfterLaunch>(v, out var e) && Enum.IsDefined(e) => p with { AfterLaunch = e },
+                    "nowPlaying" when Enum.TryParse<NowPlayingStyle>(v, out var np) && Enum.IsDefined(np) => p with { NowPlaying = np },
                     "accent" when int.TryParse(v, out var i) => p with { Accent = Math.Clamp(i, -1, Accents.Length - 1) },
                     "sounds" when bool.TryParse(v, out var b) => p with { Sounds = b },
                     "soundVolume" when int.TryParse(v, out var i) => p with { SoundVolume = Math.Clamp(i, 0, 100) },
@@ -91,6 +126,13 @@ public sealed record UiPrefs
                     "navHaptics" when bool.TryParse(v, out var b) => p with { NavHaptics = b },
                     "libraryCover" when bool.TryParse(v, out var b) => p with { LibraryCover = b },
                     "shotsStyle" when int.TryParse(v, out var i) => p with { ShotsStyle = Math.Clamp(i, 0, 2) },
+                    "lightsOn" when bool.TryParse(v, out var b) => p with { LightsOn = b },
+                    "posterTint" when bool.TryParse(v, out var b) => p with { PosterTint = b },
+                    "posterTintCustom" when bool.TryParse(v, out var b) => p with { PosterTintCustom = b },
+                    "posterTintColor" when v.Length == 7 && v[0] == '#' && v.Skip(1).All(Uri.IsHexDigit) => p with { PosterTintColor = v.ToLowerInvariant() },
+                    "posterTintIntensity" when int.TryParse(v, out var i) => p with { PosterTintIntensity = Math.Clamp(i, 0, 100) },
+                    "oobe" when int.TryParse(v, out var i) => p with { Oobe = Math.Max(0, i) },
+                    "lang" when v is "zh-CN" or "en-US" => p with { Lang = v },
                     "folders" => p with { Folders = v.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) },
                     _ => p,
                 };
@@ -108,11 +150,15 @@ public sealed record UiPrefs
             File.WriteAllLines(FilePath + ".tmp", new[]
             {
                 $"styleB={StyleB}", $"backdrop={Backdrop}", $"reduced={Reduced}", $"boot={Boot}", $"startTab={StartTab}",
+                $"titleStyle={TitleStyleKey}", $"libraryRail={LibraryRail}", $"screensaver={Screensaver}",
+                $"steamShortcut={SteamShortcut}",
+                $"screensaverIdleSeconds={ScreensaverIdleSeconds}", $"screensaverIntervalSeconds={ScreensaverIntervalSeconds}",
                 $"tabOrder={string.Join(',', TabOrder)}", $"tabsHidden={string.Join(',', TabsHidden)}", $"showHidden={ShowHiddenGames}",
-                $"sourceSteam={SourceSteam}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}",
+                $"sourceSteam={SourceSteam}", $"steamInstalledOnly={SteamInstalledOnly}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}", $"nowPlaying={NowPlaying}",
                 $"sourceXbox={SourceXbox}", $"preloadSteam={PreloadSteam}", $"backgroundRun={BackgroundRun}",
                 $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
                 $"soundTheme={SoundTheme}", $"musicEnabled={MusicEnabled}", $"musicVolume={MusicVolume}", $"musicTrack={MusicTrack}", $"musicLoop={MusicLoop}",
+                $"lightsOn={LightsOn}", $"posterTint={PosterTint}", $"posterTintCustom={PosterTintCustom}", $"posterTintColor={PosterTintColor}", $"posterTintIntensity={PosterTintIntensity}", $"oobe={Oobe}", $"lang={Lang}",
             });
             File.Move(FilePath + ".tmp", FilePath, true);
         }

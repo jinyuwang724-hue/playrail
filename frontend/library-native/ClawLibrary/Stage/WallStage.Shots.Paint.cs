@@ -21,8 +21,8 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     private const float ShGridTop = 104, ShGridX = 200, ShCellW = 200, ShCellH = 125, ShCellGap = 10, ShDayGap = 48;
-    private static readonly FontSpec ShMono = new("Cascadia Mono", 400);
-    private static readonly FontSpec ShDisplay = new("Segoe UI Variable Display", 200);
+    private static readonly FontSpec ShMono = TextKit.Num(400);
+    private static readonly FontSpec ShDisplay = new(TextKit.SansKey, 200);
     private static readonly Color ShDanger = Gfx.Rgba(0xff, 0x7a, 0x66);
     private static readonly float[] ShTilt = { -2.2f, 1.6f, -1.1f, 2.4f, -1.8f, 0.9f, -2.6f, 1.3f };
 
@@ -97,7 +97,7 @@ public sealed partial class WallStage
     private void ShPaintTabs()
     {
         float k = _ccK, raster = ShRaster;
-        const float X0 = 116, MaxW = 860, H = 44, Pad = 12, Gap = 6;
+        const float X0 = 204, MaxW = 772, H = 44, Pad = 12, Gap = 6;
         _shTabHits.Clear();
         if (_shTabs.Count == 0 || !_shLoaded) { ((CompositionSurfaceBrush)_shTabsSprite.Brush).Surface = null; return; }
         var ui = TextKit.Ui(400);
@@ -646,7 +646,7 @@ public sealed partial class WallStage
             float cy = p.PhotoY + p.PhotoH + (p.CardH - p.PhotoY - p.PhotoH) / 2;
             PText(ds, c.Time.ToString("HH:mm"), TextKit.TitleCjk, 26, InkColor, 24, cy, 200);
             string md = c.Time.ToString("MM.dd");
-            var dateFont = new FontSpec("Georgia", 400, true);
+            var dateFont = new FontSpec(TextKit.Cormorant, 500, true);
             float dw = PWidth(ds, md, dateFont, 15);
             PText(ds, md, dateFont, 15, Gfx.Rgba(0x6b, 0x62, 0x5a), p.CardW - 24 - dw, cy + 2, dw + 4);
             if (fav) ds.FillCircle(p.CardW - 24 - dw - 14, cy + 2, 4.5f, acc);

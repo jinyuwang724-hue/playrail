@@ -23,14 +23,15 @@ public sealed class TextArt
     public long LastUse;
 }
 
-public enum TitleStyle { D, B }
-
 public sealed class CardText
 {
     private readonly Gfx _g;
     private readonly Dictionary<string, TextArt> _cache = new();
     private long _tick;
     private const float Margin = 20;   // 阴影留边（世界 px）
+
+    /// <summary>Folia 的字号按视口 vw 计算，其他样式按卡宽计算。</summary>
+    public float ViewportWidth { get; set; } = 1920;
 
     public CardText(Gfx g) { _g = g; }
 
@@ -86,14 +87,17 @@ public sealed class CardText
     // ---------------- 标题 ----------------
 
     public static string CopyKey(LibraryItem item, double w, double h, bool expanded, TitleStyle style) =>
-        $"copy|{item.Id}|{Math.Round(w)}x{Math.Round(h)}|{(expanded ? 1 : 0)}|{style}|{(expanded ? item.LastPlayedDays?.ToString() ?? "-" : "")}";
+        $"copy|{item.Id}|{Math.Round(w)}x{Math.Round(h)}|{(expanded ? 1 : 0)}|{style}|{(expanded ? item.LastPlayedDays?.ToString() ?? "-" : "")}|title{item.Title.Length}:{item.Title}";
 
     /// <summary>标题块（不含展开态的按钮排）。</summary>
     public TextArt Copy(LibraryItem item, double w, double h, bool expanded, TitleStyle style) =>
-        Acquire(CopyKey(item, w, h, expanded, style), () => BuildCopy(item, (float)w, (float)h, expanded, style));
+        Acquire(CopyKey(item, w, h, expanded, style) + (style == TitleStyle.Folia ? $"|vw{Math.Round(ViewportWidth)}" : ""),
+            () => BuildCopy(item, (float)w, (float)h, expanded, style));
 
     private TextArt BuildCopy(LibraryItem item, float w, float h, bool expanded, TitleStyle style)
     {
+        if (style is TitleStyle.Folia or TitleStyle.Quiet or TitleStyle.Editorial)
+            return BuildSimpleCopy(item, w, h, expanded, style);
         var dev = _g.Device;
         bool b = style == TitleStyle.B;
         float cqi = w / 100;
@@ -250,6 +254,61 @@ public sealed class CardText
         return new TextArt { Surface = surface, Rect = rect };
     }
 
+    /// <summary>
+    /// 简约样式使用完整游戏名。Folia 按 Bravais / wall.css 的留边、字距、行高、三行标题与元信息参数重画，
+    /// 不引入原项目组件代码；另两款只保留标题和一行元信息，让封面保留更多空间。
+    /// </summary>
+    private TextArt BuildSimpleCopy(LibraryItem item, float w, float h, bool expanded, TitleStyle style)
+    {
+        bool folia = style == TitleStyle.Folia, editorial = style == TitleStyle.Editorial;
+        bool leftAligned = TitleStyles.IsLeftAligned(style);
+        float cqi = w / 100;
+        float left = expanded ? 32 : folia ? 17 : Clamp(18, 6 * cqi, 30);
+        float bottom = expanded ? (folia ? 28 : 30) : folia ? 17 : Clamp(18, 6 * cqi, 30);
+        float copyW = Math.Max(1, w - left * 2);
+        float size = folia ? expanded ? Clamp(48, ViewportWidth * .06f, 82) : Clamp(22, ViewportWidth * .02f, 36)
+            : expanded ? Clamp(30, 5.5f * cqi, 52) : editorial ? Clamp(17, 6.2f * cqi, 34) : Clamp(16, 5.8f * cqi, 32);
+        float spacing = folia ? -.045f * size : editorial ? .045f * size : .01f * size;
+        float lineHeight = size * (folia ? expanded ? .95f : .96f : editorial ? 1.24f : 1.18f);
+        float pad = size * (folia ? .14f : .08f);
+        float gap = folia ? 5 : 8;
+        float metaSize = expanded ? 17 : folia ? 13 : 12;
+        var align = leftAligned ? CanvasHorizontalAlignment.Left : CanvasHorizontalAlignment.Center;
+        string main = item.Title;
+        var titleFont = folia ? TextKit.FoliaTitle : editorial
+            ? TextKit.Cjk().IsMatch(main) ? new FontSpec(TextKit.SerifCjk, 500) : new FontSpec(TextKit.SerifDisplay, 400)
+            : TextKit.UiB(500);
+        string played = expanded && item.LastPlayedDays is int days ? days == 0 ? "今天玩过" : $"{days} 天前玩过" : "";
+        string meta = played.Length == 0 ? item.Subtitle : item.Subtitle.Length == 0 ? played : $"{item.Subtitle} · {played}";
+        using var metadata = TextKit.Layout(_g.Device, meta, TextKit.Ui(650), metaSize, copyW, align);
+        float metaH = meta.Length > 0 ? (float)metadata.LayoutBounds.Height : 0;
+        float bottomEdge = h - bottom - (expanded ? ActionsHeight + 26 + gap : 0);
+        float maxTitleW = folia && expanded ? copyW * .76f : copyW;
+        // 矮横卡保留顶部角标空间；不让第三行标题被卡面裁成半行。
+        float availableH = Math.Max(lineHeight, bottomEdge - 42 - (metaH > 0 ? metaH + gap : 0));
+        int maxLines = Math.Clamp((int)Math.Floor(availableH / lineHeight), 1, folia && !expanded ? 3 : 2);
+        using var title = TextKit.Layout(_g.Device, main, titleFont, size, maxTitleW, align, spacing, lineHeight, maxLines, balance: true);
+        float titleH = Math.Min(maxLines, Math.Max(1, title.LineCount)) * lineHeight;
+        float contentH = titleH + (metaH > 0 ? metaH + gap + (expanded ? 7 : 0) : 0);
+        float top = bottomEdge - contentH;
+        var rect = new Engine.Rect(left - Margin, top - pad - Margin, copyW + Margin * 2, contentH + pad * 2 + Margin * 2);
+        var surface = Draw(rect, ds =>
+        {
+            using var cl = new CanvasCommandList(ds);
+            using (var cds = cl.CreateDrawingSession())
+            {
+                cds.TextAntialiasing = CanvasTextAntialiasing.Grayscale;
+                float titleX = leftAligned ? left : left + (copyW - (float)title.RequestedSize.Width) / 2;
+                cds.DrawTextLayout(title, titleX, top, TextKit.Ink());
+                if (metaH > 0) cds.DrawTextLayout(metadata, left, top + titleH + gap + (expanded ? 7 : 0), TextKit.Ink(folia ? .78 : .64));
+            }
+            using var shadow = new ShadowEffect { Source = cl, BlurAmount = folia ? 3 : 5, ShadowColor = Gfx.Rgba(0, 0, 0, .50), Optimization = EffectOptimization.Speed };
+            ds.DrawImage(shadow, 0, 1);
+            ds.DrawImage(cl);
+        });
+        return new TextArt { Surface = surface, Rect = rect };
+    }
+
     /// <summary>单行宽度（含每个字后面的字距，与 Chrome 一样）。</summary>
     private float Advance(string text, FontSpec font, float size, float ls)
     {
@@ -308,19 +367,17 @@ public sealed class CardText
     {
         var dev = _g.Device;
         float left = 32, copyW = w - 64;
-        // 有截图的游戏多一个「X 截图 · 张数」：进控制中心的截图页，已经筛好这款游戏
-        var buttons = new List<(string, string, bool)> { ("A", install ? "安装" : "开始游戏", true) };
-        if (shots > 0) buttons.Add(("X", $"截图 {shots}", false));
-        buttons.Add(("Y", "游戏设置", false));
-        buttons.Add(("B", "收起", false));
+        var buttons = new List<(string, string, bool)> { ("A", install ? "安装游戏" : "开始游戏", true) };
+        if (!install) buttons.Add(("Y", "游戏设置", false));
+        buttons.Add(("B", install ? "返回" : "收起", false));
         var font = TextKit.Ui(700);
         var keyFont = TextKit.Ui(800);
         var labels = buttons.Select(bt => TextKit.Layout(dev, bt.Item2, font, 15, 100000, CanvasHorizontalAlignment.Left)).ToArray();
         var keys = buttons.Select(bt => TextKit.Layout(dev, bt.Item1, keyFont, 11, 22, CanvasHorizontalAlignment.Center)).ToArray();
         var widths = labels.Select(l => 16 + 22 + 8 + (float)l.LayoutBounds.Width + 16).ToArray();
         float total = widths.Sum() + 8 * (buttons.Count - 1);
-        float x0 = style == TitleStyle.B ? left : left + (copyW - total) / 2;
-        float y0 = h - 30 - ActionsHeight;
+        float x0 = TitleStyles.IsLeftAligned(style) ? left : left + (copyW - total) / 2;
+        float y0 = h - (style == TitleStyle.Folia ? 28 : 30) - ActionsHeight;
         var rect = new Engine.Rect(left - Margin, y0 - Margin, copyW + Margin * 2, ActionsHeight + Margin * 2);
         var surface = Draw(rect, ds =>
         {
@@ -336,10 +393,13 @@ public sealed class CardText
                     if (primary) cds.FillRoundedRectangle(x, y0, widths[i], ActionsHeight, 12, 12, TextKit.Ink(0.16));
                     float kx = x + 16, ky = y0 + (ActionsHeight - 22) / 2;
                     cds.FillEllipse(kx + 11, ky + 11, 11, 11, TextKit.Ink(0.22 * op));
-                    var kb = keys[i].LayoutBounds;
-                    cds.DrawTextLayout(keys[i], kx, ky + (22 - (float)kb.Height) / 2 - (float)kb.Y, TextKit.Ink(op));
-                    var lb = labels[i].LayoutBounds;
-                    cds.DrawTextLayout(labels[i], kx + 22 + 8, y0 + (ActionsHeight - (float)lb.Height) / 2, TextKit.Ink(op));
+                    // 单个键名字母按实际墨迹居中，避免字体的上升部、下降部和左右留白造成视觉偏移。
+                    var kb = keys[i].DrawBounds;
+                    cds.DrawTextLayout(keys[i], kx + 11 - (float)(kb.X + kb.Width / 2),
+                        ky + 11 - (float)(kb.Y + kb.Height / 2), TextKit.Ink(op));
+                    var lb = labels[i].DrawBounds;
+                    cds.DrawTextLayout(labels[i], kx + 22 + 8 - (float)lb.X,
+                        y0 + ActionsHeight / 2 - (float)(lb.Y + lb.Height / 2), TextKit.Ink(op));
                     x += widths[i] + 8;
                 }
             }

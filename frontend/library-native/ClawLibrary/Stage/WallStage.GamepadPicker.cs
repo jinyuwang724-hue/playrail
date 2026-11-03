@@ -21,7 +21,7 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private enum GpSubLevel { Key, Chooser, Settings }
+    private enum GpSubLevel { Key, Chooser, Settings, Group }
 
     /// <summary>
     /// 键格：名字、固件键码（0 = 固件发不出）、软件层指令（"pad:B" "key:Tab" "mouse:Left" "wheel:Up" "sys:screenshot"，空 = 软件层也没有）、
@@ -37,6 +37,9 @@ public sealed partial class WallStage
         public int KeyFocus = 1, SettingsFocus = 1, Tab, Cell, Act;
         public bool InTabs;
         public bool SteamMapping;
+        /// <summary>分组页（WallStage.GamepadGroups.cs）：哪一组、焦点在哪一行；从分组页直接进的选择指令 / 按键页，退回分组页。</summary>
+        public int Group, GroupFocus = 1;
+        public bool FromGroup, DirectChooser;
         public readonly List<GpCell> Chord = new();
     }
 
@@ -244,7 +247,7 @@ public sealed partial class WallStage
     private void GpSaveLayout()
     {
         int v = ++_gpLayoutEdits;
-        BuildGpItems();
+        if (_gpOpen) BuildGpItems();
         PaintGpBody();
         After(400, async () =>
         {
@@ -270,10 +273,16 @@ public sealed partial class WallStage
 
     private void GpPickerBack()
     {
+        if (SettingsFinishEdit()) return;
+        SettingsResetPointer();
         var p = _gpPicker!;
-        if (p.Level != GpSubLevel.Key) { p.Level = GpSubLevel.Key; p.Chord.Clear(); p.InTabs = false; PaintGpBody(); return; }
+        if (p.Level == GpSubLevel.Chooser && p.DirectChooser || p.Level == GpSubLevel.Key && p.FromGroup)
+        {
+            p.Level = GpSubLevel.Group; p.DirectChooser = false; p.Chord.Clear(); p.InTabs = false; PaintGpBody(); return;
+        }
+        if (p.Level is not (GpSubLevel.Key or GpSubLevel.Group)) { p.Level = GpSubLevel.Key; p.Chord.Clear(); p.InTabs = false; PaintGpBody(); return; }
         _gpPicker = null;
-        BuildGpItems();
+        if (_gpOpen) BuildGpItems();
         PaintGpBody();
     }
 
@@ -281,6 +290,7 @@ public sealed partial class WallStage
     private void GpSwitchTab(int delta)
     {
         var p = _gpPicker;
+        if (p?.Level == GpSubLevel.Group) { GpGroupSwitch(p, delta); return; }
         if (p?.Level != GpSubLevel.Chooser) return;
         p.Tab = (p.Tab + delta + GpChooserTabs.Length) % GpChooserTabs.Length;
         p.Cell = 0;
@@ -313,6 +323,7 @@ public sealed partial class WallStage
         string src = p.Source;
         var rows = new List<PerfRow>();
         if (GpIsSpecial(src)) return GpSpecialRows(p);
+        if (p.Desktop && src is "LStick" or "RStick") return GpDesktopStickRows(src);
         if (p.Desktop)
         {
             // 桌面模式：固件一层，只有「按下发什么」
@@ -465,6 +476,9 @@ public sealed partial class WallStage
         var p = _gpPicker!;
         switch (p.Level)
         {
+            case GpSubLevel.Group:
+                GpGroupMove(p, dir);
+                return;
             case GpSubLevel.Key or GpSubLevel.Settings:
             {
                 var rows = p.Level == GpSubLevel.Key ? GpKeyRows(p) : GpSettingsRows(p);
@@ -475,7 +489,7 @@ public sealed partial class WallStage
                     for (int i = focus + d; i >= 0 && i < rows.Count; i += d)
                         if (!rows[i].Section) { focus = i; break; }
                 }
-                else if (focus >= 0 && focus < rows.Count) rows[focus].Step?.Invoke(dir == Direction.Left ? -1 : 1);
+                else if (focus >= 0 && focus < rows.Count) RowStep(rows[focus], dir == Direction.Left ? -1 : 1);
                 if (p.Level == GpSubLevel.Key) p.KeyFocus = focus; else p.SettingsFocus = focus;
                 break;
             }
@@ -515,11 +529,17 @@ public sealed partial class WallStage
     private void GpPickerActivate()
     {
         var p = _gpPicker!;
+        if (p.Level == GpSubLevel.Group)
+        {
+            var grows = GpGroupRows(p);
+            if (p.GroupFocus >= 0 && p.GroupFocus < grows.Count && !grows[p.GroupFocus].Disabled) RowPress(grows[p.GroupFocus]);
+            return;
+        }
         if (p.Level is GpSubLevel.Key or GpSubLevel.Settings)
         {
             var rows = p.Level == GpSubLevel.Key ? GpKeyRows(p) : GpSettingsRows(p);
             int focus = p.Level == GpSubLevel.Key ? p.KeyFocus : p.SettingsFocus;
-            if (focus >= 0 && focus < rows.Count) rows[focus].Press?.Invoke();
+            if (focus >= 0 && focus < rows.Count) RowPress(rows[focus]);
             return;
         }
         if (p.InTabs) { p.InTabs = false; PaintGpBody(); return; }
@@ -546,11 +566,12 @@ public sealed partial class WallStage
         {
             if (cell.Cmd.StartsWith("pad:") || cell.Cmd.Length == 0) { Toast("专用功能键使用系统动作或键盘鼠标指令"); return; }
             GpSetSpecial(p, GpCommandFromCell(cell, p.Chord));
-            p.Chord.Clear(); p.Level = GpSubLevel.Key; PaintGpBody(); return;
+            p.Chord.Clear(); p.Level = p.DirectChooser ? GpSubLevel.Group : GpSubLevel.Key; p.DirectChooser = false; PaintGpBody(); return;
         }
         var chord = p.Chord.ToList();
         p.Chord.Clear();
-        p.Level = GpSubLevel.Key;
+        p.Level = p.DirectChooser ? GpSubLevel.Group : GpSubLevel.Key;
+        p.DirectChooser = false;
         bool firmwareOk = cell.Code > 0 && chord.All(c => c.Code > 0);
         if (p.Desktop)
         {
@@ -637,6 +658,9 @@ public sealed partial class WallStage
                 GpHints(ds, ("B", "返回"));
                 break;
             }
+            case GpSubLevel.Group:
+                PaintGpGroup(ds, p);
+                break;
             case GpSubLevel.Settings:
             {
                 var rows = GpSettingsRows(p);
@@ -728,7 +752,6 @@ public sealed partial class WallStage
         if (p.Tab == 0) PaintGpChooserPadArt(ds);
         if (p.Tab == 1) PaintGpChooserMouse(ds, focusCell >= 0 ? cells[focusCell].Cmd : "", accent);
 
-        using var font = new CanvasTextFormat { FontFamily = TextKit.Ui(400).Family, FontSize = 14, HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
         float radius = p.Tab == 0 ? 12 : 7;
         for (int i = 0; i < cells.Length; i++)
         {
@@ -753,7 +776,11 @@ public sealed partial class WallStage
                 GpDrawGlyph(ds, id, cx - GpGlyphWidth(id) / 2, cy, ink, false);
                 ds.Transform = old;
             }
-            else ds.DrawText(cell.Label, rect, ink, font);
+            else
+            {
+                using var l = TextKit.Layout(ds, cell.Label, TextKit.Ui(400), 14, (float)rect.Width, CanvasHorizontalAlignment.Center);
+                ds.DrawTextLayout(l, (float)rect.X, (float)(rect.Y + (rect.Height - l.LayoutBounds.Height) / 2 - l.LayoutBounds.Y), ink);
+            }
         }
 
         // 底部：键盘组合的状态 / 这一页的说明（一行小字），再下面按键提示

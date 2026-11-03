@@ -4,7 +4,10 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private string _steamAccount = "正在读取…";
+    private PlatformConnectionStore _connections = null!;
+    private CancellationTokenSource? _connectCancel;
+    private bool _steamRefreshing, _xboxRefreshing, _servicesDisposed;
+    private string? _steamRefreshError, _xboxRefreshError;
     private bool _serviceActionBusy;
     private readonly List<Microsoft.UI.Dispatching.DispatcherQueueTimer> _trayTimers = new();
 
@@ -25,37 +28,137 @@ public sealed partial class WallStage
     private void BuildStServices()
     {
         _stRows.Add(new PerfRow { Section = true, Title = "Steam" });
-        _stRows.Add(StInfo("本机账户", _steamAccount));
-        _stRows.Add(StInfo("客户端", Steam.Root() == null ? "未安装" : PlatformClients.SteamRunning() ? "运行中" : "未运行"));
-        _stRows.Add(StToggle("显示 Steam 游戏", _prefs.SourceSteam, on =>
+        var account = _connections.Steam;
+        _stRows.Add(new PerfRow { Title = "账户", Value = account?.Name ?? "未连接", Skip = true });
+        _stRows.Add(new PerfRow
         {
-            SaveUi(_prefs with { SourceSteam = on }); _stNeedsReload = true; Repaint();
-        }, true, "重新载入后生效"));
-        _stRows.Add(StToggle("打开游戏库时在托盘启动 Steam", _prefs.PreloadSteam, on =>
+            Title = _connectCancel != null ? "取消连接" : account == null ? "连接 Steam" : "更换 Steam 账户",
+            Disabled = _steamRefreshing,
+            Value = _connectCancel != null ? "正在等待网页确认…" : "",
+            Press = () => { if (_connectCancel != null) _connectCancel.Cancel(); else _ = ConnectSteam(); },
+        });
+        if (account != null)
         {
-            SaveUi(_prefs with { PreloadSteam = on }); Repaint();
-            if (on) _ = RunServiceAction(() => PlatformClients.StartSteamInTray());
-        }, true));
-        _stRows.Add(StAction("立即在托盘启动 Steam", "steam-tray", _serviceActionBusy ? "处理中…" : "", () =>
-            _ = RunServiceAction(() => PlatformClients.StartSteamInTray())));
-        _stRows.Add(StAction("打开 Steam / 管理账户", "steam-open", "在 Steam 中登录或切换账户", () =>
-            _ = RunServiceAction(() => { PlatformClients.Open("steam://open/main"); return "已打开 Steam"; })));
-        _stRows.Add(StInfo("游戏库范围", "本机缓存与安装记录，可能不含全部已购游戏"));
+            bool cloud = _steamCloud.HasKey(account.Id);
+            _stRows.Add(new PerfRow { Title = "Steam 云端同步", Value = cloud ? "已配置" : "需配置 Web API Key", Disabled = _steamRefreshing, Press = ConfigureSteamCloud });
+            if (!cloud) _stRows.Add(new PerfRow { Title = "获取 Steam Web API Key", Value = "›", Press = () => PlatformClients.Open("https://steamcommunity.com/dev/apikey") });
+            if (_steamCloudSnapshot?.SteamId == account.Id)
+                _stRows.Add(new PerfRow { Title = "上次云端同步", Value = _steamCloudSnapshot.Updated.ToLocalTime().ToString("MM-dd HH:mm"), Skip = true });
+            _stRows.Add(new PerfRow { Title = "更新本机安装状态", Disabled = _steamRefreshing, Press = RefreshSteamInstallation });
+            if (cloud) _stRows.Add(new PerfRow { Title = "移除云端配置", Disabled = _steamRefreshing, Press = () =>
+            {
+                try { _steamCloud.RemoveKey(account.Id); _ = RefreshPlatformLibrary("steam"); }
+                catch { Toast("云端配置未能移除，请重试"); }
+            } });
+        }
+        _stRows.Add(new PerfRow { Title = _steamCloudSnapshot == null ? "本机已识别游戏" : "云端已识别游戏", Value = $"{_lib.IdentifiedCount("steam")} 款", Skip = true, BrightValue = true });
+        _stRows.Add(new PerfRow { Title = "更新 Steam 游戏库", Value = _steamRefreshing ? "更新中…" : "", Disabled = _steamRefreshing,
+            Press = () => _ = RefreshPlatformLibrary("steam") });
+        if (account != null) _stRows.Add(new PerfRow { Title = "断开 Steam 连接", Disabled = _connectCancel != null || _steamRefreshing,
+            Press = () => { try { _connections.SetSteam(null); _steamCloudSnapshot = null;
+                ApplyLibrarySnapshot(_lib.ReplacePlatform("steam", Library.Build(new(), new())));
+                _ = RefreshPlatformLibrary("steam"); Repaint(); } catch { Toast("连接记录未能保存，请重试"); } } });
+        if (_steamRefreshError != null) _stRows.Add(new PerfRow { Title = "更新状态", Value = _steamRefreshError, Skip = true });
 
         _stRows.Add(new PerfRow { Section = true, Title = "Xbox" });
-        var xbox = XboxGames.Current;
-        _stRows.Add(StInfo("账户", "在 Xbox 客户端中登录或切换账户"));
-        _stRows.Add(StToggle("显示 Xbox 游戏", _prefs.SourceXbox, on =>
+        _stRows.Add(new PerfRow { Title = "账户", Value = "未连接", Skip = true });
+        // 尚无本应用的 Microsoft Client ID；不以打开客户端冒充账户授权。
+        _stRows.Add(new PerfRow { Title = "连接 Xbox", Value = "暂未开放", Press = () => Toast("Xbox 账户连接尚未开放，本机游戏可正常识别和启动") });
+        _stRows.Add(new PerfRow { Title = "本机已识别游戏", Value = $"{_lib.IdentifiedCount("xbox")} 款", Skip = true, BrightValue = true });
+        _stRows.Add(new PerfRow { Title = "更新 Xbox 游戏库", Value = _xboxRefreshing ? "更新中…" : "", Disabled = _xboxRefreshing,
+            Press = () => _ = RefreshPlatformLibrary("xbox") });
+        if (_xboxRefreshError != null) _stRows.Add(new PerfRow { Title = "更新状态", Value = _xboxRefreshError, Skip = true });
+    }
+
+    private async Task ConnectSteam()
+    {
+        if (_connectCancel != null) return;
+        using var cancellation = new CancellationTokenSource();
+        _connectCancel = cancellation;
+        Repaint();
+        try
         {
-            SaveUi(_prefs with { SourceXbox = on }); _stNeedsReload = true; Repaint();
-        }, true, "重新载入后生效"));
-        _stRows.Add(StAction("打开 Xbox / 管理账户", "xbox-open", "", () =>
-            _ = RunServiceAction(() => { PlatformClients.Open("msxbox://"); return "已请求打开 Xbox，请在客户端中登录"; })));
-        _stRows.Add(StInfo("本机已安装游戏", !_prefs.SourceXbox ? "来源已关闭" : xbox.Error ?? $"识别到 {xbox.Games.Count} 款"));
-        if (xbox.Unreadable > 0) _stRows.Add(StInfo("部分应用无法读取", "扫描可能不完整，可在 Xbox 客户端中查看"));
-        _stRows.Add(StInfo("同步范围", "已注册的 GDK / Xbox Live 游戏，不含云端完整库"));
-        _stRows.Add(new PerfRow { Section = true, Title = "刷新" });
-        _stRows.Add(StAction("重新扫描平台游戏库", "services-reload", _stNeedsReload ? "有改动待生效" : "重新载入游戏库", RestartLibrary));
+            var account = await SteamOpenId.ConnectAsync(uri => PlatformClients.Open(uri.AbsoluteUri), cancellation.Token);
+            if (_servicesDisposed) return;
+            string? previousId = _connections.Steam?.Id;
+            _connections.SetSteam(account);
+            if (previousId != account.Id)
+            {
+                _steamCloudSnapshot = null;
+                _steamUser = null;
+                _lib = _lib.ReplacePlatform("steam", Library.Build(new(), new()));
+                LoadSteamCloudCache();
+                ApplyLibrarySnapshot(_lib);
+            }
+            if (_window is MainWindow main) main.ActivateRoute("restore-library");
+            Toast($"已连接 Steam：{account.Name}");
+            await RefreshPlatformLibrary("steam");
+        }
+        catch (OperationCanceledException) { if (!_servicesDisposed) Toast(cancellation.IsCancellationRequested ? "已取消连接" : "连接已取消或超时，请重试"); }
+        catch (Exception ex) { Log.Warn($"Steam connection: {ex.GetType().Name}"); if (!_servicesDisposed) Toast("Steam 连接未完成，请检查网络后重试"); }
+        finally { _connectCancel = null; if (!_servicesDisposed && _stOpen) Repaint(); }
+    }
+
+    private async Task RefreshPlatformLibrary(string platform, bool quiet = false)
+    {
+        bool steam = platform == "steam";
+        if (steam ? _steamRefreshing : _xboxRefreshing) return;
+        if (steam) { _steamRefreshing = true; _steamRefreshError = null; }
+        else { _xboxRefreshing = true; _xboxRefreshError = null; }
+        if (_stOpen) Repaint();
+        try
+        {
+            if (steam)
+            {
+                string? linkedId = _connections.Steam?.Id;
+                if (linkedId != null && _steamCloud.HasKey(linkedId))
+                {
+                    await RefreshSteamCloud(linkedId);
+                    if (!quiet && !_servicesDisposed) Toast($"Steam 云端游戏库已更新 · {_lib.IdentifiedCount("steam")} 款");
+                    return;
+                }
+                var result = await Task.Run(() =>
+                {
+                    string root = Steam.Root() ?? throw new InvalidOperationException("请先在本机安装 Steam");
+                    string? user = linkedId == null ? Steam.UserDir(root) : Steam.UserDirForAccount(root, linkedId);
+                    if (linkedId != null && user == null) throw new InvalidOperationException("请先在本机 Steam 登录此账户，再更新游戏库");
+                    var library = Library.Load(Path.Combine(AppContext.BaseDirectory, "Assets", "library.json"), Steam.ReadPlayStats(user),
+                        id => ArtKitBuilder.TryLoad(Path.Combine(ArtRoot, id)), Steam.ReadCollections(user), Steam.ReadOwnedApps(root),
+                        Steam.ReadInstalled(root));
+                    return (library, root, user);
+                });
+                if (_servicesDisposed) return;
+                SaveUi(_prefs with { SourceSteam = true });
+                Library.IncludeSteam = true;
+                _steamRoot = result.root; _steamUser = result.user;
+                _steamCloudSnapshot = null;
+                ApplyLibrarySnapshot(_lib.ReplacePlatform("steam", result.library));
+            }
+            else
+            {
+                var result = await Task.Run(XboxGames.ReadAsync);
+                if (_servicesDisposed) return;
+                if (result.Error != null) throw new InvalidOperationException(result.Error);
+                SaveUi(_prefs with { SourceXbox = true });
+                Library.XboxLibrary = result.Games;
+                if (_lib.IdentifiedCount("xbox") != 0 || result.Games.Count != 0)
+                    ApplyLibrarySnapshot(_lib.ReplaceXbox(result.Games));
+                if (result.Unreadable > 0) _xboxRefreshError = "部分应用无法读取";
+            }
+            if (!quiet) Toast($"{(steam ? "Steam" : "Xbox")} 游戏库已更新 · {_lib.IdentifiedCount(platform)} 款");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"{platform} library refresh: {ex.GetType().Name}");
+            string error = ex is InvalidOperationException ? ex.Message : "未能更新，请稍后重试";
+            if (steam) _steamRefreshError = error; else _xboxRefreshError = error;
+            if (!_servicesDisposed && !quiet) Toast(error);
+        }
+        finally
+        {
+            if (steam) _steamRefreshing = false; else _xboxRefreshing = false;
+            if (!_servicesDisposed && _stOpen) Repaint();
+        }
     }
 
     private async Task RunServiceAction(Func<string> action)
@@ -67,8 +170,7 @@ public sealed partial class WallStage
         finally
         {
             _serviceActionBusy = false;
-            _steamAccount = Steam.LocalAccount();
-            if (_stOpen) Repaint();
+            if (!_servicesDisposed && _stOpen) Repaint();
         }
     }
 }

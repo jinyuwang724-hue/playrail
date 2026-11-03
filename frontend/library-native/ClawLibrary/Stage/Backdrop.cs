@@ -173,7 +173,7 @@ public sealed partial class Backdrop : IDisposable
     }
 
     /// <summary>还要不要逐帧画（在跑、或颜色还在渐变、或有待画的一帧）。</summary>
-    public bool NeedsFrames => _surface != null && ((_running && Animated) || _dirty || _stripChanged || (_settings.Kind == BackgroundKind.Latent && _fadeMs < ColorFadeMs) || ImageFading);
+    public bool NeedsFrames => !_stop && _surface != null && ((_running && Animated) || _dirty || _stripChanged || (_settings.Kind == BackgroundKind.Latent && _fadeMs < ColorFadeMs) || ImageFading);
     private bool _stripChanged;
 
     /// <summary>换封面：后台缩到 50×50 取代表色，颜色在 800 ms 里渐变过去。post 把结果送回 UI 线程。</summary>
@@ -284,11 +284,18 @@ public sealed partial class Backdrop : IDisposable
 
     /// <summary>画一帧（UI 线程，合成器的帧上）：只算 [left, left+width)（DIP）那一条。</summary>
     /// <summary>hold：墙面在动，背景自己的流动和换色先停（不推进时间），但开口变宽 / 挪了露出来的新区域照样补画，不留旧画面。</summary>
-    public void FrameNow(double dtMs, bool hold = false) { double l, w; lock (_gate) { l = _stripLeft; w = _stripWidth; } Frame(hold ? 0 : dtMs, l, w, hold); }
+    public void FrameNow(double dtMs, bool hold = false)
+    {
+        lock (_gate)
+        {
+            if (_stop) return;
+            Frame(hold ? 0 : dtMs, _stripLeft, _stripWidth, hold);
+        }
+    }
 
     private void Frame(double dtMs, double left, double width, bool hold = false)
     {
-        if (_surface == null || _effect == null) return;
+        if (_stop || _surface == null || _effect == null) return;
         _stripChanged = false;
         if (_running && Animated)
         {
@@ -468,6 +475,10 @@ public sealed partial class Backdrop : IDisposable
             _blur?.Dispose();
             _effect?.Dispose();
             DisposeImages();
+            _strip = null;
+            _blur = null;
+            _effect = null;
+            _surface = null;
         }
     }
 }

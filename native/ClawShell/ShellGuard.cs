@@ -8,6 +8,8 @@ using System.Collections.Generic;
 
 namespace ClawShell
 {
+    public interface IGameSurface { bool EnsureLibrarySurface(bool activate); }
+
     public interface IDesktopSurface { bool FocusDesktop(); }
 
     public interface IShellSystem
@@ -99,7 +101,7 @@ namespace ClawShell
                 try { _sys.RunStartupApps(); } catch (Exception ex) { _sys.Log("startup apps: " + ex.Message); }
                 for (int i = 0; i < MaxFailures; i++)
                 {
-                    if (_sys.LaunchLibrary()) { _sys.WriteState("game", "boot"); return true; }
+                    if (_sys.LaunchLibrary()) { _sys.WriteState("game", "boot"); if (EnsureSurface(true)) return true; }
                     _failures.Add(_sys.Now);
                     _sys.Log("library launch failed at boot (" + (i + 1) + ")");
                     _sys.Sleep(1000);
@@ -142,10 +144,25 @@ namespace ClawShell
                 _gaveUp = false;
                 _failures.Clear();
             }
-            if (_gaveUp || _sys.LibraryRunning()) return;
+            if (_gaveUp) return;
+            if (_sys.LibraryRunning())
+            {
+                if (!EnsureSurface(false))
+                {
+                    RecordFailure("library-window-unavailable");
+                    if (!_gaveUp && !_sys.LaunchLibrary()) RecordFailure("library-window-recovery-failed");
+                }
+                return;
+            }
             RecordFailure("library-not-running");
             if (_gaveUp) return;
             if (!_sys.LaunchLibrary()) RecordFailure("library-relaunch-failed");
+        }
+
+        private bool EnsureSurface(bool activate)
+        {
+            var surface = _sys as IGameSurface;
+            return surface == null || surface.EnsureLibrarySurface(activate);
         }
 
         private void RecordFailure(string what)
@@ -181,12 +198,19 @@ namespace ClawShell
         public SwitchResult ToGame()
         {
             if (_sys.ForceFlagExists()) { _sys.WriteState("desktop", "refused:force-desktop.flag"); return SwitchResult.Refused; }
-            if (!_sys.ExplorerRunning()) { _sys.WriteState("game", "already"); return SwitchResult.Ok; }
+            if (!_sys.ExplorerRunning())
+            {
+                if ((!_sys.LibraryRunning() && !_sys.LaunchLibrary()) || !EnsureSurface(true))
+                { FallbackToDesktop("library-window-unavailable"); return SwitchResult.Failed; }
+                _sys.WriteState("game", "already"); return SwitchResult.Ok;
+            }
             if (!_sys.LibraryRunning() && !_sys.LaunchLibrary())
             {
                 _sys.WriteState("desktop", "refused:library");
                 return SwitchResult.Refused;
             }
+            if (!EnsureSurface(true))
+            { _sys.WriteState("desktop", "refused:library-window"); return SwitchResult.Refused; }
             if (_sys.SteamInstalled() && !_sys.SteamRunning() && !_sys.StartSteam())
             {
                 _sys.WriteState("desktop", "refused:steam");
@@ -208,6 +232,8 @@ namespace ClawShell
             _gaveUp = false;
             _failures.Clear();
             _sys.WriteState("game", "switched");
+            if (!EnsureSurface(true))
+            { FallbackToDesktop("library-window-unavailable"); return SwitchResult.Failed; }
             return SwitchResult.Ok;
         }
 

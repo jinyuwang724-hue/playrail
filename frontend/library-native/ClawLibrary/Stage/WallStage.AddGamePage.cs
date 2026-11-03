@@ -58,6 +58,8 @@ public sealed partial class WallStage
     private ContainerVisual? _ag;
     private SpriteVisual _agSprite = null!, _agFlash = null!;
     private bool _agOpen;
+    /// <summary>封面页的右栏嵌在游戏设置 › 封面里（WallStage.GameSettingsEmbed.cs）：同一份草稿和网格，换一张就马上存。</summary>
+    private bool _agEmbed;
     private AgPage _agPage;
     private AgDraft? _agDraft;
     private int _agZone, _agIndex, _agTab, _agKind, _agVersion;
@@ -82,6 +84,15 @@ public sealed partial class WallStage
 
     private void AgOpenEdit(JsonObject g)
     {
+        var d = AgDraftOf(g);
+        AgShow(d, AgPage.Art);
+        if (d.Sgdb != null) _ = AgLoadCandidates(d, new JsonObject { ["source"] = "sgdb", ["id"] = d.Sgdb });
+        if (d.SteamAppId != null) _ = AgLoadOfficial(d);
+    }
+
+    /// <summary>本地游戏（或 Steam 里的非 Steam 游戏）的草稿：现有的图是每种的第一张。</summary>
+    private static AgDraft AgDraftOf(JsonObject g)
+    {
         var d = new AgDraft
         {
             Id = Str(g["id"]), Name = Str(g["name"]) ?? "", Exe = Str(g["exe"]) ?? "", Steam = Bool(g["steam"]), Sgdb = Str(g["sgdb"]),
@@ -96,9 +107,7 @@ public sealed partial class WallStage
             d.Pick[kind] = -1;
             if (g["art"] is JsonObject a && Str(a[kind]) is { Length: > 0 } path) { d.Cands[kind].Add((null, path)); d.Pick[kind] = 0; }
         }
-        AgShow(d, AgPage.Art);
-        if (d.Sgdb != null) _ = AgLoadCandidates(d, new JsonObject { ["source"] = "sgdb", ["id"] = d.Sgdb });
-        if (d.SteamAppId != null) _ = AgLoadOfficial(d);
+        return d;
     }
 
     private void AgShow(AgDraft d, AgPage page)
@@ -137,9 +146,8 @@ public sealed partial class WallStage
         Log.Info("add game page close");
         if (_agFromLibrary)
         {
-            // 从游戏库的 ＋ 进来的：直接回游戏库（新游戏在库里重新载入后出现）
+            // 从游戏库的 ＋ 进来的：直接回原来的游戏库，保存完成后在原窗口更新。
             _agFromLibrary = false;
-            _stNeedsReload = true;
             if (_stFromLibrary) { CloseSettingsToLibrary(); return; }
         }
         if (_st != null && _stOpen) { _st.IsVisible = true; Repaint(); }
@@ -150,6 +158,7 @@ public sealed partial class WallStage
         AgEndEdit(false);
         _agPage = page;
         _agScroll = 0;
+        _agListScroll = _agMatchScroll = 0;
         _agManualScroll = false;
         switch (page)
         {
@@ -180,6 +189,8 @@ public sealed partial class WallStage
         d.Searching = true;
         d.Status = "";
         d.Matches.Clear();
+        _agMatchScroll = 0;
+        _agManualScroll = false;
         AgRepaint(d);
         try
         {
@@ -306,7 +317,6 @@ public sealed partial class WallStage
         };
         string name = d.Name.Trim();
         bool isNew = d.Id == null;
-        bool fromLibrary = _agFromLibrary;
         AgClose();
         _ = Task.Run(async () =>
         {
@@ -316,11 +326,8 @@ public sealed partial class WallStage
                 await _agent.CallLong("local_games_save", 180, game);
                 _dq.TryEnqueue(() =>
                 {
-                    _stNeedsReload = true;
                     Toast(isNew ? $"已添加：{name}" : $"已保存：{name}");
                     _ = LgRefresh();
-                    // 从游戏库的 ＋ 加的、人已经回到墙上：重新载入一次，新游戏马上上墙
-                    if (fromLibrary && isNew && !_ccOpen) After(1200, () => { if (!_ccOpen) RestartLibrary(); });
                 });
             }
             catch (Exception ex) { _dq.TryEnqueue(() => Toast($"「{name}」没有存上：{ex.Message}")); }
@@ -334,7 +341,6 @@ public sealed partial class WallStage
             _agent ??= new AgentClient();
             await _agent.Call("local_games_remove", JsonValue.Create(d.Id));
             Toast("已移除");
-            _stNeedsReload = true;
             if (_agDraft == d) AgClose();
         }
         catch (Exception ex) { Toast(ex.Message); }
@@ -342,7 +348,7 @@ public sealed partial class WallStage
 
     private void AgRepaint(AgDraft d)
     {
-        if (_agOpen && _agDraft == d) _dq.TryEnqueue(AgPaint);
+        if ((_agOpen || _agEmbed) && _agDraft == d) _dq.TryEnqueue(AgPaint);
     }
 
     private List<(string Id, string Name)> AgCollections() =>
@@ -351,14 +357,21 @@ public sealed partial class WallStage
     // ---------------- 行（和设置页同一套） ----------------
 
     /// <summary>
-    /// 游戏设置 › 封面：打开我们的封面页（封面概览那一页）。本地游戏和 Steam 里的非 Steam 游戏走本地游戏的编辑；
-    /// Steam 游戏只换图：现有的图从 Steam 的缓存 / 自定义图读，按游戏名到 SteamGridDB 找候选，完成时设成 Steam 的自定义封面。
+    /// 游戏设置 › 封面的草稿（嵌在设置页里，不开封面页）。本地游戏和 Steam 里的非 Steam 游戏用本地游戏的那份；
+    /// Steam 游戏只换图：现有的图从 Steam 的缓存 / 自定义图读，按游戏名到 SteamGridDB 找候选，换一张就设成 Steam 的自定义封面。
     /// </summary>
-    private async void AgOpenArtFor(LibraryItem item)
+    private async void GsArtLoad(LibraryItem item)
     {
+        _agEmbed = true;
+        _agDraft = null;
         await LgRefresh();
+        if (_gsItem != item || !_agEmbed) return;
         var local = LgGames().FirstOrDefault(g => Str(g["id"]) == item.Id);
-        if (local != null) { AgOpenEdit(local); AgGo(AgPage.Art, AgTabOverview); return; }
+        if (local != null)
+        {
+            GsArtShow(AgDraftOf(local));
+            return;
+        }
         var d = new AgDraft { Id = item.Id, Name = item.Title, Exe = "", Query = item.Title, SteamArt = true, Steam = true };
         foreach (var (kind, _) in AgKinds) { d.Cands[kind] = new(); d.Pick[kind] = -1; }
         try
@@ -370,19 +383,45 @@ public sealed partial class WallStage
                     if (Str(a[kind]) is { Length: > 0 } path) { d.Cands[kind].Add((null, path)); d.Pick[kind] = 0; }
         }
         catch (Exception ex) { Log.Warn($"game art: {ex.Message}"); }
-        AgShow(d, AgPage.Art);
-        AgGo(AgPage.Art, AgTabOverview);
-        // 按游戏名先找一次 SteamGridDB，找到就把第一款的候选图拿来（不换页）
-        await AgSearch(d);
-        if (_agDraft == d && d.Matches.Count > 0 && d.Match < 0)
+        if (_gsItem != item || !_agEmbed) return;
+        GsArtShow(d);
+    }
+
+    /// <summary>嵌在游戏设置里换了一张：只存这一种图（Steam 游戏设成 Steam 的自定义图，本地游戏存进本地游戏再同步到 Steam）。</summary>
+    private void AgEmbedSave(AgDraft d, string kind)
+    {
+        var list = d.Cands[kind];
+        int pick = d.Pick[kind];
+        string? url = pick >= 0 && pick < list.Count ? list[pick].Url : "";
+        if (url == null) return;   // 换回了本来那张
+        var art = new JsonObject { [kind] = url };
+        string title = d.Name;
+        if (d.SteamArt)
         {
-            d.Match = 0;
-            var m = d.Matches[0];
-            d.Sgdb = Str(m["source"]) == "sgdb" ? Str(m["id"]) : null;
-            d.SteamAppId = Str(m["steamAppId"]);
-            _ = AgLoadCandidates(d, m);
-            if (d.SteamAppId != null) _ = AgLoadOfficial(d);
+            var req = new JsonObject { ["id"] = d.Id, ["platform"] = "steam", ["title"] = d.Name };
+            _ = Task.Run(async () =>
+            {
+                try { _agent ??= new AgentClient(); await _agent.CallLong("game_art_save", 180, req, art); }
+                catch (Exception ex) { _dq.TryEnqueue(() => Toast($"「{title}」的{AgKindTitle(kind)}没有换上：{ex.Message}")); }
+            });
+            return;
         }
+        var game = new JsonObject
+        {
+            ["id"] = d.Id, ["name"] = d.Name.Trim(), ["exe"] = d.Exe, ["steam"] = d.Steam, ["sgdb"] = d.Sgdb, ["steamAppId"] = d.SteamAppId, ["art"] = art,
+            ["collections"] = new JsonArray(d.Collections.Select(c => (JsonNode?)JsonValue.Create(c)).ToArray()),
+            ["newCollections"] = new JsonArray(d.NewCollections.Select(c => (JsonNode?)JsonValue.Create(c)).ToArray()),
+        };
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                _agent ??= new AgentClient();
+                await _agent.CallLong("local_games_save", 180, game);
+                _dq.TryEnqueue(() => { _ = LgRefresh(); });
+            }
+            catch (Exception ex) { _dq.TryEnqueue(() => Toast($"「{title}」的{AgKindTitle(kind)}没有存上：{ex.Message}")); }
+        });
     }
 
     private List<PerfRow> AgArtRows(AgDraft d)
@@ -637,7 +676,7 @@ public sealed partial class WallStage
         var targets = AgOverviewTargets(d);
         if (index < 0 || index >= targets.Count) return;
         var t = targets[index];
-        if (t.Local) { _ = AgPickLocal(d, t.Kind); return; }
+        if (t.Local || _agEmbed) { _ = AgPickLocal(d, t.Kind); return; }   // 游戏设置里没有候选页签：图本身也是从本地换
         int tab = Array.IndexOf(AgTabKinds, t.Kind);
         if (tab < 0) { _ = AgPickLocal(d, t.Kind); return; }   // 图标只有本地这一种来源
         _agTab = tab;
@@ -657,6 +696,7 @@ public sealed partial class WallStage
         Toast(to < 0 ? $"不用{AgKindTitle(kind)}了" : $"已换{AgKindTitle(kind)}");
         AgPaint();
         AgBounce(AgGridTile(kind, index));
+        if (_agEmbed) AgEmbedSave(d, kind);
     }
 
     /// <summary>「Steam 官方封面」弹窗：这一种图在 Steam 商店里的官方版本，A 用它，B 关。</summary>
@@ -686,6 +726,7 @@ public sealed partial class WallStage
         AgPaint();
         AgBounce(AgGridTile(kind, at));
         Toast($"已换成 Steam 官方的{AgKindTitle(kind)}");
+        if (_agEmbed) AgEmbedSave(d, kind);
     }
 
     /// <summary>从本地选一张（系统的选文件窗口，触屏、鼠标都能用），选好就用上。</summary>
@@ -705,6 +746,7 @@ public sealed partial class WallStage
             d.Pick[kind] = at;
             Toast($"已换{AgKindTitle(kind)}");
             AgPaint();
+            if (_agEmbed) AgEmbedSave(d, kind);
             if (_agTab == AgTabOverview && AgOverviewSlots().TryGetValue(kind, out var slot)) AgBounce(slot);
             else if (_agTab < AgTabOverview && AgTabKinds[_agTab] == kind) AgBounce(AgGridTile(kind, at));
         }
@@ -712,6 +754,7 @@ public sealed partial class WallStage
     }
 
     private SpriteVisual? _agBounce;
+    private ContainerVisual? _agBounceHost;
 
     /// <summary>
     /// 换图时那张图 Q 弹一下：把页面上这一块（图、勾、焦点框）单独画到一层上，从中心放大到 1.1 倍再弹回、
@@ -720,20 +763,29 @@ public sealed partial class WallStage
     private void AgBounce(Rect r)
     {
         var d = _agDraft;
-        if (_ag == null || d == null || Reduced || r.Width <= 0) return;
-        if (_agBounce == null)
+        ContainerVisual? host = _agEmbed && !_agOpen ? _st : _ag;
+        if (host == null || d == null || Reduced || r.Width <= 0) return;
+        if (_agBounce == null || _agBounceHost != host)
         {
+            if (_agBounce != null) { _agBounceHost?.Children.Remove(_agBounce); _agBounce.Dispose(); }
             _agBounce = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
-            _ag.Children.InsertAbove(_agBounce, _agSprite);
+            _agBounceHost = host;
+            host.Children.InsertAtTop(_agBounce);
         }
         float k = _ccK, raster = k * Chrome.Dpi, pad = 8;
         var hits = _agHits.ToList();
         var tabHits = _agTabHits.ToList();
-        var area = new Rect(r.X - pad, r.Y - pad, r.Width + pad * 2, r.Height + pad * 2);
+        bool embed = _agEmbed && !_agOpen;
+        // 嵌在游戏设置里：封面概览按 GsArtMatrix 挪过去、放大了，弹的那块也照它算
+        var m = embed ? GsArtMatrix : Matrix3x2.Identity;
+        var tl = Vector2.Transform(new Vector2((float)r.X, (float)r.Y), m);
+        var br = Vector2.Transform(new Vector2((float)(r.X + r.Width), (float)(r.Y + r.Height)), m);
+        var area = new Rect(tl.X - pad, tl.Y - pad, br.X - tl.X + pad * 2, br.Y - tl.Y + pad * 2);
         CcSet(_agBounce, CcDraw((float)area.Width, (float)area.Height, raster, ds =>
         {
-            ds.Transform = Matrix3x2.CreateTranslation(-(float)area.X, -(float)area.Y) * ds.Transform;
-            using (ds.CreateLayer(1, area)) AgPaintArt(ds, d);
+            ds.Transform = m * Matrix3x2.CreateTranslation(-(float)area.X, -(float)area.Y) * ds.Transform;
+            if (embed) GsPaintArt(ds, d);
+            else using (ds.CreateLayer(1, new Rect(r.X - pad, r.Y - pad, r.Width + pad * 2, r.Height + pad * 2))) AgPaintArt(ds, d);
         }));
         _agHits.Clear(); _agHits.AddRange(hits);
         _agTabHits.Clear(); _agTabHits.AddRange(tabHits);
@@ -873,7 +925,7 @@ public sealed partial class WallStage
             {
                 MinHeight = 0, MinWidth = 0, BorderThickness = new Thickness(0), RequestedTheme = ElementTheme.Dark,
                 IsSpellCheckEnabled = false, IsTextPredictionEnabled = false, Visibility = Visibility.Collapsed,
-                FontFamily = new FontFamily("Segoe UI Variable Text, Microsoft YaHei UI"),
+                FontFamily = new FontFamily(TextKit.XamlUi),
             };
             var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
             foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused", "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused" })
@@ -949,10 +1001,11 @@ public sealed partial class WallStage
     // ---------------- 绘制 ----------------
 
     private Color AgMuted => Gfx.WithAlpha(CcText, 0.55f);
-    private static readonly FontSpec AgMono = new("Cascadia Mono", 400);
+    private static readonly FontSpec AgMono = TextKit.Num(400);
 
     private void AgPaint()
     {
+        if (_agEmbed && !_agOpen) { if (_stOpen) PaintSt(); return; }
         if (!_agOpen || _ag == null || _agDraft == null) return;
         float k = _ccK, raster = k * Chrome.Dpi;
         _agHits.Clear();
@@ -1305,18 +1358,28 @@ public sealed partial class WallStage
 
     private void AgPaintRows(CanvasDrawingSession ds, List<PerfRow> rows, float top, int focus, int zone)
     {
+        float viewH = 700 - top;
+        float contentH = RowsHeight(rows);
+        if (!_agManualScroll && focus >= 0)
+            _agListScroll = RowScroll(rows, focus, _agListScroll, viewH);
+        _agListScroll = Math.Clamp(_agListScroll, 0, Math.Max(0, contentH - viewH));
         var old = ds.Transform;
-        ds.Transform = Matrix3x2.CreateTranslation(40, top) * old;
-        PaintRowList(ds, rows, focus, null, false, AgRowsW);
+        using (ds.CreateLayer(1, new Rect(32, top, AgRowsW + 16, viewH)))
+        {
+            ds.Transform = Matrix3x2.CreateTranslation(40, top - _agListScroll) * old;
+            PaintRowList(ds, rows, focus, null, false, AgRowsW);
+            ds.Transform = old;
+        }
         ds.Transform = old;
-        float y = top;
+        float y = top - _agListScroll;
         for (int i = 0; i < rows.Count; i++)
         {
             float h = rows[i].Section ? PerfSecH : PerfRowH;
             if (!rows[i].Section && !rows[i].Disabled)
             {
                 var row = rows[i];
-                _agHits.Add((new Rect(40, y, AgRowsW, h), zone, i, () => row.Press?.Invoke()));
+                float y0 = Math.Max(top, y), y1 = Math.Min(700, y + h);
+                if (y1 > y0) _agHits.Add((new Rect(40, y0, AgRowsW, y1 - y0), zone, i, () => row.Press?.Invoke()));
             }
             y += h;
         }
@@ -1356,9 +1419,15 @@ public sealed partial class WallStage
     private CanvasBitmap? AgBitmapOf(string? path)
     {
         if (string.IsNullOrEmpty(path)) return null;
-        if (_lgBitmaps.TryGetValue(path, out var bmp)) return bmp;
-        _lgBitmaps[path] = null;
-        _ = LoadAgBitmap(path);
+        string key = path;
+        if (!path.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            try { var file = new FileInfo(path); if (!file.Exists) return null; key += $"|{file.Length}|{file.LastWriteTimeUtc.Ticks}"; }
+            catch { return null; }
+        }
+        if (_lgBitmaps.TryGetValue(key, out var bmp)) return bmp;
+        _lgBitmaps[key] = null;
+        _ = LoadAgBitmap(path, key);
         return null;
     }
 
@@ -1393,18 +1462,21 @@ public sealed partial class WallStage
         finally { AgDownloads.Release(); }
     }
 
-    private async Task LoadAgBitmap(string path)
+    private async Task LoadAgBitmap(string path, string key)
     {
         try
         {
             string? local = path.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? await AgFetchThumb(path) : path;
             if (local == null) return;
-            var bmp = await CanvasBitmap.LoadAsync(G.Device, local);
+            using var bytes = new MemoryStream(await File.ReadAllBytesAsync(local));
+            using var input = bytes.AsRandomAccessStream();
+            var bmp = await CanvasBitmap.LoadAsync(G.Device, input);
             _dq.TryEnqueue(() =>
             {
-                _lgBitmaps[path] = bmp;
+                if (_servicesDisposed) { bmp.Dispose(); return; }
+                _lgBitmaps[key] = bmp;
                 if (_lgBitmaps.Count > 200)
-                    foreach (var k in _lgBitmaps.Keys.Where(k => k != path).Take(_lgBitmaps.Count - 150).ToList()) { _lgBitmaps[k]?.Dispose(); _lgBitmaps.Remove(k); }
+                    foreach (var k in _lgBitmaps.Keys.Where(k => k != key).Take(_lgBitmaps.Count - 150).ToList()) { _lgBitmaps[k]?.Dispose(); _lgBitmaps.Remove(k); }
                 AgPaintSoon();
             });
         }
@@ -1430,7 +1502,7 @@ public sealed partial class WallStage
     /// <summary>缩略图一张张到：攒一下再重画，不要每张都整页重画。</summary>
     private void AgPaintSoon()
     {
-        if (_agPaintQueued || !_agOpen) return;
+        if (_agPaintQueued || !(_agOpen || _agEmbed)) return;
         _agPaintQueued = true;
         After(60, () => { _agPaintQueued = false; AgPaint(); });
     }

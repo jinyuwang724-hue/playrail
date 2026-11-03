@@ -152,13 +152,16 @@ public sealed partial class WallStage
     }
 
     /// <summary>≡：墙上 = 打开控制中心（出场形变），控制中心里 = 关掉。</summary>
-    public void ToggleControlCenter()
+    public void ToggleControlCenter() => WithCue(Sfx.None, () =>
     {
+        if (_wsOpen) { WsBack(); return; }
+        if (ConsumeScreensaverWake()) return;
+        if (_ob != null) return;
         if (_backgroundSettingsOpen) CloseBackgroundSettings();
         MarkInput();
         if (MorphIntercept()) return;
         if (_ccOpen) CloseControlCenter(); else OpenControlCenter();
-    }
+    });
 
     /// <summary>测试用：游戏库卡封面此刻的状态（有没有图、解码好没有、可见不可见）。</summary>
     internal (bool ok, string info) CcCoverState()
@@ -189,8 +192,10 @@ public sealed partial class WallStage
     /// <param name="quiet">从游戏库直接进某一页（设置页）：不走游戏库卡的形变，墙在 240 ms 里淡出，主页卡片不出现。</param>
     private void OpenControlCenter(bool quiet = false)
     {
+        ExitScreensaver();
+        NowPlayingYield();
         if (_stack.Count == 0) return;
-        SoundFx.Play(Sfx.Open);
+        Cue(quiet ? Sfx.ModalShow : Sfx.MenuIn);
         long t0 = NowMs;
         if (_searchOpen) CloseSearch();
         if (_expandedKey != null) Collapse(false);
@@ -248,12 +253,14 @@ public sealed partial class WallStage
     private void CloseControlCenter()
     {
         if (!_ccOpen || _cc == null) return;
+        Cue(Sfx.MenuOut);
         ClosePerf(instant: true);
         CloseGamepad(instant: true);
         CloseDisplay(instant: true);
         CloseSystem(instant: true);
         CloseSettingsPage(instant: true);
         CloseShots(instant: true);
+        if (!_wsStandalone) CloseSwitcher(instant: true);
         _stFromLibrary = false;
         _ccOpen = false;
         int v = ++_ccVersion;
@@ -278,6 +285,7 @@ public sealed partial class WallStage
         CloseSystem(instant: true);
         CloseSettingsPage(instant: true);
         CloseShots(instant: true);
+        if (!_wsStandalone) CloseSwitcher(instant: true);
         _cc.IsVisible = false;
         _cc.StopAnimation("Opacity");
         _cc.Opacity = 1;
@@ -305,11 +313,12 @@ public sealed partial class WallStage
         if (_syOpen) { SyMove(dir); return; }
         if (_stOpen) { StMove(dir); return; }
         if (_shOpen) { ShMove(dir); return; }
+        if (_wsOpen) { WsMove(dir); return; }
         if (CcChromeMove(dir)) return;
         if (dir is not (Direction.Left or Direction.Right)) return;
         // 不再限制「200 ms 一步」：滚动是弹簧，连按就直接换终点接着滚（可打断）
         int next = Math.Clamp(_ccFocus + (dir == Direction.Left ? -1 : 1), 0, _ccBlocks.Count - 1);
-        if (next == _ccFocus) return;
+        if (next == _ccFocus) { Cue(Sfx.Bump); return; }
         CcFocus(next);
     }
 
@@ -330,8 +339,10 @@ public sealed partial class WallStage
         if (_syOpen) { SyActivate(); return; }
         if (_stOpen) { StActivate(); return; }
         if (_shOpen) { ShActivate(); return; }
+        if (_wsOpen) { WsActivate(); return; }
         if (CcChromeActivate()) return;
         var b = _ccBlocks[_ccFocus];
+        if (_ccFocus > 0) Cue(Sfx.ModalShow);   // 进性能 / 手柄 / 显示与声音 / 系统 / 设置 / 截图页
         switch (_ccFocus)
         {
             case 0:   // 游戏库：进集合层（进场形变）
@@ -358,14 +369,18 @@ public sealed partial class WallStage
         }
     }
 
-    /// <summary>Y：手柄页里交给手柄页（震动页 = 恢复原来的强度）；控制中心里 = 拍立得 ⇄ 卡片 切换卡片样式；墙上仍是游戏设置的占位提示。</summary>
+    /// <summary>Y：各设置页保留自己的操作；控制中心切换卡片样式；游戏库仅为已展开游戏打开设置。</summary>
     public void PadY()
     {
+        if (_wsOpen) { return; }
+        if (ConsumeScreensaverWake()) return;
         MarkInput();
+        if (_ob != null) return;
         if (MorphIntercept()) return;
         if (_ccOpen && _agOpen) { AgY(); return; }
         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
         if (_ccOpen && _stOpen) { StResetFocused(); return; }
+        if (_qsOpen || (_ccOpen && _wsOpen)) return;
         if (_ccOpen && _shOpen) { ShY(); return; }
         if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
@@ -375,18 +390,28 @@ public sealed partial class WallStage
     /// <summary>View：截图页里 = 按游戏筛选；其余照旧开关性能读数。</summary>
     public void PadView()
     {
+        if (_wsOpen) { return; }
+        if (ConsumeScreensaverWake()) return;
+        MarkInput();
+        if (_ob != null) return;
         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShToggleFilter(); return; }
+        if (_qsOpen) return;
         ToggleHud();
     }
 
-    /// <summary>X：手柄页里交给手柄页（震动页 = 测试震动）；截图页换排版；墙上展开的卡有截图 = 去看它的截图；其余照旧切标题样式。</summary>
+    /// <summary>X：游戏库显示 / 隐藏竖条；其他页面保留各自的操作。</summary>
     public void PadX()
     {
+        if (_wsOpen) { WsCloseFocused(); return; }
+        if (ConsumeScreensaverWake()) return;
+        MarkInput();
+        if (_ob != null) return;
         if (_ccOpen && _agOpen) { MarkInput(); AgX(); return; }
         if (_ccOpen && _gpOpen) { MarkInput(); GpPadButton(isY: false); return; }
         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShX(); return; }
-        if (!_ccOpen && _expandedKey != null) { MarkInput(); if (!MorphIntercept() && TryOpenShotsForExpanded()) return; }
-        ToggleTitleStyle();
+        if (_ccOpen && _wsOpen) { MarkInput(); WsCloseFocused(); return; }
+        if (_qsOpen) return;
+        if (!_ccOpen) ToggleLibraryRail();
     }
 
     private void OpenRailSettings()
@@ -406,6 +431,8 @@ public sealed partial class WallStage
     {
         if (_agOpen) { AgClick(sx, sy); return; }
         if (_shOpen) { ShClick(sx, sy); return; }
+        if (_wsOpen) { WsClick(sx, sy); return; }
+        if (_stOpen && GsOverlayClick(sx, sy)) return;
         if (_stOpen && StCategoryClick(sx, sy)) return;
         if (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen) { SettingsClick(sx, sy); return; }
         if (CcChromeClick(sx, sy)) return;
@@ -660,7 +687,7 @@ public sealed partial class WallStage
         var chrome = CcChromeLabel();   // 焦点在左下图标 / 电源菜单 / 头像上：写它的名字和说明
         using var name = TextKit.Layout(G.Device, chrome?.name ?? b.Name, TextKit.Ui(700), 24, maxW, CanvasHorizontalAlignment.Center, 0, 32);
         string line = chrome?.line ?? (string.IsNullOrEmpty(b.Summary) ? b.Second : $"{b.Second} • {b.Summary}");
-        using var mono = TextKit.Layout(G.Device, line, new FontSpec(CcMonoFont, 400), 12, maxW, CanvasHorizontalAlignment.Center, 0, 16);
+        using var mono = TextKit.Layout(G.Device, line, TextKit.Num(400), 12, maxW, CanvasHorizontalAlignment.Center, 0, 16);
         // 拍立得：块名已经写在相纸上，下面不再重复；焦点在左下图标 / 电源 / 头像上时照常写它们的名字
         bool hide = !_ccCards && chrome == null;
         CcSet(_ccLabel, CcDraw(maxW, CcLabelH, raster, ds =>
@@ -729,6 +756,7 @@ public sealed partial class WallStage
         using (var glow = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(Colors.White, 0.22f), Gfx.WithAlpha(Colors.White, 0))
                { Center = new Vector2(x + W * 0.85f, y + H * 0.1f), RadiusX = W * 0.6f, RadiusY = W * 0.6f })
             ds.FillRectangle(x, y, W, H, glow);
+        if (LineIcons.Draw(ds, b.Icon, x + W / 2, y + H / 2, iconSize, Gfx.WithAlpha(Colors.White, 0.95f), stroke: 1.25f)) return;
         using var icon = TextKit.Layout(ds, b.Icon, new FontSpec(CcIconFont, 400), iconSize, 300, CanvasHorizontalAlignment.Left);
         var ib = icon.DrawBounds;
         ds.DrawTextLayout(icon, x + W / 2 - (float)(ib.X + ib.Width / 2), y + H / 2 - (float)(ib.Y + ib.Height / 2), Gfx.WithAlpha(Colors.White, 0.95f));
@@ -1270,7 +1298,8 @@ public sealed partial class WallStage
             uint seed = (uint)(((int)MathF.Round(b.X) * 73856093) ^ ((int)MathF.Round(b.Y) * 19349663));
             double jitter = ((seed % 1000) / 1000.0 - 0.5) * 0.08;
             double n = Math.Min(dist / maxDist, 1);
-            double dur = (0.46 + n * 0.3) * 1000, delay = Math.Max(0, (0.04 + n * 0.26 + jitter) * 1000);
+            // 远处的卡晚一点、慢一点，但都在背景板淡完（0.62 s）前后淡完 —— 之前最远的要到 1 s 才没，看着像散完了才一起消失
+            double dur = (0.40 + n * 0.18) * 1000, delay = Math.Max(0, (0.02 + n * 0.16 + jitter * 0.5) * 1000);
             float rot = (seed % 2 == 0 ? 1 : -1) * (1.8f + (seed % 3) * 0.8f);
             // 实测：每张幽灵卡用一份墙卡的实时画面（VisualSurface）时，十几张一起在起飞那一帧渲染，每次都掉一帧；
             // 改成墙卡自己散开（只动卡的内层：位移、缩放、转角、透明度），不多画任何东西
@@ -1383,7 +1412,8 @@ public sealed partial class WallStage
             double nn = Math.Min(dist / (spacing * 14), 1);
             double eased = nn * nn * (3 - 2 * nn);
             double seed = Seed(ItemFor(t.Slot) ?? t.Slot.Key.ToString());
-            double delay = Math.Min(0.04 + eased * 0.34 + seed * 0.04, 0.32) * 1000;
+            // 远处的卡不再干等 0.32 s 才出发（等的这段是空的），最多 0.22 s
+            double delay = Math.Min(0.03 + eased * 0.2 + seed * 0.03, 0.22) * 1000;
             if (!Program.Args.Contains("--no-flyin")) t.MorphFlyIn(dir * reach / s, delay);
         }
 
@@ -1577,7 +1607,7 @@ public sealed partial class WallStage
 
         // 性能：还没有接入功耗读数，不编数字
         var perf = _ccBlocks[1];
-        perf.Second = "功耗与风扇";
+        perf.Second = "芯片功耗与风扇";
         // 性能：工具箱后台 agent 的实时功耗与当前预设（连不上就写「—」，不编数字）
         double? pkgW = Num(_perfView?["actual"]?["package"]);
         perf.Summary = _perfS != null ? PerfPresetText() : _perfAgentDown ? "连不上工具箱后台" : "正在读取…";
@@ -1609,7 +1639,7 @@ public sealed partial class WallStage
 
         var app = _ccBlocks[5];
         app.Second = "主页与外观";
-        app.Summary = $"标题样式：{(Style == TitleStyle.B ? "极简黑体" : "电影字幕")} · 动态背景：{(_backdropOn ? "开" : "关")}";
+        app.Summary = $"标题样式：{TitleStyles.Name(Style)} · 动态背景：{(_backdropOn ? "开" : "关")}";
         app.HasReading = false;
     }
 

@@ -176,7 +176,7 @@ public sealed partial class WallStage
         _stRows.Add(new PerfRow { Title = "打开小黄鸭原版", Disabled = _lsBusy, Press = () => { _ = LsRun("open_lossless"); } });
     }
 
-    private void BuildLsFields(JsonArray? groups, JsonObject values)
+    private void BuildLsFields(JsonArray? groups, JsonObject values, Action<string, JsonNode?>? changed = null)
     {
         if (groups == null) return;
         foreach (var group in groups.OfType<JsonObject>())
@@ -188,7 +188,11 @@ public sealed partial class WallStage
             {
                 string key = Str(field["key"])!, title = Str(field["title"])!;
                 var value = values[key] ?? field["default"];
-                void Set(JsonNode? next) { values[key] = next; Repaint(); }
+                void Set(JsonNode? next)
+                {
+                    values[key] = next?.DeepClone();
+                    if (changed != null) changed(key, next?.DeepClone()); else Repaint();
+                }
                 PerfRow row;
                 switch (Str(field["kind"]))
                 {
@@ -217,7 +221,7 @@ public sealed partial class WallStage
                         row = new PerfRow { Title = title, Value = Str(value) ?? "", Press = () => StEditText(Str(value) ?? "", text => Set(JsonValue.Create(text.Trim()))) };
                         break;
                 }
-                row.Disabled = _lsSaving;
+                row.Disabled = changed == null && _lsSaving;
                 _stRows.Add(row);
             }
         }

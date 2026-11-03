@@ -16,7 +16,6 @@ public sealed partial class WallStage
     /// <summary>快速设置键 / Claw 键在 Steam 大屏幕里做什么（工具箱后台的按键接管，settings.qamAction / msiAction）。</summary>
     private static readonly string[] GpActions = { "MainMenu", "QuickAccess", "MagpieToggle", "None" };
     private static readonly string[] GpSpecialChoices = { "原功能", "主菜单", "快速访问", "超分开关", "不做事" };
-    private const string GpLater = "后台的手柄固件写入还没上线，接上后这里就能改";
 
     // 按键映射页（手柄模式 / 桌面模式）的格子和布局在 WallStage.GamepadMap.cs。
 
@@ -111,10 +110,12 @@ public sealed partial class WallStage
                 break;
             }
             default:   // mouse
-                left.Add(Item("移动光标", "LS", "左摇杆", GpLater));
-                left.Add(Item("光标速度", "LS", "—", GpLater));
-                right.Add(Item("滚动", "RS", "右摇杆", GpLater));
-                right.Add(Item("左键 / 右键", "RB", "RB / LB", GpLater));
+                left.Add(GpMapCell("LStick", true));
+                left.Add(new GpItem { Title = "灵敏度", Key = "LS", Value = _gpDesktopLayout == null ? "—" : $"{GpStickSens("left", true)} %",
+                    Disabled = _gpDesktopLayout == null, Press = () => GpOpenGroup("LStick", true) });
+                right.Add(GpMapCell("RStick", true));
+                right.Add(new GpItem { Title = "灵敏度", Key = "RS", Value = _gpDesktopLayout == null ? "—" : $"{GpStickSens("right", true)} %",
+                    Disabled = _gpDesktopLayout == null, Press = () => GpOpenGroup("RStick", true) });
                 break;
         }
 
@@ -187,17 +188,31 @@ public sealed partial class WallStage
         {
             case "LStick" or "RStick":
             {
+                if (desktop)
+                {
+                    string desktopSide = src == "LStick" ? "left" : "right";
+                    var s = _gpFw?["desktopStickMappings"]?[desktopSide];
+                    string output = Str(s?["output"]) ?? "native";
+                    it.Key = ""; it.Lights = new[] { src == "LStick" ? "LS" : "RS" };
+                    it.Value = GpStickModeName(GpStickMode(desktopSide, true));
+                    it.Stock = GpStickMode(desktopSide, true) == (desktopSide == "left" ? "mouse" : "scroll") && !Bool(s?["flipX"]) && !Bool(s?["flipY"]);
+                    it.Disabled = _gpDesktopLayout == null; it.Why = _gpFwError ?? "正在读取…";
+                    it.Press = () => GpOpenGroup(src, true);
+                    break;
+                }
                 bool isLeft = src == "LStick", swap = Bool(_gpFw?["sticks"]?["swap"]);
                 it.Key = "";
                 it.Lights = new[] { isLeft ? "LS" : "RS" };
                 it.Choices = isLeft ? new[] { "左摇杆", "右摇杆" } : new[] { "右摇杆", "左摇杆" };
                 it.Choice = swap ? 1 : 0;
-                it.Value = _gpFw == null ? "—" : it.Choices[it.Choice];
-                it.Stock = !swap;
-                it.Disabled = _gpFw == null;
+                // 映射页上写摇杆的行为（摇杆 / 摇杆鼠标 / 十字键），桌面模式和互换另说；A 进摇杆那组
+                string side = isLeft ? "left" : "right";
+                it.Value = desktop ? (_gpFw == null ? "—" : it.Choices[it.Choice]) : GpStickModeName(GpStickMode(side)) + (swap && _gpGame == null ? " · 左右互换" : "");
+                it.Stock = !swap && GpStickMode(side) == "stick";
                 it.Why = _gpFwError ?? "正在读取…";
                 // 固件只有「左右互换」一个开关：改任意一边，两边一起换
                 it.SetChoice = i => { if (_gpFw?["sticks"] is JsonObject s) s["swap"] = i == 1; _ = GpWrite("set_stick_swap", JsonValue.Create(i == 1)); };
+                it.Press = () => GpOpenGroup(src, desktop);
                 break;
             }
             case "QS" or "Claw":
@@ -206,16 +221,70 @@ public sealed partial class WallStage
                 it.Stock = _gpSettings?["buttonMappings"]?[src] == null;
                 it.Disabled = _gpSettings == null;
                 it.Why = _gpError ?? "正在读取…";
-                it.Press = () => GpOpenPicker(src, false);
+                it.Press = () => GpOpenGroup(src, false);
                 break;
             }
             default:
                 it.Value = desktop ? GpDesktopSummary(src) : GpKeySummary(src);
                 it.Stock = desktop ? GpDesktopStock(src) : GpActs(src) == null && GpFirmwareCodes(src) is var c && (c.Length == 0 || c.Length == 1 && c[0] == GpNativeCode(src));
-                it.Press = () => GpOpenPicker(src, desktop);
+                it.Press = () => GpOpenGroup(src, desktop);
                 break;
         }
         return it;
+    }
+
+    private List<PerfRow> GpDesktopStickRows(string src)
+    {
+        string side = src == "LStick" ? "left" : "right";
+        var s = _gpFw?["desktopStickMappings"]?[side];
+        string output = Str(s?["output"]) ?? "native";
+        bool flipX = Bool(s?["flipX"]), flipY = Bool(s?["flipY"]);
+        void Save()
+        {
+            if (s is JsonObject live) { live["output"] = output; live["flipX"] = flipX; live["flipY"] = flipY; }
+            ++_gpInputRevision;
+            _gpRangeWrites ??= new SettingsWriteQueue(ex => Toast($"没有写进手柄：{ex.Message}"), () => { _ = GpRefresh(); });
+            string target = output; bool x = flipX, y = flipY;
+            _ = _gpRangeWrites.Enqueue($"dstickmap:{side}", 150, async () =>
+            {
+                _agent ??= new AgentClient();
+                await _agent.Call("set_desktop_stick", JsonValue.Create(side), JsonValue.Create(target), JsonValue.Create(x), JsonValue.Create(y));
+            });
+        }
+        PerfRow Toggle(string title, bool value, Action<bool> set) => new()
+        {
+            Title = title, Choices = new[] { "关", "开" }, Choice = value ? 1 : 0,
+            Press = () => { set(!value); Save(); }, Step = d => { set(d > 0); Save(); }, Select = i => { set(i == 1); Save(); },
+        };
+        int dz = Int(_gpFw?["desktopSticks"]?[side]?["deadzone"], 10);
+        int outer = Int(_gpFw?["desktopSticks"]?[side]?["outer"], 100);
+        void SaveRange()
+        {
+            if (_gpFw is JsonObject fw)
+            {
+                if (fw["desktopSticks"] is not JsonObject sticks) fw["desktopSticks"] = sticks = new JsonObject();
+                sticks[side] = new JsonObject { ["deadzone"] = dz, ["outer"] = outer };
+            }
+            GpRangeChanged($"dstick:{side}", "set_desktop_stick_deadzone", side, dz, outer);
+        }
+        var rows = new List<PerfRow>
+        {
+            Toggle("反转水平方向", flipX, v => flipX = v),
+            Toggle("反转垂直方向", flipY, v => flipY = v),
+            new() { Title = "死区", Numeric = true, Number = dz, Minimum = 0, Maximum = 50, Increment = 1, Value = $"{dz} %",
+                Step = d => { dz = Math.Clamp(dz + d, 0, 50); SaveRange(); },
+                SetNumber = v => { dz = v; SaveRange(); } },
+            new() { Title = "外圈阈值", Numeric = true, Number = outer, Minimum = 75, Maximum = 100, Increment = 1, Value = $"{outer} %",
+                Step = d => { outer = Math.Clamp(outer + d, 75, 100); SaveRange(); },
+                SetNumber = v => { outer = v; SaveRange(); } },
+            new() { Title = "恢复默认功能", Value = "方向 · 死区 · 外圈  ›", Press = () =>
+                { output = "native"; flipX = flipY = false; Save(); dz = 10; outer = 100; SaveRange();
+                  GpSetStick(side, "mode", JsonValue.Create(side == "left" ? "mouse" : "scroll"), true);
+                  GpSetStick(side, "sensitivity", JsonValue.Create(50), true); } },
+        };
+        if (s == null) foreach (var row in rows.Where(r => !r.Section)) row.Disabled = true;
+        rows.InsertRange(0, GpStickRows(new GpPickerState { Desktop = true }, src));
+        return rows;
     }
 
     private static string GpSourceName(string src) => src switch
@@ -243,6 +312,7 @@ public sealed partial class WallStage
     /// <summary>桌面模式下这个键映射到什么：直接写键值（没改过就是这个键自己）。</summary>
     private string GpDesktopSummary(string src)
     {
+        if (src is "LStick" or "RStick") return GpMapCell(src, true).Value;
         if (_gpFw == null || _gpFw["desktopKeys"] == null) return "—";
         return GpDesktopStock(src) ? GpNativeName(src) : GpCodesText(GpDesktopCodes(src)!);
     }

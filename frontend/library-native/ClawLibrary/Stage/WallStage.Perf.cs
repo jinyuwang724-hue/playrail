@@ -23,11 +23,15 @@ public sealed partial class WallStage
         public string Title = "";
         public string Value = "";
         public float Indent; // Optional child-row indentation; used by the system-page pilot.
+        public string? EditId;
         public string[]? Choices;
         public int Choice = -1;
         public bool Section, Disabled, Numeric;
+        public bool BrightValue;
         /// <summary>这个模式下用不上的行：照样占位（高度不变），焦点跳过。</summary>
         public bool Skip;
+        /// <summary>行首画这个手柄键的图标（分组页），代替行号。</summary>
+        public string? Glyph;
         public Action<int>? Step;
         public Action? Press;
         public Action<int>? Select, SetNumber;
@@ -35,6 +39,7 @@ public sealed partial class WallStage
         /// <summary>设置页：和默认不同（前面画一个小点），Y 用 Reset 恢复默认。</summary>
         public bool Changed;
         public Action? Reset;
+        public Action? Secondary;
     }
 
     // 设计 px（× _ccK），1280×800 舞台：左栏 348、右栏 812、中间 40
@@ -49,7 +54,26 @@ public sealed partial class WallStage
     /// <summary>强调色跟着背景的主题色走（当前游戏封面的代表色），背景还没取到色时用 folia 的橙。</summary>
     private Color PerfAccent => FixedAccent ?? _ccBack?.Accent ?? Gfx.Rgba(0xfd, 0x8a, 0x5a);
 
-    private AgentClient? _agent;
+    private AgentClient? _agentClient;
+    private AgentClient? _agent
+    {
+        get => _agentClient;
+        set
+        {
+            if (ReferenceEquals(_agentClient, value)) return;
+            if (_agentClient != null)
+            {
+                _agentClient.ConnectionChanged -= GpAgentConnectionChanged;
+                _agentClient.EventReceived -= GpAgentEvent;
+            }
+            _agentClient = value;
+            if (_agentClient != null)
+            {
+                _agentClient.ConnectionChanged += GpAgentConnectionChanged;
+                _agentClient.EventReceived += GpAgentEvent;
+            }
+        }
+    }
     private ContainerVisual? _perf;
     private ContainerVisual _perfRightView = null!;
     private float _perfScroll, _perfScrollY = float.NaN;
@@ -96,6 +120,7 @@ public sealed partial class WallStage
     private void ClosePerf(bool instant = false)
     {
         if (!_perfOpen || _perf == null) return;
+        if (!instant) Cue(Sfx.ModalHide);
         _perfOpen = false;
         SettingsResetPointer();
         _perfCurveEdit = false;
@@ -142,13 +167,13 @@ public sealed partial class WallStage
     private DispatcherQueueTimer MakePerfTimer()
     {
         var t = _dq.CreateTimer();
-        t.Interval = TimeSpan.FromSeconds(1);
+        t.Interval = TimeSpan.FromMilliseconds(500);
         t.IsRepeating = true;
         t.Tick += (_, _) =>
         {
             if (!_perfOpen) return;
             // 实时 CPU 频率两秒采一次（左栏「CPU 频率」）；功耗、风扇每秒从 agent 取，取回来顺手重画
-            if (_perfTicks++ % 2 == 0) (_cpuFreq ??= new CpuFreq()).Sample();
+            if (_perfTicks++ % 4 == 0) (_cpuFreq ??= new CpuFreq()).Sample();
             _ = PerfRefresh(true);
         };
         return t;
@@ -185,7 +210,7 @@ public sealed partial class WallStage
         if (!fromSave && view["actual"]?["package"] is JsonValue pv && pv.TryGetValue(out double pkg))
         {
             _perfPower.Enqueue(pkg);
-            while (_perfPower.Count > 60) _perfPower.Dequeue();
+            while (_perfPower.Count > 120) _perfPower.Dequeue();
         }
         if (!_perfOpen) return;
         BuildPerfRows();
@@ -223,7 +248,7 @@ public sealed partial class WallStage
     private async Task PerfSetEcore(bool on)
     {
         if (_agent == null) return;
-        try { PerfApplyView(await _agent.Call("set_ecore", JsonValue.Create(on)), fromSave: true); Toast(on ? "模拟全核心 E 核：开，重启后生效" : "模拟全核心 E 核：关，重启后生效"); }
+        try { PerfApplyView(await _agent.Call("set_ecore", JsonValue.Create(on)), fromSave: true); }
         catch (Exception ex) { Toast($"没有改成：{ex.Message}"); }
     }
 
@@ -441,18 +466,19 @@ public sealed partial class WallStage
                 if (!_perfRows[i].Section && !_perfRows[i].Skip) { _perfFocus = i; PaintPerf(); return; }
             return;
         }
-        if (_perfFocus >= 0 && _perfFocus < _perfRows.Count) _perfRows[_perfFocus].Step?.Invoke(dir == Direction.Left ? -1 : 1);
+        if (_perfFocus >= 0 && _perfFocus < _perfRows.Count) RowStep(_perfRows[_perfFocus], dir == Direction.Left ? -1 : 1);
     }
 
     private void PerfActivate()
     {
         SettingsResumeKeyboard();
         if (_perfCurveEdit) { PerfFinishCurveEdit(); return; }
-        if (_perfFocus >= 0 && _perfFocus < _perfRows.Count) _perfRows[_perfFocus].Press?.Invoke();
+        if (_perfFocus >= 0 && _perfFocus < _perfRows.Count) RowPress(_perfRows[_perfFocus]);
     }
 
     private void PerfBack()
     {
+        if (SettingsFinishEdit()) return;
         SettingsResetPointer();
         if (_perfCurveEdit) { PerfFinishCurveEdit(); return; }
         ClosePerf();
@@ -538,8 +564,11 @@ public sealed partial class WallStage
     /// <summary>控制中心子页右栏的设置列表（性能、手柄共用）：分组标题、行号、焦点 ▸、几选一下划线、焦点数值 ‹ ›。</summary>
     private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus, List<SettingsPointerTarget>? targets = null, bool numbers = false, float listWidth = PerfRightW, bool leadingNotes = true)
     {
+        if (targets != null)
+            _settingsEdit.Observe(focus >= 0 && focus < rows.Count && rows[focus] is { Numeric: true, Disabled: false, Skip: false } focused
+                ? SettingsEditKey(focused, focus) : null);
         var ui = TextKit.Ui(400);
-        var mono = new FontSpec("Cascadia Mono", 400);
+        var mono = TextKit.Num(400);
         float y = 0, W = listWidth;
         int n = 0;
         for (int i = 0; i < rows.Count; i++)
@@ -552,7 +581,7 @@ public sealed partial class WallStage
                 continue;
             }
             n++;
-            targets?.Add(new(i, SettingsTargetKind.Row, 0, y, W, PerfRowH));
+            if (!r.Skip) targets?.Add(new(i, SettingsTargetKind.Row, 0, y, W, PerfRowH));
             bool f = i == focus;
             float cy = y + PerfRowH / 2;
             float a = r.Disabled ? 0.32f : 1;
@@ -563,19 +592,25 @@ public sealed partial class WallStage
                 using var g = CanvasGeometry.CreatePath(pb);
                 ds.FillGeometry(g, Gfx.WithAlpha(CcText, a));
             }
-            else if (numbers) PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(CcText, 0.32f * a), 0, cy, 40);
+            else if (numbers && r.Glyph == null) PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(CcText, 0.32f * a), 0, cy, 40);
+            if (r.Glyph is { Length: > 0 }) GpPaintGlyph(ds, r.Glyph, 14, cy, 26, Gfx.WithAlpha(CcText, (f ? 1f : 0.85f) * a), false);
             if (r.Changed) ds.FillCircle(27, cy, 3, PerfAccent);
-            PText(ds, r.Title, ui, 17, Gfx.WithAlpha(CcText, (f ? 1f : 0.88f) * a), 36 + r.Indent, cy, 400);
-            if (targets != null && r.SetNumber != null && !r.Disabled)
+            PText(ds, r.Title, ui, 17, Gfx.WithAlpha(CcText, (f ? 1f : 0.88f) * a), (r.Glyph != null ? 50 : 36) + r.Indent, cy, 400);
+            bool editing = f && SettingsRowEditing(r, i);
+            if (targets != null && r.SetNumber != null && editing)
             {
                 const float sliderWidth = 200;
-                float left = W - 300;
+                float vw = PWidth(ds, r.Value, ui, 17);
+                float left = Math.Min(W - 300, W - vw - 76 - sliderWidth);
                 float fraction = Math.Clamp((r.Number - r.Minimum) / (float)Math.Max(1, r.Maximum - r.Minimum), 0, 1);
                 ds.FillRoundedRectangle(left, cy - 2, sliderWidth, 4, 2, 2, Gfx.WithAlpha(CcText, .18f));
                 if (fraction > 0) ds.FillRoundedRectangle(left, cy - 2, sliderWidth * fraction, 4, 2, 2, PerfAccent);
                 ds.FillCircle(left + sliderWidth * fraction, cy, f ? 6 : 5, CcText);
-                float vw = PWidth(ds, r.Value, ui, 17);
-                PText(ds, r.Value, ui, 17, CcText, W - vw, cy, vw + 4);
+                PText(ds, r.Value, ui, 17, CcText, W - 22 - vw, cy, vw + 4);
+                DrawChevron(ds, W - 34 - vw, cy, true, CcText);
+                DrawChevron(ds, W - 6, cy, false, CcText);
+                targets.Add(new(i, SettingsTargetKind.Decrease, W - 56 - vw, y, 44, PerfRowH));
+                targets.Add(new(i, SettingsTargetKind.Increase, W - 44, y, 44, PerfRowH));
                 targets.Add(new(i, SettingsTargetKind.Slider, left, y, sliderWidth, PerfRowH));
             }
             else if (r.Choices != null)
@@ -621,18 +656,24 @@ public sealed partial class WallStage
             {
                 string v = r.Value;
                 float vw = PWidth(ds, v, ui, 17);
-                var col = Gfx.WithAlpha(CcText, leadingNotes && r.Disabled ? 0.65f : (f ? 1f : 0.6f) * a);
-                if ((f || targets != null) && r.Numeric && !r.Disabled)
+                var col = Gfx.WithAlpha(CcText, leadingNotes && r.Disabled ? 0.65f : (f || r.BrightValue ? 1f : 0.6f) * a);
+                if (r.Secondary != null)
                 {
-                    // 焦点上的数值：‹ 值 ›，← → 直接改
+                    PText(ds, v, ui, 17, col, W - 56 - vw, cy, vw + 4);
+                    LineIcons.Draw(ds, "", W - 22, cy, 18, col);
+                    targets?.Add(new(i, SettingsTargetKind.Secondary, W - 44, y, 44, PerfRowH));
+                }
+                else if (editing)
+                {
+                    // 确认进入调整后才显示 ‹ 值 › 并开放箭头命中。
                     float right = W;
                     DrawChevron(ds, right - 6, cy, false, col);
-                    PText(ds, v, TextKit.Ui(600), 17, col, right - 22 - vw, cy, vw + 4);
+                    PText(ds, v, ui, 17, col, right - 22 - vw, cy, vw + 4);
                     DrawChevron(ds, right - 34 - vw, cy, true, col);
                     targets?.Add(new(i, SettingsTargetKind.Decrease, right - 56 - vw, y, 44, PerfRowH));
                     targets?.Add(new(i, SettingsTargetKind.Increase, right - 44, y, 44, PerfRowH));
                 }
-                else PText(ds, v, ui, 17, col, W - vw, cy, vw + 4);
+                else PText(ds, v, ui, 17, col, W - (r.Numeric ? 22 : 0) - vw, cy, vw + 4);
             }
             y += PerfRowH;
         }
@@ -678,7 +719,7 @@ public sealed partial class WallStage
 
         // ---- 功耗 ----
         double? pkg = Num(v?["actual"]?["package"]);
-        Header(0, "功耗 · 最近 60 秒", pkg is double p ? $"{p:0.0} W" : "—", accent);
+        Header(0, "芯片功耗 · 最近 60 秒", pkg is double p ? $"{p:0.0} W" : "—", accent);
         float cTop = header, cH = powerH;
         var hist = _perfPower.ToArray();
         bool autoMode = Str(s?["mode"]) == "autotdp";
@@ -701,7 +742,7 @@ public sealed partial class WallStage
         }
         if (hist.Length >= 2)
         {
-            float dx = W / 59f, x0 = W - (hist.Length - 1) * dx;
+            float dx = W / 119f, x0 = W - (hist.Length - 1) * dx;
             using var line = new CanvasPathBuilder(ds);
             using var area = new CanvasPathBuilder(ds);
             line.BeginFigure(x0, Y(hist[0]));
@@ -785,7 +826,7 @@ public sealed partial class WallStage
             ds.DrawLine(cx, gTop, cx, gTop + gH - labelH, Gfx.WithAlpha(accent, 0.8), 1.5f, dash);
             ds.FillCircle(cx, FY(rr), 5, accent);
         }
-        var mono = new FontSpec("Cascadia Mono", 400);
+        var mono = TextKit.Num(400);
         foreach (int t in new[] { axis[0], 60, 70, 80, axis[^1] })
         {
             string lab = t == axis[^1] ? $"{t} °C" : t.ToString();

@@ -342,6 +342,143 @@ public static class Bench
         Log.Info($"rec chrome: {n} frames");
     }
 
+    /// <summary>录正在游戏面板：弹出 → 右移两格 → 回到「继续游戏」→ 游戏结束（已退出，封面飞回卡片）。</summary>
+    private static async Task RecPlayingAsync(WallStage s)
+    {
+        await Task.Delay(5000);
+        if (Program.Args.FirstOrDefault(a => a.StartsWith("--recmoves=")) is { } mv)
+            foreach (char ch in mv[11..]) { s.Move(ch switch { 'L' => Direction.Left, 'U' => Direction.Up, 'D' => Direction.Down, _ => Direction.Right }); await Task.Delay(450); }
+        var rec = new FrameRecorder();
+        if (!rec.Start(s.HostWindow)) return;
+        await Task.Delay(300);
+        long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+        s.DemoNowPlaying(); await Task.Delay(1800);
+        s.Move(Direction.Right); await Task.Delay(700);
+        s.Move(Direction.Right); await Task.Delay(700);
+        s.Move(Direction.Left); await Task.Delay(500);
+        s.Move(Direction.Left); await Task.Delay(900);
+        s.DemoGameEnded(); await Task.Delay(3200);
+        string dir = Path.Combine(App.CacheDir, "rec", "launch");
+        int n = await rec.StopAndSaveAsync(dir, mark);
+        Log.Info($"rec playing: {n} frames");
+        s.DemoNowPlaying(); await Task.Delay(1500);
+        var still = new FrameRecorder { Full = true };
+        if (still.Start(s.HostWindow)) { await Task.Delay(300); await still.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "launch-still"), System.Diagnostics.Stopwatch.GetTimestamp()); }
+        // 第二种：墙面 + 顶部「正在游戏」条
+        s.DemoGameEnded(); await Task.Delay(2600);
+        s.DemoNowPlaying(bar: true); await Task.Delay(1200);
+        var still2 = new FrameRecorder { Full = true };
+        if (still2.Start(s.HostWindow)) { await Task.Delay(300); await still2.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "launch-slow"), System.Diagnostics.Stopwatch.GetTimestamp()); }
+        try { await EncodeMp4Async(dir, Path.Combine(App.CacheDir, "rec", "launch.mp4")); }
+        catch (Exception ex) { Log.Error("encode mp4", ex); }
+    }
+
+    /// <summary>
+    /// 录启动画面：展开聚焦卡 → 启动画面（不真的启动）→ 45 秒提示 → B 收回；再开一次，静止后存两张原分辨率截图，最后拼成 mp4。
+    /// </summary>
+    private static async Task RecLaunchAsync(WallStage s)
+    {
+        await Task.Delay(5000);
+        if (Program.Args.FirstOrDefault(a => a.StartsWith("--recmoves=")) is { } mv)
+            foreach (char ch in mv[11..]) { s.Move(ch switch { 'L' => Direction.Left, 'U' => Direction.Up, 'D' => Direction.Down, _ => Direction.Right }); await Task.Delay(450); }
+        Log.Info($"reclaunch game: {s.DemoLaunchTitle}");
+        var rec = new FrameRecorder();
+        if (!rec.Start(s.HostWindow)) return;
+        await Task.Delay(300);
+        long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+        s.Activate(); await Task.Delay(1100);
+        s.DemoLaunchStart(); await Task.Delay(3600);
+        s.DemoLaunchSlow(); await Task.Delay(1800);
+        s.Back(); await Task.Delay(1200);
+        string dir = Path.Combine(App.CacheDir, "rec", "launch");
+        int n = await rec.StopAndSaveAsync(dir, mark);
+        Log.Info($"rec launch: {n} frames");
+        // 原分辨率静帧：画面停稳后各录 0.3 秒，取最后一帧
+        s.DemoLaunchStart(); await Task.Delay(2600);
+        async Task Still(string name)
+        {
+            var r = new FrameRecorder { Full = true };
+            if (!r.Start(s.HostWindow)) return;
+            await Task.Delay(300);
+            await r.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", name), System.Diagnostics.Stopwatch.GetTimestamp());
+        }
+        await Still("launch-still");
+        s.DemoLaunchSlow(); await Task.Delay(500);
+        await Still("launch-slow");
+        s.DemoLaunchHandoff(); await Task.Delay(800);
+        try { await EncodeMp4Async(dir, Path.Combine(App.CacheDir, "rec", "launch.mp4")); }
+        catch (Exception ex) { Log.Error("encode mp4", ex); }
+    }
+
+    /// <summary>把录下的 JPEG 帧按真实时间戳拼成 mp4（系统自带的 MediaComposition，不需要 ffmpeg）。</summary>
+    private static async Task EncodeMp4Async(string dir, string output)
+    {
+        var frames = Directory.GetFiles(dir, "f*.jpg").OrderBy(f => f).ToList();
+        if (frames.Count < 2) return;
+        double Ms(string f) { var m = System.Text.RegularExpressions.Regex.Match(Path.GetFileName(f), @"_([+-]\d+)ms"); return double.Parse(m.Groups[1].Value); }
+        var comp = new Windows.Media.Editing.MediaComposition();
+        // 30 fps：按时间取帧，避免 60+ 帧时剪辑太多
+        double t0 = Ms(frames[0]), last = Ms(frames[^1]);
+        int k = 0;
+        for (double t = t0; t < last; t += 1000.0 / 30)
+        {
+            while (k + 1 < frames.Count && Ms(frames[k + 1]) <= t) k++;
+            var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(frames[k]);
+            comp.Clips.Add(await Windows.Media.Editing.MediaClip.CreateFromImageFileAsync(file, TimeSpan.FromMilliseconds(1000.0 / 30)));
+        }
+        if (File.Exists(output)) File.Delete(output);
+        var folder = await Windows.Storage.StorageFolder.GetFolderFromPathAsync(Path.GetDirectoryName(output)!);
+        var outFile = await folder.CreateFileAsync(Path.GetFileName(output), Windows.Storage.CreationCollisionOption.ReplaceExisting);
+        var profile = Windows.Media.MediaProperties.MediaEncodingProfile.CreateMp4(Windows.Media.MediaProperties.VideoEncodingQuality.HD1080p);
+        profile.Video!.Width = 960; profile.Video.Height = 600;
+        profile.Audio = null;
+        var result = await comp.RenderToFileAsync(outFile, Windows.Media.Editing.MediaTrimmingPreference.Precise, profile);
+        Log.Info($"mp4 {output}: {result} clips={comp.Clips.Count}");
+    }
+
+    /// <summary>
+    /// 录墙面外观（叠色、关灯）和焦点切换的每一帧：关灯 → 走两步 → 快速左右来回（打断）→ 开灯 → 往下走；
+    /// recstack 换成 Steam 页签里的集合（叠页边的收放、叠色、熄灯）。
+    /// 灯光开关两次，结束时设置和开始时一样。
+    /// </summary>
+    private static async Task RecLookAsync(WallStage s, bool stacks)
+    {
+        await Task.Delay(1500);
+        var rec = new FrameRecorder();
+        if (!rec.Start(s.HostWindow)) return;
+        await Task.Delay(300);
+        long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+        async Task Step(int ms, string name, Action a)
+        {
+            a();
+            Log.Info($"reclook {name} @{FrameRecorder.QpcMs(System.Diagnostics.Stopwatch.GetTimestamp() - mark):F0}ms");
+            await Task.Delay(ms);
+        }
+        if (stacks)
+        {
+            // 集合的叠页边：Steam 页签里的分类
+            await Step(1600, "tab", () => s.SwitchTab(1));
+            await Step(900, "collection", () => s.FocusFirstCollection());
+            await Step(900, "lights", s.ToggleLights);
+            await Step(900, "right", () => s.Move(Direction.Right));
+            await Step(900, "lights", s.ToggleLights);
+            await Step(900, "left", () => s.Move(Direction.Left));
+        }
+        else
+        {
+            await Step(900, "lights", s.ToggleLights);
+            await Step(800, "right", () => s.Move(Direction.Right));
+            await Step(800, "right", () => s.Move(Direction.Right));
+            await Step(120, "left", () => s.Move(Direction.Left));
+            await Step(120, "right", () => s.Move(Direction.Right));
+            await Step(900, "left", () => s.Move(Direction.Left));
+            await Step(900, "lights", s.ToggleLights);
+            await Step(900, "down", () => s.Move(Direction.Down));
+        }
+        int n = await rec.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "look"), mark);
+        Log.Info($"rec look: {n} frames");
+    }
+
     /// <summary>录真实速度的每一帧：经手柄投递路径按 ≡（出场）/ A（进场），各录 1.6 s。</summary>
     private static async Task RecordAsync(WallStage s, string state)
     {
@@ -380,7 +517,18 @@ public static class Bench
                 case "expand": s.Activate(); break;
                 case "collapse": s.Activate(); await Task.Delay(1500); Log.Info("state collapse now"); s.Back(); break;
                 case "collection": s.SwitchTab(1); await Task.Delay(1500); if (s.FocusFirstCollection()) { await Task.Delay(700); s.Activate(); } break;
-                case "styleb": s.ToggleTitleStyle(); break;
+                case "styleb": s.SetTitleStyle(TitleStyle.B); break;
+                case "style-folia": s.SetTitleStyle(TitleStyle.Folia); break;
+                case "style-quiet": s.SetTitleStyle(TitleStyle.Quiet); break;
+                case "style-editorial": s.SetTitleStyle(TitleStyle.Editorial); break;
+                case "rail-hidden": s.ToggleLibraryRail(); break;
+                case "screensaver": s.ScreensaverTestState(); break;
+                case "appearance-probe": await s.AppearanceProbeAsync(); break;
+                case "library-filter-probe": await s.LibraryFilterProbeAsync(); break;
+                case "local-library-probe": await s.LocalLibraryProbeAsync(); break;
+                case "lighting-probe": await s.LightingProbeAsync(); break;
+                case "desktop-mapping-probe": await s.DesktopMappingProbeAsync(); break;
+                case "idle-screen-probe": await s.IdleScreensaverProbeAsync(); break;
                 case "tab": s.SwitchTab(1); break;
                 case "control": s.ToggleControlCenter(); break;
                 case "cycle": await CycleAsync(s); break;
@@ -406,6 +554,13 @@ public static class Bench
                 }
                 case "perfsave": await PerfSaveTestAsync(s); break;
                 case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
+                case "reclook" or "recstack": await RecLookAsync(s, state == "recstack"); break;
+                case "reclaunch": await RecLaunchAsync(s); break;
+                case "gstest": s.DemoGameSessionProbe(); break;
+                case "npattach": s.DemoAttachRunningGame(); break;
+                case "recplaying": await RecPlayingAsync(s); break;
+                case "stlook": s.LookTestState(); break;
+                case "sfx": s.SoundTestState(); await Task.Delay(11000); break;
                 case "ccslow": s.ToggleControlCenter(); await Task.Delay(7000); Log.Info("state ccslow enter"); s.Activate(); break;
                 case "ccenter": s.ToggleControlCenter(); await Task.Delay(2500); Log.Info("state ccenter now"); s.Activate(); break;
                 case "control2": s.ToggleControlCenter(); await Task.Delay(900); s.Move(Direction.Right); await Task.Delay(260); s.Move(Direction.Right); break;
@@ -435,6 +590,114 @@ public static class Bench
                     if (state == "add5") { s.SwitchTab(-1); await Task.Delay(300); s.SwitchTab(-1); await Task.Delay(2500); }
                     if (state == "add6") { s.Move(Direction.Left); await Task.Delay(400); s.Activate(); await Task.Delay(1500); }
                     if (state == "add9") { await Task.Delay(8000); s.Activate(); await Task.Delay(6000); s.Move(Direction.Right); await Task.Delay(300); s.Move(Direction.Up); await Task.Delay(300); s.Activate(); await Task.Delay(2500); }
+                    break;
+                }
+                case "gpm" or "gpmd" or "gpg":
+                    // 手柄页按键映射，焦点在右侧 RB
+                    s.ToggleControlCenter(); await Task.Delay(1500);
+                    for (int i = 0; i < 2; i++) { s.Move(Direction.Right); await Task.Delay(300); }
+                    await Task.Delay(800); s.Activate(); await Task.Delay(2500);
+                    s.Move(Direction.Right); await Task.Delay(400); s.Move(Direction.Right); await Task.Delay(400); s.Move(Direction.Down); await Task.Delay(800);
+                    if (state == "gpmd") for (int i = 0; i < 5; i++) { s.Move(Direction.Down); await Task.Delay(400); }
+                    if (state == "gpg") { s.Activate(); await Task.Delay(800); }
+                    await Task.Delay(800);
+                    break;
+                case "gs0" or "gs1" or "gs2" or "gs3" or "gs4" or "gsk" or "gsc" or "gsb" or "gsm" or "gsmd":
+                {
+                    // 游戏设置：gs0–gs4 各分类，gsk 手柄里某个键的按键页，gsc 选择指令（键盘页），gsb 通用里浏览启动程序
+                    s.ToggleControlCenter();
+                    await Task.Delay(1500);
+                    int cat = state is "gsk" or "gsc" or "gsm" or "gsmd" ? 2 : state == "gsb" ? 0 : state[2] - '0';
+                    s.GameSettingsTestState(Program.Args.FirstOrDefault(a => a.StartsWith("--game="))?[7..] ?? "", cat);
+                    await Task.Delay(6000);
+                    s.Move(Direction.Right);
+                    await Task.Delay(800);
+                    if (state is "gsk" or "gsc")
+                    {
+                        for (int i = 0; i < 6; i++) { s.Move(Direction.Down); await Task.Delay(250); }
+                        s.Activate(); await Task.Delay(1000);
+                        if (state == "gsc") { s.Move(Direction.Down); await Task.Delay(250); s.Activate(); await Task.Delay(600); s.SwitchTab(1); await Task.Delay(300); s.SwitchTab(1); await Task.Delay(800); }
+                    }
+                    if (state is "gsm" or "gsmd") { for (int i = 0; i < (state == "gsm" ? 4 : 10); i++) { s.Move(Direction.Down); await Task.Delay(300); } await Task.Delay(600); }
+                    if (state == "gsb") { s.Activate(); await Task.Delay(1200); }
+                    break;
+                }
+                case "qsapply":
+                {
+                    // 快捷设置：性能显示磁贴按 5 次（关 → 1 → 2 → 3 → 4 → 关 一整圈，回到原值），每次等后台回读
+                    await Task.Delay(1500);
+                    s.QuickPanelTest(0);
+                    await Task.Delay(2500);
+                    string start = s.QuickPanelTestValue("osd");
+                    for (int i = 0; i < 5; i++) { s.QuickPanelTestPress("osd"); await Task.Delay(2200); Log.Info($"quick panel test osd readback {i + 1}: {s.QuickPanelTestValue("osd")}"); }
+                    Log.Info($"quick panel test osd start={start} end={s.QuickPanelTestValue("osd")}");
+                    s.QuickPanelTestClose();
+                    break;
+                }
+                case "qsset":
+                {
+                    // 快捷设置：按 --qs=<焦点 id | power | arm | edit | sec=分区> 摆好状态停住（截图用）
+                    await Task.Delay(1500);
+                    s._qsTestGame = Program.Args.FirstOrDefault(a => a.StartsWith("--qsgame="))?[9..];
+                    s.QuickPanelTest(0);
+                    await Task.Delay(1800);
+                    s.QuickPanelTestState(Program.Args.FirstOrDefault(a => a.StartsWith("--qs="))?[5..] ?? "tdp");
+                    break;
+                }
+                case "qsrules":
+                {
+                    // 快捷设置导航规则：逐步按方向键，日志记每步焦点（--qsgame= 时带退出按钮）
+                    s._qsTestGame = Program.Args.FirstOrDefault(a => a.StartsWith("--qsgame="))?[9..];
+                    await Task.Delay(1500);
+                    s.QuickPanelTest(0);
+                    await Task.Delay(1800);
+                    Log.Info($"qsrules start {s.QsFocusTest}");
+                    var seq = Program.Args.FirstOrDefault(a => a.StartsWith("--seq="))?[6..] ?? "LRDLRDLLRDDDDDUUUUUURUL";
+                    foreach (char c in seq)
+                    {
+                        var d = c switch { 'L' => Direction.Left, 'R' => Direction.Right, 'U' => Direction.Up, _ => Direction.Down };
+                        s.Move(d); await Task.Delay(250);
+                        Log.Info($"qsrules {c} -> {s.QsFocusTest}");
+                    }
+                    s.SwitchTab(1); await Task.Delay(300); Log.Info($"qsrules RB -> page {s.QsFocusTest}");
+                    s.Move(Direction.Left); await Task.Delay(250); Log.Info($"qsrules L -> {s.QsFocusTest}");
+                    s.Move(Direction.Down); await Task.Delay(250); Log.Info($"qsrules D -> {s.QsFocusTest}");
+                    s.Move(Direction.Right); await Task.Delay(250); Log.Info($"qsrules R -> {s.QsFocusTest}");
+                    s.QuickPanelTestClose();
+                    break;
+                }
+                case "qs" or "qsnav":
+                {
+                    // 快捷设置：qs = 打开停住，qsnav = 走 12 步焦点后收起（游戏库里开，没有游戏画面）
+                    await Task.Delay(1500);
+                    s.QuickPanelTest(state == "qsnav" ? 12 : 0);
+                    if (state == "qsnav") { await Task.Delay(4600); s.QuickPanelTestClose(); await Task.Delay(1000); }
+                    break;
+                }
+                case "wsgo" or "wsx":
+                {
+                    // 窗口切换页：焦点停在标题含 --window= 的窗口上，wsgo = A 切过去，wsx = X 请它关
+                    string want = Program.Args.FirstOrDefault(a => a.StartsWith("--window="))?[9..] ?? "";
+                    s.ToggleControlCenter();
+                    await Task.Delay(1500);
+                    s.SwitcherTestState();
+                    await Task.Delay(1200);
+                    s.SwitcherTestPick(want, close: state == "wsx");
+                    await Task.Delay(1500);
+                    break;
+                }
+                case "ws" or "wsnav":
+                {
+                    // 窗口切换页：ws = 打开停住，wsnav = 打开、往右走两格、往回一格、B 出场
+                    s.ToggleControlCenter();
+                    await Task.Delay(1500);
+                    s.SwitcherTestState();
+                    await Task.Delay(1200);
+                    if (state == "wsnav")
+                    {
+                        s.Move(Direction.Right); await Task.Delay(500); s.Move(Direction.Right); await Task.Delay(500);
+                        s.Move(Direction.Left); await Task.Delay(800); s.SwitcherTestBack(); await Task.Delay(900);
+                    }
                     break;
                 }
                 case "shots0" or "shots1" or "shots2" or "shotsv" or "shotsnav" or "shotsf":

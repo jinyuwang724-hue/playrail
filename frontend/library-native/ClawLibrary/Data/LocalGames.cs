@@ -5,7 +5,11 @@ using System.Text.Json;
 
 namespace ClawLibrary.Data;
 
-public sealed record LocalGame(string Id, string Name, string Exe, bool Steam, string? Collection, long ArtVersion);
+public sealed record LocalGame(string Id, string Name, string Exe, bool Steam, string? Collection, long ArtVersion)
+{
+    public string StartDir { get; init; } = "";
+    public string Args { get; init; } = "";
+}
 
 public static class LocalGames
 {
@@ -26,7 +30,8 @@ public static class LocalGames
                 if (S("id").Length == 0 || S("exe").Length == 0) continue;
                 bool steam = !g.TryGetProperty("steam", out var st) || st.ValueKind != JsonValueKind.False;
                 long ver = g.TryGetProperty("artVersion", out var av) && av.TryGetInt64(out var a) ? a : 0;
-                list.Add(new LocalGame(S("id"), S("name"), S("exe"), steam, S("collection") is { Length: > 0 } c ? c : null, ver));
+                list.Add(new LocalGame(S("id"), S("name"), S("exe"), steam, S("collection") is { Length: > 0 } c ? c : null, ver)
+                    { StartDir = S("dir"), Args = S("args") });
             }
         }
         catch (Exception ex) { Log.Warn($"local games: {ex.Message}"); }

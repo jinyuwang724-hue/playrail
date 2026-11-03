@@ -62,7 +62,7 @@ public sealed partial class WallStage
         foreach (var (id, glyph, label) in new[]
         {
             ("power", "", "电源"), ("files", "", "文件管理器"), ("browser", "", "浏览器"),
-            ("shots", "", "截图"), ("avatar", "", ""),
+            ("windows", "", "窗口"), ("shots", "", "截图"), ("avatar", "", ""),
         })
             _ccDock.Add(CcMakeButton(id, glyph, label, _ccChrome));
         _ccPowerLayer = G.Container();
@@ -74,6 +74,7 @@ public sealed partial class WallStage
         if (caps.Hibernate) items.Add(("hibernate", CcSnowflake, "休眠"));
         items.Add(("restart", "", "重启"));
         items.Add(("shutdown", "", "关机"));
+        if (ShellMode.Available) items.Add(("mode", "", "切换到桌面"));
         foreach (var (id, glyph, label) in items) _ccPower.Add(CcMakeButton(id, glyph, label, _ccPowerLayer));
     }
 
@@ -81,7 +82,7 @@ public sealed partial class WallStage
     private static readonly Dictionary<string, string> CcChromeDesc = new()
     {
         ["power"] = "睡眠、休眠、重启、关机", ["files"] = "打开资源管理器", ["browser"] = "打开默认浏览器",
-        ["shots"] = "截图管理", ["avatar"] = "打开 Windows 设置",
+        ["windows"] = "切换和关闭打开的窗口", ["shots"] = "截图管理", ["avatar"] = "打开 Windows 设置",
         ["sleep"] = "关屏，进入低电量待机", ["hibernate"] = "保存现场后断电，下次开机原样恢复",
         ["restart"] = "立即重启", ["shutdown"] = "立即关机",
     };
@@ -117,13 +118,13 @@ public sealed partial class WallStage
         _ccUser ??= SystemInfo.UserName();
         float y = vh - (CcEdgeBottom + CcDockBtn) * k;
         float x = CcEdgeX * k;
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < _ccDock.Count - 1; i++)
         {
             _ccDock[i].Size = new Vector2(CcDockBtn * k);
             _ccDock[i].Pos = new Vector2(x, y);
             x += (CcDockBtn + CcDockGap) * k;
         }
-        var av = _ccDock[4];
+        var av = _ccDock[^1];
         float pillW = CcAvatarPillW();
         av.Size = new Vector2(pillW * k, CcDockBtn * k);
         av.Pos = new Vector2(vw - (CcEdgeX + pillW) * k, y);
@@ -199,6 +200,7 @@ public sealed partial class WallStage
     /// <summary>一个图标字形，按墨迹框居中放在 (cx, cy)。雪花用 Segoe UI Symbol（图标字体里没有）。</summary>
     private static void CcGlyph(CanvasDrawingSession ds, string glyph, float cx, float cy, float size, Color c)
     {
+        if (LineIcons.Draw(ds, glyph, cx, cy, size, c)) return;
         var font = glyph == CcSnowflake ? new FontSpec("Segoe UI Symbol", 400) : new FontSpec(CcIconFont, 400);
         if (glyph == CcSnowflake) size *= 1.3f;   // 雪花在 Segoe UI Symbol 里墨迹偏小，放大到和图标字体同样大
         using var l = TextKit.Layout(ds, glyph, font, size, 400, CanvasHorizontalAlignment.Left);
@@ -321,13 +323,14 @@ public sealed partial class WallStage
     /// <summary>电池：圆角外框 + 正极小头 + 按电量填充（低于 15 % 且没在充电时填红色），充电时中间一道闪电。</summary>
     private static void CcIconBattery(CanvasDrawingSession ds, Color c, BatteryState bat)
     {
+        bool plug = bat.Charging || bat.OnAc;
+        if (plug) c = Theme.ChargingGreen;
         ds.DrawRoundedRectangle(1, 5, 14.2f, 8.4f, 2.4f, 2.4f, c, CcIconStroke);
         ds.FillRoundedRectangle(16, 7.6f, 1.6f, 3.2f, 0.8f, 0.8f, c);
-        bool plug = bat.Charging || bat.OnAc;
         float full = 14.2f - 3.6f, w = MathF.Max(1.2f, full * Math.Clamp(bat.Percent, 0, 100) / 100f);
         var fill = !plug && bat.Percent < 15 ? Gfx.Rgba(0xef, 0x44, 0x44) : c;
         ds.FillRoundedRectangle(2.8f, 6.8f, w, 4.8f, 1.2f, 1.2f, fill);
-        if (!bat.Charging) return;
+        if (!plug) return;
         using var pb = new CanvasPathBuilder(ds);
         pb.BeginFigure(9.3f, 5.6f);
         pb.AddLine(6.2f, 9.6f);
@@ -337,8 +340,8 @@ public sealed partial class WallStage
         pb.AddLine(8.5f, 8.6f);
         pb.EndFigure(CanvasFigureLoop.Closed);
         using var g = CanvasGeometry.CreatePath(pb);
-        ds.FillGeometry(g, Theme.Bg);
-        ds.DrawGeometry(g, Theme.Bg, 0.6f);
+        ds.FillGeometry(g, Microsoft.UI.Colors.White);
+        ds.DrawGeometry(g, Microsoft.UI.Colors.White, 0.6f);
     }
 
     // ---------------- 开 / 关 / 每秒刷新 ----------------
@@ -464,6 +467,7 @@ public sealed partial class WallStage
     private void CcPowerShow(bool show, bool instant = false)
     {
         _ccPowerOpen = show;
+        if (show) CcUpdateModeButton();
         int v = ++_ccPowerVersion;
         if (instant || Reduced)
         {
@@ -564,6 +568,7 @@ public sealed partial class WallStage
         if (_syOpen) { SyBack(); return true; }
         if (_stOpen) { StBack(); return true; }
         if (_shOpen) { ShBack(); return true; }
+        if (_wsOpen) { WsBack(); return true; }
         if (_ccZone == CcZone.Power) { CcPowerClose(); return true; }
         if (_ccZone == CcZone.Dock) { _ccZone = CcZone.Row; CcChromeFocus(); return true; }
         return false;
@@ -597,12 +602,25 @@ public sealed partial class WallStage
                 CcChromeFocus();
                 break;
             case "files":
+                // 游戏模式没有 explorer：从游戏库（应用包）里直接起 explorer 会让它跑在包里，先切到桌面
+                if (ShellMode.Available && !ShellMode.ExplorerRunning())
+                {
+                    _ = ShellMode.Run("to-desktop").ContinueWith(t => _dq.TryEnqueue(() =>
+                    {
+                        if (t.Result == 0) SystemInfo.Open("explorer.exe"); else Toast(ShellMode.Why());
+                    }));
+                    Toast("正在切换到桌面…");
+                    break;
+                }
                 SystemInfo.Open("explorer.exe");
                 Toast("正在打开文件管理器");
                 break;
             case "browser":
                 _ = Task.Run(SystemInfo.OpenBrowser);
                 Toast("正在打开浏览器");
+                break;
+            case "windows":
+                OpenSwitcher();
                 break;
             case "shots":
                 OpenShots();
@@ -625,6 +643,7 @@ public sealed partial class WallStage
     private void CcRunPower(string id)
     {
         var item = _ccPower.First(p => p.Id == id);
+        if (id == "mode") { _ = CcSwitchMode(); CcPowerShow(false); _ccZone = CcZone.Dock; _ccDockFocus = 0; CcChromeFocus(); return; }
         if (id is not ("restart" or "shutdown")) Toast($"正在{item.Label}…");
         Log.Info($"control center power: {id}");
         if (Program.Args.Contains("--power-dry")) return;

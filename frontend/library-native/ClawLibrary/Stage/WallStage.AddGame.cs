@@ -16,16 +16,18 @@ public sealed partial class WallStage
     private enum LgPage { None, List }
 
     private LgPage _lgPage;
-    private Action<string>? _stBrowsePick;
     private bool _stBrowseExe, _lgPolling, _lgFolderTaken;
+    /// <summary>游戏设置中选中程序或快捷方式之后做什么；null = 添加游戏（只选 exe）。</summary>
+    private Action<string>? _stBrowsePick;
     private JsonObject? _lgState;
     private readonly Dictionary<string, CanvasBitmap?> _lgBitmaps = new();
     private TextBox? _stEditBox;
+    private PasswordBox? _stSecretBox;
     private Action<string>? _stEditDone;
     /// <summary>正在打字的那一行（它的值先不画，免得和输入框里的字叠在一起）。</summary>
     private string? _stEditTitle;
 
-    private bool StEditing => _stEditBox?.Visibility == Visibility.Visible;
+    private bool StEditing => _stEditBox?.Visibility == Visibility.Visible || _stSecretBox?.Visibility == Visibility.Visible;
 
     // ---------------- 后台 ----------------
 
@@ -36,9 +38,15 @@ public sealed partial class WallStage
             _agent ??= new AgentClient();
             bool wasBusy = Bool(_lgState?["busy"]);
             if (await _agent.Call("local_games_state") is JsonObject o) _lgState = (JsonObject)o.DeepClone();
+            if (_servicesDisposed) return;
+            string stamp = $"{_lgState?["games"]?.ToJsonString()}|{_lgState?["collections"]?.ToJsonString()}|{_lgState?["lastSync"]?.ToJsonString()}";
+            if (_lgState != null && (_localLibraryStamp != stamp || wasBusy && !Bool(_lgState["busy"])))
+            {
+                _localLibraryStamp = stamp;
+                await RefreshLocalLibraryAsync();
+            }
             if (wasBusy && !Bool(_lgState?["busy"]))
             {
-                _stNeedsReload = true;
                 if (Str(_lgState?["error"]) is { Length: > 0 } err) Toast(err);
             }
         }
@@ -53,7 +61,7 @@ public sealed partial class WallStage
         _lgPolling = true;
         try
         {
-            while (_stOpen && Bool(_lgState?["busy"]))
+            while (!_servicesDisposed && Bool(_lgState?["busy"]))
             {
                 await Task.Delay(1000);
                 await LgRefresh();
@@ -87,7 +95,7 @@ public sealed partial class WallStage
         bool busy = Bool(s?["busy"]);
         var games = LgGames().ToList();
         _stRows.Add(new PerfRow { Section = true, Title = "本地游戏" });
-        _stRows.Add(StAction("添加游戏…", "lgadd", "", () => { _stBrowseExe = true; StBrowseTo(""); }));
+        _stRows.Add(StAction("添加游戏", "lgadd", "", () => { _stBrowseExe = true; StBrowseTo(""); }));
         _stRows.Add(new PerfRow { Title = "本地游戏", Value = s == null ? "" : $"{games.Count} 款", Disabled = s != null && games.Count == 0, Press = () => LgOpenList() });
         int folder = _lgFolderTaken ? 0 : Library.FolderGames.Count;
         if (folder > 0)
@@ -107,7 +115,7 @@ public sealed partial class WallStage
             : pending > 0 ? $"{pending} 款" : "已同步";
         _stRows.Add(new PerfRow
         {
-            Title = "同步到 Steam", Value = syncValue, Disabled = s == null || (pending == 0 && !busy),
+            Title = "同步到 Steam（将重启 Steam）", Value = syncValue, Disabled = s == null || (pending == 0 && !busy),
             Press = () => { if (!busy && StConfirm("lgsync")) _ = LgJob("local_games_sync"); },
         });
         _stRows.Add(new PerfRow
@@ -182,14 +190,18 @@ public sealed partial class WallStage
     private void BuildStBrowseExes(string path)
     {
         string[] exes;
-        try { exes = Directory.GetFiles(path, "*.exe").OrderBy(f => f, StringComparer.CurrentCulture).Take(200).ToArray(); }
+        try { exes = Directory.EnumerateFiles(path).Where(f => Path.GetExtension(f).Equals(".exe", StringComparison.OrdinalIgnoreCase)
+            || _stBrowsePick != null && Path.GetExtension(f).Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(f => f, StringComparer.CurrentCulture).Take(200).ToArray(); }
         catch { return; }
         foreach (var exe in exes)
         {
             long mb = 0;
             try { mb = new FileInfo(exe).Length >> 20; } catch { }
             var target = exe;
-            _stRows.Add(new PerfRow { Title = Path.GetFileName(exe), Value = $"{mb} MB", Press = () => { if (_stBrowsePick is { } pick) pick(target); else LgNewFromExe(target); } });
+            bool shortcut = Path.GetExtension(exe).Equals(".lnk", StringComparison.OrdinalIgnoreCase);
+            _stRows.Add(new PerfRow { Title = Path.GetFileName(exe), Value = shortcut ? "快捷方式" : $"{mb} MB",
+                Press = () => { if (_stBrowsePick is { } pick) pick(target); else LgNewFromExe(target); } });
         }
     }
 
@@ -226,20 +238,15 @@ public sealed partial class WallStage
                 MinHeight = 0, MinWidth = 0, BorderThickness = new Thickness(0), RequestedTheme = ElementTheme.Dark,
                 IsSpellCheckEnabled = false, IsTextPredictionEnabled = false, TextAlignment = TextAlignment.Right,
                 VerticalContentAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed,
-                FontFamily = new FontFamily("Microsoft YaHei UI"),
+                FontFamily = new FontFamily(TextKit.XamlUi),
             };
-            var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-            var ink = new SolidColorBrush(Theme.Ink);
-            foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused", "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused" })
-                _stEditBox.Resources[key] = clear;
-            foreach (var key in new[] { "TextControlForeground", "TextControlForegroundPointerOver", "TextControlForegroundFocused" })
-                _stEditBox.Resources[key] = ink;
+            StyleInlineInput(_stEditBox);
             _stEditBox.KeyDown += (_, e) =>
             {
                 if (e.Key == Windows.System.VirtualKey.Enter) { e.Handled = true; StEditEnd(true); }
                 else if (e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; StEditEnd(false); }
             };
-            _stEditBox.LostFocus += (_, _) => { if (StEditing) StEditEnd(true); };
+            _stEditBox.LostFocus += (_, _) => { if (_stEditBox.Visibility == Visibility.Visible) StEditEnd(true); };
             _stEditBox.Loaded += (_, _) =>
             {
                 if (FindChild(_stEditBox, "DeleteButton") is FrameworkElement x) { x.MaxWidth = 0; x.Opacity = 0; x.IsHitTestVisible = false; }
@@ -247,41 +254,79 @@ public sealed partial class WallStage
             HookTouchKeyboard(_stEditBox);
             _rootEl.Overlay.Children.Add(_stEditBox);
         }
-        if (_stFocus < 0 || _stFocus >= _stRows.Count) return;
-        float top = 0;
-        for (int i = 0; i < _stFocus; i++) top += _stRows[i].Section ? PerfSecH : PerfRowH;
-        float k = _ccK;
-        _stEditDone = done;
-        _stEditTitle = _stRows[_stFocus].Title;
-        // 屏幕键盘从底下出来（占下半屏）：这一行在下半屏就把列表往上推，推到键盘上面能看见；
-        // 列表到底了也照推（底下露出空白，键盘反正盖着），收键盘时弹回去
-        float rowTop = PerfTop + top - _stScroll;
-        _stKbLift = Math.Max(0, rowTop + PerfRowH - StKbLimit);
-        _stScroll += _stKbLift;
-        Repaint();
         _stEditBox.Text = text;
-        _stEditBox.FontSize = 17 * k;
-        _stEditBox.Width = (PerfRightW - 320) * k;
-        _stEditBox.Height = PerfRowH * k;
-        _stEditBox.Padding = new Thickness(0);
-        Canvas.SetLeft(_stEditBox, (PerfRightX + 320) * k);
-        Canvas.SetTop(_stEditBox, (PerfTop + top - _stScroll) * k);
-        _stEditBox.Visibility = Visibility.Visible;
+        PositionInlineInput(_stEditBox, done);
         FocusTextBox(_stEditBox, () => StEditing);
     }
 
     private void StEditEnd(bool commit)
     {
-        if (_stEditBox == null || !StEditing) return;
+        if (!StEditing) return;
         var done = _stEditDone;
-        string text = _stEditBox.Text;
+        string text = _stSecretBox?.Visibility == Visibility.Visible ? _stSecretBox.Password : _stEditBox?.Text ?? "";
         _stEditDone = null;
         _stEditTitle = null;
         _stKbLift = 0;
-        _stEditBox.Visibility = Visibility.Collapsed;
+        if (_stEditBox != null) { _stEditBox.Visibility = Visibility.Collapsed; _stEditBox.Text = ""; }
+        if (_stSecretBox != null) { _stSecretBox.Visibility = Visibility.Collapsed; _stSecretBox.Password = ""; }
         _rootEl.Focus(FocusState.Programmatic);
         if (commit) done?.Invoke(text);
         if (_stOpen) Repaint();
+    }
+
+    private void StEditSecret(Action<string> done)
+    {
+        if (_stFocus < 0 || _stFocus >= _stRows.Count) return;
+        _stSecretBox ??= CreateSecretBox();
+        _stSecretBox.Password = "";
+        PositionInlineInput(_stSecretBox, done);
+        _dq.TryEnqueue(() => { if (_stSecretBox.Visibility == Visibility.Visible) { (_window as MainWindow)?.RequestTextInputFocus(); _stSecretBox.Focus(FocusState.Programmatic); } });
+    }
+
+    // All settings inputs share the existing inline editor's type, colours and placement.
+    // PasswordBox only supplies masking; it does not introduce another visual component.
+    private static void StyleInlineInput(Control box)
+    {
+        box.FontFamily = new FontFamily(TextKit.XamlUi);
+        box.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        box.Foreground = new SolidColorBrush(Theme.Ink);
+        box.BorderThickness = new Thickness(0);
+        box.Padding = new Thickness(0);
+        var clear = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused", "TextControlBackgroundDisabled",
+            "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused", "TextControlBorderBrushDisabled" }) box.Resources[key] = clear;
+        foreach (var key in new[] { "TextControlForeground", "TextControlForegroundPointerOver", "TextControlForegroundFocused" }) box.Resources[key] = box.Foreground;
+    }
+
+    private void PositionInlineInput(Control box, Action<string> done)
+    {
+        if (_stFocus < 0 || _stFocus >= _stRows.Count) return;
+        float top = 0;
+        for (int i = 0; i < _stFocus; i++) top += _stRows[i].Section ? PerfSecH : PerfRowH;
+        _stEditDone = done; _stEditTitle = _stRows[_stFocus].Title;
+        _stKbLift = Math.Max(0, PerfTop + top - _stScroll + PerfRowH - StKbLimit);
+        _stScroll += _stKbLift; Repaint();
+        box.Width = (StRightW - 320) * _ccK; box.Height = PerfRowH * _ccK; box.FontSize = 17 * _ccK;
+        Canvas.SetLeft(box, (StRightX + 320) * _ccK); Canvas.SetTop(box, (PerfTop + top - _stScroll) * _ccK);
+        box.Visibility = Visibility.Visible;
+    }
+
+    private PasswordBox CreateSecretBox()
+    {
+        var box = new PasswordBox { MinHeight = 0, MinWidth = 0, MaxLength = 32, PasswordRevealMode = PasswordRevealMode.Hidden,
+            RequestedTheme = ElementTheme.Dark, BorderThickness = new Thickness(0), Padding = new Thickness(0),
+            VerticalContentAlignment = VerticalAlignment.Center, HorizontalContentAlignment = HorizontalAlignment.Right,
+            Visibility = Visibility.Collapsed };
+        StyleInlineInput(box);
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter) { e.Handled = true; StEditEnd(true); }
+            else if (e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; StEditEnd(false); }
+        };
+        box.GotFocus += (_, _) => ShowTouchKeyboard();
+        box.LostFocus += (_, _) => { if (box.Visibility == Visibility.Visible) StEditEnd(false); HideTouchKeyboardSoon(); };
+        _rootEl.Overlay.Children.Add(box);
+        return box;
     }
 
     // ---------------- 从游戏库添加 ----------------
@@ -328,6 +373,13 @@ public sealed partial class WallStage
         {
             _kbPending = false;
             if (!TextInputFocused() || TouchKeyboard.Visible(hwnd)) return;
+            // 游戏模式没有 explorer，系统触摸键盘（TextInputHost）不在：用经典屏幕键盘 osk
+            if (ShellMode.Available && !ShellMode.ExplorerRunning())
+            {
+                if (System.Diagnostics.Process.GetProcessesByName("osk").Length == 0) SystemInfo.Open("osk.exe");
+                Log.Info("touch keyboard: game mode, opening osk");
+                return;
+            }
             Log.Info($"touch keyboard: system pane {(asked ? "did not show" : "refused")}, opening TabTip");
             TouchKeyboard.Toggle();
         });
@@ -344,7 +396,7 @@ public sealed partial class WallStage
     }
 
     private bool TextInputFocused() =>
-        _rootEl.XamlRoot != null && Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(_rootEl.XamlRoot) is TextBox;
+        _rootEl.XamlRoot != null && Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(_rootEl.XamlRoot) is TextBox or PasswordBox;
 
     /// <summary>
     /// 给输入框焦点：等这次点按 / 按键处理完再给。手指、鼠标点下去那一下舞台会拿走焦点，松手时同步给输入框的话
@@ -355,15 +407,17 @@ public sealed partial class WallStage
         _dq.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
             if (!stillWanted() || box.Visibility != Visibility.Visible) return;
+            (_window as MainWindow)?.RequestTextInputFocus();
             box.Focus(FocusState.Programmatic);
             box.SelectAll();
         });
     }
 
-    /// <summary>每个输入框建好时挂上：拿到焦点叫键盘，失去焦点收键盘。</summary>
+    /// <summary>每个输入框建好时挂上：拿到焦点叫键盘，失去焦点收键盘；打字时一下一下的按键声（只在有焦点时，程序改字不响）。</summary>
     private void HookTouchKeyboard(TextBox box)
     {
         box.GotFocus += (_, _) => ShowTouchKeyboard();
         box.LostFocus += (_, _) => HideTouchKeyboardSoon();
+        box.TextChanging += (s, e) => { if (e.IsContentChanging && s.FocusState != Microsoft.UI.Xaml.FocusState.Unfocused) SoundFx.Play(Sfx.Typing); };
     }
 }

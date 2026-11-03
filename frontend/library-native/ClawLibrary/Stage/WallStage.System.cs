@@ -75,6 +75,7 @@ public sealed partial class WallStage
     private void CloseSystem(bool instant = false)
     {
         if (!_syOpen || _sy == null) return;
+        if (!instant) Cue(Sfx.ModalHide);
         _syOpen = false;
         _syUpdatesOpen = false;
         SettingsResetPointer();
@@ -114,14 +115,35 @@ public sealed partial class WallStage
     private DispatcherQueueTimer MakeSyTimer()
     {
         var t = _dq.CreateTimer();
-        t.Interval = TimeSpan.FromSeconds(1);
+        t.Interval = TimeSpan.FromMilliseconds(500);
         t.IsRepeating = true;
         t.Tick += (_, _) =>
         {
+            if (_syOpen && !_settingsGesture.Active) _ = SyRefreshBattery();
             if (_syArmed != null && NowMs - _syArmedAt > 3000) { _syArmed = null; BuildSyRows(); PaintSy(); }
             if (_syOpen && !_settingsGesture.Active && _syWrites?.IsBusy != true && (SyUpdating || NowMs - _syReadAt >= 5000)) _ = SyRefresh();
         };
         return t;
+    }
+
+    private bool _syBatteryBusy;
+    private async Task SyRefreshBattery()
+    {
+        if (_syBatteryBusy) return;
+        _syBatteryBusy = true;
+        try
+        {
+            _agent ??= new AgentClient();
+            var power = await _agent.Call("get_power_state");
+            if (power?["live"] is not JsonObject live || _syView == null) return;
+            var battery = _syView["battery"] as JsonObject ?? new JsonObject();
+            foreach (var (from, to) in new[] { ("batteryW", "watts"), ("batteryWSource", "wattsSource"), ("minutes", "minutes"), ("chargeMinutes", "chargeMinutes"), ("sampleId", "sampleId") })
+                battery[to] = live[from]?.DeepClone();
+            if (_syView["battery"] == null) _syView["battery"] = battery;
+            if (_syOpen) PaintSy();
+        }
+        catch { }
+        finally { _syBatteryBusy = false; }
     }
 
     private bool SyUpdating =>
@@ -266,7 +288,7 @@ public sealed partial class WallStage
                 string[] names = hib ? SyButtonNames : new[] { "睡眠", "关机" };
                 string cur = Str(power["buttonDc"]) ?? "sleep";
                 int bi = Array.IndexOf(ids, cur);
-                _syRows.Add(Pick("按电源键", names, bi < 0 ? 0 : bi, i => { power["buttonDc"] = power["buttonAc"] = ids[i]; SySet("set_power_button", JsonValue.Create(ids[i])); },
+                _syRows.Add(Pick("按电源键", names, bi < 0 ? 0 : bi, i => { power["buttonDc"] = ids[i]; power["buttonAc"] = ids[i]; SySet("set_power_button", JsonValue.Create(ids[i])); },
                     Str(power["buttonAc"]) != cur ? "插电时不同" : ""));
                 int di = Array.IndexOf(SyDisplay, Int(power["displayDc"], -1));
                 _syRows.Add(Pick("电池供电时关屏", SyDisplayNames, di < 0 ? 2 : di, i => { power["displayDc"] = SyDisplay[i]; SySet("set_display_off", JsonValue.Create(SyDisplay[i])); },
@@ -306,7 +328,7 @@ public sealed partial class WallStage
                 else if (hib)
                 {
                     int hi = Array.IndexOf(SyHibernate, Int(power["hibernateDc"], -1));
-                    _syRows.Add(Pick("睡眠转休眠", SyHibernateNames, hi < 0 ? 2 : hi, i => { power["hibernateDc"] = power["hibernateAc"] = SyHibernate[i]; SySet("set_hibernate_after", JsonValue.Create(SyHibernate[i])); },
+                    _syRows.Add(Pick("睡眠转休眠", SyHibernateNames, hi < 0 ? 2 : hi, i => { power["hibernateDc"] = SyHibernate[i]; power["hibernateAc"] = SyHibernate[i]; SySet("set_hibernate_after", JsonValue.Create(SyHibernate[i])); },
                         hi < 0 ? "当前为自定义时间" : ""));
                 }
                 else _syRows.Add(Later("睡眠转休眠", "休眠未启用"));
@@ -424,7 +446,7 @@ public sealed partial class WallStage
         bool wuBusy = jobState is "searching" or "downloading" or "installing";
         var jobIds = (job?["ids"] as JsonArray)?.Select(n => Str(n) ?? "").ToHashSet() ?? new HashSet<string>();
         if (jobState == "done" && Bool(job?["reboot"]))
-            _syRows.Add(new PerfRow { Title = "Windows 更新已安装", Value = "重启后生效", Disabled = true });
+            _syRows.Add(new PerfRow { Title = "Windows 更新已安装（重启后生效）", Disabled = true });
         else if (jobState == "failed")
             _syRows.Add(new PerfRow { Title = "Windows 更新没装成", Value = Str(job?["error"]) ?? "", Disabled = true });
         if (wuItems.Length == 0)
@@ -441,7 +463,7 @@ public sealed partial class WallStage
         else
         {
             if (wuItems.Length >= 2)
-                _syRows.Add(SyAct($"安装全部 Windows 更新（{wuItems.Length} 项）", "wu-all", wuBusy ? "正在安装…" : "", () =>
+                _syRows.Add(SyAct($"安装全部 Windows 更新（{wuItems.Length} 项）" + (wuItems.Any(i => Bool(i["reboot"])) ? "（可能需重启）" : ""), "wu-all", wuBusy ? "正在安装…" : "", () =>
                 {
                     if (wuBusy || !SyConfirm("wu-all")) return;
                     var ids = new JsonArray(wuItems.Select(i => (JsonNode?)JsonValue.Create(Str(i["id"]))).ToArray());
@@ -457,7 +479,7 @@ public sealed partial class WallStage
                     : _syArmed == key ? "再按一次确认" : string.Join(" · ", new[] { kb, size > 0 ? $"{Math.Max(1, size >> 20)} MB" : "" }.Where(x => x.Length > 0));
                 _syRows.Add(new PerfRow
                 {
-                    Title = Str(it["title"]) ?? id, Value = value,
+                    Title = (Str(it["title"]) ?? id) + (Bool(it["reboot"]) ? "（可能需重启）" : ""), Value = value,
                     Press = () =>
                     {
                         if (wuBusy) { Toast("Windows 更新正在安装，等它装完"); return; }
@@ -501,18 +523,18 @@ public sealed partial class WallStage
         }
         else if (queued.Contains(id)) value = "排队中";
         else if (result == "done") value = "已更新";
-        else if (result == "restart") value = "已更新，重启后生效";
+        else if (result == "restart") value = "已更新";
         else if (result.StartsWith("failed")) value = "失败：" + result[(result.IndexOf(':') + 1)..].Trim();
         else
         {
             long size = (long)(Num(item["size"]) ?? 0);
             value = $"{Str(item["current"])} → {Str(item["latest"])}" + (size > 0 ? $" · {Math.Max(1, size >> 20)} MB" : "");
-            if (_syArmed == key) value = "再按一次确认" + (Str(item["note"]) is string note ? $"（{note}）" : "");
+            if (_syArmed == key) value = "再按一次确认" + (Str(item["note"]) is string note && !note.Contains("重启") ? $"（{note}）" : "");
         }
         bool busy = id == active || queued.Contains(id);
         return new PerfRow
         {
-            Title = Str(item["title"]) ?? id, Value = value,
+            Title = (Str(item["title"]) ?? id) + (result == "restart" ? "（重启后生效）" : (Str(item["note"]) ?? "").Contains("重启") ? "（更新后自动重启）" : ""), Value = value,
             Press = () =>
             {
                 if (busy || result is "done" or "restart") return;
@@ -550,7 +572,7 @@ public sealed partial class WallStage
                 }
             return;
         }
-        if (_syFocus >= 0 && _syFocus < _syRows.Count && !_syRows[_syFocus].Disabled) _syRows[_syFocus].Step?.Invoke(dir == Direction.Left ? -1 : 1);
+        if (_syFocus >= 0 && _syFocus < _syRows.Count && !_syRows[_syFocus].Disabled) RowStep(_syRows[_syFocus], dir == Direction.Left ? -1 : 1);
     }
 
     private void SyActivate()
@@ -559,10 +581,10 @@ public sealed partial class WallStage
         if (_syFocus < 0 || _syFocus >= _syRows.Count) return;
         var r = _syRows[_syFocus];
         if (r.Disabled) { if (r.Value == DsLater) Toast($"这一项{DsLater}"); return; }
-        r.Press?.Invoke();
+        RowPress(r);
     }
 
-    private void SyBack() { if (_syUpdatesOpen) SyOpenUpdates(false); else CloseSystem(); }
+    private void SyBack() { if (SettingsFinishEdit()) return; if (_syUpdatesOpen) SyOpenUpdates(false); else CloseSystem(); }
 
     // ---------------- 绘制 ----------------
 
@@ -631,9 +653,10 @@ public sealed partial class WallStage
             ds.FillRoundedRectangle(0, barY - 3, Math.Max(6, W * bat.Percent / 100f), 6, 3, 3, accent);
         var rows = new List<(string, string)>();
         double? watts = Num(b?["watts"]);
+        string estimate = Str(b?["wattsSource"]) == "capacityDelta" ? "估算 " : "";
         string state = !bat.HasBattery ? "—"
-            : bat.OnAc ? (watts is > 0.3 ? $"充电中 · {watts:0.0} W" : bat.Percent >= 99 ? "已充满" : "已接通电源")
-            : watts is < -0.3 ? $"放电 · {-watts:0.0} W" : "使用电池";
+            : bat.OnAc ? (watts is > 0.3 ? $"充电中 · {estimate}{watts:0.0} W" : bat.Percent >= 99 ? "已充满" : "已接通电源")
+            : watts is < -0.3 ? $"整机放电 · {estimate}{-watts:0.0} W" : "使用电池";
         rows.Add(("状态", state));
         // 插着电：预计充电时间（到充电上限或充满）；用电池：预计使用时间。固件不报功率，后台要攒十几秒的电量变化才算得出来。
         int minutes = Int(b?[bat.OnAc ? "chargeMinutes" : "minutes"]);

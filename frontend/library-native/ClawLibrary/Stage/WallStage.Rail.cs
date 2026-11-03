@@ -1,4 +1,4 @@
-﻿// 舞台里与竖条（首页窄缝）有关的部分：焦点在墙与竖条之间走、竖条各项的动作、设置、搜索、时钟与电池刷新、动态背景。
+// 舞台里与竖条（首页窄缝）有关的部分：焦点在墙与竖条之间走、竖条各项的动作、设置、搜索、时钟与电池刷新、动态背景。
 using System.Numerics;
 using ClawLibrary.Data;
 using ClawLibrary.Engine;
@@ -91,6 +91,7 @@ public sealed partial class WallStage
         {
             bool was = _windowActive;
             _windowActive = e.WindowActivationState != WindowActivationState.Deactivated;
+            OnScreensaverWindowActivation(_windowActive);
             UpdateBackdropRunning();
             if (was != _windowActive) GpOnWindowActive(_windowActive);
         };
@@ -107,7 +108,7 @@ public sealed partial class WallStage
         m.Shortcuts = new();   // 竖条里只放平台页签；Steam 的分类铺在 Steam 页签的墙上
         m.Settings = new()
         {
-            ("标题样式", Style == TitleStyle.B ? "极简黑体" : "电影字幕"),
+            ("外观设置", TitleStyles.Name(Style)),
             ("背景样式", _backgroundSettings.Name),
             ("控制中心卡片", _ccCards ? "卡片" : "拍立得"),
             ("动态背景", _backdropOn ? "开" : "关"),
@@ -156,6 +157,7 @@ public sealed partial class WallStage
 
     private bool SeamUsable()
     {
+        if (!LibraryRailVisible) return false;
         Sync();
         var geo = SeamGeometry(_anchorX, _center, _openWidth, View);
         return !geo.Collapsed && geo.Width > _contentWidth * 0.6;
@@ -257,8 +259,10 @@ public sealed partial class WallStage
             case RailKind.Account:
                 SystemInfo.Open("ms-settings:yourinfo");
                 break;
-            case RailKind.Explorer:
-                SystemInfo.Open("explorer.exe");
+            case RailKind.Steam:
+                string uri = _prefs.SteamShortcut == SteamShortcutTarget.BigPicture ? "steam://open/bigpicture" : "steam://open/games";
+                try { PlatformClients.Open(uri); Log.Info($"rail Steam shortcut: {uri}"); }
+                catch (Exception ex) { Log.Warn($"rail Steam shortcut: {ex.Message}"); Toast("无法打开 Steam，请确认已安装 Steam"); }
                 break;
             case RailKind.Search:
                 OpenSearch();
@@ -335,7 +339,7 @@ public sealed partial class WallStage
         }
         switch (i)
         {
-            case 0: ToggleTitleStyle(); break;
+            case 0: OpenSettingsFromLibrary(); _stCat = 2; Repaint(); break;
             case 1: SetBackgroundPreview(true); _railFocus = 0; break;
             case 2: SetCcCardStyle(!_ccCards); break;
             case 3: _backdropOn = !_backdropOn; UpdateBackdropRunning(); _prefs = _prefs with { Backdrop = _backdropOn }; _prefs.Save(); Toast(_backdropOn ? "动态背景：开" : "动态背景：关"); break;
@@ -494,6 +498,7 @@ public sealed partial class WallStage
     /// <summary>鼠标点在竖条上：聚焦那一项并执行。</summary>
     private bool RailClick(double sx, double sy)
     {
+        if (!LibraryRailVisible) return false;
         Sync();
         var geo = SeamGeometry(_anchorX, _center, _openWidth, View);
         if (geo.Width < 2 || sx < geo.ScreenX - geo.Width / 2 || sx > geo.ScreenX + geo.Width / 2) return false;
@@ -630,6 +635,7 @@ public sealed partial class WallStage
         _searchFocus = 1;
         _railFocused = true;
         PlaceSearchBox();
+        (_window as MainWindow)?.RequestTextInputFocus();
         _searchBox.Focus(FocusState.Programmatic);
         RepaintRail();
     }
@@ -661,8 +667,7 @@ public sealed partial class WallStage
         if (!_searchOpen || _searchBox == null) return;
         var q = _searchBox.Text.Trim();
         if (q.Length == 0) { FocusSearchBox(); return; }
-        var all = _lib.HomeTabs.Count > 0 ? _lib.HomeTabs[0].Items() : _lib.Games;   // 「全部」：最近玩过的在前
-        var items = all.Where(i => Contains(i.Title, q) || Contains(i.Main, q) || Contains(i.Kicker, q) || Contains(i.Tail, q) || Contains(i.Subtitle, q)).ToList();
+        var items = SearchItems(q);
         Log.Info($"search \"{q}\": {items.Count}");
         if (items.Count == 0) { Toast($"没有找到「{q}」"); FocusSearchBox(); return; }
         Sync();
@@ -676,20 +681,28 @@ public sealed partial class WallStage
         _railFocus = -1;
         // 结果墙是有限的方块矩阵（不像合集那样循环铺满）：缝右边的格子按离起点的远近排名，第 0 名就是起点那格，
         // 往外一圈圈放，放完为止，其余格子空着
-        int anchorCol = BoundaryColumn(_anchorX);
-        var cands = new List<Slot>();
-        for (double span = 1600; ; span *= 1.6)
-        {
-            cands = SlotsIn(new Bounds(_anchorX, _anchorX + span * 2, start.Cy - span, start.Cy + span), 6000, new List<Slot>())
-                .Where(s => s.Column >= anchorCol).ToList();
-            if (cands.Count >= items.Count * 2 || span > 60000) break;
-        }
         // 面板已经是完整宽度：开口不用再动，缝直接翻面成「游戏库 › 搜索」信息条，墙从缝边翻牌换成结果
         PushLayer(start, new Layer
         {
-            Id = $"search:{q}", Title = q, Items = items, Layout = Content.Finite(cands, items.Count, start.Cx, start.Cy, start.Key), Home = false,
+            Id = $"search:{q}", Title = q, Items = items, Layout = SearchLayout(items.Count, start), Home = false,
             Crumbs = new[] { "游戏库", "搜索" },
         });
+    }
+
+    private List<LibraryItem> SearchItems(string query) => _lib.Games.OrderByDescending(g => g.LastPlayed)
+        .Where(i => Contains(i.Title, query) || Contains(i.Main, query) || Contains(i.Kicker, query) || Contains(i.Tail, query) || Contains(i.Subtitle, query)).ToList();
+
+    private FiniteLayout SearchLayout(int count, Slot start)
+    {
+        int anchorCol = BoundaryColumn(_anchorX);
+        var candidates = new List<Slot>();
+        for (double span = 1600; ; span *= 1.6)
+        {
+            candidates = SlotsIn(new Bounds(_anchorX, _anchorX + span * 2, start.Cy - span, start.Cy + span), 6000, new List<Slot>())
+                .Where(s => s.Column >= anchorCol).ToList();
+            if (candidates.Count >= count * 2 || span > 60000) break;
+        }
+        return Content.Finite(candidates, count, start.Cx, start.Cy, start.Key);
     }
 
     private static bool Contains(string? s, string q) => s != null && s.Contains(q, StringComparison.OrdinalIgnoreCase);
@@ -777,9 +790,10 @@ public sealed partial class WallStage
         UpdateWallBackgroundVisibility();
         _backdrop.Visible = _backdropOn || _backgroundSettingsOpen;
         bool recent = NowMs - _lastInput < BackdropIdleMs;
-        bool run = _backdropOn && _windowActive && !Reduced && recent && !_ccOpen;   // 整屏可见，不再依赖侧边栏开口；控制中心开着时墙冻住
+        bool run = _backdropOn && _windowActive && !Reduced && recent && !_ccOpen && _ob == null;   // 整屏可见，不再依赖侧边栏开口；控制中心 / 首次启动引导开着时墙冻住
         _backdrop.Run(run);
         CcBackRun();
+        ObBackRun();
         EnsureBackdropLoop();
         // 背景在动时，角落里那个 1 px 的点也一起动：实测只有缝里一条在动时，展开 / 换页签时 DWM 会隔帧合成（约 8 % 的帧 33 ms），
         // 加上这个点就每帧都准时；背景本来就让合成每帧都在跑，它不额外花什么

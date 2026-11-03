@@ -1,6 +1,6 @@
 ﻿// 中间的竖条（首页窄缝，120 px）：参照 folia 首页窄缝的排法（自己实现），并按需求加了系统信息与快捷入口。
 // 从上到下：导航区（竖排页签、分隔线、合集直达入口）→ 账户（头像在上、用户名在下）
-// → 工具列（搜索、设置、文件管理器竖着排）→ 时间、电池各一行。搜索打开时整条缝换成搜索面板（Chrome.SeamSearch）。导航区是唯一可伸缩的一段：放不下全名时页签缩成一个字，再放不下就在里面滚，
+// → 工具列（搜索、添加游戏、设置、Steam 竖着排）→ 时间、电池各一行。搜索打开时整条缝换成搜索面板（Chrome.SeamSearch）。导航区是唯一可伸缩的一段：放不下全名时页签缩成一个字，再放不下就在里面滚，
 // 保证焦点那一项露出来。设置打开时导航区换成设置列表。
 // 竖条可以交互：手柄 / 键盘的焦点进到竖条里时，焦点那一项画白色描边高亮（墙上的焦点环同时熄掉）。
 using System.Numerics;
@@ -9,6 +9,7 @@ using ClawLibrary.Engine;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Brushes;
 using Microsoft.Graphics.Canvas.Geometry;
+using Microsoft.Graphics.Canvas.Svg;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.Graphics.Canvas.UI.Composition;
 using Windows.Foundation;
@@ -18,7 +19,7 @@ using Colors = Microsoft.UI.Colors;
 
 namespace ClawLibrary.Stage;
 
-public enum RailKind { Tab, Shortcut, Account, Search, AddGame, Settings, Explorer, Setting, Back }
+public enum RailKind { Tab, Shortcut, Account, Search, AddGame, Settings, Steam, Setting, Back }
 
 public sealed class RailItem
 {
@@ -53,6 +54,7 @@ public sealed class Rail
     private const float PadX = 10, PadTop = 16, PadBottom = 16;
     private const string IconFont = "Segoe Fluent Icons";
     private readonly Gfx _g;
+    private CanvasSvgDocument? _steamIcon;
     public float Dpi = 1;
     public readonly List<RailItem> Items = new();
     /// <summary>导航区滚动量（内容比导航区高时）。</summary>
@@ -68,8 +70,10 @@ public sealed class Rail
 
     private CanvasTextLayout V(string text, FontSpec f, float size, float ls)
     {
-        using var fmt = TextKit.Format(f, size, false, vertical: true);
+        text = I18n.T(text);
+        var fmt = TextKit.Shared(f, size, false, vertical: true, text: text);
         var l = new CanvasTextLayout(_g.Device, text, fmt, 100000, 100000);
+        TextKit.Mix(l, text, f);
         if (ls != 0) l.SetCharacterSpacing(0, text.Length, 0, ls, 0);
         return l;
     }
@@ -140,9 +144,9 @@ public sealed class Rail
         float nameH = (float)name.LayoutBounds.Height;
         float accH = av + 8 + nameH;
         float accY = statusY - groupGap - accH;
-        // 工具：竖着一列（搜索、添加游戏、设置、文件管理器），照 folia 缝里的工具格：40 × 40 方格、圆角 12、静止时无底无框，间隔 8
+        // 工具：竖着一列（搜索、添加游戏、设置、Steam），照 folia 缝里的工具格：40 × 40 方格、圆角 12、静止时无底无框，间隔 8
         const float toolW = 40, toolH = 40, toolGap = 8;
-        var tools = new[] { (RailKind.Search, ""), (RailKind.AddGame, ""), (RailKind.Settings, ""), (RailKind.Explorer, "") };
+        var tools = new[] { (RailKind.Search, ""), (RailKind.AddGame, ""), (RailKind.Settings, ""), (RailKind.Steam, "") };
         float toolsH = tools.Length * toolH + (tools.Length - 1) * toolGap;
         float ruleY = accY - groupGap / 2 - 0.5f;   // 工具与账户之间一道短分隔线
         float toolsY = accY - groupGap - toolsH;
@@ -167,8 +171,17 @@ public sealed class Rail
                 ds.FillRoundedRectangle(r, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.16));
                 ds.DrawRoundedRectangle(new Rect(r.X + 0.5, r.Y + 0.5, r.Width - 1, r.Height - 1), 11.5f, 11.5f, Gfx.WithAlpha(Theme.Ink, 0.26), 1);
             }
-            var icon = this.H(tools[i].Item2, new FontSpec(IconFont, 400), 18);
-            DrawCentered(ds, icon, (float)(r.X + toolW / 2), (float)(r.Y + toolH / 2), pressed ? Theme.Accent : focused ? Theme.Ink : Gfx.WithAlpha(Theme.Ink, 0.8));
+            var color = pressed ? Theme.Accent : focused ? Theme.Ink : Gfx.WithAlpha(Theme.Ink, 0.8);
+            if (tools[i].Item1 == RailKind.Steam)
+            {
+                _steamIcon ??= CanvasSvgDocument.LoadFromXml(_g.Device, File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "Steam.svg")));
+                _steamIcon.Root.SetColorAttribute("fill", color);
+                ds.DrawSvg(_steamIcon, new Size(20, 20), (float)(r.X + toolW / 2 - 10), (float)(r.Y + toolH / 2 - 10));
+            }
+            else
+            {
+                LineIcons.Draw(ds, tools[i].Item2, (float)(r.X + toolW / 2), (float)(r.Y + toolH / 2), 18, color);
+            }
             Add(tools[i].Item1, 0, r);
         }
         ds.FillRectangle(cx - 12, ruleY, 24, 1, Gfx.WithAlpha(Theme.Ink, 0.16));
@@ -198,7 +211,7 @@ public sealed class Rail
         if (focus >= 0 && focus < Items.Count)
         {
             var it = Items[focus];
-            if (it.Kind is RailKind.Search or RailKind.AddGame or RailKind.Settings or RailKind.Explorer)
+            if (it.Kind is RailKind.Search or RailKind.AddGame or RailKind.Settings or RailKind.Steam)
             {
                 // 工具格：方形焦点环（folia focus-visible：2 px 描边，离按钮 2 px），底色上面已经画了
                 var b = it.Bounds;
@@ -213,18 +226,17 @@ public sealed class Rail
 
     private void DrawBattery(CanvasDrawingSession ds, float x, float y, BatteryState b)
     {
-        var body = new Rect(x, y, 20, 10);
-        ds.DrawRoundedRectangle(new Rect(x + 0.5, y + 0.5, 19, 9), 2.5f, 2.5f, Theme.SeamInkSoft, 1);
-        ds.FillRoundedRectangle(new Rect(x + 20.5, y + 3, 1.5, 4), 0.75f, 0.75f, Theme.SeamInkSoft);
+        bool plug = b.Charging || b.OnAc;
+        var outline = plug ? Theme.ChargingGreen : Theme.SeamInkSoft;
+        ds.DrawRoundedRectangle(new Rect(x + 0.5, y + 0.5, 19, 9), 2.5f, 2.5f, outline, 1);
+        ds.FillRoundedRectangle(new Rect(x + 20.5, y + 3, 1.5, 4), 0.75f, 0.75f, outline);
         float fill = 16 * Math.Clamp(b.Percent, 0, 100) / 100f;
-        var color = b.Percent <= 15 && !b.OnAc ? Gfx.Rgba(0xfd, 0x5c, 0x47) : b.Charging ? Gfx.Rgba(0x7d, 0xd8, 0x8a) : Theme.Ink;
+        var color = plug ? Theme.ChargingGreen : b.Percent <= 15 ? Gfx.Rgba(0xfd, 0x5c, 0x47) : Theme.Ink;
         ds.FillRoundedRectangle(new Rect(x + 2, y + 2, Math.Max(1, fill), 6), 1.2f, 1.2f, color);
-        if (b.Charging || b.OnAc)
+        if (plug)
         {
-            var bolt = H("", new FontSpec(IconFont, 400), 9);
-            DrawCentered(ds, bolt, x + 10, y + 5, Theme.Bg);
+            LineIcons.Draw(ds, "", x + 10, y + 5, 9, Colors.White, fill: true);
         }
-        _ = body;
     }
 
     private void DrawAvatar(CanvasDrawingSession ds, RailModel m, Rect r)

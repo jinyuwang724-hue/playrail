@@ -7,7 +7,7 @@ namespace ClawLibrary.Data;
 internal static class ToolboxActivation
 {
     public static bool IsRoute(string route) => route is "library" or "control-center"
-        or "restore-library" or "restore-control-center" or "minimize-library" or "minimize-control-center";
+        or "restore-library" or "restore-control-center" or "minimize-library" or "minimize-control-center" or "window-switcher";
     public static string Target(string route) => route.StartsWith("restore-", StringComparison.Ordinal) ? route[8..]
         : route.StartsWith("minimize-", StringComparison.Ordinal) ? route[9..] : route;
     public static bool ShouldMinimize(string route, bool? xboxFse, bool? steamBigPicture) =>
@@ -30,6 +30,7 @@ internal static class ToolboxWindow
     /// </summary>
     public static bool SteamHomeRedirect(string route, nint window)
     {
+        if (!Stage.ShellMode.GameMode) return false;
         if (route != "activate" || XboxFseActive() != true) return false;
         if (!ClawLibrary.Stage.UiPrefs.Load().FseSteam) return false;
         try { Process.Start(new ProcessStartInfo("steam://open/bigpicture") { UseShellExecute = true }); }
@@ -66,6 +67,9 @@ internal static class ToolboxWindow
     private static extern int ShowWindow(nint window, int command);
     public static void Minimize(nint window) => ShowWindow(window, 6);
     public static void Restore(nint window) { if (IsIconic(window)) ShowWindow(window, 9); }
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(nint window, int attribute, out int value, int size);
+    /// <summary>窗口被外壳隐藏了（DWM_CLOAKED_SHELL，Xbox 全屏体验里游戏在前台时的后台应用）。</summary>
+    public static bool ShellCloaked(nint window) => DwmGetWindowAttribute(window, 14, out int cloaked, 4) == 0 && (cloaked & 2) != 0;
 
     public static bool? SteamBigPictureOpen()
     {

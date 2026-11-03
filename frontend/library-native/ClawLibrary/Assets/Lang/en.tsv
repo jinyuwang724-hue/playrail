@@ -1,0 +1,1251 @@
+Claw 游戏库	Claw Library
+Claw 游戏库 · 双击打开，右键退出	Claw Library · double-click to open, right-click to quit
+打开游戏库	Open library
+退出游戏库	Quit library
+其他	Other
+Steam 云端	Steam Cloud
+安装	Install
+注意	Note
+卸载	Uninstall
+设置	Settings
+STEAM · 未安装	STEAM · Not installed
+本地	Local
+非 Steam	Non-Steam
+PC · 文件夹	PC · Folder
+{0} 款游戏	{0} games
+合集 · {0}	Collection · {0}
+全部	All
+浮光	Glow
+星港	Starport
+夜航	Night flight
+Steam 已在运行	Steam is already running
+已请求 Steam 在托盘启动，首次使用请在 Steam 中登录	Asked Steam to start in the tray. Sign in to Steam the first time.
+无法处理此请求	Can't handle this request
+连接请求已过期，请回到游戏库重新连接	The connect request expired. Go back to the library and connect again.
+无效的连接请求	Invalid connect request
+连接成功，可以返回 Claw 游戏库	Connected. You can return to Claw Library.
+连接未完成，请返回游戏库重试	Not connected. Go back to the library and try again.
+未安装 Steam	Steam not installed
+没有本机账户记录，请在 Steam 中登录	No local account found. Sign in to Steam.
+ · 本机账户	 · Local account
+Steam 大屏幕模式	Steam Big Picture
+无法读取本机游戏，请重新扫描	Can't read local games. Scan again.
+莫奈	Monet
+漫游	Drift
+胶片封面墙	Film-strip cover wall
+隐现	Fade
+镜头畸变	Lens distortion
+纸张纹理	Paper texture
+横向交错滑动	Horizontal stagger
+竖向交错滑动	Vertical stagger
+像素	Pixel
+流体	Fluid
+混合	Blend
+全屏叠色	Full-screen tint
+今天玩过	Played today
+{0} 天前玩过	Played {0} days ago
+安装游戏	Install game
+开始游戏	Play
+游戏设置	Game settings
+返回	Back
+收起	Collapse
+打开	Open
+{0} 款游戏 · 共 {1} 小时	{0} games · {1} hours total
+搜索游戏库	Search library
+输入游戏名、原名或开发商，按回车搜索。	Type a game name, original title or developer, then press Enter.
+搜索	Search
+游戏库 › 搜索	Library › Search
+选择	Select
+关闭搜索	Close search
+轻触	Light touch
+清透	Clear
+数码	Digital
+电影字幕	Movie subtitle
+极简黑体	Minimal sans
+留白细字	Airy thin
+简约衬线	Simple serif
+橙	Orange
+黄	Yellow
+青	Teal
+蓝	Blue
+紫	Purple
+粉	Pink
+不支持的后台调用	Unsupported service call
+工具箱后台版本太旧	Toolbox service is too old
+本地游戏	Local games
+添加游戏	Add game
+{0} 款	{0}
+收进文件夹里的游戏	Games in folders
+补封面	Fill covers
+完整	Complete
+补全封面	Complete covers
+关闭 Steam	Close Steam
+写入 Steam	Write to Steam
+启动 Steam	Start Steam
+再按一次确认	Press again to confirm
+已同步	Synced
+同步到 Steam（将重启 Steam）	Sync to Steam (restarts Steam)
+SteamGridDB 密钥	SteamGridDB key
+已填	Set
+不填也能用	Optional
+清除	Clear
+仅游戏库	Library only
+待同步	Pending sync
+分类未保存	Categories not saved
+缺封面	Missing cover
+快捷方式	Shortcut
+匹配游戏	Match game
+游戏名	Game name
+搜索中	Searching
+封面图片	Cover image
+背景	Background
+徽标	Logo
+宽幅封面图片	Wide cover image
+图标	Icon
+连不上	Can't connect
+名称是空的	Name is empty
+已换「{0}」的封面	Changed the cover of "{0}"
+「{0}」的封面没有换上：{1}	Couldn't change the cover of "{0}": {1}
+已添加：{0}	Added: {0}
+已保存：{0}	Saved: {0}
+「{0}」没有存上：{1}	Couldn't save "{0}": {1}
+已移除	Removed
+「{0}」的{1}没有换上：{2}	Couldn't change the {1} of "{0}": {2}
+「{0}」的{1}没有存上：{2}	Couldn't save the {1} of "{0}": {2}
+名称	Name
+匹配	Match
+正在找…	Searching…
+未匹配	Not matched
+加入 Steam	Add to Steam
+关	Off
+开	On
+分类	Category
+从游戏库移除	Remove from library
+再按一次	Press again
+新建	New
+新建分类	New category
+Steam 分类	Steam categories
+不加入	Don't add
+{0} 等 {1} 个	{0} and {1} more
+封面概览	Cover overview
+不用{0}了	Stop using {0}
+已换{0}	Changed {0}
+已换成 Steam 官方的{0}	Switched to Steam's official {0}
+更换封面	Change cover
+编辑游戏	Edit game
+游戏	Game
+程序	Program
+Steam 官方封面	Steam official cover
+预览	Preview
+不用	None
+从本地选择	Choose from this device
+Steam 官方 · {0}	Steam official · {0}
+用这张	Use this one
+完成	Done
+屏保测试集合	Screensaver test collection
+标题样式	Title style
+播放失败，请重新选择曲目	Playback failed. Pick another track.
+界面音效	UI sounds
+音效风格	Sound style
+音效音量	Sound volume
+试听整套音效	Play the whole sound set
+导航 · 确认 · 详情 · 开关 · 菜单 · 提示 · 启动	Navigate · Confirm · Details · Toggle · Menu · Alert · Launch
+背景音乐	Music
+主页背景音乐	Home music
+音乐音量	Music volume
+音乐曲目	Music track
+循环播放	Loop
+导入本地音乐	Import local music
+正在导入…	Importing…
+移除所选音乐	Remove selected music
+仅移除导入的副本	Removes only the imported copy
+已移除音乐副本	Removed the music copy
+没能移除：	Couldn't remove:
+音乐状态	Music status
+播放范围	Plays
+前端在前台时播放，进入游戏后淡出	While the frontend is in front; fades out in games
+‹ 返回上一级	‹ Up one level
+没有可导入的音频	No audio to import
+可进入子文件夹继续查找	Open a subfolder to keep looking
+打不开这个文件夹	Can't open this folder
+已导入「{0}」	Imported "{0}"
+导入失败：	Import failed:
+读取音频超时，请换一个文件	Reading the audio timed out. Try another file.
+电源	Power
+文件管理器	File Explorer
+浏览器	Browser
+截图	Screenshots
+睡眠	Sleep
+休眠	Hibernate
+重启	Restart
+关机	Shut down
+睡眠、休眠、重启、关机	Sleep, hibernate, restart, shut down
+打开资源管理器	Open File Explorer
+打开默认浏览器	Open the default browser
+截图管理	Manage screenshots
+打开 Windows 设置	Open Windows Settings
+关屏，进入低电量待机	Screen off, low-power standby
+保存现场后断电，下次开机原样恢复	Saves your session and powers off; restores it next time
+立即重启	Restart now
+立即关机	Shut down now
+账户	Account
+正在打开文件管理器	Opening File Explorer
+正在打开浏览器	Opening the browser
+正在打开系统设置	Opening system settings
+正在{0}…	{0}…
+「{0}」页面还没有做	The "{0}" page isn't built yet
+卡片样式：卡片	Card style: Card
+卡片样式：拍立得	Card style: Polaroid
+竖条不在屏幕上：先把墙面移回来	The rail is off screen: bring the wall back first
+游戏库	Library
+性能	Performance
+手柄	Controller
+显示与声音	Display & sound
+系统	System
+软件设置	App settings
+控制中心	Control center
+还没有游戏	No games yet
+芯片功耗与风扇	Chip power & fans
+连不上工具箱后台	Can't reach the toolbox service
+正在读取…	Loading…
+按键、震动与摇杆	Buttons, rumble & sticks
+没有检测到手柄	No controller detected
+震动 左 {0} % · 右 {1} %	Rumble L {0} % · R {1} %
+震动 {0} %	Rumble {0} %
+手柄已连接	Controller connected
+已连接	Connected
+亮度、音量与刷新率	Brightness, volume & refresh rate
+刷新率 {0} Hz	Refresh rate {0} Hz
+读不到刷新率	Can't read refresh rate
+电池、电源、更新与维护	Battery, power, updates & maintenance
+充电中	Charging
+已接通电源	Plugged in
+使用电池	On battery
+电量 {0}% · {1}	Battery {0}% · {1}
+读不到电池	Can't read battery
+主页与外观	Home & appearance
+正在启动「{0}」	Starting "{0}"
+「{0}」没能启动：{1}	"{0}" didn't start: {1}
+「{0}」没有可用的启动方式	"{0}" has no way to start
+在 Steam 里安装「{0}」	Install "{0}" in Steam
+游戏库 · {0}	Library · {0}
+未安装	Not installed
+没有找到	Not found
+更新	Update
+下载	Download
+连接 Steam	Connect Steam
+连接 Xbox	Connect Xbox
+密钥	Key
+绑定	Link
+登录	Sign in
+封面	Cover
+图片	Image
+音量	Volume
+声音	Sound
+麦克风	Microphone
+静音	Mute
+识别	Detect
+文件夹	Folder
+集合	Collection
+列表	List
+功耗	Power draw
+充电	Charging
+电池	Battery
+桌面模式	Desktop mode
+摇杆	Sticks
+背键	Back buttons
+扳机	Triggers
+映射	Mapping
+震动	Rumble
+启动	Launch
+恢复	Restore
+动态	Motion
+还原	Reset
+后台	Service
+已降低动态效果	Reduced motion on
+已恢复完整动效	Full motion restored
+帧 {0} ms · 最长 {1} ms · {2} fps · DWM {3} fps 掉帧 {4} · 卡片 {5} · 图 {6}	Frame {0} ms · max {1} ms · {2} fps · DWM {3} fps drops {4} · cards {5} · images {6}
+左摇杆	Left stick
+右摇杆	Right stick
+行为	Behavior
+死区	Dead zone
+XeSS 多帧生成	XeSS multi-frame generation
+充电与电池供电提示	Charging and battery alerts
+手柄与桌面模式切换提示	Controller / desktop mode alerts
+后台还没接上	The service isn't connected yet
+加强	Boost
+保持比例	Keep aspect
+全屏	Full screen
+居中	Center
+整数	Integer
+复古	Retro
+这一项{0}	This setting {0}
+没有改成：{0}	Not changed: {0}
+屏幕	Screen
+这台机器不支持	Not supported on this device
+显示	Display
+亮度	Brightness
+刷新率	Refresh rate
+分辨率	Resolution
+可变刷新率（VRR）	Variable refresh rate (VRR)
+自动亮度	Auto brightness
+屏幕缩放	Display scale
+{0} % · 静音	{0} % · Muted
+未知设备	Unknown device
+输出设备	Output device
+显卡	Graphics
+Intel 显卡选项	Intel graphics options
+读不到显卡驱动	Can't read the graphics driver
+低延迟	Low latency
+帧同步	Frame sync
+使用条件	Requirements
+需在支持的游戏内开启 XeSS 插帧	Turn on XeSS frame generation in a supported game
+显卡缩放	GPU scaling
+锐化	Sharpening
+饱和度	Saturation
+对比度	Contrast
+伽马	Gamma
+可变刷新率	Variable refresh rate
+小黄鸭	Lossless Scaling
+应用结果	Result
+应用状态	Status
+正在保存并应用…	Saving and applying…
+修改自动保存并应用	Changes save and apply automatically
+修改自动保存，开启后应用	Changes save automatically and apply when on
+小黄鸭没有应用：	Lossless Scaling not applied:
+读不到手柄固件	Can't read controller firmware
+后台还没有固件读取	The service can't read firmware yet
+没有保存：{0}	Not saved: {0}
+这一项还没接上：后台的手柄固件写入还没上线	Not wired up yet: the service can't write controller firmware yet
+没有写进手柄：{0}	Not written to the controller: {0}
+连接	Connect
+左右分开调还没接上：后台的震动接口还只认一个强度	Separate left/right isn't wired up yet: the service takes one strength
+震动强度没有写进手柄：{0}	Rumble strength not written to the controller: {0}
+没有切过去：{0}	Didn't switch: {0}
+没有震起来：{0}	Didn't rumble: {0}
+手柄模式	Controller mode
+按键映射	Button mapping
+鼠标	Mouse
+现在改不了	Can't change right now
+桌面模式（游戏库里先用手柄模式）	Desktop mode (the library uses controller mode first)
+DInput 模式	DInput mode
+Claw 8 EX · 没有检测到手柄	Claw 8 EX · No controller detected
+正在载入线稿…	Loading line art…
+模式	Mode
+切到手柄模式	Switch to controller mode
+切到桌面模式	Switch to desktop mode
+进去选键	Choose a key
+改	Change
+改这个键在 Steam 大屏幕里做什么	Change what this button does in Steam Big Picture
+改映射	Change mapping
+测试震动	Test rumble
+恢复原来的强度	Restore the original strength
+当前	Current
+← → 改  ·  A 完成	← → change · A done
+十字上键	D-pad up
+十字下键	D-pad down
+十字左键	D-pad left
+十字右键	D-pad right
+左摇杆按下	Left stick press
+右摇杆按下	Right stick press
+View 键	View button
+Menu 键	Menu button
+Xbox 键	Xbox button
+无	None
+{0} 键	{0} key
+ 键	Key
+滚轮上	Wheel up
+滚轮下	Wheel down
+滚轮左	Wheel left
+滚轮右	Wheel right
+鼠标左键点击	Left click
+鼠标右键点击	Right click
+鼠标中键点击	Middle click
+鼠标后退键	Mouse back
+鼠标前进键	Mouse forward
+禁用	Disabled
+按键	Buttons
+正面按键	Face buttons
+肩键	Bumpers
+功能键	Function buttons
+十字键	D-pad
+扳机键	Triggers
+摇杆鼠标	Stick mouse
+滚轮	Wheel
+没有保存桌面映射：{0}	Desktop mapping not saved: {0}
+灵敏度	Sensitivity
+输出到	Output to
+输出	Output
+{0}（桌面模式）	{0} (desktop mode)
+选择指令	Choose an action
+触发设置	Trigger settings
+换分组	Change group
+原功能	Original function
+原键	Original key
+按	Press
+左键	Left click
+右键	Right click
+中键	Middle click
+后退	Back
+前进	Forward
+滚轮 ↑	Wheel ↑
+滚轮 ↓	Wheel ↓
+滚轮 ←	Wheel ←
+滚轮 →	Wheel →
+主菜单	Main menu
+快速访问	Quick access
+超分开关	Upscaling toggle
+不做事	Do nothing
+{0}死区	{0} dead zone
+{0}外圈	{0} outer edge
+快速触发	Quick trigger
+开 · 轻按即满	On · light press is full
+关 · 线性	Off · linear
+左扳机	Left trigger
+右扳机	Right trigger
+{0}起点	{0} start
+{0}终点	{0} end
+左侧震动	Left rumble
+右侧震动	Right rumble
+手柄模式 · 手柄输出	Controller mode · gamepad output
+桌面模式 · 离开游戏库后生效	Desktop mode · applies after leaving the library
+桌面模式 · 键盘鼠标	Desktop mode · keyboard & mouse
+ · 左右互换	 · swapped
+反转水平方向	Invert horizontal
+反转垂直方向	Invert vertical
+外圈阈值	Outer threshold
+恢复默认功能	Restore default function
+恢复方向、死区和外圈  ›	Restore direction, dead zone and outer edge ›
+LT 左扳机	LT left trigger
+RT 右扳机	RT right trigger
+LB 左肩键	LB left bumper
+RB 右肩键	RB right bumper
+十字键 上	D-pad up
+十字键 下	D-pad down
+十字键 左	D-pad left
+十字键 右	D-pad right
+快速设置键	Quick settings button
+Claw 键	Claw button
+M1 背键	M1 back button
+M2 背键	M2 back button
+起	Start
+止	End
+普通按压	Press
+长按	Hold
+双击	Double press
+开始按压	Press start
+释放按压	Release
+组合键	Chord
+键盘	Keyboard
+数字键盘	Numpad
+L 按下	L press
+上	Up
+左	Left
+右	Right
+下	Down
+R 按下	R press
+前进键	Forward button
+后退键	Back button
+空格	Space
+播放	Play
+停止	Stop
+上一首	Previous track
+下一首	Next track
+Claw 控制中心	Claw control center
+Game Bar 截图	Game Bar screenshot
+显示键盘	Show keyboard
+Steam 左侧主菜单	Steam main menu (left)
+Steam 右侧快速访问	Steam quick access (right)
+Steam 游戏库	Steam library
+Steam 截图	Steam screenshot
+音量 +	Volume +
+音量 −	Volume −
+切换超分	Toggle upscaling
+不映射	Not mapped
+左摇杆 {0}	Left stick {0}
+右摇杆 {0}	Right stick {0}
+十字 ↑	D-pad ↑
+十字 ↓	D-pad ↓
+十字 ←	D-pad ←
+十字 →	D-pad →
+鼠标{0}	Mouse {0}
+小键盘 {0}	Numpad {0}
+键盘 {0}	Keyboard {0}
+指令	Action
+禁用这个键	Disable this button
+按下不起作用  ›	Pressing does nothing ›
+恢复原键位	Restore the original key
+{0}自己  ›	{0} itself ›
+触发 {0}	Trigger {0}
+触发	Trigger
+触发方式	Trigger type
+按住哪个键时触发	Fires while holding which key
+删除这个触发方式	Delete this trigger
+这个键	This button
+添加触发方式	Add a trigger
+长按、双击、组合键……  ›	Hold, double press, chord… ›
+一个键最多 8 个触发方式	Up to 8 triggers per button
+默认	Default
+连发 {0} 次/秒	Turbo {0} per second
+切换	Toggle
+延迟 {0}/{1} ms	Delay {0}/{1} ms
+ · 第二批	 · Batch two
+这一项在软件输入层的第二批里做	This comes in batch two of the software input layer
+{0}设置	{0} settings
+长按时间	Hold time
+双击间隔	Double-press interval
+按住以重复（连发）	Hold to repeat (turbo)
+{0} 次/秒	{0} per second
+触发启动延迟	Trigger start delay
+触发结束延迟	Trigger end delay
+可中断	Interruptible
+触感强度	Haptic strength
+关闭	Off
+指令循环	Cycle actions
+反转输入	Invert input
+专用功能键使用系统动作或键盘鼠标指令	Special buttons use system actions or keyboard/mouse actions
+「{0}」之后做	After "{0}"
+桌面模式下手柄发不出「{0}」	In desktop mode the controller can't send "{0}"
+（Steam 大屏接管）	 (Steam Big Picture takes over)
+（常规场景）	 (regular)
+（桌面模式）	 (desktop mode)
+现在：{0}  ·  改了立刻生效	Now: {0} · changes apply immediately
+{0}{1} · 触发设置	{0}{1} · Trigger settings
+照 Steam 输入	Follow Steam Input
+Ctrl / Shift / Alt / Win 按一下是叠加，可以组合；再按一个普通键完成	Ctrl / Shift / Alt / Win add up and combine; press a regular key to finish
+专用功能键支持系统动作、键盘组合和鼠标指令	Special buttons support system actions, key combos and mouse actions
+系统动作与专用按键共用，选择后立即生效	System actions are shared with special buttons and apply immediately
+选定	Select
+换页	Next page
+功耗配置档	Power profile
+跟随全局	Follow global
+固定功耗	Fixed power
+按电源切换	By power source
+自动	Auto
+不限	Unlimited
+CPU 频率上限	CPU frequency cap
+插电	Plugged in
+ CPU 频率上限	CPU frequency cap
+目标帧率	Target frame rate
+功耗下限	Power floor
+插电功耗上限	Plugged-in power cap
+电池功耗上限	Battery power cap
+短时功耗加成	Short-term power boost
+功耗控制	Power control
+请在控制中心开启功耗控制	Turn on power control in the control center
+帧率上限（RTSS）	Frame rate cap (RTSS)
+限帧配置	Frame limit profile
+独立配置	Own profile
+帧率上限	Frame rate cap
+RTSS 状态	RTSS status
+性能显示（RTSS）	Performance overlay (RTSS)
+显示配置	Overlay profile
+游戏配置未能保存：{0}	Game profile not saved: {0}
+通用	General
+画面	Display
+已安装文件	Installed files
+先选一款游戏	Pick a game first
+文件夹里的游戏先在设置里添加成本地游戏	Add folder games as local games in Settings first
+游戏名称	Game name
+更改游戏名称	Rename game
+编辑  ›	Edit ›
+游戏名称已更改	Game renamed
+启动目录	Start in
+启动程序	Program
+游戏程序	Game program
+更改	Change
+浏览  ›	Browse ›
+已改成 {0}	Changed to {0}
+没有安装	Not installed
+找不到程序	Program not found
+启动选项	Launch options
+Steam 没开	Steam isn't running
+游戏中启用 Steam 覆盖层	Enable the Steam overlay in game
+Steam 云同步	Steam Cloud sync
+收藏	Favorite
+在库中隐藏（重新载入游戏库后生效）	Hide in library (after reloading the library)
+没有装	Not installed
+自动缩放	Auto scaling
+超分预设	Upscaling preset
+小黄鸭（Lossless Scaling）	Lossless Scaling
+程序位置	Program location
+找不到	Not found
+打开所在文件夹	Open containing folder
+占用空间	Size on disk
+浏览本地文件	Browse local files
+验证游戏文件完整性	Verify integrity of game files
+已交给 Steam 验证，进度在 Steam 的下载页里	Handed to Steam; see progress on Steam's Downloads page
+手柄档案	Controller profile
+全局	Global
+游戏配置档	Game profile
+已从全局映射复制一份，进这款游戏时自动换上	Copied from the global mapping; used automatically in this game
+这款游戏改回全局映射	Use the global mapping for this game again
+预设	Presets
+已换成预设「{0}」	Switched to preset "{0}"
+还没有	None yet
+保存为预设	Save as preset
+已存成预设「{0}」	Saved as preset "{0}"
+删除这个预设	Delete this preset
+已删除预设「{0}」	Deleted preset "{0}"
+Steam 游戏显示范围	Steam games shown
+所有游戏	All games
+已安装游戏	Installed games
+游戏库未能刷新，请稍后重试	Library didn't refresh. Try again later.
+库内刷新验证 	Refresh check in library
+载入	Load
+ 已编辑	Edited
+小黄鸭设置已同步	Lossless Scaling settings synced
+本机状态	This device
+已识别 · 后台运行中	Detected · running in background
+已识别 · 后台未运行	Detected · not running
+正在检测…	Checking…
+未找到小黄鸭	Lossless Scaling not found
+提示	Tip
+重新检测本机	Check this device again
+选择小黄鸭 EXE…	Choose Lossless Scaling EXE…
+读取小黄鸭设置	Read Lossless Scaling settings
+保存并应用	Save and apply
+正在同步…	Syncing…
+有未保存的修改	Unsaved changes
+重新读取设置	Reload settings
+配置	Profiles
+未命名	Untitled
+当前配置	Current profile
+配置名称	Profile name
+请填写配置名称	Enter a profile name
+匹配程序或窗口	Match program or window
+请填写程序路径或窗口匹配条件	Enter a program path or window match
+配置管理	Manage profiles
+添加游戏配置…	Add game profile…
+复制当前配置	Duplicate current profile
+删除当前配置	Delete current profile
+保存后生效	Applies after saving
+停止小黄鸭后台	Stop Lossless Scaling
+启动小黄鸭后台	Start Lossless Scaling
+打开小黄鸭原版	Open Lossless Scaling
+设备 {0}（未连接）	Device {0} (not connected)
+保留当前值（{0}）	Keep current value ({0})
+无法读取程序	Can't read the program
+自定义预设	Custom preset
+ 副本	Copy
+预设尚未保存，再按一次返回放弃修改	Preset not saved. Press again to discard changes.
+预设已更新	Preset updated
+预设已保存，引用此预设的游戏配置已更新	Preset saved; game profiles that use it were updated
+编辑超分预设	Edit upscaling preset
+预设名称	Preset name
+保存方式	Saving
+保存后用于下次缩放，游戏内当前画面不变	Used for the next scaling; the current in-game picture stays the same
+效果链 · {0} / 12	Effect chain · {0} / 12
+尚无效果器	No effects yet
+添加后按顺序处理画面	Effects process the picture in order
+参数与顺序 ›	Parameters & order ›
+添加效果器…	Add effect…
+保存	Save
+保存预设	Save preset
+正在保存…	Saving…
+返回预设列表	Back to presets
+恢复内置预设	Restore built-in preset
+删除预设	Delete preset
+还原原始效果链	Restore the original effect chain
+引用它的游戏改为「无」	Games that use it switch to "None"
+选择效果器分类	Choose an effect category
+添加效果器 › {0}	Add effect › {0}
+可调缩放	Adjustable scaling
+返回效果链	Back to effect chain
+缩放	Scaling
+缩放方式	Scaling mode
+倍数	Factor
+适应屏幕	Fit screen
+指定尺寸	Exact size
+充满屏幕	Fill screen
+宽度（像素）	Width (px)
+高度（像素）	Height (px)
+横向比例	Horizontal ratio
+纵向比例	Vertical ratio
+效果顺序	Effect order
+上移	Move up
+下移	Move down
+移除效果器	Remove effect
+请输入 {0}–{1}	Enter {0}–{1}
+ 的整数	 (whole number)
+请输入有效数值	Enter a valid number
+桌面复制	Desktop Duplication
+读取失败	Read failed
+效果链	Effect chain
+编辑预设	Edit preset
+内置预设	Built-in presets
+复制预设	Duplicate preset
+新建预设	New preset
+刷新预设与设置	Refresh presets & settings
+请刷新重试	Refresh and try again
+铺满屏幕	Fill screen
+锐化强度	Sharpening strength
+捕获与性能	Capture & performance
+捕获方式	Capture method
+处理帧率上限	Frame rate cap
+不限制	Unlimited
+3D 游戏模式	3D game mode
+调整光标速度	Adjust cursor speed
+黑边修正	Black border fix
+左右各裁掉	Crop left & right
+不裁	No crop
+{0} 像素	{0} px
+上下各裁掉	Crop top & bottom
+简体中文	简体中文
+你好，	Hello,
+开始	Start
+登录 Steam	Sign in with Steam
+安装 Steam	Install Steam
+打开 Steam	Open Steam
+继续	Continue
+正在等待浏览器	Waiting for browser
+正在查找 Steam	Looking for Steam
+跳过	Skip
+更换账户	Switch account
+取消	Cancel
+本机未登录	Not signed in here
+Steam 大屏幕	Steam Big Picture
+桌面	Desktop
+手柄震动	Haptics
+开机先显示	Open to
+主页	Home
+字体	Fonts
+风扇与功耗	Fan & power
+小组件	Widget
+其他前端	Other apps
+正在准备	Getting ready
+一切就绪	All set
+进入游戏库	Open library
+性能显示	Performance overlay
+显示布局	Overlay layout
+位置	Position
+选择项目	Choose an item
+重新载入	Reload
+显示此项目	Show this item
+所在行	Row
+排列顺序	Order
+项目颜色	Item color
+显示设置未能保存：	Overlay settings not saved:
+显示设置	Overlay settings
+状态	Status
+操作	Actions
+Game Bar 性能显示：关闭 → 1 → 2 → 3 → 4 → 关闭	Game Bar overlay: Off → 1 → 2 → 3 → 4 → Off
+显示状态	Overlay status
+显示性能数据	Show performance data
+显示位置	Overlay position
+左上	Top left
+上方居中	Top center
+右上	Top right
+左侧居中	Middle left
+屏幕居中	Center
+右侧居中	Middle right
+左下	Bottom left
+下方居中	Bottom center
+右下	Bottom right
+悬浮窗	Floating window
+位置固定，鼠标穿透；只在设置中更改位置	Fixed position, click-through; change it only in Settings
+显示档位	Overlay level
+1 · FPS 数字	1 · FPS number
+2 · 横向摘要	2 · Horizontal summary
+3 · 标准列表	3 · Standard list
+4 · 完整监控	4 · Full monitor
+字号	Text size
+小	Small
+中	Medium
+大	Large
+一档	Level 1
+二档	Level 2
+三档	Level 3
+四档	Level 4
+自定义	Custom
+行数	Rows
+一行	One row
+两行	Two rows
+缩小单位	Smaller units
+排版	Layout
+水平边距	Horizontal margin
+垂直边距	Vertical margin
+项目间距	Item spacing
+文字颜色	Text color
+文字不透明度	Text opacity
+背景不透明度	Background opacity
+防烧屏偏移	Burn-in shift
+显示项目	Items
+第 {0} 行	Row {0}
+恢复默认排版	Restore default layout
+白色	White
+绿色	Green
+蓝色	Blue
+紫色	Purple
+橙色	Orange
+黄色	Yellow
+青色	Teal
+请输入六位 RGB 色值，例如 FFFFFF	Enter a six-digit RGB value, e.g. FFFFFF
+均衡	Balanced
+按电源	By power source
+手动	Manual
+已恢复首次修改前的核心设置，修改后需重启生效	Core settings restored to before the first change; restart to apply
+没有恢复：{0}	Not restored: {0}
+未接管	Not managed
+功耗接管	Power control
+{0} 帧	{0} fps
+插电上限	Plugged-in cap
+电池上限	Battery cap
+尚未开启	Not on yet
+等待游戏帧率	Waiting for game frame rate
+调节状态	Tuning status
+真实帧率	Actual frame rate
+等待有效样本	Waiting for valid samples
+短时加成	Short-term boost
+插电功耗	Plugged-in power
+电池功耗	Battery power
+CPU 频率	CPU frequency
+不限频 · 按负载运行	No cap · runs by load
+固定 CPU 频率	Fixed CPU frequency
+模拟全核心 E 核	Emulate all cores as E-cores
+修改后需重启	Restart required after changing
+已保存的核心设置	Saved core settings
+部分核心 · 可恢复原值	Some cores · can restore
+恢复原始核心设置	Restore original core settings
+首次修改前 ›	Before the first change ›
+风扇	Fans
+风扇模式	Fan mode
+调速方式	Fan control
+原厂自动控制	Factory auto control
+EC 高温保护 · 冷却后恢复曲线	EC heat protection · curve returns after cooling
+开机风扇服务 · 退出界面仍生效	Fan service at boot · keeps working after the UI closes
+软件自动调速	Software auto control
+编辑这档曲线	Edit this curve
+编辑中 · ← → 选点  ↑ ↓ 改	Editing · ← → pick point ↑ ↓ change
+6 个温度点 ›	6 temperature points ›
+{0} °C 风量	Airflow at {0} °C
+完成曲线编辑	Finish editing curve
+全速运转	Full speed
+恢复原厂自动控制	Restore factory auto control
+恢复这档默认曲线	Restore this level's default curve
+{0}档曲线已恢复默认	{0} curve restored to default
+芯片功耗 · 最近 60 秒	Chip power · last 60 seconds
+上限 {0} W	Cap {0} W
+下限 {0} W	Floor {0} W
+功耗预设	Power presets
+调节方式	Tuning method
+目标帧率反馈	Target frame rate feedback
+风扇 · {0}档	Fans · {0}
+上限 {0} RPM	Max {0} RPM
+CPU 温度	CPU temperature
+占空比	Duty cycle
+曲线预期	Expected by curve
+外观设置	Appearance
+背景样式	Background style
+控制中心卡片	Control center cards
+卡片	Card
+拍立得	Polaroid
+动态背景	Animated background
+降低动态效果	Reduce motion
+性能读数	Performance readout
+导出日志	Export logs
+存到桌面	Save to desktop
+恢复默认	Restore defaults
+工具箱设置回到默认	Reset toolbox settings to defaults
+返回竖条	Back to rail
+缓慢漂移	Slow drift
+竖向纹理	Vertical texture
+封面排列	Cover layout
+横向条带	Horizontal strips
+竖向条带	Vertical strips
+条带数量	Strip count
+{0} 条	{0} strips
+滑动速度	Scroll speed
+倾斜角度	Tilt angle
+背景暗化	Background dimming
+显示模式	Display mode
+背景效果	Background effect
+返回设置	Back to settings
+动态背景：开	Animated background: On
+动态背景：关	Animated background: Off
+正在恢复默认，工具箱后台会重启一下	Restoring defaults; the toolbox service will restart
+后台版本太旧	Service is too old
+读不到	Can't read
+已禁用	Disabled
+正在运行 · 按 A 禁用	Running · press A to disable
+没禁用 · 按 A 禁用	Not disabled · press A to disable
+正在禁用…	Disabling…
+正在恢复…	Restoring…
+MSI Center M 已禁用（没有卸载，可以再按一下恢复）	MSI Center M disabled (not uninstalled; press again to restore)
+MSI Center M 已恢复自启	MSI Center M autostart restored
+没有做成：{0}	Didn't work: {0}
+没有找到「{0}」	"{0}" not found
+命运	Destiny
+取消连接	Cancel connect
+更换 Steam 账户	Change Steam account
+正在等待网页确认…	Waiting for the web page to confirm…
+Steam 云端同步	Steam cloud sync
+Key 已加密保存	Key saved encrypted
+配置 Web API Key	Set Web API key
+获取 Steam Web API Key	Get a Steam Web API key
+打开 Steam 网页  ›	Open the Steam web page ›
+上次云端同步	Last cloud sync
+更新本机安装状态	Update local install status
+移除云端配置	Remove cloud setup
+云端配置未能移除，请重试	Couldn't remove the cloud setup. Try again.
+本机已识别游戏	Games found on this device
+云端已识别游戏	Games found in the cloud
+更新 Steam 游戏库	Update Steam library
+更新中…	Updating…
+断开 Steam 连接	Disconnect Steam
+连接记录未能保存，请重试	Couldn't save the connection. Try again.
+更新状态	Update status
+暂未开放	Not available yet
+Xbox 账户连接尚未开放，本机游戏可正常识别和启动	Xbox account linking isn't available yet; local games are detected and launch normally
+更新 Xbox 游戏库	Update Xbox library
+已连接 Steam：{0}	Steam connected: {0}
+已取消连接	Connection canceled
+连接已取消或超时，请重试	Connection canceled or timed out. Try again.
+部分应用无法读取	Some apps can't be read
+未能更新，请稍后重试	Couldn't update. Try again later.
+没有做成：	Didn't work:
+托盘	Tray
+已识别游戏	Games found
+在托盘启动 Steam	Start Steam in the tray
+立即在托盘启动 Steam	Start Steam in the tray now
+测试选项	Test options
+当前值	Current value
+测试数值	Test value
+测试手柄	Test controller
+第一项	First item
+第二项	Second item
+外观	Appearance
+声音与反馈	Sound & feedback
+账户与服务	Accounts & services
+开机自启	Startup
+禁用第三方软件	Disable other apps
+维护	Maintenance
+Steam 插件	Steam plugin
+关于	About
+正在重新载入游戏库…	Reloading the library…
+工具箱后台版本太旧，先更新后台	The toolbox service is too old; update it first
+桌面快捷方式	Desktop shortcut
+选择磁盘	Choose a drive
+可移动磁盘	Removable drive
+本地磁盘	Local drive
+{0} · 剩 {1} GB	{0} · {1} GB free
+（空）	(empty)
+✓ 用这个文件夹	✓ Use this folder
+已添加	Added
+已添加：找到 {0} 款游戏	Added: found {0} games
+已添加，但里面没找到带 exe 的子文件夹	Added, but no subfolder with an exe was found
+（没有子文件夹）	(no subfolders)
+开机	Startup
+未生效	Not in effect
+全屏体验	Full screen experience
+开机不再进入全屏体验	No longer start in the full screen experience
+全屏体验主页：{0}	Full screen experience home: {0}
+全屏体验状态	Full screen experience status
+首页	Home
+开机自动运行工具箱后台	Run the toolbox service at startup
+工具箱后台开机会自动运行	The toolbox service runs at startup
+工具箱后台开机不再自动运行	The toolbox service no longer runs at startup
+没有找到登录任务	Sign-in task not found
+打开游戏库时	When the library opens
+处理中…	Working…
+后台运行	Run in background
+关闭窗口后留在托盘	Stay in the tray after closing the window
+重新打开	Reopen
+双击托盘图标，或再次打开游戏库	Double-click the tray icon, or open the library again
+立即收到后台	Send to background now
+语言	Language
+界面语言	Interface language
+竖条信息栏	Rail info bar
+竖栏 Steam 按钮	Rail Steam button
+Steam 库	Steam library
+开机落在的集合	Collection at startup
+第 {0} 个	No. {0}
+可见性	Visibility
+隐藏	Hidden
+至少要留一个集合	Keep at least one collection
+游戏来源	Game sources
+（重新载入游戏库后生效）	 (after reloading the library)
+已移除：{0}	Removed: {0}
+添加游戏文件夹（重新载入游戏库后生效）	Add a game folder (after reloading the library)
+显示在 Steam 里隐藏的游戏（重新载入游戏库后生效）	Show games hidden in Steam (after reloading the library)
+重新载入游戏库	Reload library
+重新生成全部封面（重新载入游戏库后生效）	Regenerate all covers (after reloading the library)
+启动游戏后	After launching a game
+保持	Keep
+收到后台并暂停	Send to background and pause
+背景图片	Background image
+游戏封面	Game covers
+本地壁纸	Local wallpaper
+选择壁纸…	Choose wallpaper…
+已换成本地壁纸	Switched to local wallpaper
+标题	Title
+色块漂移	Color drift
+光带	Light band
+滚动速度	Scroll speed
+压暗	Darken
+墙面	Wall
+海报灯光	Poster lights
+开灯	Lights on
+关灯	Lights off
+海报叠色	Poster tint
+自定义叠色	Custom tint
+叠色颜色	Tint color
+叠色强度	Tint strength
+屏幕保护	Screensaver
+开关灯屏保	Lights screensaver
+闲置时随机亮起游戏封面	Lights up random game covers when idle
+闲置后进入	Start after idle
+{0} 秒	{0} s
+{0} 分 {1} 秒	{0} min {1} s
+切换亮起的游戏	Switch the lit game
+每 {0} 秒	Every {0} s
+预览屏保	Preview screensaver
+任意输入退出	Any input exits
+界面	Interface
+截图页排版	Screenshot page layout
+游戏库显示封面	Show covers in the library
+跟随封面	Follow cover
+强调色	Accent color
+导航震动	Navigation haptics
+全局提示	Global alerts
+大屏幕按键	Big Picture buttons
+左侧栏	Left sidebar
+右侧栏	Right sidebar
+接管快设键和 Claw 键	Take over quick settings and Claw buttons
+快设键	Quick settings button
+处理中	Working
+需要处理	Needs attention
+没生效	Not in effect
+以管理员身份启动（重启 Steam 后生效）	Start as administrator (after restarting Steam)
+没生效的原因	Why it's not in effect
+需要处理：	Needs attention:
+大屏幕导航震动	Big Picture navigation haptics
+自启列表	Startup list
+{0}：开机自动运行	{0}: runs at startup
+{0}：开机不再自动运行	{0}: no longer runs at startup
+已被工具箱替代	Replaced by the toolbox
+第三方软件	Other apps
+运行中	Running
+未禁用	Not disabled
+{0} 已恢复（服务和计划任务打开）	{0} restored (services and scheduled tasks on)
+{0} 已禁用，没有卸载	{0} disabled, not uninstalled
+诊断	Diagnostics
+性能读数（帧时间）	Performance readout (frame time)
+重新运行首次设置	Run first-time setup again
+重启工具箱后台	Restart the toolbox service
+工具箱后台正在重启，几秒后自动连回	The toolbox service is restarting and reconnects in a few seconds
+备份设置	Back up settings
+还没有备份	No backups yet
+已备份到 文档\ClawToolbox 备份	Backed up to Documents\ClawToolbox backups
+选择备份	Choose a backup
+还原所选备份	Restore selected backup
+正在还原，工具箱后台会重启一下	Restoring; the toolbox service will restart
+已还原，后台正在重启	Restored; the service is restarting
+还原设置	Restore settings
+版本	Version
+工具箱后台	Toolbox service
+Game Bar 小组件	Game Bar widget
+开源许可	Open-source licenses
+工具箱	Toolbox
+这一项没有默认值	This setting has no default
+「{0}」已恢复默认	"{0}" restored to default
+日历	Calendar
+放映	Slideshow
+冲印	Prints
+截图排版：{0}	Screenshot layout: {0}
+已收藏	Favorited
+已取消收藏	Removed from favorites
+复制到剪贴板	Copy to clipboard
+在文件夹中显示	Show in folder
+删除	Delete
+正在打开文件夹	Opening folder
+已复制到剪贴板	Copied to clipboard
+没有删掉：文件可能正被占用	Not deleted: the file may be in use
+已从这里移除（Steam 上的上传还在）	Removed here (the Steam upload remains)
+已移到回收站	Moved to the Recycle Bin
+周日	Sun
+周一	Mon
+周二	Tue
+周三	Wed
+周四	Thu
+周五	Fri
+周六	Sat
+{0} 年 	{0}
+{0} 月 {1} 日 · {2}	{0}/{1} · {2}
+只看 {0}	Only {0}
+「{0}」在「{1}」里没有截图	"{0}" has no screenshots in "{1}"
+还没有截图	No screenshots yet
+按 View 换一款游戏或取消筛选	Press View to pick another game or clear the filter
+Game Bar 截图（{0}）、Steam 截图和 Steam 上传的截图都会出现在这里	Game Bar screenshots ({0}), Steam screenshots and Steam uploads all show up here
+按游戏筛选 · {0}	Filter by game · {0}
+还有 {0} 款 ↓   	{0} more ↓
+{0}A 选定   B 关闭	{0}A select B close
+{0} 张	{0} shots
+连拍 {0}	Burst {0}
+ · 已收藏	 · Favorited
+再按一次 A	Press A again
+专用按键映射	Special button mapping
+生效场景	When it applies
+常规场景	Regular
+Steam 大屏接管	Steam Big Picture takes over
+使用范围	Scope
+大屏打开时按原接管开关生效	While Big Picture is open, follows the original takeover switch
+关闭 Steam 大屏后使用这套映射	Used after Steam Big Picture closes
+Steam 接管	Steam takeover
+常规映射	Regular mapping
+按下不执行  ›	Pressing does nothing ›
+恢复原接管映射	Restore the original takeover mapping
+恢复默认映射	Restore default mapping
+测试这项指令	Test this action
+立即执行  ›	Run now ›
+指令已执行	Action ran
+执行失败：{0}	Failed: {0}
+请输入 Steam 提供的 32 位 Web API Key	Enter the 32-character Web API key from Steam
+云端配置未能保存，请重试	Couldn't save the cloud setup. Try again.
+本机尚未安装 Steam	Steam isn't installed on this device
+不休眠	Never
+30 分钟	30 minutes
+1 小时	1 hour
+3 小时	3 hours
+3 分钟	3 minutes
+5 分钟	5 minutes
+10 分钟	10 minutes
+电池与电源	Battery & power
+充电上限	Charge limit
+按电源键	Power button
+现在是 {0} %	Now {0} %
+读不到：{0}	Can't read: {0}
+读不到电源设置	Can't read power settings
+插电时不同	Different when plugged in
+动画后台暂未连接	Animation service not connected yet
+睡眠／休眠动画	Sleep / hibernate animation
+唤醒动画	Wake animation
+睡眠多久后转休眠	Hibernate after sleeping for
+现在是自定义时间	Custom time set
+这台机器没有开启休眠	Hibernate isn't enabled on this device
+电池下多久关屏	Screen off on battery after
+现在是从不关屏	Screen never turns off
+关掉唤醒的设备不是工具箱改的，要在设备管理器里逐个打开	Wake devices that are off weren't changed by the toolbox; turn them on one by one in Device Manager
+只允许电源键唤醒	Only the power button can wake
+{0} 个设备可唤醒	{0} devices can wake
+读不到唤醒设备	Can't read wake devices
+更新与维护	Updates & maintenance
+查看全部更新	See all updates
+正在更新…	Updating…
+正在检查…	Checking…
+{0} 个可更新	{0} updates
+已是最新	Up to date
+没查成	Didn't check
+检查更新	Check for updates
+正在检查更新	Checking for updates
+全部更新（{0} 项）	Update all ({0})
+开始更新 {0} 项	Starting {0} updates
+Windows 更新	Windows Update
+Windows 更新已安装（重启后生效）	Windows updates installed (restart to apply)
+Windows 更新没装成	Windows updates didn't install
+检查失败	Check failed
+还没检查	Not checked yet
+安装全部 Windows 更新（{0} 项）	Install all Windows updates ({0})
+（可能需重启）	 (may need a restart)
+正在安装…	Installing…
+开始安装 {0} 个 Windows 更新	Starting {0} Windows updates
+准备中…	Preparing…
+下载中…	Downloading…
+安装中…	Installing…
+Windows 更新正在安装，等它装完	Windows updates are installing; wait for them to finish
+开始安装这个 Windows 更新	Start installing this Windows update
+微星	MSI
+{0}驱动和固件	{0} drivers & firmware
+下载中 {0} % · {1} / {2} MB	Downloading {0} % · {1} / {2} MB
+下载中 {0} MB	Downloading {0} MB
+校验中…	Verifying…
+收尾中…	Finishing…
+排队中	Queued
+已更新	Updated
+失败：	Failed:
+（{0}）	 ({0})
+（重启后生效）	 (after restart)
+（更新后自动重启）	 (restarts after updating)
+本前端	This frontend
+系统 · 全部更新	System · update all
+估算 	Estimate
+充电中 · {0}{1} W	Charging · {0}{1} W
+已充满	Fully charged
+整机放电 · {0}{1} W	Discharging · {0}{1} W
+{0} 小时 {1} 分	{0} h {1} min
+{0} 分钟	{0} min
+已到上限 {0} %	At the {0} % limit
+正在估算…	Estimating…
+预计充电时间	Time to full
+预计使用时间	Time remaining
+健康度	Health
+满充 / 设计	Full charge / design
+循环次数	Cycle count
+前端	Frontend
+显卡驱动	Graphics driver
+手柄固件	Controller firmware
+设备	Device
+型号	Model
+处理器	Processor
+内存	Memory
+后台出错：{0}	Service error: {0}
+系统读数{0}	System readout{0}
+开发版	Dev build
+墨	Ink
+黑	Black
+深蓝	Navy
+深绿	Forest green
+酒红	Wine red
+工具箱后台自启动	Start background service at sign-in
+启动 Steam 至托盘	Start Steam in tray
+转入后台	Run in background
+默认集合	Default collection
+显示 Steam 隐藏游戏	Show hidden Steam games
+游戏来源 · 重新载入后生效	Game sources · reload required
+待重新载入	Reload pending
+封面 · 将重新载入游戏库	Covers · library will reload
+封面灯光屏保	Cover light screensaver
+封面切换间隔	Cover interval
+重启 Steam 后生效	Restart Steam to apply
+帧时间读数	Frame times
+试听音效	Preview sounds
+悬浮窗位置	Overlay position
+仅前台播放 · 游戏中淡出	Foreground only · fades during games
+待保存	Unsaved changes
+需配置 Web API Key	Web API Key required
+按住连发	Hold to repeat
+当前：{0}	Current: {0}
+先选修饰键，再选普通键完成组合	Select modifiers, then a key
+选择普通键完成	Select a key to finish
+方向 · 死区 · 外圈  ›	Direction · dead zone · outer zone  ›
+组合：{0} + …  选择普通键完成	Chord: {0} + … select a key to finish
+测试指令	Test command
+View 更改或清除筛选	View: change or clear filter
+后台调速	Background fan control
+高温保护 · 冷却后恢复	Thermal protection · resumes after cooling
+编辑当前曲线	Edit current curve
+恢复当前默认曲线	Reset current curve
+首次修改前的值 ›	Original values ›
+转入后台并暂停	Pause in background
+睡眠与唤醒	Sleep & wake
+抑制自动唤醒	Suppress automatic wakes
+暂停游戏	Pause games
+暂停指纹识别	Pause fingerprint reader
+检测到反作弊时跳过	Skipped when anti-cheat is detected
+睡眠转休眠	Hibernate after sleep
+48 小时 · 增强睡眠	48 hours · enhanced sleep
+电池供电时关屏	Turn off display on battery
+系统与驱动更新	System & driver updates
+系统 · 更新	System · Updates
+不限频	Unlimited
+以管理员身份启动	Run as administrator
+已配置	Configured
+暂不可用	Unavailable
+未运行	Not running
+此功能暂不可用	This feature is unavailable
+添加游戏文件夹	Add game folder
+选择程序…	Choose program…
+重新检测	Detect again
+重新生成全部封面	Regenerate all covers
+首次设置	Setup
+设置完成	Setup complete

@@ -19,6 +19,7 @@ public sealed partial class WallStage
     {
         MarkInput();
         if (_agOpen) AgDrag((float)(dy / _ccK));
+        else if (_shOpen && _shFilterOpen) ShDragFilter((float)(dy / _ccK));
         else if (_shOpen) ShDrag((float)(dy / _ccK));
     }
 
@@ -27,7 +28,8 @@ public sealed partial class WallStage
     {
         if (Math.Abs(tx) < SwipeMin || Math.Abs(tx) < Math.Abs(ty) * 1.2) return;
         if (_agOpen) { AgSwipe(tx < 0 ? 1 : -1); return; }
-        if (SettingsPageOpen) return;
+        if (SettingsPageOpen && !_shOpen && !_wsOpen) return;
+        if (_shOpen && !_shViewer && !_shFilterOpen && _dragFrom.y / _ccK <= 80) { ShSwitchTab(tx < 0 ? 1 : -1); return; }
         if (_shOpen && ShDragScrolls) return;
         // 划得远多走几格（每 260 设计 px 一格，最多 4 格）
         int steps = Math.Clamp((int)Math.Round(Math.Abs(tx) / (_ccK * 260)), 1, 4);
@@ -38,6 +40,7 @@ public sealed partial class WallStage
     {
         MarkInput();
         float d = delta / 120f * 84;
+        if (_shOpen && _shFilterOpen) { if (!horizontal) ShDragFilter(d); return; }
         if (_agOpen) { if (!horizontal) AgDrag(d); return; }
         if (_shOpen && ShDragScrolls) { if (!horizontal) ShDrag(d); return; }
         // 其余（卡片、放映、冲印）：滚一格走一格
@@ -48,9 +51,29 @@ public sealed partial class WallStage
 
     /// <summary>手动滚过图片网格：先不让焦点把它拽回去（手柄一动就恢复跟焦点）。</summary>
     private bool _agManualScroll;
+    private float _agListScroll, _agMatchScroll;
+
+    private static float RowScroll(List<PerfRow> rows, int focus, float scroll, float viewH)
+    {
+        if (focus < 0 || focus >= rows.Count) return scroll;
+        float top = 0;
+        for (int i = 0; i < focus; i++) top += rows[i].Section ? PerfSecH : PerfRowH;
+        float bottom = top + (rows[focus].Section ? PerfSecH : PerfRowH);
+        if (top < scroll) scroll = top;
+        if (bottom > scroll + viewH) scroll = bottom - viewH;
+        return scroll;
+    }
 
     private void AgDrag(float dy)
     {
+        if (_agDraft != null && _agOffKind == null && _agPage is AgPage.Category or AgPage.Match)
+        {
+            _agManualScroll = true;
+            if (_agPage == AgPage.Match) _agMatchScroll -= dy / AgMatchS;
+            else _agListScroll -= dy;
+            AgPaint();
+            return;
+        }
         if (_agDraft == null || _agPage != AgPage.Art || _agTab >= AgTabOverview || _agOffKind != null) return;
         _agManualScroll = true;
         _agScroll -= dy;
@@ -75,5 +98,18 @@ public sealed partial class WallStage
         _shGrid.StopAnimation("Offset.Y");
         _shGrid.Offset = new Vector3(0, -_shScroll * k, 0);
         ShCalImages();
+    }
+
+    private float _shFilterDragRemainder;
+    private void ShDragFilter(float dy)
+    {
+        _shFilterDragRemainder += dy;
+        int steps = (int)(_shFilterDragRemainder / ShFltRow);
+        if (steps == 0) return;
+        _shFilterDragRemainder -= steps * ShFltRow;
+        int rows = (int)Math.Min(ShFltRows, _shFilterItems.Count);
+        _shFltFirst = Math.Clamp(_shFltFirst - steps, 0, Math.Max(0, _shFilterItems.Count - rows));
+        _shFilterFocus = Math.Clamp(_shFilterFocus, _shFltFirst, Math.Max(_shFltFirst, _shFltFirst + rows - 1));
+        ShPaintFilter();
     }
 }

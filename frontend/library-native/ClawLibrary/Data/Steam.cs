@@ -64,6 +64,25 @@ public static class Steam
         catch { return id + " · 本机账户"; }
     }
 
+    public static string? AccountName(string steamId)
+    {
+        var root = Root();
+        if (root == null) return null;
+        try
+        {
+            return TextVdf.Parse(File.ReadAllText(Path.Combine(root, "config", "loginusers.vdf")))
+                .Path("users", steamId)?.Value("PersonaName");
+        }
+        catch { return null; }
+    }
+
+    public static string? UserDirForAccount(string root, string steamId)
+    {
+        if (!ulong.TryParse(steamId, out var id) || id <= 76561197960265728UL || id - 76561197960265728UL > uint.MaxValue) return null;
+        string directory = Path.Combine(root, "userdata", (id - 76561197960265728UL).ToString());
+        return Directory.Exists(directory) ? directory : null;
+    }
+
     public static Dictionary<string, PlayStats> ReadPlayStats(string? userDir)
     {
         var result = new Dictionary<string, PlayStats>();
@@ -435,6 +454,53 @@ public static class Steam
             }
         }
         return list;
+    }
+
+    /// <summary>一个非 Steam 快捷方式的启动方式：程序、起始目录、启动参数（去掉引号）；找不到返回 null。</summary>
+    public static (string Exe, string StartDir, string Options)? ShortcutLaunch(string? userDir, string appId)
+    {
+        if (userDir == null) return null;
+        try
+        {
+            var path = Path.Combine(userDir, "config", "shortcuts.vdf");
+            if (!File.Exists(path)) return null;
+            var data = File.ReadAllBytes(path);
+            int i = 0, depth = 0;
+            uint appid = 0; bool haveId = false; string exe = "", start = "", options = "";
+            string ReadString() { int s = i; while (i < data.Length && data[i] != 0) i++; var v = Encoding.UTF8.GetString(data, s, i - s); i++; return v; }
+            while (i < data.Length)
+            {
+                byte type = data[i++];
+                if (type == 0x08)
+                {
+                    depth--;
+                    if (depth == 1 && haveId && appid.ToString() == appId && exe.Length > 0) return (exe, start, options);
+                    if (depth == 1) { haveId = false; exe = start = options = ""; }
+                    if (depth < 0) break;
+                    continue;
+                }
+                var name = ReadString();
+                switch (type)
+                {
+                    case 0x00: depth++; break;
+                    case 0x01:
+                        var value = ReadString();
+                        if (name.Equals("exe", StringComparison.OrdinalIgnoreCase)) exe = value.Trim().Trim('"');
+                        else if (name.Equals("StartDir", StringComparison.OrdinalIgnoreCase)) start = value.Trim().Trim('"');
+                        else if (name.Equals("LaunchOptions", StringComparison.OrdinalIgnoreCase)) options = value.Trim();
+                        break;
+                    case 0x02:
+                        if (i + 4 > data.Length) return null;
+                        uint v = BitConverter.ToUInt32(data, i); i += 4;
+                        if (name.Equals("appid", StringComparison.OrdinalIgnoreCase)) { appid = v; haveId = true; }
+                        break;
+                    case 0x07: i += 8; break;
+                    default: return null;
+                }
+            }
+        }
+        catch (Exception ex) { Log.Warn($"shortcut launch {appId}: {ex.Message}"); }
+        return null;
     }
 
     /// <summary>非 Steam 快捷方式：appid（无符号）、名字、程序、起始目录（去掉引号）。游戏库自动收新加的快捷方式、截图按进程路径归游戏都用它。</summary>

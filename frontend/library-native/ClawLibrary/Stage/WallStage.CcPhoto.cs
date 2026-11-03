@@ -76,6 +76,7 @@ public sealed partial class WallStage
                { Center = new Vector2(x + w / 2, y + h / 2), RadiusX = w * 0.74f, RadiusY = h * 0.74f })
             ds.FillRectangle(x, y, w, h, vignette);
         // 细线白色图标，偏小
+        if (LineIcons.Draw(ds, b.Icon, x + w / 2, y + h / 2, 52, Gfx.WithAlpha(Colors.White, 0.88f), stroke: 1f)) return;
         using var icon = TextKit.Layout(ds, b.Icon, new FontSpec(CcIconFont, 300), 52, 300, CanvasHorizontalAlignment.Left);
         var ib = icon.DrawBounds;
         ds.DrawTextLayout(icon, x + w / 2 - (float)(ib.X + ib.Width / 2), y + h / 2 - (float)(ib.Y + ib.Height / 2), Gfx.WithAlpha(Colors.White, 0.88f));

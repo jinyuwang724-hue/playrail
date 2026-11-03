@@ -1,0 +1,1 @@
+Payload\pawnio\PawnIO_setup.exe is the unmodified official PawnIO 2.2.0 installer by namazso (https://github.com/namazso/PawnIO.Setup), Authenticode-signed by namazso.eu. It installs the PawnIO driver used for power and fan control. See the project page for its license.

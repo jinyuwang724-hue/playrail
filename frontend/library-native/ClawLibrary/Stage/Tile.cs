@@ -65,9 +65,16 @@ public sealed class Tile : IDisposable
         _persp.Children.InsertAtTop(_pivot);
         El.Children.InsertAtTop(_persp);
         _props = G.C.CreatePropertySet();
-        _props.InsertScalar("pop", 0);
+        _pop = new CssTransition(G, _props, "pop", v => _props.InsertScalar("pop", v), 0);
+        // 焦点放大：四边各外扩一个 gap（缩放量随卡尺寸，让位途中也对）
+        var popScale = G.C.CreateExpressionAnimation("Vector3(1 + p.pop * 16 / Max(1, el.Size.X), 1 + p.pop * 16 / Max(1, el.Size.Y), 1)");
+        popScale.SetReferenceParameter("p", _props);
+        popScale.SetReferenceParameter("el", El);
+        _persp.StartAnimation("Scale", popScale);
         Place(Rect);
     }
+
+    private readonly CssTransition _pop;
 
     public static Matrix4x4 Perspective(float d) => new(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, -1 / d, 0, 0, 0, 1);
 
@@ -176,21 +183,22 @@ public sealed class Tile : IDisposable
         ApplyPop(!_s.Reduced);
     }
 
-    /// <summary>焦点放大：四边各外扩一个 gap（缩放量随卡尺寸，让位途中也对）。展开态不放大。</summary>
-    private void ApplyPop(bool animate)
-    {
-        float target = Focused && !Expanded ? 1 : 0;
-        var expr = G.C.CreateExpressionAnimation("Vector3(1 + p.pop * 16 / Max(1, el.Size.X), 1 + p.pop * 16 / Max(1, el.Size.Y), 1)");
-        expr.SetReferenceParameter("p", _props);
-        expr.SetReferenceParameter("el", El);
-        _persp.StartAnimation("Scale", expr);
-        if (animate) _props.StartAnimation("pop", G.Scalar(CurrentPop(), target, Motion.PopMs, Bezier.EaseOut));
-        else { _props.StopAnimation("pop"); _props.InsertScalar("pop", target); }
-        _popTarget = target;
-    }
+    /// <summary>焦点放大（.bravais-tile-face transform 300ms ease-out，从此刻的大小接着走）。展开态不放大。</summary>
+    private void ApplyPop(bool animate) => _pop.To(!Expanded && (_s.ScreensaverActive ? _s.ScreensaverLights(this) : Focused) ? 1 : 0,
+        Motion.PopMs, Bezier.EaseOut, _s.NowMs, animate);
 
-    private float _popTarget;
-    private float CurrentPop() { _props.TryGetScalar("pop", out float v); return v; }
+    internal float PopTarget => _pop.Target;
+    internal float PopProgress => _pop.Value(_s.NowMs);
+    internal float LightsTarget => _face?.LightsTarget ?? 0;
+    internal float TintTarget => _face?.TintTarget ?? 0;
+    internal bool TitleVisible => _face?.TitleVisible ?? false;
+
+    /// <summary>墙面外观（灯光、叠色）变了：按新的设置过渡（260 ms，和网页一样）。</summary>
+    public void ApplyLook()
+    {
+        _face?.ApplyFocus(Focused, Expanded, animate: !_s.Reduced);
+        ApplyPop(!_s.Reduced);
+    }
 
     // ---------------- 控制中心的「移形换影」（folia 集合层的出入场）：都动内层，外层矩形不动 ----------------
 
@@ -258,7 +266,11 @@ public sealed class Tile : IDisposable
         _animUntil = _s.NowMs + (long)(delayMs + durMs) + 50;
     }
 
-    /// <summary>入场：从径向推开的位置（世界坐标）就位，透明度 0 → 1、尺度 0.94 → 1，0.5 s cubic-bezier(0.32,0.72,0,1)。</summary>
+    /// <summary>
+    /// 入场：从径向推开的位置（世界坐标）就位，尺度 0.94 → 1，0.5 s cubic-bezier(0.32,0.72,0,1)；
+    /// 透明度 0 → 1 用柔和得多的曲线、位移 85 % 的时长 —— 之前和位移同一条强 ease-out，头 0.1 s 就几乎全实，
+    /// 看着是卡先在远处冒出来再滑过来；现在边飞边显，和出场的边散边淡对称。
+    /// </summary>
     public void MorphFlyIn(Vector2 from, double delayMs)
     {
         Cancel();
@@ -271,10 +283,10 @@ public sealed class Tile : IDisposable
         sc.InsertKeyFrame(1, Vector3.One, G.Ease(ease));
         var op = G.C.CreateScalarKeyFrameAnimation();
         op.InsertKeyFrame(0, 0, G.Linear);
-        op.InsertKeyFrame(1, 1, G.Ease(ease));
+        op.InsertKeyFrame(1, 1, G.Ease(new Bezier(0.25f, 0.4f, 0.45f, 1f)));
         foreach (var a in new KeyFrameAnimation[] { off, sc, op })
         {
-            a.Duration = Gfx.Ms(500);
+            a.Duration = Gfx.Ms(a == op ? 425 : 500);
             a.DelayTime = Gfx.Ms(delayMs);
             a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
         }
@@ -284,7 +296,10 @@ public sealed class Tile : IDisposable
         _animUntil = _s.NowMs + (long)(delayMs + 500) + 50;
     }
 
-    /// <summary>出场四散：沿径向挪开（世界坐标）、转一点、缩到 0.9，透明度 1 → 0.72 → 0。</summary>
+    /// <summary>
+    /// 出场四散：沿径向挪开（世界坐标）、转一点、缩到 0.9；透明度跟着位移一起走（起飞就开始淡，和位移同一种先快后慢的曲线，
+    /// 用位移 85 % 的时长淡完），边散边消失，不是散完了才一起没掉。
+    /// </summary>
     public void MorphScatter(Vector2 to, float rotateDeg, double durMs, double delayMs)
     {
         Cancel();
@@ -298,14 +313,12 @@ public sealed class Tile : IDisposable
         var rot = G.C.CreateScalarKeyFrameAnimation();
         rot.InsertKeyFrame(0, 0, G.Linear);
         rot.InsertKeyFrame(1, rotateDeg, ease);
-        var inOut = G.Ease(new Bezier(0.42f, 0f, 0.58f, 1f));
         var op = G.C.CreateScalarKeyFrameAnimation();
         op.InsertKeyFrame(0, 1, G.Linear);
-        op.InsertKeyFrame(0.5f, 0.72f, inOut);
-        op.InsertKeyFrame(1, 0, inOut);
+        op.InsertKeyFrame(1, 0, G.Ease(new Bezier(0.33f, 0.7f, 0.45f, 1f)));
         foreach (var a in new KeyFrameAnimation[] { off, sc, rot, op })
         {
-            a.Duration = Gfx.Ms(durMs);
+            a.Duration = Gfx.Ms(a == op ? durMs * 0.85 : durMs);
             a.DelayTime = Gfx.Ms(delayMs);
             a.DelayBehavior = AnimationDelayBehavior.SetInitialValueBeforeDelay;
         }
@@ -510,6 +523,7 @@ public sealed class Tile : IDisposable
     internal sealed class Face : IDisposable
     {
         private readonly WallStage _s;
+        private readonly Tile _tile;
         private Gfx G => _s.G;
         public readonly ContainerVisual Root;
         private readonly LibraryItem? _item;
@@ -536,17 +550,29 @@ public sealed class Tile : IDisposable
         /// <summary>这张卡用的那张图（按卡在墙上的本来尺寸挑的：竖封面 / 方裁 / 大背景）。</summary>
         public LoadedImageSurface? ArtSurface => _img?.Surface;
         public string? BaseArtPath => _item?.Art is { } a && _baseKind is char k ? a.File(k) : null;
-        private SpriteVisual? _ring1, _ring4, _ring5, _shadowCaster, _stack1, _stack2, _tint, _hilite;
+        private SpriteVisual? _ring1, _ring4, _ring5, _shadowCaster, _tint, _hilite, _lights;
         private ContainerVisual? _ring;
         private DropShadow? _shadow;
         private SpriteVisual? _copy, _actions, _badge, _glyph;
         private TextArt? _copyArt, _actionsArt, _badgeArt, _glyphArt;
+        private TextArt? _screensaverCopyArt;
+        private SpriteVisual? _screensaverShade;
         private readonly ContainerVisual? _inner;
         private CompositionLinearGradientBrush? _tintBrush;
+        /// <summary>叠色此刻用的颜色（null = 默认的主题渐变）。</summary>
+        private Color? _tintSolid;
+        private bool _tintBuilt;
+        private Engine.Rect _box;
+        // 卡面上各层的 CSS transition（焦点来回切从此刻的值接着走）
+        private CssTransition? _ringT, _shadowT, _tintT, _hiliteT, _lightsT, _stackOut;
+        private readonly List<CssTransition> _stackTint = new(), _stackDim = new();
+        private readonly List<CompositionColorBrush> _stackTintBrush = new();
+        private readonly List<SpriteVisual> _shades = new();
 
         public Face(WallStage s, Tile tile, string? id, Engine.Rect r, bool expanded, ImageCarry? carry = null)
         {
             _s = s;
+            _tile = tile;
             _expanded = expanded;
             Root = G.Container();
             Root.RelativeOffsetAdjustment = new Vector3(-0.5f, -0.5f, 0);
@@ -576,18 +602,40 @@ public sealed class Tile : IDisposable
             // ---- 卡外的装饰：集合叠页边、投影、焦点环（卡面 overflow:hidden 不裁 box-shadow）----
             if (item.Kind == ItemKind.Collection)
             {
-                _stack2 = G.Sprite(G.Solid(Gfx.Mix(posterBg, 0.9, TextKit.Ink())));
-                _stack2.Offset = new Vector3(6, 6, 0);
-                _stack1 = G.Sprite(G.Solid(Gfx.Mix(posterBg, 0.8, TextKit.Ink())));
-                _stack1.Offset = new Vector3(3, 3, 0);
-                Root.Children.InsertAtTop(_stack2);
-                Root.Children.InsertAtTop(_stack1);
+                // 叠页边（bravaisTileKinds.css）：远 6 px、近 3 px 两层页，各带一道 1 px 发丝线；抬起（焦点）时收回卡下面。
+                // 页边在卡外，卡里的叠色层 / 熄灯层盖不到，所以按同一套规则把叠色、熄灯混进页色（上面各盖一层同色）。
+                var fx = G.C.CreatePropertySet();
+                _stackOut = new CssTransition(G, fx, "k", v => fx.InsertScalar("k", v), 1);
+                foreach (var (d, mix) in new[] { (6f, 0.80), (3f, 0.66) })
+                {
+                    var page = G.Container();
+                    var off = G.C.CreateExpressionAnimation($"Vector3({d} * p.k, {d} * p.k, 0)");
+                    off.SetReferenceParameter("p", fx);
+                    page.StartAnimation("Offset", off);
+                    SpriteVisual Layer(Color c, bool inflate)
+                    {
+                        var sp = G.Sprite(G.Solid(c));
+                        if (inflate) { sp.Size = new Vector2(2, 2); sp.Offset = new Vector3(-1, -1, 0); }
+                        page.Children.InsertAtTop(sp);
+                        return sp;
+                    }
+                    Layer(Gfx.Mix(Theme.Bg, 0.72, Colors.Black), true);
+                    Layer(Gfx.Mix(Theme.Bg, mix, TextKit.Ink()), false);
+                    var tint = Layer(Theme.TintB, true);
+                    var dim = Layer(Colors.Black, true);
+                    _stackTint.Add(new CssTransition(G, tint, "Opacity", v => tint.Opacity = v, 0));
+                    _stackTintBrush.Add((CompositionColorBrush)tint.Brush);
+                    _stackDim.Add(new CssTransition(G, dim, "Opacity", v => dim.Opacity = v, 0));
+                    Root.Children.InsertAtTop(page);
+                }
             }
             _shadowCaster = G.Sprite(G.Solid(Colors.Black));
-            _shadowCaster.Opacity = 0;
+            var caster = _shadowCaster;
+            _shadowT = new CssTransition(G, caster, "Opacity", v => caster.Opacity = v, 0);
             Root.Children.InsertAtTop(_shadowCaster);
             _ring = G.Container();
-            _ring.Opacity = 0;
+            var ringV = _ring;
+            _ringT = new CssTransition(G, ringV, "Opacity", v => ringV.Opacity = v, 0);
             SpriteVisual Ring(float inflate, Color c)
             {
                 var sp = G.Sprite(G.Solid(c));
@@ -637,25 +685,37 @@ public sealed class Tile : IDisposable
                 _glyph = TextSprite(_glyphArt, r, anchorBottom: false);
                 _inner.Children.InsertAtTop(_glyph);
             }
-            foreach (var sh in ShadeSprites(r)) _inner.Children.InsertAtTop(sh);
-            // 焦点顶部 10% 高光
-            _hilite = G.Sprite(G.LinearGradient(180, r.Width, r.Height, (0, Gfx.Rgba(255, 255, 255, 0.10)), (0.6, Gfx.Rgba(255, 255, 255, 0))));
-            _hilite.Opacity = 0;
-            _inner.Children.InsertAtTop(_hilite);
-            // 主题染色压住背景卡，焦点 / 展开时褪掉
-            _tintBrush = G.LinearGradient(145, r.Width, r.Height, (0, Theme.TintA), (1, Theme.TintB));
-            _tint = G.Sprite(_tintBrush);
-            _tint.Opacity = (float)Theme.TintOpacity;
-            _inner.Children.InsertAtTop(_tint);
+            foreach (var sh in ShadeSprites(r)) { _shades.Add(sh); _inner.Children.InsertAtTop(sh); }
             _badgeArt = s.Text.Badge(item.Badge, item.Kind == ItemKind.Collection);
             _badge = TextSprite(_badgeArt, r, anchorBottom: false);
             _inner.Children.InsertAtTop(_badge);
             BuildCopy(r, null);
+            // 层级照 wall.css：底部压暗、角标、标题 < 焦点高光（::after）< 叠色（z 3，连标题和角标一起染）< 熄灯（z 5，整张盖住）
+            _hilite = G.Sprite(G.LinearGradient(180, r.Width, r.Height, (0, Gfx.Rgba(255, 255, 255, 0.10)), (0.6, Gfx.Rgba(255, 255, 255, 0))));
+            var hilite = _hilite;
+            _hiliteT = new CssTransition(G, hilite, "Opacity", v => hilite.Opacity = v, 0);
+            _inner.Children.InsertAtTop(_hilite);
+            _tint = G.Sprite(null);
+            var tintV = _tint;
+            _tintT = new CssTransition(G, tintV, "Opacity", v => tintV.Opacity = v, 0);
+            _inner.Children.InsertAtTop(_tint);
+            _lights = G.Sprite(G.Solid(Colors.Black));
+            var lightsV = _lights;
+            _lightsT = new CssTransition(G, lightsV, "Opacity", v => lightsV.Opacity = v, 0);
+            _inner.Children.InsertAtTop(_lights);
+            _box = r;
+        }
+
+        /// <summary>标题、按钮排放进卡面时排在高光 / 叠色 / 熄灯之下。</summary>
+        private void InsertContent(Visual v)
+        {
+            if (_hilite != null) _inner!.Children.InsertBelow(v, _hilite);
+            else _inner!.Children.InsertAtTop(v);
         }
 
         private IEnumerable<SpriteVisual> ShadeSprites(Engine.Rect r)
         {
-            bool b = _s.Style == TitleStyle.B;
+            bool b = TitleStyles.IsLeftAligned(_s.Style);
             Color K(double a) => Gfx.Rgba(0, 0, 0, a);
             if (_expanded && b)
             {
@@ -664,6 +724,8 @@ public sealed class Tile : IDisposable
             }
             else if (_expanded)
                 yield return G.Sprite(G.LinearGradient(0, r.Width, r.Height, (0, K(.88)), (.18, K(.66)), (.38, K(.24)), (.55, K(0))));
+            else if (_s.Style == TitleStyle.Folia)
+                yield return G.Sprite(G.LinearGradient(180, r.Width, r.Height, (.34, K(.05)), (.56, K(.24)), (1, K(.92))));
             else if (_artKind != null && b)
                 yield return G.Sprite(G.LinearGradient(180, r.Width, r.Height, (.52, K(0)), (1, K(.78))));
             else if (_artKind != null)
@@ -672,7 +734,7 @@ public sealed class Tile : IDisposable
                 yield return G.Sprite(G.LinearGradient(180, r.Width, r.Height, (.34, K(.05)), (.56, K(.24)), (1, K(.92))));
         }
 
-        /// <summary>文字图挂成精灵：anchorBottom 时按卡底边定位（D 居中 / B 靠左），让位途中可随卡宽缩放。</summary>
+        /// <summary>文字图挂成精灵：anchorBottom 时按样式从左边或中间对齐，随让位中的卡宽缩放。</summary>
         private SpriteVisual TextSprite(TextArt art, Engine.Rect r, bool anchorBottom)
         {
             var sp = G.Sprite(G.C.CreateSurfaceBrush(art.Surface), relative: false);
@@ -690,7 +752,7 @@ public sealed class Tile : IDisposable
                 sp.Offset = new Vector3((float)art.Rect.X, (float)art.Rect.Y, 0);
                 return;
             }
-            float ax = _s.Style == TitleStyle.B ? 0 : 0.5f;
+            float ax = TitleStyles.IsLeftAligned(_s.Style) ? 0 : 0.5f;
             float anchorX = (float)(r.Width * ax);
             sp.RelativeOffsetAdjustment = new Vector3(ax, 1, 0);
             sp.Offset = new Vector3((float)art.Rect.X - anchorX, (float)(art.Rect.Y - r.Height), 0);
@@ -700,9 +762,10 @@ public sealed class Tile : IDisposable
         private void BuildCopy(Engine.Rect r, Visual? scaleWith)
         {
             if (_item == null || _inner == null) return;
+            _box = r;
             var oldCopy = _copyArt; var oldActions = _actionsArt;
             _copyArt = _s.Text.Copy(_item, r.Width, r.Height, _expanded, _s.Style);
-            if (_copy == null) { _copy = TextSprite(_copyArt, r, anchorBottom: true); _inner.Children.InsertAtTop(_copy); }
+            if (_copy == null) { _copy = TextSprite(_copyArt, r, anchorBottom: true); InsertContent(_copy); }
             else { ((CompositionSurfaceBrush)_copy.Brush).Surface = _copyArt.Surface; PositionText(_copy, _copyArt, r, true); }
             if (_expanded)
             {
@@ -710,7 +773,7 @@ public sealed class Tile : IDisposable
                 if (_actions == null)
                 {
                     _actions = TextSprite(_actionsArt, r, anchorBottom: true);
-                    _inner.Children.InsertAtTop(_actions);
+                    InsertContent(_actions);
                     // .focus-actions：卡起步后 140ms 从下方 12px 淡入（240ms）
                     if (!_s.Reduced)
                     {
@@ -730,6 +793,7 @@ public sealed class Tile : IDisposable
             }
             _s.Text.Release(oldCopy);
             _s.Text.Release(oldActions);
+            UpdateContentVisibility();
             if (scaleWith != null)
             {
                 // 让位途中：文字按终点尺寸画好，随卡宽等比缩放（网页里字号是 cqi，跟卡宽走）
@@ -758,6 +822,7 @@ public sealed class Tile : IDisposable
         {
             if (_item == null) return;
             BuildCopy(r, scaleWith);
+            _box = r;
             if (_tintBrush != null) Gfx.SetLinear(_tintBrush, 145, r.Width, r.Height);
             if (_badgeArt != null && _badge != null) { var nb = _s.Text.Badge(_item.Badge, _item.Kind == ItemKind.Collection); _s.Text.Release(_badgeArt); _badgeArt = nb; ((CompositionSurfaceBrush)_badge.Brush).Surface = nb.Surface; }
         }
@@ -922,12 +987,30 @@ public sealed class Tile : IDisposable
         public void ApplyFocus(bool focused, bool expanded, bool animate)
         {
             if (_item == null) return;
-            // 焦点环 + 投影：box-shadow 600ms ease；集合的叠页边同时褪掉
-            float ring = focused ? 1 : 0;
-            SetOpacity(_ring, ring, Motion.ShadowMs, Bezier.Ease_, animate);
-            SetOpacity(_stack1, 1 - ring, Motion.ShadowMs, Bezier.Ease_, animate);
-            SetOpacity(_stack2, 1 - ring, Motion.ShadowMs, Bezier.Ease_, animate);
-            if (focused || expanded)
+            long now = _s.NowMs;
+            var look = _s.Look;
+            bool saver = _s.ScreensaverActive;
+            bool lit = saver ? _s.ScreensaverLights(_tile) : focused || expanded;
+            bool lightsOn = !saver && look.LightsOn;
+            bool raised = focused || expanded || (saver && lit);
+            UpdateContentVisibility();
+            if (saver) { focused = false; expanded = false; }
+            // 焦点环 + 投影：box-shadow 600ms ease（环的三道颜色从透明补间过去，等于整体淡入淡出）
+            _ringT!.To(focused ? 1 : 0, Motion.ShadowMs, Bezier.Ease_, now, animate && !saver);
+            // 叠页边：抬起时收回卡下面（box-shadow 300ms ease）
+            _stackOut?.To(focused || saver ? 0 : 1, Motion.StackMs, Bezier.Ease_, now, animate);
+            // 叠色：焦点 / 展开的那张不染，关灯时全部归零（两层不叠加）；熄灯：焦点 / 展开的那张不熄
+            float tint = !lit && look.Tint && lightsOn ? (float)look.TintOpacity : 0;
+            float dark = !lit && !lightsOn ? (float)Motion.LightsOutOpacity : 0;
+            SetTintColor(look);
+            _tintT!.To(tint, Motion.TintMs, Bezier.Ease_, now, animate);
+            _lightsT!.To(dark, Motion.TintMs, Bezier.Ease_, now, animate);
+            float stackTint = !focused && look.Tint && lightsOn ? (float)look.TintOpacity : 0;
+            float stackDim = !focused && !lightsOn ? (float)Motion.LightsOutOpacity : 0;
+            foreach (var b in _stackTintBrush) b.Color = look.TintCustom ? look.TintColor : Theme.TintB;
+            foreach (var t in _stackTint) t.To(stackTint, Motion.StackMs, Bezier.Ease_, now, animate);
+            foreach (var t in _stackDim) t.To(stackDim, Motion.StackMs, Bezier.Ease_, now, animate);
+            if (raised)
             {
                 if (_shadow == null)
                 {
@@ -939,19 +1022,70 @@ public sealed class Tile : IDisposable
                 _shadow.Offset = expanded ? new Vector3(0, 42, 0) : new Vector3(0, 12, 0);
                 _shadow.BlurRadius = expanded ? 110 : 32;
                 _shadow.Color = expanded ? Gfx.Rgba(0, 0, 0, 0.74) : Gfx.Rgba(0, 0, 0, 0.45);
-                SetOpacity(_shadowCaster, 1, Motion.ShadowMs, Bezier.Ease_, animate);
+                _shadowT!.To(1, Motion.ShadowMs, Bezier.Ease_, now, animate);
             }
-            else SetOpacity(_shadowCaster, 0, Motion.ShadowMs, Bezier.Ease_, animate);
-            SetOpacity(_tint, focused || expanded ? 0 : (float)Theme.TintOpacity, Motion.TintMs, Bezier.Ease_, animate);
-            SetOpacity(_hilite, focused ? 1 : 0, Motion.HighlightMs, Bezier.Ease_, animate);
+            else _shadowT!.To(0, Motion.ShadowMs, Bezier.Ease_, now, animate);
+            _hiliteT!.To(focused || (saver && lit) ? 1 : 0, Motion.HighlightMs, Bezier.Ease_, now, animate);
         }
 
-        private void SetOpacity(Visual? v, float to, double ms, Bezier ease, bool animate)
+        internal float LightsTarget => _lightsT?.Target ?? 0;
+        internal float TintTarget => _tintT?.Target ?? 0;
+        internal bool TitleVisible => _copy?.IsVisible == true;
+
+        /// <summary>屏保保留高亮游戏的标题与衬底，随封面一起缩放；退出时恢复完整排版。</summary>
+        private void UpdateContentVisibility()
         {
-            if (v == null) return;
-            if (!animate) { v.StopAnimation("Opacity"); v.Opacity = to; return; }
-            v.StartAnimation("Opacity", G.Scalar(v.Opacity, to, ms, ease));
-            v.Opacity = to;
+            bool normal = !_s.ScreensaverActive;
+            bool spotlight = _s.ScreensaverLights(_tile);
+            if (_copy != null && _copyArt != null && _item != null)
+            {
+                var oldSaverCopy = _screensaverCopyArt;
+                if (spotlight)
+                {
+                    // 边缘封面的底部可能在屏幕外；只重排文字，封面和墙面位置保持原样。
+                    var area = _s.ScreensaverTitleArea(_tile);
+                    _screensaverCopyArt = _s.Text.Copy(_item, area.Width, area.Height, false, _s.Style);
+                    ((CompositionSurfaceBrush)_copy.Brush).Surface = _screensaverCopyArt.Surface;
+                    PositionText(_copy, _screensaverCopyArt, area, anchorBottom: false);
+                    _copy.Offset += new Vector3((float)area.X, (float)area.Y, 0);
+                    if (_screensaverShade == null)
+                    {
+                        _screensaverShade = G.Sprite(G.LinearGradient(180, _box.Width, _box.Height,
+                            (.34, Gfx.Rgba(0, 0, 0, .05)), (.56, Gfx.Rgba(0, 0, 0, .24)), (1, Gfx.Rgba(0, 0, 0, .92))));
+                        _inner!.Children.InsertBelow(_screensaverShade, _copy);
+                    }
+                    // 渐暗跟随文字的可见底边，但仍覆盖整张封面，避免边缘出现亮条。
+                    var shade = (CompositionLinearGradientBrush)_screensaverShade.Brush;
+                    shade.ColorStops[0].Offset = (float)((area.Y + area.Height * .34) / _box.Height);
+                    shade.ColorStops[1].Offset = (float)((area.Y + area.Height * .56) / _box.Height);
+                    shade.ColorStops[2].Offset = (float)((area.Y + area.Height) / _box.Height);
+                }
+                else
+                {
+                    _screensaverCopyArt = null;
+                    ((CompositionSurfaceBrush)_copy.Brush).Surface = _copyArt.Surface;
+                    PositionText(_copy, _copyArt, _box, anchorBottom: true);
+                }
+                _s.Text.Release(oldSaverCopy);
+                _copy.IsVisible = normal || spotlight;
+            }
+            if (_screensaverShade != null) _screensaverShade.IsVisible = spotlight;
+            foreach (var shade in _shades) shade.IsVisible = normal;
+            foreach (var v in new[] { _actions, _badge, _glyph }) if (v != null) v.IsVisible = normal;
+        }
+
+        /// <summary>
+        /// 叠色的颜色：默认是主题渐变（145°，底色 78 % 混强调色 → 底色 84 % 混副色），选了自定义色就是那一种纯色。
+        /// 换颜色不过渡（网页里 background 不在 transition 里），只有不透明度过渡。
+        /// </summary>
+        private void SetTintColor(WallLook look)
+        {
+            Color? want = look.TintCustom ? look.TintColor : null;
+            if (_tintBuilt && want == _tintSolid) return;
+            _tintBuilt = true;
+            _tintSolid = want;
+            if (want is Color c) { _tintBrush = null; _tint!.Brush = G.Solid(c); }
+            else { _tintBrush = G.LinearGradient(145, _box.Width, _box.Height, (0, Theme.TintA), (1, Theme.TintB)); _tint!.Brush = _tintBrush; }
         }
 
         public void Dispose()
@@ -959,6 +1093,7 @@ public sealed class Tile : IDisposable
             _s.Images.Release(_img?.Surface);
             _s.Images.Release(_incoming?.Surface);
             _s.Text.Release(_copyArt);
+            _s.Text.Release(_screensaverCopyArt);
             _s.Text.Release(_actionsArt);
             _s.Text.Release(_badgeArt);
             _s.Text.Release(_glyphArt);

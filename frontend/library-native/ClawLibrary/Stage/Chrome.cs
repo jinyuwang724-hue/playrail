@@ -15,6 +15,7 @@ public static class Theme
     public static readonly Color Bg = Gfx.Rgba(9, 9, 11);
     public static readonly Color Ink = Gfx.Rgba(244, 244, 245);
     public static readonly Color Accent = Gfx.Rgba(0xf4, 0xe0, 0x4d);
+    public static readonly Color ChargingGreen = Gfx.Rgba(0x7d, 0xd8, 0x8a);
     public static readonly Color GlowA = Gfx.Rgba(0xfd, 0x5c, 0x47);
     public static readonly Color GlowB = Gfx.Rgba(0x6a, 0x48, 0xff);
     /// <summary>--poster-bg: color-mix(bg 88%, ink)</summary>
@@ -24,8 +25,10 @@ public static class Theme
     public static readonly Color SeamInkSoft = Gfx.WithAlpha(Ink, 0.55);
     public static readonly Color TintA = Gfx.Mix(Bg, 0.78, GlowA);
     public static readonly Color TintB = Gfx.Mix(Bg, 0.84, GlowB);
-    public const double TintOpacity = 0.5;
 }
+
+/// <summary>墙面外观（folia 的海报灯光与海报叠色，设置在 ui.ini）：TintOpacity 是叠色强度（默认 0.5）。</summary>
+public readonly record struct WallLook(bool LightsOn, bool Tint, bool TintCustom, Color TintColor, double TintOpacity);
 
 public sealed record ChromeArt(CompositionDrawingSurface Surface, Vector2 Size);
 
@@ -54,15 +57,16 @@ public sealed class Chrome
 
     private CanvasTextLayout V(string text, FontSpec f, float size, float ls, float? lineHeight)
     {
-        using var fmt = TextKit.Format(f, size, false, vertical: true);
+        text = I18n.T(text);
+        float baseline = 0;
         if (lineHeight is float lh)
         {
             var (b, hh) = TextKit.NormalLine(_g.Device, f, size, text);
-            fmt.LineSpacingMode = CanvasLineSpacingMode.Uniform;
-            fmt.LineSpacing = lh;
-            fmt.LineSpacingBaseline = (lh - hh) / 2 + b;
+            baseline = (lh - hh) / 2 + b;
         }
+        var fmt = TextKit.Shared(f, size, false, vertical: true, text: text, lineHeight: lineHeight, baseline: baseline);
         var l = new CanvasTextLayout(_g.Device, text, fmt, 100000, 100000);
+        TextKit.Mix(l, text, f);
         if (ls != 0) l.SetCharacterSpacing(0, text.Length, 0, ls, 0);
         return l;
     }
@@ -213,7 +217,6 @@ public sealed class Chrome
     {
         const float W = 300, PadX = 22, PadTop = 22, Gap = 16;
         float inner = W - PadX * 2;
-        var iconFont = new FontSpec("Segoe Fluent Icons", 400);
         // 面包屑行（min-height 32）
         // 输入框（44 高）
         float formY = PadTop + 32 + Gap;
@@ -244,12 +247,8 @@ public sealed class Chrome
             ds.FillRoundedRectangle(field, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.05));
             var inset = new Windows.Foundation.Rect(field.X + 0.5, field.Y + 0.5, field.Width - 1, field.Height - 1);
             ds.DrawRoundedRectangle(inset, 11.5f, 11.5f, typing || focus == 1 ? Theme.Accent : Gfx.WithAlpha(Theme.Ink, 0.24), 1);
-            var mag = H("", iconFont, 16);
-            var (mx, my, mw, mh) = Box(mag);
-            ds.DrawTextLayout(mag, PadX + 12 + 8 - (float)(mag.DrawBounds.X + mag.DrawBounds.Width / 2), (float)field.Y + 22 - mh / 2 - my, Gfx.WithAlpha(Theme.Ink, 0.7));
-            var x = H("", iconFont, 14);
-            var (xx, xy, xw, xh) = Box(x);
-            ds.DrawTextLayout(x, (float)(clear.X + 16) - (float)(x.DrawBounds.X + x.DrawBounds.Width / 2), (float)(clear.Y + 16) - xh / 2 - xy, Gfx.WithAlpha(Theme.Ink, 0.8));
+            LineIcons.Draw(ds, "", PadX + 12 + 8, (float)field.Y + 22, 16, Gfx.WithAlpha(Theme.Ink, 0.7));
+            LineIcons.Draw(ds, "", (float)(clear.X + 16), (float)(clear.Y + 16), 14, Gfx.WithAlpha(Theme.Ink, 0.8));
 
             // 提示
             ds.DrawTextLayout(hint, PadX - hbx, hintY - hby, soft);
@@ -257,9 +256,7 @@ public sealed class Chrome
             // 主按钮
             ds.FillRoundedRectangle(submit, 12, 12, Gfx.WithAlpha(Theme.Ink, focus == 2 ? 0.22 : 0.16));
             if (focus == 2) ds.DrawRoundedRectangle(submit, 12, 12, Gfx.WithAlpha(Theme.Ink, 0.26), 1);
-            var si = H("", iconFont, 18);
-            var (sx, sy, sw, sh) = Box(si);
-            ds.DrawTextLayout(si, (float)submit.X + 16 + 9 - (float)(si.DrawBounds.X + si.DrawBounds.Width / 2), (float)submit.Y + 22 - sh / 2 - sy, Theme.Ink);
+            LineIcons.Draw(ds, "", (float)submit.X + 16 + 9, (float)submit.Y + 22, 18, Theme.Ink);
             ds.DrawTextLayout(label, (float)submit.X + 16 + 18 + 8 - lbx, (float)submit.Y + 22 - lbh / 2 - lby, Theme.Ink);
 
             // 手柄焦点：与竖条同一种白色描边（输入框、按钮各自的圆角）
@@ -318,7 +315,7 @@ public sealed class Chrome
 
     public ChromeArt Hud(string text)
     {
-        var l = H(text, new FontSpec("Segoe UI Variable Text", 400), 12);
+        var l = H(text, TextKit.Ui(400), 12);
         l.SetTypography(0, text.Length, TabularNums());
         var (bx, by, bw, bh) = Box(l);
         float w = bw + 16, h = bh + 8;
