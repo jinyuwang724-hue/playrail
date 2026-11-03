@@ -29,10 +29,18 @@ class GameShellTests {
         s=new SurfaceSystem{Explorer=false,Library=true,Recover=false};g=new ShellGuard(s);
         Check(g.ToGame()==SwitchResult.Failed&&s.Explorer,"failed repair of an empty game shell recovers desktop");
         s=new SurfaceSystem{Explorer=false,Library=true,Recover=false};g=new ShellGuard(s);combo=0;
-        for(int i=0;i<3;i++)g.Tick(i*10,ref combo);
+        for(int i=0;i<3;i++){g.Tick(i*10,ref combo);s.Clock=s.Clock.AddSeconds(1);}
+        Check(!g.GaveUp&&!s.Explorer&&s.Launches==0,"a window still coming up gets a grace period, not a crash count");
+        for(int i=3;i<7;i++){s.Clock=s.Clock.AddSeconds(11);g.Tick(i*10,ref combo);}
         Check(g.GaveUp&&s.Explorer,"repeated window failures have a bounded desktop fallback");
+        s=new SurfaceSystem{Explorer=false,Library=true,Recover=false};g=new ShellGuard(s);combo=0;
+        g.Tick(0,ref combo);s.Clock=s.Clock.AddSeconds(5);s.Recover=true;g.Tick(10,ref combo);
+        s.Recover=false;s.Clock=s.Clock.AddSeconds(8);g.Tick(20,ref combo);s.Clock=s.Clock.AddSeconds(8);g.Tick(30,ref combo);
+        Check(!g.GaveUp&&s.Launches==0,"a recovered window resets the grace period");
         s=new SurfaceSystem{Library=false};g=new ShellGuard(s);
         Check(g.Boot()&&s.Activations==1&&s.Visible,"boot validates a visible frontend as well as a process");
+        s=new SurfaceSystem{Library=false,Recover=false};g=new ShellGuard(s);
+        Check(g.Boot()&&!s.Explorer&&s.Launches==1,"boot stays in game mode when the window is up but not yet foreground");
         Console.WriteLine("PASS "+count+" game-shell checks");
     }
 }

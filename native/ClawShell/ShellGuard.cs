@@ -58,9 +58,12 @@ namespace ClawShell
         public const int ComboHoldMs = 2000;
         public const int TickMs = 100;
         public const int LibraryCheckEveryTicks = 10;
+        /// <summary>游戏库进程在、窗口却还没出来（刚启动 / 刚重启 / 正在切桌面）时先等这么久，再算一次失败。</summary>
+        public static readonly TimeSpan SurfaceGrace = TimeSpan.FromSeconds(10);
 
         private readonly IShellSystem _sys;
         private readonly List<DateTime> _failures = new List<DateTime>();
+        private DateTime? _surfaceBadSince;
         private bool _gaveUp;
         private bool _sawExplorer;
 
@@ -101,7 +104,13 @@ namespace ClawShell
                 try { _sys.RunStartupApps(); } catch (Exception ex) { _sys.Log("startup apps: " + ex.Message); }
                 for (int i = 0; i < MaxFailures; i++)
                 {
-                    if (_sys.LaunchLibrary()) { _sys.WriteState("game", "boot"); if (EnsureSurface(true)) return true; }
+                    if (_sys.LaunchLibrary())
+                    {
+                        _sys.WriteState("game", "boot");
+                        // 进程和窗口都在：没抢到前台（开机动画还没走完等）不算失败，交给 Supervise 接着看
+                        if (!EnsureSurface(true)) _sys.Log("library window not foreground at boot; supervising");
+                        return true;
+                    }
                     _failures.Add(_sys.Now);
                     _sys.Log("library launch failed at boot (" + (i + 1) + ")");
                     _sys.Sleep(1000);
@@ -136,7 +145,7 @@ namespace ClawShell
 
             if (tick % LibraryCheckEveryTicks != 0) return;
             bool explorer = _sys.ExplorerRunning();
-            if (explorer) { _sawExplorer = true; return; }
+            if (explorer) { _sawExplorer = true; _surfaceBadSince = null; return; }
             if (_sawExplorer)
             {
                 // 桌面 → 游戏模式（别的进程切的）：重新开始计数，之前放弃过也重新看着
@@ -147,13 +156,17 @@ namespace ClawShell
             if (_gaveUp) return;
             if (_sys.LibraryRunning())
             {
-                if (!EnsureSurface(false))
-                {
-                    RecordFailure("library-window-unavailable");
-                    if (!_gaveUp && !_sys.LaunchLibrary()) RecordFailure("library-window-recovery-failed");
-                }
+                if (EnsureSurface(false)) { _surfaceBadSince = null; return; }
+                // EnsureSurface 每次都已请它显示；连续 SurfaceGrace 还不行才算一次失败并重新激活
+                DateTime now = _sys.Now;
+                if (_surfaceBadSince == null) { _surfaceBadSince = now; _sys.Log("library window not visible yet; waiting"); return; }
+                if (now - _surfaceBadSince.Value < SurfaceGrace) return;
+                _surfaceBadSince = now;
+                RecordFailure("library-window-unavailable");
+                if (!_gaveUp && !_sys.LaunchLibrary()) RecordFailure("library-window-recovery-failed");
                 return;
             }
+            _surfaceBadSince = null;
             RecordFailure("library-not-running");
             if (_gaveUp) return;
             if (!_sys.LaunchLibrary()) RecordFailure("library-relaunch-failed");
