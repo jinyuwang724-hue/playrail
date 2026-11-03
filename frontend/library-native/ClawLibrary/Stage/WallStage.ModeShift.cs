@@ -29,7 +29,8 @@ public sealed partial class WallStage
             _mode.Children.InsertAtTop(_modeBack);
             _mode.Children.InsertAtTop(_modeMark);
         }
-        _top.Children.Remove(_mode); _top.Children.InsertAtTop(_mode);
+        if (_mode.Parent != null) _top.Children.Remove(_mode);   // 第一次还不在树里，Remove 会抛
+        _top.Children.InsertAtTop(_mode);
         const float W = 320, H = 200;
         string label = toGame ? "游戏模式" : "桌面";
         CcSet(_modeMark, CcDraw(W, H, raster, ds =>
