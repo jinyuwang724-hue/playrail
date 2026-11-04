@@ -818,7 +818,9 @@ public sealed partial class WallStage : IDisposable
         if (from == null) return;
         var next = Nav.FindAdjacentSlot(from, dir, HasContent, Drawn);
         if (TryEnterRailFrom(from, next, dir)) return;
-        if (next == null) { Cue(Sfx.Bump); return; }
+        // 声音跟着位置走：撞到哪边的墙就在哪边响，移到哪张卡就从哪边响
+        if (next == null) { Cue(Sfx.Bump, pan: dir == Direction.Left ? -0.6f : dir == Direction.Right ? 0.6f : PanFor(from)); return; }
+        CuePan(PanFor(next));
         if (_expandedKey is { } ek && next.Key != ek) Collapse(false);
         Focus(next.Key);
     });

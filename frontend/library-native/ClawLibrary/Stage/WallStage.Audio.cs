@@ -50,7 +50,7 @@ public sealed partial class WallStage
     private void ApplyHomeAudio()
     {
         SoundFx.Enabled = _prefs.Sounds;
-        SoundFx.Configure(_prefs.SoundTheme, _prefs.SoundVolume);
+        SoundFx.Configure(_prefs.SoundVolume);
         SoundFx.SetActive(IsForeground());
         _homeMusic?.Configure(_prefs.MusicEnabled, _prefs.MusicVolume, MusicFiles.Resolve(_prefs.MusicTrack).Path, _prefs.MusicLoop);
         // The tick stops itself once both channels are off and the device has gone idle (after any fade-out).
@@ -92,11 +92,6 @@ public sealed partial class WallStage
     {
         _stRows.Add(new PerfRow { Section = true, Title = "界面音效" });
         _stRows.Add(StToggle("界面音效", _prefs.Sounds, on => { SaveAudio(_prefs with { Sounds = on }); }, false));
-        _stRows.Add(StPick("音效风格", SoundFx.ThemeNames, _prefs.SoundTheme, n =>
-        {
-            ++_soundPreviewVersion;
-            SaveAudio(_prefs with { SoundTheme = n }); Cue(Sfx.None); SoundFx.Play(Sfx.Activate, preview: true);
-        }, 0));
         var volume = StNumber("音效音量", _prefs.SoundVolume, 0, 100, 5, n => $"{n} %", n =>
         {
             SaveAudio(_prefs with { SoundVolume = n }); Cue(Sfx.None); SoundFx.Play(Sfx.Nav, preview: true);

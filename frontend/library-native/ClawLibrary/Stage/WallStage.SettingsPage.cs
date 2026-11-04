@@ -73,7 +73,7 @@ public sealed partial class WallStage
                 ? style : _prefs.StyleB ? TitleStyle.B : TitleStyle.D;
         _reducedLocal = _prefs.Reduced;
         SoundFx.Enabled = _prefs.Sounds;
-        SoundFx.Configure(_prefs.SoundTheme, _prefs.SoundVolume);
+        SoundFx.Configure(_prefs.SoundVolume);
         // 封面重新生成：上次在设置里点了，这次启动先删掉旧的封面套件（缺的会在后台重新生成）
         var flag = Path.Combine(App.CacheDir, "art.reset");
         if (File.Exists(flag))

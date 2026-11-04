@@ -1,0 +1,115 @@
+{
+ "format": "48 kHz / 24-bit stereo PCM",
+ "cues": {
+  "nav": {
+   "seconds": 0.168,
+   "lufsMax": -34,
+   "peakDb": -18.3
+  },
+  "tab": {
+   "seconds": 0.22,
+   "lufsMax": -28,
+   "peakDb": -15.8
+  },
+  "slider_up": {
+   "seconds": 0.136,
+   "lufsMax": -34,
+   "peakDb": -17.7
+  },
+  "slider_down": {
+   "seconds": 0.136,
+   "lufsMax": -34,
+   "peakDb": -17.9
+  },
+  "typing": {
+   "seconds": 0.094,
+   "lufsMax": -38,
+   "peakDb": -18.9
+  },
+  "bump": {
+   "seconds": 0.216,
+   "lufsMax": -28,
+   "peakDb": -13.1
+  },
+  "shutter": {
+   "seconds": 0.332,
+   "lufsMax": -24,
+   "peakDb": -9.8
+  },
+  "activate": {
+   "seconds": 0.5,
+   "lufsMax": -24,
+   "peakDb": -13.3
+  },
+  "back": {
+   "seconds": 0.436,
+   "lufsMax": -28,
+   "peakDb": -16.8
+  },
+  "toggle_on": {
+   "seconds": 0.384,
+   "lufsMax": -24,
+   "peakDb": -13
+  },
+  "toggle_off": {
+   "seconds": 0.372,
+   "lufsMax": -28,
+   "peakDb": -16.8
+  },
+  "detail_in": {
+   "seconds": 0.628,
+   "lufsMax": -24,
+   "peakDb": -12.8
+  },
+  "detail_out": {
+   "seconds": 0.564,
+   "lufsMax": -28,
+   "peakDb": -16.9
+  },
+  "menu_in": {
+   "seconds": 0.628,
+   "lufsMax": -24,
+   "peakDb": -11.7
+  },
+  "menu_out": {
+   "seconds": 0.564,
+   "lufsMax": -28,
+   "peakDb": -15.7
+  },
+  "modal_show": {
+   "seconds": 0.588,
+   "lufsMax": -24,
+   "peakDb": -11.5
+  },
+  "modal_hide": {
+   "seconds": 0.48,
+   "lufsMax": -28,
+   "peakDb": -14.9
+  },
+  "toast": {
+   "seconds": 1.292,
+   "lufsMax": -21.5,
+   "peakDb": -15.6
+  },
+  "positive": {
+   "seconds": 1.416,
+   "lufsMax": -21.5,
+   "peakDb": -13.2
+  },
+  "error": {
+   "seconds": 0.512,
+   "lufsMax": -21.5,
+   "peakDb": -7.2
+  },
+  "launch": {
+   "seconds": 1.94,
+   "lufsMax": -18,
+   "peakDb": -10.2
+  },
+  "startup": {
+   "seconds": 2.564,
+   "lufsMax": -18,
+   "peakDb": -9.4
+  }
+ }
+}

@@ -13,7 +13,7 @@ internal static partial class AudioEngine
     [LibraryImport(Lib)] private static partial int ca_open();
     [LibraryImport(Lib)] private static partial void ca_close();
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf16)] private static partial int ca_sfx_load(int id, string path);
-    [LibraryImport(Lib)] private static partial int ca_sfx_play(int id, float pitch, float gain);
+    [LibraryImport(Lib)] private static partial int ca_sfx_play(int id, float pitch, float gain, float pan);
     [LibraryImport(Lib)] private static partial void ca_sfx_stop_all();
     [LibraryImport(Lib)] private static partial void ca_sfx_volume(float volume);
     [LibraryImport(Lib, StringMarshalling = StringMarshalling.Utf16)] private static partial int ca_music_open(string path, int loop);
@@ -58,10 +58,10 @@ internal static partial class AudioEngine
         return r == 0;
     }
 
-    public static void PlaySfx(int id, float pitch)
+    public static void PlaySfx(int id, float pitch, float pan)
     {
         if (!Ready) return;
-        ca_sfx_play(id, pitch, 1);
+        ca_sfx_play(id, pitch, 1, Math.Clamp(pan, -1, 1));
         Woke?.Invoke();
     }
 

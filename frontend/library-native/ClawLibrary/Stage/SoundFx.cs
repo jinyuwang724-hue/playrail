@@ -1,6 +1,6 @@
-// 界面音效：照 Steam 大屏幕的那一套事件（导航、到头、确认、返回、进出详情、启动、页签、侧边菜单、弹层、开关、滑块、
-// 提示、打字、开机……），声音是 tools/Compose-UiSounds.mjs 合成的原创短音，三套风格。
-// 播放走 AudioEngine（miniaudio）：音效整段解码进内存，几个声音可以叠着响、可以变调（打字、连续导航轻微错开音高）。
+// 界面音效：一套签名音色（tools/Compose-UiSounds.mjs 合成，48 kHz / 24 位立体声），按 Steam 大屏幕的事件划分。
+// 声音只用三种材料：触（移动）、光（状态变化，上滑 = 进 / 开、下滑 = 退 / 关）、气（空间变化）；提示 / 成功用玻璃铃、出错用闷嗡。
+// 播放走 AudioEngine（miniaudio）：音效整段解码进内存，可叠、可变调、可摆声相（导航跟着焦点在屏幕上的位置）。
 namespace ClawLibrary.Stage;
 
 public enum Sfx
@@ -11,8 +11,6 @@ public enum Sfx
 
 public static class SoundFx
 {
-    public static readonly string[] ThemeNames = { "轻触", "清透", "数码" };
-    private static readonly string[] Themes = { "soft", "crystal", "digital" };
     /// <summary>Sfx 顺序对应的文件名（Sfx.None 不对应文件）。</summary>
     private static readonly string[] Files =
     {
@@ -21,7 +19,7 @@ public static class SoundFx
     };
 
     private static readonly bool[] _loaded = new bool[Files.Length];
-    private static int _volume = -1, _theme;
+    private static int _volume = -1;
     private static volatile bool _active = true;
     private static long _lastNav;
     private static bool _navFlip;
@@ -30,17 +28,15 @@ public static class SoundFx
     public static long Plays_;
     private static readonly Random _rng = new();
 
-    public static void SetVolume(int volume) => Configure(_theme, volume);
-
-    public static void Configure(int theme, int volume)
+    public static void Configure(int volume)
     {
-        theme = Math.Clamp(theme, 0, Themes.Length - 1); volume = Math.Clamp(volume, 0, 100);
+        volume = Math.Clamp(volume, 0, 100);
         // 音量是响度刻度（平方），40 % 听起来是一半左右，0 静音；总线软限幅兜住叠音
         AudioEngine.SfxVolume((float)Math.Pow(volume / 100.0, 2) * 1.6f);
-        if (_theme == theme && _volume >= 0) { _volume = volume; return; }
-        _theme = theme; _volume = volume;
-        for (int i = 1; i < Files.Length; i++)
-            _loaded[i] = AudioEngine.LoadSfx(i, Path.Combine(AppContext.BaseDirectory, "Assets", "Audio", "Sfx", Themes[theme], Files[i] + ".wav"));
+        if (_volume < 0)
+            for (int i = 1; i < Files.Length; i++)
+                _loaded[i] = AudioEngine.LoadSfx(i, Path.Combine(AppContext.BaseDirectory, "Assets", "Audio", "Sfx", "claw", Files[i] + ".wav"));
+        _volume = volume;
     }
 
     /// <summary>游戏库不在前台：正在响的声音立刻停掉，之后不再出声。</summary>
@@ -51,7 +47,8 @@ public static class SoundFx
     }
 
     /// <param name="pitch">变调（1 = 原调；播放速度跟着变）。</param>
-    public static void Play(Sfx kind, bool preview = false, float pitch = 1)
+    /// <param name="pan">声相 −1（左）..1（右）。</param>
+    public static void Play(Sfx kind, bool preview = false, float pitch = 1, float pan = 0)
     {
         if (kind == Sfx.None || (!Enabled && !preview) || !_active || _volume <= 0 || !_loaded[(int)kind]) return;
         if (kind == Sfx.Nav)
@@ -61,10 +58,10 @@ public static class SoundFx
             if (now - _lastNav < 30) return;
             _lastNav = now;
             _navFlip = !_navFlip;
-            pitch *= _navFlip ? 1f : 1.035f;
+            pitch *= _navFlip ? 1f : 1.03f;
         }
         if (kind == Sfx.Typing) pitch *= 0.94f + (float)_rng.NextDouble() * 0.12f;
-        AudioEngine.PlaySfx((int)kind, pitch);
+        AudioEngine.PlaySfx((int)kind, pitch, pan);
         Plays_++;
     }
 

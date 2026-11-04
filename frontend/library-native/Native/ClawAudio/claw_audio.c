@@ -101,8 +101,8 @@ CA_API int ca_sfx_load(int id, const wchar_t* path)
     return r;
 }
 
-/// 放一次：同一种声音最多叠两层（新的顶掉最旧的），总数满了也顶掉最旧的。
-CA_API int ca_sfx_play(int id, float pitch, float gain)
+/// 放一次：同一种声音最多叠两层（新的顶掉最旧的），总数满了也顶掉最旧的。pan −1（左）..1（右）。
+CA_API int ca_sfx_play(int id, float pitch, float gain, float pan)
 {
     if (!g_open || id < 0 || id >= CLIPS || !g_clipOk[id]) return MA_INVALID_ARGS;
     ma_mutex_lock(&g_lock);
@@ -123,6 +123,7 @@ CA_API int ca_sfx_play(int id, float pitch, float gain)
         slot->ok = 1; slot->clip = id; slot->seq = ++g_seq;
         ma_sound_set_pitch(&slot->sound, pitch);
         ma_sound_set_volume(&slot->sound, gain);
+        ma_sound_set_pan(&slot->sound, pan);
         run();
         r = ma_sound_start(&slot->sound);
         g_plays++;
