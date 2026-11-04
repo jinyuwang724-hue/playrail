@@ -31,6 +31,7 @@ public sealed partial class MainWindow
             else _shortcutWindow?.EnsureFullscreenBounds();
         };
         _gameShellTimer.Start();
+        InitializeWindowManager();
     }
 
     private void RestoreGameShell(bool activate)

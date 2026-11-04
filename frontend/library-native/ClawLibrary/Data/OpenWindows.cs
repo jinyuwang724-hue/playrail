@@ -38,6 +38,9 @@ internal static class OpenWindows
         return result;
     }
 
+    /// <summary>窗口管理用：这个窗口是不是切换器里会出现的那种应用窗口（不是弹窗、工具窗、外壳、输入法）。</summary>
+    public static OpenWindow? AppWindow(nint hwnd) { try { return Candidate(hwnd, (uint)Environment.ProcessId, new()); } catch { return null; } }
+
     private static OpenWindow? Candidate(nint hwnd, uint self, Dictionary<uint, string> names)
     {
         if (!IsWindowVisible(hwnd)) return null;

@@ -34,6 +34,7 @@ public sealed partial class WallStage
     private static readonly string[] BootNames = { "游戏库", "控制中心", "性能", "手柄", "显示与声音", "系统", "设置" };
 
     private UiPrefs _prefs = new();
+    internal bool WindowManagerOn => _prefs.WindowManager;
     private ContainerVisual? _st;
     private ContainerVisual _stRightView = null!;
     private SpriteVisual _stTitle = null!, _stLeft = null!, _stRight = null!;
@@ -528,6 +529,8 @@ public sealed partial class WallStage
     {
         _stRows.Add(new PerfRow { Section = true, Title = "开机" });
         BuildStBootMode();
+        if (ShellMode.Available)
+            _stRows.Add(StToggle("游戏模式窗口管理（试验）", _prefs.WindowManager, on => { SaveUi(_prefs with { WindowManager = on }); Repaint(); }, false));
         // 游戏模式不经过 explorer，全屏体验只在桌面模式下有意义
         if (ShellMode.Available && ShellMode.DefaultGame) { }
         else if (v?["home"] is JsonObject home && home["choices"] is JsonArray choices)

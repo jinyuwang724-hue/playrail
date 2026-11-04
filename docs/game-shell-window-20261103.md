@@ -63,3 +63,8 @@
 - **游戏库卡**：用 CompositionVisualSurface 显示墙的实时画面。
 - **模式切换动画**：`Stage/WallStage.ModeShift.cs`。整屏压暗、正中目标模式的大图标 + 名字浮上来，切完再收：去桌面时桌面和任务栏按原位从这层里淡出来；回游戏模式这层淡掉露出墙。
 - **通知下移**：后台在用的是 `ClawInput-0.17.58-overlay-r2.exe`（源码 artifacts/overlay-focus-fix-191/src/native/InputLayer，哈希与已装一致）。只改 Osd.cs 通知的 restingTop 30 → 64，原样重编替换，原文件留作 `ClawInput-0.17.58-overlay-r2.before-notice-r3.exe`。改动副本 `docs/notice-r3-Osd.cs.txt`。没碰 0.17.58 的四个手改 Python 文件；游戏库 0.1.206 仍调用 set_overlay_hold（唤出路由和快设面板两处）。
+
+## 0.1.208：窗口管理（试验，第一步，11-04）
+
+- 可行性（`artifacts/wm-probe`）：桌面模式下藏任务栏后中文候选框、Game Bar 截图都正常，任务栏不自己冒；但单独按 Win 会弹开始菜单并带出任务栏，最大化窗口底部留任务栏空位。「游戏模式保留 explorer」要改后台的游戏模式判断（ClawRouter SessionModeProbe、claw_input_layer / claw_button_mappings 的 session_game_mode 都要求 explorer 不是外壳），还没做。
+- `MainWindow.WindowManager.cs`：设置 › 通用「游戏模式窗口管理（试验）」，默认关（ui.ini windowManager）。SetWinEventHook 收窗口出现 / 最小化 / 销毁：能调大小的新应用窗口直接最大化（全屏游戏、弹窗不动）；应用窗口最小化或关掉、前台没应用时游戏库立即回前台。实测：新窗口被最大化、最小化后 0.6 s 内游戏库在前台、关掉后游戏库在前台。
