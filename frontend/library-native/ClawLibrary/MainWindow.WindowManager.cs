@@ -50,8 +50,8 @@ public sealed partial class MainWindow
                 case 0x8002:   // EVENT_OBJECT_SHOW
                     if (_wmPlaced.Contains(hwnd) || OpenWindows.AppWindow(hwnd) is not { } w) return;
                     _wmPlaced.Add(hwnd);
-                    // 窗口刚出现时常常还在自己摆位置：等一下再铺
-                    Later(150, () => WmPlace(w));
+
+                    WmPlace(w);   // 一出现就铺，不等 —— 等了会先看到原尺寸再跳一下，像被硬拉
                     break;
                 case 0x0016:   // EVENT_SYSTEM_MINIMIZESTART
                     if (OpenWindows.AppWindow(hwnd) is not { } m) return;

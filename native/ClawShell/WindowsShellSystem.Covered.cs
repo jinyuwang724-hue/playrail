@@ -31,34 +31,81 @@ namespace ClawShell
         /// <summary>
         /// 藏任务栏（主屏和副屏的）。工作区不自己改：explorer 还把任务栏当成占位的应用栏，我们改了它马上改回来，
         /// 每改一次所有全屏窗口都重排一次 = 整屏闪（11-04 实测游戏库窗口来回变了六百多次）。
-        /// 所以进来时把任务栏设成系统的「自动隐藏」（explorer 自己让出那一条），原来的设置记下来，回桌面再还原。
-        /// 监视循环每 0.1 秒调一次：已经藏好就什么都不做。
+        /// 让 explorer 自己让出那一条的办法是任务栏「自动隐藏」：这台 Win11 上 ABM_SETSTATE 不生效、改注册表（StuckRects3 第 8 字节）
+        /// 也要 explorer 重启才读，所以进来时改注册表、重启一次 explorer（游戏库盖着，看不到），原值记下来，回桌面还原再重启一次。
+        /// 这样窗口按系统自己的方式最大化就是整屏，不用我们去拉。监视循环每 0.1 秒调一次：已经处理过就只管把任务栏藏住。
         /// </summary>
         public void HideDesktopUi()
         {
             if (!File.Exists(AutoHideSavedPath))
             {
-                int was = AppBarState();
+                int was = TaskbarAutoHideByte();
                 try { File.WriteAllText(AutoHideSavedPath, was.ToString()); } catch { }
-                if ((was & 1) == 0) { SetAppBarState(was | 1); Log("taskbar auto-hide on (was " + was + ")"); }
+                // explorer 正常退出时会把它内存里的任务栏设置写回注册表：先停它、再改、再起，不然改了也被盖掉
+                // 11-04 实测：这台 Win11 上 explorer 启动时会把 StuckRects3 改回原值、ABM_SETSTATE / ABM_REMOVE 也不理，工作区仍留任务栏那一条；
+                // 重启 explorer 白白多闪一次，先关掉这条（只记下原值）。窗口铺满交给游戏库的窗口管理。
+                if (false && was >= 0 && (was & 1) == 0)
+                {
+                    Log("taskbar auto-hide on (was " + was + "); restarting explorer");
+                    bool stopped = StopExplorer();
+                    SetTaskbarAutoHideByte(was | 1);
+                    if (!stopped) Log("explorer did not stop; auto-hide applies next restart");
+                    StartExplorer();
+                }
             }
             foreach (IntPtr tray in Trays())
                 if (IsWindowVisible(tray)) { ShowWindow(tray, 0); Log("taskbar hidden"); }
         }
 
-        /// <summary>回桌面：任务栏放回来，「自动隐藏」还原成进来之前的样子。</summary>
+        /// <summary>回桌面：「自动隐藏」还原成进来之前的样子（改过才重启一次 explorer），任务栏放回来。</summary>
         public void ShowDesktopUi()
         {
-            foreach (IntPtr tray in Trays()) ShowWindow(tray, 8 /* SW_SHOWNA */);
             if (File.Exists(AutoHideSavedPath))
             {
-                int was;
-                if (int.TryParse(File.ReadAllText(AutoHideSavedPath).Trim(), out was)) SetAppBarState(was);
+                int was = -1;
+                if (false && int.TryParse(File.ReadAllText(AutoHideSavedPath).Trim(), out was) && was >= 0 && (was & 1) == 0 && TaskbarAutoHideByte() != was)
+                {
+                    Log("taskbar auto-hide restored (" + was + "); restarting explorer");
+                    StopExplorer();
+                    SetTaskbarAutoHideByte(was);
+                    StartExplorer();
+                }
                 try { File.Delete(AutoHideSavedPath); } catch { }
-                Log("taskbar auto-hide restored (" + was + ")");
-                RestoreWorkArea();
             }
+            foreach (IntPtr tray in Trays()) ShowWindow(tray, 8 /* SW_SHOWNA */);
             Log("taskbar shown");
+        }
+
+        private const string StuckRectsKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3";
+
+        /// <summary>StuckRects3 Settings 第 8 字节：bit0 = 自动隐藏。读不到返回 -1。</summary>
+        private static int TaskbarAutoHideByte()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(StuckRectsKey))
+                {
+                    var data = key == null ? null : key.GetValue("Settings") as byte[];
+                    return data != null && data.Length > 8 ? data[8] : -1;
+                }
+            }
+            catch { return -1; }
+        }
+
+        private bool SetTaskbarAutoHideByte(int value)
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(StuckRectsKey, true))
+                {
+                    var data = key == null ? null : key.GetValue("Settings") as byte[];
+                    if (data == null || data.Length <= 8) return false;
+                    data[8] = (byte)value;
+                    key.SetValue("Settings", data, Microsoft.Win32.RegistryValueKind.Binary);
+                    return true;
+                }
+            }
+            catch (Exception ex) { Log("taskbar auto-hide setting: " + ex.Message); return false; }
         }
 
         /// <summary>回桌面：工作区让出任务栏那一条（广播一次，窗口按新工作区重排）。</summary>
@@ -76,7 +123,7 @@ namespace ClawShell
             SystemParametersInfo(0x002F, 0, ref work, 0x2);
         }
 
-        private static string AutoHideSavedPath { get { return Path.Combine(ShellDir, "taskbar-autohide-before.txt"); } }
+        private static string AutoHideSavedPath { get { return Path.Combine(ShellDir, "taskbar-autohide-byte.txt"); } }
 
         [StructLayout(LayoutKind.Sequential)] private struct APPBARDATA { public int cbSize; public IntPtr hWnd; public uint uCallbackMessage; public uint uEdge; public RECT rc; public IntPtr lParam; }
         [DllImport("shell32.dll")] private static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA data);
