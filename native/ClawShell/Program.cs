@@ -18,7 +18,7 @@ namespace ClawShell
 {
     public static class Program
     {
-        public const string Version = "1.0.2";
+        public const string Version = "1.0.3";
         private static WindowsShellSystem _sys;
         private static string _verb = "";
 
@@ -86,6 +86,7 @@ namespace ClawShell
                     GC.KeepAlive(mutex);
                     return 0;
                 }
+                case "set-covered": _sys.SetCoverWanted(args.Length > 1 && args[1].ToLowerInvariant() == "on"); _sys.WriteState(_sys.CoveredActive() || !_sys.ExplorerRunning() ? "game" : "desktop", "covered-setting"); return 0;
                 case "ensure-surface": return _sys.EnsureLibrarySurface(args.Contains("--activate")) ? 0 : 1;
                 case "to-game": return (int)guard.ToGame();
                 case "to-desktop": return (int)guard.ToDesktop();

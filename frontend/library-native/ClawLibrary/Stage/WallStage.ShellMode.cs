@@ -11,7 +11,10 @@ internal static class ShellMode
 {
     public static string Exe => Path.Combine(AppContext.BaseDirectory, "Payload", "shell", "ClawShell.exe");
     public static bool Available => File.Exists(Exe);
-    public static bool GameMode => Available && !ExplorerRunning() && ReadState()?["mode"]?.GetValue<string>() == "game";
+    /// <summary>游戏模式：explorer 不在；或「保留 explorer」那种（任务栏藏着、游戏库盖着，ClawShell 写 covered:true）。</summary>
+    public static bool GameMode => Available && ReadState() is { } s && s["mode"]?.GetValue<string>() == "game" && (s["covered"]?.GetValue<bool>() == true || !ExplorerRunning());
+    /// <summary>「游戏模式保留 explorer」开关（shellkeep-explorer.flag，ClawShell set-covered on|off）。</summary>
+    public static bool KeepExplorer => State?["keepExplorer"]?.GetValue<bool>() == true;
 
     private static readonly string StatePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClawToolbox", "shell", "state.json");
@@ -121,7 +124,7 @@ public sealed partial class WallStage
     {
         var b = _ccPower.FirstOrDefault(p => p.Id == "mode");
         if (b == null) return;
-        bool desktop = ShellMode.ExplorerRunning();
+        bool desktop = !ShellMode.GameMode;
         string label = desktop ? "返回游戏模式" : "切换到桌面";
         string glyph = desktop ? "" : "";
         if (b.Label == label && b.Glyph == glyph) return;
@@ -136,7 +139,7 @@ public sealed partial class WallStage
         _shellBusy = true;
         try
         {
-            bool toGame = ShellMode.ExplorerRunning();
+            bool toGame = !ShellMode.GameMode;
             // 切换画面先盖上（游戏库这时还在前面），等它进场走完再真的切；切完再收场，看得出从哪到了哪
             try { ModeShiftShow(toGame); } catch (Exception ex) { Log.Warn($"mode shift: {ex.Message}"); }   // 动画出错也照样切
             var hold = Task.Delay(Reduced ? 0 : (int)ModeHoldMs);

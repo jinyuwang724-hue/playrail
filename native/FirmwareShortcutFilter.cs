@@ -104,6 +104,9 @@ namespace ClawRouter {
         public long Suppressed {get;private set;}
         public long ReplayFailures {get{return 0;}}
         public event Action GameBarSuppressed;
+        /// <summary>保留 explorer 的游戏模式：单按 Win 不能弹开始菜单（会把藏着的任务栏一起带出来）。</summary>
+        public static volatile bool CoveredShell;
+        bool winHeld, winTainted;
         public FirmwareShortcutFilter() : this(null) {}
         public FirmwareShortcutFilter(Func<bool> gameMode) {
             this.gameMode=gameMode;
@@ -132,6 +135,14 @@ namespace ClawRouter {
             }
             if(gameMode!=null&&!game&&decision.ObservedGameBar)action="gamebarInput";
             if(action!=null){var handler=ShortcutPressed;if(handler!=null)handler(action,GetForegroundWindow(),game);}
+            if(key.key==0x5b||key.key==0x5c){
+                if(!stroke.Up){if(!winHeld){winHeld=true;winTainted=false;}}
+                else{
+                    // 中间没有别的键（固件的 G / Tab 被我们吞了）：先插一个 Ctrl 再放 Win 抬起，系统就不当成单按 Win
+                    if(CoveredShell&&winHeld&&!winTainted){var tag=new UIntPtr(0x434C4157u);keybd_event(0x11,0,0,tag);keybd_event(0x11,0,2,tag);}
+                    winHeld=false;
+                }
+            } else if(winHeld&&!decision.Swallow)winTainted=true;
             return decision.Swallow ? new IntPtr(1) : CallNextHookEx(hook,code,message,data);
         }
         protected override void WndProc(ref Message message) {

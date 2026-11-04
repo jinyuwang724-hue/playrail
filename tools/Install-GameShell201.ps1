@@ -1,10 +1,10 @@
-﻿# 游戏库 0.1.207 → 0.1.208 原位升级（不先卸载，LocalCache 里的偏好保留），外壳换成 1.0.2 并重启 watch 监视进程。
+﻿# 游戏库 0.1.209 → 0.1.210 原位升级（不先卸载，LocalCache 里的偏好保留），外壳换成 1.0.3 并重启 watch 监视进程。
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 $out=Join-Path $root 'artifacts\game-shell-201'
 $before=Get-AppxPackage ClawToolbox.Library
-if ([version]$before.Version -ge [version]'0.1.208.0') { throw ('Installed '+$before.Version+' is not older than 0.1.208.0') }
-$msix=Join-Path $root 'frontend\library-native\AppPackages\ClawLibrary_0.1.208.0_x64_Test\ClawLibrary_0.1.208.0_x64.msix'
+if ([version]$before.Version -ge [version]'0.1.210.0') { throw ('Installed '+$before.Version+' is not older than 0.1.210.0') }
+$msix=Join-Path $root 'frontend\library-native\AppPackages\ClawLibrary_0.1.210.0_x64_Test\ClawLibrary_0.1.210.0_x64.msix'
 & 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe' verify /pa $msix *> (Join-Path $out 'signature.log')
 if ($LASTEXITCODE) { throw 'Signature verification failed' }
 $statePath=Join-Path $env:LOCALAPPDATA 'ClawToolbox\shell\state.json'

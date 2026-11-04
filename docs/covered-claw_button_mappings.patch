@@ -1,0 +1,15 @@
+--- artifacts/covered-router/claw_button_mappings.orig.py	2026-11-04 17:01:53.836699400 +0800
++++ artifacts/covered-router/claw_button_mappings.py	2026-11-04 17:02:45.914526600 +0800
+@@ -30,8 +30,11 @@
+ 
+ def session_game_mode():
+     try:
+-        if json.loads((Path(os.environ['LOCALAPPDATA'])/'ClawToolbox/shell/state.json').read_text(encoding='utf-8')).get('mode') != 'game':
++        state = json.loads((Path(os.environ['LOCALAPPDATA'])/'ClawToolbox/shell/state.json').read_text(encoding='utf-8'))
++        if state.get('mode') != 'game':
+             return False
++        if state.get('covered'):
++            return True  # 保留 explorer 的游戏模式（ClawShell 1.0.3）：explorer 还是外壳但被藏起来，照游戏模式处理
+         user = ctypes.WinDLL('user32', use_last_error=True)
+         user.GetShellWindow.restype = wintypes.HWND
+         shell = user.GetShellWindow()

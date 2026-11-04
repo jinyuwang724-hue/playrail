@@ -10,6 +10,9 @@ namespace ClawShell
 {
     public interface IGameSurface { bool EnsureLibrarySurface(bool activate); }
 
+    /// <summary>保留 explorer 的游戏模式（试验）：见 WindowsShellSystem.Covered.cs。</summary>
+    public interface ICoveredShell { bool CoverWanted(); bool CoveredActive(); void HideDesktopUi(); void ShowDesktopUi(); }
+
     public interface IDesktopSurface { bool FocusDesktop(); }
 
     public interface IShellSystem
@@ -91,6 +94,7 @@ namespace ClawShell
             try { _sys.DeleteShellValue(); } catch (Exception ex) { _sys.Log("delete shell value failed: " + ex.Message); }
             bool started = false;
             try { started = _sys.ExplorerRunning() || _sys.StartExplorer(); } catch (Exception ex) { _sys.Log("start explorer failed: " + ex.Message); }
+            try { if (started && Cover != null) Cover.ShowDesktopUi(); } catch (Exception ex) { _sys.Log("show taskbar failed: " + ex.Message); }
             try { _sys.WriteState("desktop", "fallback:" + reason + (started ? "" : ":explorer-failed")); } catch { }
         }
 
@@ -106,6 +110,8 @@ namespace ClawShell
                 {
                     if (_sys.LaunchLibrary())
                     {
+                        // 保留 explorer：游戏库起来以后再拉起 explorer，任务栏一出来就藏掉
+                        if (Cover != null && Cover.CoverWanted() && _sys.StartExplorer()) Cover.HideDesktopUi();
                         _sys.WriteState("game", "boot");
                         // 进程和窗口都在：没抢到前台（开机动画还没走完等）不算失败，交给 Supervise 接着看
                         if (!EnsureSurface(true)) _sys.Log("library window not foreground at boot; supervising");
@@ -136,16 +142,19 @@ namespace ClawShell
                 comboMs += TickMs;
                 if (comboMs >= ComboHoldMs && comboMs < ComboHoldMs + TickMs)
                 {
-                    bool desktop = _sys.ExplorerRunning();
+                    bool desktop = _sys.ExplorerRunning() && !CoveredNow;
                     _sys.Log("pad combo: switch to " + (desktop ? "game" : "desktop"));
                     if (desktop) ToGame(); else ToDesktop();
                 }
             }
             else comboMs = 0;
 
+            // 保留 explorer 的游戏模式：每 0.1 秒看一眼，任务栏冒出来就藏回去；游戏库照游戏模式看着
+            bool covered = CoveredNow;
+            if (covered) Cover.HideDesktopUi();
             if (tick % LibraryCheckEveryTicks != 0) return;
             bool explorer = _sys.ExplorerRunning();
-            if (explorer) { _sawExplorer = true; _surfaceBadSince = null; return; }
+            if (explorer && !covered) { _sawExplorer = true; _surfaceBadSince = null; return; }
             if (_sawExplorer)
             {
                 // 桌面 → 游戏模式（别的进程切的）：重新开始计数，之前放弃过也重新看着
@@ -171,6 +180,9 @@ namespace ClawShell
             if (_gaveUp) return;
             if (!_sys.LaunchLibrary()) RecordFailure("library-relaunch-failed");
         }
+
+        private ICoveredShell Cover { get { return _sys as ICoveredShell; } }
+        private bool CoveredNow { get { return Cover != null && Cover.CoveredActive(); } }
 
         private bool EnsureSurface(bool activate)
         {
@@ -211,6 +223,11 @@ namespace ClawShell
         public SwitchResult ToGame()
         {
             if (_sys.ForceFlagExists()) { _sys.WriteState("desktop", "refused:force-desktop.flag"); return SwitchResult.Refused; }
+            if (CoveredNow)
+            {
+                if ((!_sys.LibraryRunning() && !_sys.LaunchLibrary()) || !EnsureSurface(true)) { FallbackToDesktop("library-window-unavailable"); return SwitchResult.Failed; }
+                Cover.HideDesktopUi(); _sys.WriteState("game", "already"); return SwitchResult.Ok;
+            }
             if (!_sys.ExplorerRunning())
             {
                 if ((!_sys.LibraryRunning() && !_sys.LaunchLibrary()) || !EnsureSurface(true))
@@ -230,6 +247,16 @@ namespace ClawShell
                 return SwitchResult.Refused;
             }
             _sys.EnsureSupervisor();
+            if (Cover != null && Cover.CoverWanted())
+            {
+                // 保留 explorer：不结束它，藏任务栏、工作区铺满，游戏库盖住桌面
+                Cover.HideDesktopUi();
+                _gaveUp = false;
+                _failures.Clear();
+                _sys.WriteState("game", "covered");
+                if (!EnsureSurface(true)) { FallbackToDesktop("library-window-unavailable"); return SwitchResult.Failed; }
+                return SwitchResult.Ok;
+            }
             if (!_sys.StopExplorer())
             {
                 _sys.Log("explorer did not stay stopped; restoring");
@@ -254,6 +281,7 @@ namespace ClawShell
         public SwitchResult ToDesktop()
         {
             if (_sys.ExplorerRunning() || _sys.StartExplorer()) {
+                if (Cover != null) Cover.ShowDesktopUi();
                 var desktop = _sys as IDesktopSurface;
                 if (desktop != null && !desktop.FocusDesktop()) _sys.Log("desktop focus request did not settle");
                 _sys.WriteState("desktop", "switched"); return SwitchResult.Ok;

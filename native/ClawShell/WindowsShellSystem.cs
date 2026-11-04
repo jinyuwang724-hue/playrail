@@ -375,6 +375,7 @@ namespace ClawShell
             {
                 Directory.CreateDirectory(ShellDir);
                 string json = "{\"mode\":\"" + mode + "\",\"default\":\"" + (IsOurShellValue() ? "game" : "desktop") + "\",\"explorer\":" + (ExplorerRunning() ? "true" : "false")
+                    + ",\"covered\":" + (mode == "game" && ExplorerRunning() ? "true" : "false") + ",\"keepExplorer\":" + (CoverWanted() ? "true" : "false")
                     + ",\"forceFlag\":" + (ForceFlagExists() ? "true" : "false") + ",\"installed\":" + (File.Exists(StableExe) && LibraryInstalled() ? "true" : "false")
                     + ",\"message\":\"" + (message ?? "").Replace("\\", "\\\\").Replace("\"", "'") + "\",\"version\":\"" + Program.Version + "\",\"at\":\"" + DateTime.Now.ToString("s") + "\"}";
                 string tmp = StatePath + ".tmp";

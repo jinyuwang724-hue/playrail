@@ -1204,7 +1204,7 @@ public sealed partial class WallStage
     private List<(string Id, string Glyph, string Name, bool Danger)> QsPowerItems()
     {
         var list = new List<(string, string, string, bool)>();
-        if (ShellMode.Available) list.Add(("mode", "qs.mode", ShellMode.ExplorerRunning() ? "游戏模式" : "桌面模式", false));
+        if (ShellMode.Available) list.Add(("mode", "qs.mode", !ShellMode.GameMode ? "游戏模式" : "桌面模式", false));
         list.Add(("sleep", "\uE708", "睡眠", false));
         list.Add(("restart", "\uE777", "重启", true));
         list.Add(("shutdown", "\uE7E8", "关机", true));

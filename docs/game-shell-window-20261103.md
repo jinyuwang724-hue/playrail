@@ -68,3 +68,13 @@
 
 - 可行性（`artifacts/wm-probe`）：桌面模式下藏任务栏后中文候选框、Game Bar 截图都正常，任务栏不自己冒；但单独按 Win 会弹开始菜单并带出任务栏，最大化窗口底部留任务栏空位。「游戏模式保留 explorer」要改后台的游戏模式判断（ClawRouter SessionModeProbe、claw_input_layer / claw_button_mappings 的 session_game_mode 都要求 explorer 不是外壳），还没做。
 - `MainWindow.WindowManager.cs`：设置 › 通用「游戏模式窗口管理（试验）」，默认关（ui.ini windowManager）。SetWinEventHook 收窗口出现 / 最小化 / 销毁：能调大小的新应用窗口直接最大化（全屏游戏、弹窗不动）；应用窗口最小化或关掉、前台没应用时游戏库立即回前台。实测：新窗口被最大化、最小化后 0.6 s 内游戏库在前台、关掉后游戏库在前台。
+
+## 0.1.210 + ClawShell 1.0.3 + 后台：保留 explorer 的游戏模式（试验，11-04）
+
+开关：设置 › 通用「游戏模式保留系统输入法（试验）」= `ClawShell set-covered on|off` = `shell\keep-explorer.flag`。开着时进入游戏模式不结束 explorer，改为藏任务栏（主副屏）、工作区设成整屏，监视循环每 0.1 秒把冒出来的任务栏藏回去；回桌面放回任务栏和工作区。state.json 多了 `covered`（mode=game 且 explorer 在）和 `keepExplorer`。
+
+- 游戏库 `ShellMode.GameMode` 认 covered；模式按钮、快设面板模式键、「退出游戏库」按 GameMode 判断。
+- 后台按键路由（ClawRouter-0.17.58-specialkeys.exe，源码 = native/ 下五个文件）：SessionModeProbe 认 covered；FirmwareShortcutFilter 在 covered 时，Win 按下到抬起之间系统没看到别的键（固件的 G/Tab 被吞了）就在抬起前插一个带标记的 Ctrl，开始菜单不弹。原文件留作 `ClawRouter-0.17.58-specialkeys.before-covered.exe`。快捷键测试 23 + 原有项通过。
+- 后台 Python：已装的 claw_button_mappings.py 的 session_game_mode 认 covered（只加两行），原件 `claw_button_mappings.py.before-covered`。其余手改文件没动。
+- ClawShell 1.0.3 第一版把 `CoverFlagPath` 写成依赖 ShellDir 的静态字段，分部类静态初始化顺序不定 → 启动即崩（状态不写、日志也没有）；改成属性后正常。
+- 实测（`artifacts/wm-probe/cov-*.png`）：进游戏模式后 explorer 在、任务栏藏住、TextInputHost 在；单按 Win 不出开始菜单、任务栏不冒；快设面板照游戏模式打开；新窗口被铺满；游戏模式下打 nihao 出「你好」候选框；回桌面任务栏回来。
