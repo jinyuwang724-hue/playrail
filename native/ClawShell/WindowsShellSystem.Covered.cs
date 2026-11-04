@@ -56,8 +56,24 @@ namespace ClawShell
                 if (int.TryParse(File.ReadAllText(AutoHideSavedPath).Trim(), out was)) SetAppBarState(was);
                 try { File.Delete(AutoHideSavedPath); } catch { }
                 Log("taskbar auto-hide restored (" + was + ")");
+                RestoreWorkArea();
             }
             Log("taskbar shown");
+        }
+
+        /// <summary>回桌面：工作区让出任务栏那一条（广播一次，窗口按新工作区重排）。</summary>
+        private static void RestoreWorkArea()
+        {
+            RECT screen = PrimaryScreen(), work = screen, t;
+            IntPtr main = FindWindow("Shell_TrayWnd", null);
+            if (main != IntPtr.Zero && GetWindowRect(main, out t))
+            {
+                if (t.Top > screen.Top && t.Bottom >= screen.Bottom) work.Bottom = t.Top;
+                else if (t.Top <= screen.Top && t.Bottom < screen.Bottom) work.Top = t.Bottom;
+                else if (t.Left > screen.Left) work.Right = t.Left;
+                else if (t.Right < screen.Right) work.Left = t.Right;
+            }
+            SystemParametersInfo(0x002F, 0, ref work, 0x2);
         }
 
         private static string AutoHideSavedPath { get { return Path.Combine(ShellDir, "taskbar-autohide-before.txt"); } }
@@ -87,7 +103,13 @@ namespace ClawShell
             return list;
         }
 
-        private static RECT PrimaryScreen() { return new RECT { Left = 0, Top = 0, Right = GetSystemMetrics(0), Bottom = GetSystemMetrics(1) }; }
+        /// <summary>主屏的物理像素大小。外壳进程默认不感知 DPI，GetSystemMetrics 给的是缩放后的 1280x800，拿它设工作区就错了（11-04 闪屏的另一半原因），先声明按显示器感知 DPI。</summary>
+        private static RECT PrimaryScreen()
+        {
+            try { SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { }
+            return new RECT { Left = 0, Top = 0, Right = GetSystemMetrics(0), Bottom = GetSystemMetrics(1) };
+        }
+        [DllImport("user32.dll")] private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
         private static bool Same(RECT a, RECT b) { return a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom; }
 
         [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }

@@ -281,7 +281,8 @@ namespace ClawShell
         public SwitchResult ToDesktop()
         {
             if (_sys.ExplorerRunning() || _sys.StartExplorer()) {
-                if (Cover != null) Cover.ShowDesktopUi();
+                // 先把状态写成桌面，监视进程就不会在我们放出任务栏的同时又把它藏回去
+                if (Cover != null) { _sys.WriteState("desktop", "switching"); Cover.ShowDesktopUi(); }
                 var desktop = _sys as IDesktopSurface;
                 if (desktop != null && !desktop.FocusDesktop()) _sys.Log("desktop focus request did not settle");
                 _sys.WriteState("desktop", "switched"); return SwitchResult.Ok;

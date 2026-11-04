@@ -8,6 +8,7 @@ public sealed partial class MainWindow
     private DispatcherQueueTimer? _gameShellTimer;
     private bool _wasGameMode;
     private int _emptyShellTicks;
+    private bool _edgeOff;
 
     private void InitializeGameShell()
     {
@@ -18,6 +19,7 @@ public sealed partial class MainWindow
         {
             if (_shortcutClosed || _desktopHandoff || _stage == null || _overlayRoutes.CurrentCount == 0) return;
             bool game = Stage.ShellMode.GameMode;
+            if (game != _edgeOff) { _edgeOff = game; EdgeGestures.Set(WinRT.Interop.WindowNative.GetWindowHandle(this), game); Log.Info($"edge gestures {(game ? "off" : "default")}"); }   // 游戏模式下底边上滑不出开始菜单
             if (!game) { _wasGameMode = false; _emptyShellTicks = 0; return; }
             bool entered = !_wasGameMode;
             _wasGameMode = true;
