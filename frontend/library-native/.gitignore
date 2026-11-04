@@ -10,3 +10,5 @@ ClawLibrary/Payload/**/*.pdb
 ClawLibrary/Payload/**/*.msix
 ClawLibrary/Payload/**/*.msixbundle
 ClawLibrary/Payload/**/*.cer
+# Built by tools/Build-ClawAudio.ps1 before each ClawLibrary build
+Native/ClawAudio/bin/

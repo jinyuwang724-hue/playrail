@@ -58,7 +58,7 @@ public sealed partial class WallStage
     {
         SoundFx.SetActive(true);
         PreviewSounds();
-        After(10000, () => Log.Info($"sfx test: {SoundFx.Blocks_} blocks written"));
+        After(10000, () => Log.Info($"sfx test: {SoundFx.Plays_} plays, engine {AudioEngine.Info()}"));
     }
 
     /// <summary>开机：墙第一次画出来时响一下（音效开着才响）。</summary>

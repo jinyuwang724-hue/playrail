@@ -31,10 +31,17 @@ public sealed partial class WallStage
             _audioTimer.Interval = TimeSpan.FromMilliseconds(100);
             _audioTimer.Tick += (_, _) =>
             {
-                try { bool active = IsForeground(); SoundFx.SetActive(active); _homeMusic.Tick(active); }
+                try
+                {
+                    bool active = IsForeground(); SoundFx.SetActive(active); _homeMusic.Tick(active);
+                    // 一秒没声音就停设备；两路都关、设备也停了，定时器也歇着，下次出声时 Woke 再叫醒
+                    if (!AudioEngine.Idle(1000) && !_prefs.Sounds && !_prefs.MusicEnabled) _audioTimer?.Stop();
+                }
                 catch (Exception ex) { Log.Warn("audio tick: " + ex.Message); _audioTimer?.Stop(); }
             };
+            AudioEngine.Woke += () => _dq.TryEnqueue(() => { if (!_audioDisposed) _audioTimer?.Start(); });
             ApplyHomeAudio();
+            _ = ConvertLegacyMusic();
             if (Program.Args.Contains("--audio-probe")) _ = ProbeHomeAudio();
         }
         catch (Exception ex) { _musicError = "音乐播放器暂不可用"; Log.Warn("home audio init: " + ex.Message); }
@@ -46,10 +53,22 @@ public sealed partial class WallStage
         SoundFx.Configure(_prefs.SoundTheme, _prefs.SoundVolume);
         SoundFx.SetActive(IsForeground());
         _homeMusic?.Configure(_prefs.MusicEnabled, _prefs.MusicVolume, MusicFiles.Resolve(_prefs.MusicTrack).Path, _prefs.MusicLoop);
-        // Leave enough time for a fade-out when the last enabled channel is switched off.
+        // The tick stops itself once both channels are off and the device has gone idle (after any fade-out).
         _audioTimer?.Start();
-        if (!_prefs.Sounds && !_prefs.MusicEnabled)
-            After(1800, () => { if (!_prefs.Sounds && !_prefs.MusicEnabled) _audioTimer?.Stop(); });
+    }
+
+    /// <summary>旧版导入的 M4A / AAC / WMA 副本转成引擎能解的 MP3，选中的曲目跟着换 id。</summary>
+    private async Task ConvertLegacyMusic()
+    {
+        try
+        {
+            var moved = await MusicFiles.ConvertLegacyAsync();
+            if (moved.Count == 0 || _audioDisposed) return;
+            Log.Info($"music: converted {moved.Count} imported track(s) to MP3");
+            if (moved.TryGetValue(_prefs.MusicTrack, out var id)) { _musicError = null; SaveUi(_prefs with { MusicTrack = id }); ApplyHomeAudio(); }
+            if (_stOpen && _gsItem == null && _stCat == 5) Repaint();
+        }
+        catch (Exception ex) { Log.Warn("music convert: " + ex.Message); }
     }
 
     private void SaveAudio(UiPrefs next)
@@ -146,7 +165,7 @@ public sealed partial class WallStage
         if (_stOpen) Repaint();
         try
         {
-            imported = await Task.Run(() => MusicFiles.Import(source));
+            imported = await MusicFiles.ImportAsync(source);
             await HomeMusic.ValidateAsync(imported.Path);
             if (_audioDisposed) return;
             SaveUi(_prefs with { MusicTrack = imported.Id });
@@ -170,6 +189,7 @@ public sealed partial class WallStage
             catch (Exception ex) { report[track.Id] = ex.Message; }
         report["loopEnabled"] = _prefs.MusicLoop;
         report["foregroundPolicy"] = !HomeAudioPolicy.CanPlay(true, 20, false, false);
+        report["engine"] = AudioEngine.Info();
         File.WriteAllText(Path.Combine(App.CacheDir, "audio-probe.json"), report.ToJsonString());
         Log.Info("audio probe: " + report.ToJsonString());
     }
@@ -177,6 +197,6 @@ public sealed partial class WallStage
     private void DisposeHomeAudio()
     {
         _audioDisposed = true; ++_soundPreviewVersion;
-        _audioTimer?.Stop(); _homeMusic?.Dispose(); SoundFx.Dispose();
+        _audioTimer?.Stop(); _homeMusic?.Dispose(); SoundFx.Dispose(); AudioEngine.Close();
     }
 }

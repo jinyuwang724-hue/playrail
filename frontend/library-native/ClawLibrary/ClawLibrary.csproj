@@ -51,5 +51,13 @@
     <!-- 首次启动引导安装的组件（tools\Stage-OobePayload.ps1 收集） -->
     <Content Include="Payload\**\*" CopyToOutputDirectory="PreserveNewest" />
     <Manifest Include="$(ApplicationManifest)" />
+    <!-- 声音引擎：miniaudio + Native\ClawAudio\claw_audio.c，构建前用 MSVC 编出来 -->
+    <Content Include="..\Native\ClawAudio\bin\clawaudio.dll" Link="clawaudio.dll" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <Target Name="BuildClawAudio" BeforeTargets="BeforeBuild"
+          Inputs="..\Native\ClawAudio\claw_audio.c;..\Native\ClawAudio\miniaudio.h;..\tools\Build-ClawAudio.ps1"
+          Outputs="..\Native\ClawAudio\bin\clawaudio.dll">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\..\tools\Build-ClawAudio.ps1&quot;" />
+  </Target>
 </Project>

@@ -1,3 +1,7 @@
+using Windows.Media.MediaProperties;
+using Windows.Media.Transcoding;
+using Windows.Storage;
+
 namespace ClawLibrary.Data;
 
 public sealed record HomeTrack(string Id, string Name, string Path, bool Custom = false);
@@ -26,6 +30,51 @@ public sealed class MusicLibrary(string assets, string userFolder)
         return tracks;
     }
     public HomeTrack Resolve(string id) => Tracks().FirstOrDefault(t => t.Id == id) ?? Tracks()[0];
+
+    /// <summary>声音引擎（miniaudio）直接能解的格式；其余导入时用系统编解码器转成 MP3。</summary>
+    private static readonly string[] Native = { ".mp3", ".wav", ".flac" };
+    private static bool IsNative(string path) => Native.Contains(System.IO.Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+
+    public async Task<HomeTrack> ImportAsync(string source)
+    {
+        var track = await Task.Run(() => Import(source));
+        if (IsNative(track.Path)) return track;
+        try { return await ConvertAsync(track); }
+        finally { if (File.Exists(track.Path)) File.Delete(track.Path); }
+    }
+
+    /// <summary>旧版导入、引擎解不了的副本（M4A / AAC / WMA）转成 MP3；返回 旧 id → 新 id。</summary>
+    public async Task<Dictionary<string, string>> ConvertLegacyAsync()
+    {
+        var moved = new Dictionary<string, string>();
+        foreach (var track in Tracks().Where(t => t.Custom && !IsNative(t.Path)).ToList())
+            try
+            {
+                var converted = await ConvertAsync(track);
+                File.Delete(track.Path);
+                moved[track.Id] = converted.Id;
+            }
+            catch (Exception ex) { Log.Warn($"music convert {System.IO.Path.GetFileName(track.Path)}: {ex.Message}"); }
+        return moved;
+    }
+
+    private async Task<HomeTrack> ConvertAsync(HomeTrack track)
+    {
+        string name = System.IO.Path.GetFileNameWithoutExtension(track.Path) + ".mp3";
+        var input = await StorageFile.GetFileFromPathAsync(track.Path);
+        var folder = await StorageFolder.GetFolderFromPathAsync(userFolder);
+        var output = await folder.CreateFileAsync(name + ".importing", CreationCollisionOption.ReplaceExisting);
+        try
+        {
+            var prepared = await new MediaTranscoder().PrepareFileTranscodeAsync(input, output, MediaEncodingProfile.CreateMp3(AudioEncodingQuality.High));
+            if (!prepared.CanTranscode) throw new IOException("无法转换这个音频：" + prepared.FailureReason);
+            await prepared.TranscodeAsync();
+            string destination = System.IO.Path.Combine(userFolder, name);
+            File.Move(output.Path, destination, true);
+            return new("custom:" + name, track.Name, destination, true);
+        }
+        finally { if (File.Exists(output.Path)) File.Delete(output.Path); }
+    }
 
     public HomeTrack Import(string source)
     {
