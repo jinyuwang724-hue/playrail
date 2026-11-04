@@ -14,12 +14,13 @@ public sealed partial class MainWindow
     private WinEventProc? _wmProc;
     private readonly List<nint> _wmHooks = new();
     private readonly HashSet<nint> _wmPlaced = new();
+    private readonly HashSet<nint> _wmZoomFix = new();
 
     private void InitializeWindowManager()
     {
         _wmProc = OnWinEvent;
         // OUTOFCONTEXT | SKIPOWNPROCESS：回调在本线程的消息循环里，自己的窗口不报
-        foreach (var (from, to) in new (uint, uint)[] { (0x0016, 0x0016), (0x8001, 0x8002) })
+        foreach (var (from, to) in new (uint, uint)[] { (0x0003, 0x0003), (0x0016, 0x0016), (0x8001, 0x8002), (0x800B, 0x800B) })
         {
             nint h = SetWinEventHook(from, to, 0, _wmProc, 0, 0, 0x0000 | 0x0002);
             if (h != 0) _wmHooks.Add(h);
@@ -37,6 +38,15 @@ public sealed partial class MainWindow
         {
             switch (ev)
             {
+                case 0x800B:   // EVENT_OBJECT_LOCATIONCHANGE：只看「刚被最大化」的（用户点了最大化、程序自己最大化），最大化只到工作区，底下会空一截
+                    if (!IsZoomed(hwnd) || _wmZoomFix.Contains(hwnd) || OpenWindows.AppWindow(hwnd) is not { } z) return;
+                    _wmZoomFix.Add(hwnd);
+                    Later(60, () => { _wmZoomFix.Remove(hwnd); WmPlace(z); });
+                    break;
+                case 0x0003:   // EVENT_SYSTEM_FOREGROUND：进游戏模式前就开着的窗口、切换器切过去的窗口，到前台时也照样铺满
+                    if (OpenWindows.AppWindow(hwnd) is not { } fg) return;
+                    Later(80, () => WmPlace(fg));
+                    break;
                 case 0x8002:   // EVENT_OBJECT_SHOW
                     if (_wmPlaced.Contains(hwnd) || OpenWindows.AppWindow(hwnd) is not { } w) return;
                     _wmPlaced.Add(hwnd);
@@ -59,7 +69,7 @@ public sealed partial class MainWindow
 
     private void WmPlace(OpenWindow w)
     {
-        if (!WmActive || !OpenWindows.Matches(w) || IsZoomed(w.Hwnd) || ToolboxWindow.IsIconic(w.Hwnd)) return;
+        if (!WmActive || !OpenWindows.Matches(w) || ToolboxWindow.IsIconic(w.Hwnd)) return;
         long style = GetWindowLongPtr(w.Hwnd, -16).ToInt64();
         if ((style & 0x00010000) == 0 || (style & 0x00040000) == 0) return;   // 没有最大化按钮 / 不能调大小：照它自己的尺寸
         if (CoversMonitor(w.Hwnd)) return;   // 已经全屏（游戏）
@@ -78,7 +88,9 @@ public sealed partial class MainWindow
         var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
         if (!GetMonitorInfo(MonitorFromWindow(hwnd, 2), ref info)) return ShowWindow(hwnd, 3);
         var m = info.Monitor; var wk = info.Work;
-        if (wk.Left == m.Left && wk.Top == m.Top && wk.Right == m.Right && wk.Bottom == m.Bottom) return ShowWindow(hwnd, 3);   // SW_MAXIMIZE
+        if (wk.Left == m.Left && wk.Top == m.Top && wk.Right == m.Right && wk.Bottom == m.Bottom) return IsZoomed(hwnd) || ShowWindow(hwnd, 3);   // SW_MAXIMIZE
+        // 已经最大化的（进来之前就最大化着）：最大化只到工作区，先还原再按边框铺满
+        if (IsZoomed(hwnd)) ShowWindow(hwnd, 9);   // SW_RESTORE
         if (!GetWindowRect(hwnd, out var r)) return false;
         var f = r;
         DwmGetWindowAttribute(hwnd, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, out f, Marshal.SizeOf<WmRect>());
