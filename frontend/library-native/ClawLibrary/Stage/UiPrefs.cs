@@ -8,6 +8,8 @@ public enum AfterLaunch { Keep, Hide }
 /// <summary>游戏中回到游戏库：先给「正在游戏」面板，还是直接回墙面（顶上一条「正在游戏」）。</summary>
 public enum NowPlayingStyle { Panel, Bar }
 public enum SteamShortcutTarget { Library, BigPicture }
+/// <summary>卡盒版首页的样式：展架（底部一排卡盒）/ 叠放（一摞卡盒）。</summary>
+public enum HomeStyle { Shelf, Stack }
 
 public sealed record UiPrefs
 {
@@ -66,6 +68,9 @@ public sealed record UiPrefs
     public string PosterTintColor { get; init; } = DefaultTintColor;
     public int PosterTintIntensity { get; init; } = 50;
     public const string DefaultTintColor = "#161419";
+    public HomeStyle Home { get; init; }
+    /// <summary>插卡启动 / 退卡的音效。</summary>
+    public bool InsertSound { get; init; } = true;
 
     public static readonly (string Name, uint Rgb)[] Accents =
     {
@@ -136,6 +141,8 @@ public sealed record UiPrefs
                     "posterTintIntensity" when int.TryParse(v, out var i) => p with { PosterTintIntensity = Math.Clamp(i, 0, 100) },
                     "oobe" when int.TryParse(v, out var i) => p with { Oobe = Math.Max(0, i) },
                     "lang" when v is "zh-CN" or "en-US" => p with { Lang = v },
+                    "homeStyle" when Enum.TryParse<HomeStyle>(v, out var hs) && Enum.IsDefined(hs) => p with { Home = hs },
+                    "insertSound" when bool.TryParse(v, out var b) => p with { InsertSound = b },
                     "folders" => p with { Folders = v.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) },
                     _ => p,
                 };
@@ -161,7 +168,7 @@ public sealed record UiPrefs
                 $"sourceXbox={SourceXbox}", $"preloadSteam={PreloadSteam}", $"windowManager={WindowManager}", $"backgroundRun={BackgroundRun}",
                 $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
                 $"soundTheme={SoundTheme}", $"musicEnabled={MusicEnabled}", $"musicVolume={MusicVolume}", $"musicTrack={MusicTrack}", $"musicLoop={MusicLoop}",
-                $"lightsOn={LightsOn}", $"posterTint={PosterTint}", $"posterTintCustom={PosterTintCustom}", $"posterTintColor={PosterTintColor}", $"posterTintIntensity={PosterTintIntensity}", $"oobe={Oobe}", $"lang={Lang}",
+                $"lightsOn={LightsOn}", $"posterTint={PosterTint}", $"posterTintCustom={PosterTintCustom}", $"posterTintColor={PosterTintColor}", $"posterTintIntensity={PosterTintIntensity}", $"oobe={Oobe}", $"lang={Lang}", $"homeStyle={Home}", $"insertSound={InsertSound}",
             });
             File.Move(FilePath + ".tmp", FilePath, true);
         }

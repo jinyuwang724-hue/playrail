@@ -264,6 +264,7 @@ public sealed partial class WallStage
     private void CloseControlCenter()
     {
         if (!_ccOpen || _cc == null) return;
+        CsAfterControlCenter();
         Cue(Sfx.MenuOut);
         ClosePerf(instant: true);
         CloseGamepad(instant: true);
@@ -411,6 +412,7 @@ public sealed partial class WallStage
         if (_ccOpen && _shOpen) { ShY(); return; }
         if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
+        else if (CsActive) CsGameSettings();
         else OpenGameSettingsForFocus();
     }
 
@@ -1291,6 +1293,7 @@ public sealed partial class WallStage
     /// </summary>
     private bool MorphExit()
     {
+        if (_cs != null) return false;
         Sync();
         long now = NowMs;
         var tiles = VisibleTiles(now);
@@ -1405,6 +1408,7 @@ public sealed partial class WallStage
     /// </summary>
     private bool MorphEnter()
     {
+        if (_cs != null) return false;
         Sync();
         long now = NowMs;
         var tiles = VisibleTiles(now);

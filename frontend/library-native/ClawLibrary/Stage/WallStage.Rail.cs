@@ -147,6 +147,7 @@ public sealed partial class WallStage
     /// <summary>只重画竖条（不翻转）。</summary>
     private void RepaintRail()
     {
+        CsPaintStatus();
         if (_stack.Count == 0) return;
         var front = _seamFront ? _seamB : _seamA;
         PaintSeam(front);
@@ -450,7 +451,8 @@ public sealed partial class WallStage
     {
         bool showWall = !_backgroundSettingsOpen && !BackdropBehindCovers;
         _wallBackgroundL.IsVisible = _wallBackgroundR.IsVisible = showWall;
-        _field.IsVisible = _vignette.IsVisible = !_backgroundSettingsOpen;
+        _field.IsVisible = _vignette.IsVisible = !_backgroundSettingsOpen && _cs == null;
+        if (_cs != null) _wallBackgroundL.IsVisible = _wallBackgroundR.IsVisible = false;
         _cam.InsertScalar("bfull", BackdropBehindCovers ? 1 : 0);
     }
 
@@ -790,7 +792,7 @@ public sealed partial class WallStage
         UpdateWallBackgroundVisibility();
         _backdrop.Visible = _backdropOn || _backgroundSettingsOpen;
         bool recent = NowMs - _lastInput < BackdropIdleMs;
-        bool run = _backdropOn && _windowActive && !Reduced && recent && !_ccOpen && _ob == null;   // 整屏可见，不再依赖侧边栏开口；控制中心 / 首次启动引导开着时墙冻住
+        bool run = _backdropOn && _windowActive && !Reduced && recent && !_ccOpen && _ob == null && _cs == null;   // 整屏可见，不再依赖侧边栏开口；控制中心 / 首次启动引导开着时墙冻住
         _backdrop.Run(run);
         CcBackRun();
         ObBackRun();

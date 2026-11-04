@@ -70,7 +70,7 @@ public sealed partial class WallStage
         if (_lm != null) EndLaunchMotion("replaced", animate: false);
         bool fly = mode == LmMode.Launching;
         double W = View.Width, H = View.Height, d = Chrome.Dpi;
-        var cell = tile != null ? ScreensaverScreenRect(tile) : new Rect(W / 2 - 150, H / 2 - 225, 300, 450);
+        var cell = tile != null ? ScreensaverScreenRect(tile) : _lmFromRect is { } fr ? new Rect(fr.X, fr.Y, fr.Width, fr.Height) : new Rect(W / 2 - 150, H / 2 - 225, 300, 450);
         // 竖封面按卡片高度、2:3 放在卡片正中起飞：等比缩放，不压扁（展开的卡多是方的）
         double fh = Math.Min(cell.Height, cell.Width * 1.5), fw = fh * 2 / 3;
         var from = new Rect(cell.X + (cell.Width - fw) / 2, cell.Y + (cell.Height - fh) / 2, fw, fh);
@@ -350,6 +350,7 @@ public sealed partial class WallStage
         if (lm == null || lm.Leaving) return;
         lm.Leaving = true;
         Log.Info($"launch motion end {lm.Item.Id} reason={reason} after={NowMs - lm.Started}ms");
+        CsLaunchEnded(reason);
         void Drop()
         {
             if (_lm == lm) _lm = null;

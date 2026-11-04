@@ -98,6 +98,7 @@ public sealed partial class WallStage
         _ccBack?.SetFilmCovers(covers, a => _dq.TryEnqueue(() => { a(); CcBackLoop(); }));
         _ = BuildMissingArtAsync();
         Repaint();
+        CsRebuild();
     }
 
     // 切换范围可能补进没有封面的游戏；把补图请求串行合并，避免和启动补图并发写同一套文件。

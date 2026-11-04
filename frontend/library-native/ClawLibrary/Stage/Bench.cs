@@ -1,4 +1,4 @@
-﻿// 自测（--bench）：按固定脚本跑一遍（静止、右摇杆平移、十字键走位、展开 / 收起、换页签、进出合集），
+// 自测（--bench）：按固定脚本跑一遍（静止、右摇杆平移、十字键走位、展开 / 收起、换页签、进出合集），
 // 每段用 DWM 合成时间戳量帧间隔（后台线程 2 ms 轮询 qpcCompose），同时记进程 CPU 与内存，写进日志和 logs\bench.json。
 // --state=expand|collection|styleb|tab 则只把墙摆到某个状态停住（截图对比用）。
 using System.Diagnostics;
@@ -411,6 +411,8 @@ public static class Bench
     }
 
     /// <summary>把录下的 JPEG 帧按真实时间戳拼成 mp4（系统自带的 MediaComposition，不需要 ffmpeg）。</summary>
+    internal static Task EncodeMp4(string dir, string output) => EncodeMp4Async(dir, output);
+
     private static async Task EncodeMp4Async(string dir, string output)
     {
         var frames = Directory.GetFiles(dir, "f*.jpg").OrderBy(f => f).ToList();
@@ -556,6 +558,7 @@ public static class Bench
                 case "recexit" or "recenter" or "recboth" or "recidle": await RecordAsync(s, state); break;
                 case "reclook" or "recstack": await RecLookAsync(s, state == "recstack"); break;
                 case "reclaunch": await RecLaunchAsync(s); break;
+                case "reccases": await s.RecCasesAsync(); break;
                 case "gstest": s.DemoGameSessionProbe(); break;
                 case "npattach": s.DemoAttachRunningGame(); break;
                 case "recplaying": await RecPlayingAsync(s); break;

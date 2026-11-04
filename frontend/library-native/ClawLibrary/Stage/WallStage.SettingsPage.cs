@@ -618,6 +618,8 @@ public sealed partial class WallStage
     private void BuildStLibrary()
     {
         _stRows.Add(new PerfRow { Section = true, Title = "显示" });
+        _stRows.Add(StPick("首页样式", new[] { "展架", "叠放" }, (int)_prefs.Home, i => { CsSetHomeStyle((HomeStyle)i); Repaint(); }, 0));
+        _stRows.Add(StToggle("插卡音效", _prefs.InsertSound, on => { SaveUi(_prefs with { InsertSound = on }); Repaint(); }, true));
         _stRows.Add(StToggle("竖条信息栏", _prefs.LibraryRail, on => { SetLibraryRail(on); Repaint(); }, true));
         _stRows.Add(StPick("竖栏 Steam 按钮", new[] { "Steam 库", "Steam 大屏幕模式" }, (int)_prefs.SteamShortcut,
             i => { SaveUi(_prefs with { SteamShortcut = (SteamShortcutTarget)i }); Repaint(); }, 0));

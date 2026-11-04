@@ -206,6 +206,7 @@ public sealed partial class WallStage : IDisposable
         TweenSeam(SeamHome, 0);
         Focus(start?.Key, false);
         ApplyLibraryRailVisibility(animate: false);
+        CsStart();
         Log.Info($"wall built: {_tiles.Count} tiles ({NowMs - t0}ms in stage, {App.SinceProcessStartMs():F0}ms since process start)");
 
         if (ShouldShowOobe()) OpenOobe();
@@ -278,6 +279,7 @@ public sealed partial class WallStage : IDisposable
         if (Math.Abs(oldRs - G.RasterScale) > 1e-4) { Text.Clear(); foreach (var t in _tiles.Values) t.Redraw(); }
         RenderSeamContent();
         Recull(true);
+        CsResize();
     }
 
     private bool IsForeground()
@@ -365,6 +367,7 @@ public sealed partial class WallStage : IDisposable
             if (it.Id == id || it.ArtFrom?.Id == id) t.Show(t.Shown);
         }
         UpdateBackdropKey(FocusKey, false);
+        CsRefreshItem(id);
     }
 
     // ---------------- 墙以外的视觉 ----------------
@@ -635,7 +638,7 @@ public sealed partial class WallStage : IDisposable
         double dt = _lastFrame == 0 ? 16 : Math.Min(50, now - _lastFrame);
         _lastFrame = now;
         _pad?.ApplyPan(this);
-        if (_ccOpen || _wsOpen || _qsOpen) { PanVelocity = Vector2.Zero; _glide = Vector2.Zero; }
+        if (_ccOpen || _wsOpen || _qsOpen || CsActive) { PanVelocity = Vector2.Zero; _glide = Vector2.Zero; }
         var v = PanVelocity + _glide;
         if (v.X != 0 || v.Y != 0)
         {
@@ -671,6 +674,7 @@ public sealed partial class WallStage : IDisposable
         if (ConsumeScreensaverWake()) return;
         if (_backgroundSettingsOpen) return;
         if (_ccOpen || _wsOpen || _qsOpen || MorphBusy) return;
+        if (CsActive) { MarkInput(); CsDrag(dx, dy); return; }
         MarkInput();
         Sync();
         _camX = _camY = null;
@@ -812,6 +816,7 @@ public sealed partial class WallStage : IDisposable
         if (LaunchMotionIntercept(false, dir)) { if (_lm?.Mode != LmMode.Playing) Cue(Sfx.None); return; }
         if (MorphIntercept()) return;
         if (_ccOpen) { CcMove(dir); return; }
+        if (CsActive) { CsMove(dir); return; }
         if (RailMove(dir)) return;
         if (EnsureFocusOnScreen()) return;
         var from = SlotByKey(FocusKey!.Value);
@@ -837,6 +842,7 @@ public sealed partial class WallStage : IDisposable
         if (LaunchMotionIntercept(false, activate: true)) { if (_lm?.Mode != LmMode.Playing) Cue(Sfx.None); return; }
         if (MorphIntercept()) return;
         if (_ccOpen) { CcActivate(); return; }
+        if (CsActive) { CsActivate(); return; }
         if (RailActivate()) return;
         if (EnsureFocusOnScreen()) return;
         var slot = SlotByKey(FocusKey!.Value);
@@ -923,6 +929,13 @@ public sealed partial class WallStage : IDisposable
         if (LaunchMotionIntercept(true)) return;
         if (MorphIntercept()) return;
         if (_ccOpen) { if (!CcChromeBack()) CloseControlCenter(); return; }
+        if (CsActive)
+        {
+            if (CsBack()) return;
+            if (_npBar != null && _game is { } now) { ResumeGame(now); return; }
+            Cue(Sfx.Bump);
+            return;
+        }
         if (RailBack()) return;
         if (_expandedKey != null) { Cue(Sfx.DetailOut); Collapse(true); return; }
         if (_stack.Count > 1) { Cue(Sfx.DetailOut); Pop(); return; }
@@ -1146,6 +1159,7 @@ public sealed partial class WallStage : IDisposable
         if (_ccOpen && _gpOpen) { GpSwitchTab(delta); return; }   // 手柄页「选择指令」里 LB / RB 换页签
         if (_ccOpen && _stOpen && GsOverlayTab(delta)) return;     // 游戏设置：按键选择换页签 / 封面换图种
         if (_ccOpen && _shOpen) { if (!MorphIntercept()) ShSwitchTab(delta); return; }   // 截图页换游戏
+        if (CsActive) { if (!MorphIntercept()) CsSwitchTab(delta); return; }
         if (_stack.Count > 1 || _ccOpen || MorphIntercept()) { Cue(Sfx.Bump); return; }
         if (_expandedKey != null) Collapse(false);
         if (_searchOpen) CloseSearch();
@@ -1288,6 +1302,7 @@ public sealed partial class WallStage : IDisposable
         if (_backgroundSettingsOpen) { MarkInput(); RailClick(sx, sy); return; }
         if (MorphIntercept()) return;
         if (_ccOpen) { CcClick(sx, sy); return; }
+        if (CsActive && CsClick(sx, sy)) return;
         if (RailClick(sx, sy)) return;
         Sync();
         var geo = SeamGeometry(_anchorX, _center, _openWidth, View);
@@ -1484,6 +1499,7 @@ public sealed partial class WallStage : IDisposable
         _shFilterDragRemainder = 0;
         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, 0, 0, 0, pt.PointerId);
         _dragFrom = (pt.Position.X, pt.Position.Y);
+        CsDragEnd();
         _glide = Vector2.Zero;
         if (!_rootEl.CapturePointer(e.Pointer)) { _pagePointer.Reset(); _drag = null; return; }
         _rootEl.Focus(FocusState.Pointer);
@@ -1586,6 +1602,7 @@ public sealed partial class WallStage : IDisposable
         if (result == TouchResult.Tap) { ClickAt(pt.Position.X, pt.Position.Y); return; }
         if (_ob != null || _lm is { Leaving: false } || _searchOpen || _backgroundSettingsOpen || TouchNavigationHit(_dragFrom.x, _dragFrom.y)) return;
         if (_ccOpen) { if (result == TouchResult.Horizontal) CcSwipe(pt.Position.X - _dragFrom.x, pt.Position.Y - _dragFrom.y); return; }
+        if (CsActive) { CsDragEnd(); return; }
         if ((pt.Timestamp - d.t) / 1000.0 > 80) return;
         // 惯性：滑行距离 = 松手速度 × 0.3（power），按时间常数 280ms 指数衰减；速度上限 4000 px/s
         double speed = Math.Sqrt(d.vx * d.vx + d.vy * d.vy);
