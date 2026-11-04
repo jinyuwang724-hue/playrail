@@ -118,8 +118,8 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 .floor{position:absolute;left:calc(50% - 380px);width:760px;bottom:70px;height:80px;border-radius:50%;background:radial-gradient(closest-side,rgba(0,0,0,.65),transparent);z-index:1}
 
 /* ---- C2 卡盒架 (Selene-style larger selected cover) ---- */
-#v2 .info{position:absolute;left:96px;right:96px;bottom:596px;display:flex;align-items:flex-end;justify-content:space-between;gap:48px}
-#v2 .info .tx{min-width:0;display:flex;flex-direction:column;gap:12px}
+#v2 .info{position:absolute;left:96px;right:96px;bottom:562px;display:flex;flex-direction:column;align-items:flex-start;gap:22px}
+#v2 .info .tx{min-width:0;max-width:100%;display:flex;flex-direction:column;gap:10px}
 #v2 h2.t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row{position:absolute;left:0;right:0;bottom:64px;height:470px}
 .rail{position:absolute;left:0;bottom:0;display:flex;align-items:flex-end;gap:28px;transition:transform .55s var(--quart)}
@@ -127,8 +127,8 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 .it .wrap{position:absolute;inset:0;transition:transform .55s var(--quart),filter .4s,box-shadow .55s;border-radius:6px;box-shadow:0 10px 18px rgba(0,0,0,.45);filter:brightness(.78)}
 .it.sel{width:308px;height:462px}
 .it.sel .wrap{filter:none;transform:translateY(-8px);box-shadow:0 26px 50px -8px rgba(0,0,0,.7),0 0 0 3px #fff,0 18px 60px -10px var(--a)}
-.glab{position:absolute;left:0;top:-36px;font-size:15px;color:var(--fg2);white-space:nowrap;transition:top .55s var(--quart)}
-.it.sel .glab{top:-44px}
+.glab{position:absolute;left:0;top:-36px;font-size:15px;color:var(--fg2);white-space:nowrap;transition:opacity .3s}
+.it.sel .glab{opacity:0}
 
 /* ---- C3 叠放 (CollectionViewPagingLayout stack) ---- */
 #v3 .info{position:absolute;left:96px;top:0;bottom:0;width:640px;display:flex;flex-direction:column;justify-content:center;gap:14px}
@@ -143,7 +143,7 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 .amb img.on{opacity:.4}
 .amb::after{content:"";position:absolute;inset:0;background:linear-gradient(to bottom,rgba(15,15,16,.15),var(--bg) 92%)}
 .ascroll{position:absolute;top:112px;bottom:0;left:0;right:0;overflow-y:auto;padding:16px 0 120px;touch-action:pan-y}
-.grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:44px 28px;padding:8px 96px 0}
+.grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:48px 32px;padding:8px 96px 0}
 .sec{position:relative;padding:0 96px;font-size:24px;font-weight:600;display:flex;gap:12px;align-items:baseline;margin:16px 0 22px}
 .sec small{font-size:17px;color:var(--fg3);font-weight:400;font-variant-numeric:tabular-nums}
 .rrow{position:relative;display:flex;gap:24px;overflow-x:auto;padding:8px 96px 16px;touch-action:pan-x}
@@ -293,7 +293,7 @@ function lay2(){
   const items=[...document.querySelectorAll("#items .it")],s=S.idx,W0=228,G0=28,W1=308;
   items.forEach((el,i)=>el.classList.toggle("sel",i===s));
   const total=items.length*(W0+G0)-G0+(W1-W0);
-  let x=96-Math.max(0,s-1)*(W0+G0);x=Math.max(Math.min(96,1824-total),x);
+  let x=96-s*(W0+G0);x=Math.max(Math.min(96,1824-total),x);
   document.getElementById("items").style.transform=`translateX(${x}px)`;
 }
 /* ---------- C3: stack ---------- */
@@ -321,7 +321,7 @@ function lay3(){
     el.style.pointerEvents=a>0?"":"none";el.classList.toggle("sel",p===0&&i===s)});
 }
 /* ---------- category pages (全部 / Steam / 本地): the earlier "A" layout, recent row + cover grid ---------- */
-const COLS=7;
+const COLS=5;const CW=(1728-(COLS-1)*32)/COLS+32,RW=424;
 function catPage(){const L=list(),Rc=recent();
   /* recent: loose cartridges (taken out of their cases); the label carries the wide art */
   const card=(g,i)=>`<button class="rcard ga" data-z="r" data-i="${i}" aria-label="${esc(g.t)}" style="${cvars(g)}"><div class="cg f">
@@ -375,11 +375,16 @@ function render(){
 function step(d){const n=list().length;const j=Math.max(0,Math.min(n,S.idx+d));if(j===S.idx)return;S.idx=j;S.zone="row";layout()}
 function nav(dx,dy){if(S.busy)return;
   if(S.page==="cat"){const nR=recent().length,nG=list().length;
-    if(S.az==="r"){if(dx){const j=S.ai+dx;if(j>=0&&j<nR)S.ai=j}else if(dy>0){S.az="g";S.ai=Math.min(nG-1,Math.round(S.ai*420/((1728-6*28)/COLS+28)))}}
+    if(S.az==="r"){if(dx){const j=S.ai+dx;if(j>=0&&j<nR)S.ai=j}else if(dy>0){S.az="g";S.ai=Math.min(nG-1,Math.round(S.ai*RW/CW))}}
     else{if(dx){const j=S.ai+dx;if(j>=0&&j<nG&&Math.floor(j/COLS)===Math.floor(S.ai/COLS))S.ai=j}
-      else{const j=S.ai+dy*COLS;if(j>=0&&j<nG)S.ai=j;else if(j<0&&nR){S.az="r";S.ai=Math.min(nR-1,Math.floor((S.ai%COLS)*((1728-6*28)/COLS+28)/444))}}}
+      else{const j=S.ai+dy*COLS;if(j>=0&&j<nG)S.ai=j;else if(j<0&&nR){S.az="r";S.ai=Math.min(nR-1,Math.round((S.ai%COLS)*CW/RW))}}}
     paintFocus();return}
-  if(S.zone==="row"){if(dx)step(dx);else if(dy<0&&S.idx<list().length){S.zone="acts";S.act=0;paintFocus()}}
+  const hasActs=S.idx<list().length;
+  if(S.v==="3"){ /* pile sits right of the buttons: up/down flip the pile, left walks into the buttons */
+    if(S.zone==="row"){if(dy)step(dy);else if(dx<0&&hasActs){S.zone="acts";S.act=2;paintFocus()}}
+    else{if(dx>0&&S.act===2||dy){S.zone="row";paintFocus()}else if(dx){S.act=Math.max(0,S.act+dx);paintFocus()}}
+    return}
+  if(S.zone==="row"){if(dx)step(dx);else if(dy<0&&hasActs){S.zone="acts";S.act=0;paintFocus()}}
   else{if(dx){S.act=Math.max(0,Math.min(2,S.act+dx));paintFocus()}else if(dy>0){S.zone="row";paintFocus()}}
 }
 function press(){if(S.busy)return;
