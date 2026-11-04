@@ -18,7 +18,7 @@ namespace ClawShell
 {
     public static class Program
     {
-        public const string Version = "1.0.3";
+        public const string Version = "1.0.4";
         private static WindowsShellSystem _sys;
         private static string _verb = "";
 

@@ -28,32 +28,53 @@ namespace ClawShell
             try { return File.ReadAllText(StatePath).Contains("\"mode\":\"game\""); } catch { return false; }
         }
 
-        /// <summary>藏任务栏（主屏和副屏的）、工作区设成整块屏幕。已经藏好了就什么都不做（监视循环每 0.1 秒调一次）。</summary>
+        /// <summary>
+        /// 藏任务栏（主屏和副屏的）。工作区不自己改：explorer 还把任务栏当成占位的应用栏，我们改了它马上改回来，
+        /// 每改一次所有全屏窗口都重排一次 = 整屏闪（11-04 实测游戏库窗口来回变了六百多次）。
+        /// 所以进来时把任务栏设成系统的「自动隐藏」（explorer 自己让出那一条），原来的设置记下来，回桌面再还原。
+        /// 监视循环每 0.1 秒调一次：已经藏好就什么都不做。
+        /// </summary>
         public void HideDesktopUi()
         {
+            if (!File.Exists(AutoHideSavedPath))
+            {
+                int was = AppBarState();
+                try { File.WriteAllText(AutoHideSavedPath, was.ToString()); } catch { }
+                if ((was & 1) == 0) { SetAppBarState(was | 1); Log("taskbar auto-hide on (was " + was + ")"); }
+            }
             foreach (IntPtr tray in Trays())
                 if (IsWindowVisible(tray)) { ShowWindow(tray, 0); Log("taskbar hidden"); }
-            RECT screen = PrimaryScreen(), work;
-            if (SystemParametersInfoGet(0x0030 /* SPI_GETWORKAREA */, 0, out work, 0) && !Same(work, screen))
-                SystemParametersInfo(0x002F /* SPI_SETWORKAREA */, 0, ref screen, 0x2 /* SPIF_SENDCHANGE */);
         }
 
-        /// <summary>回桌面：任务栏放回来，工作区让出任务栏那一条。</summary>
+        /// <summary>回桌面：任务栏放回来，「自动隐藏」还原成进来之前的样子。</summary>
         public void ShowDesktopUi()
         {
-            RECT screen = PrimaryScreen(), work = screen;
             foreach (IntPtr tray in Trays()) ShowWindow(tray, 8 /* SW_SHOWNA */);
-            IntPtr main = FindWindow("Shell_TrayWnd", null);
-            RECT t;
-            if (main != IntPtr.Zero && GetWindowRect(main, out t))
+            if (File.Exists(AutoHideSavedPath))
             {
-                if (t.Top > screen.Top && t.Bottom >= screen.Bottom) work.Bottom = t.Top;
-                else if (t.Top <= screen.Top && t.Bottom < screen.Bottom) work.Top = t.Bottom;
-                else if (t.Left > screen.Left) work.Right = t.Left;
-                else if (t.Right < screen.Right) work.Left = t.Right;
+                int was;
+                if (int.TryParse(File.ReadAllText(AutoHideSavedPath).Trim(), out was)) SetAppBarState(was);
+                try { File.Delete(AutoHideSavedPath); } catch { }
+                Log("taskbar auto-hide restored (" + was + ")");
             }
-            SystemParametersInfo(0x002F, 0, ref work, 0x2);
             Log("taskbar shown");
+        }
+
+        private static string AutoHideSavedPath { get { return Path.Combine(ShellDir, "taskbar-autohide-before.txt"); } }
+
+        [StructLayout(LayoutKind.Sequential)] private struct APPBARDATA { public int cbSize; public IntPtr hWnd; public uint uCallbackMessage; public uint uEdge; public RECT rc; public IntPtr lParam; }
+        [DllImport("shell32.dll")] private static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA data);
+
+        private static int AppBarState()
+        {
+            var d = new APPBARDATA { cbSize = Marshal.SizeOf(typeof(APPBARDATA)), hWnd = FindWindow("Shell_TrayWnd", null) };
+            return (int)SHAppBarMessage(0x4 /* ABM_GETSTATE */, ref d).ToUInt32();
+        }
+
+        private static void SetAppBarState(int state)
+        {
+            var d = new APPBARDATA { cbSize = Marshal.SizeOf(typeof(APPBARDATA)), hWnd = FindWindow("Shell_TrayWnd", null), lParam = new IntPtr(state) };
+            SHAppBarMessage(0xA /* ABM_SETSTATE */, ref d);
         }
 
         private static System.Collections.Generic.List<IntPtr> Trays()

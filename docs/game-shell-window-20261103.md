@@ -78,3 +78,8 @@
 - 后台 Python：已装的 claw_button_mappings.py 的 session_game_mode 认 covered（只加两行），原件 `claw_button_mappings.py.before-covered`。其余手改文件没动。
 - ClawShell 1.0.3 第一版把 `CoverFlagPath` 写成依赖 ShellDir 的静态字段，分部类静态初始化顺序不定 → 启动即崩（状态不写、日志也没有）；改成属性后正常。
 - 实测（`artifacts/wm-probe/cov-*.png`）：进游戏模式后 explorer 在、任务栏藏住、TextInputHost 在；单按 Win 不出开始菜单、任务栏不冒；快设面板照游戏模式打开；新窗口被铺满；游戏模式下打 nihao 出「你好」候选框；回桌面任务栏回来。
+
+## ClawShell 1.0.4 / 游戏库 0.1.211：修整屏闪（11-04）
+
+1.0.3 每 0.1 秒用 SPI_SETWORKAREA 把工作区改成整屏，explorer 仍把（被藏的）任务栏当应用栏、立刻改回，每改一次全屏窗口重排一次：17:46 起游戏库窗口在 1280x800 / 1284x804 之间变了六百多次 = 整屏闪。已回桌面、开关关掉。
+1.0.4 不再碰工作区：进入时把任务栏设成系统「自动隐藏」（ABM_SETSTATE，原值存 shell\taskbar-autohide-before.txt，回桌面还原），再藏任务栏窗口。实测两轮（各 20 s / 60 s 空闲 + 开窗口、最小化、单按 Win、快设面板 ×3、切换器）：进入时 1 次尺寸变化，之后 0 次；任务栏不冒；回桌面自动隐藏还原为 0、任务栏回来。开关保持关闭，等用户再试。
