@@ -66,10 +66,12 @@ public sealed partial class WallStage
         {
             await Step(1400, "style stack", () => { SaveUi(_prefs with { Home = HomeStyle.Stack }); CsMorphStyle(); });
             await Step(1300, "entry", () => CsShowTab(0, 0, entry: true));
-            await Step(800, "right", () => Move(Direction.Right));
-            await Step(800, "right", () => Move(Direction.Right));
-            await Step(120, "left", () => Move(Direction.Left));
-            await Step(1000, "left", () => Move(Direction.Left));
+            await Step(800, "down", () => Move(Direction.Down));
+            await Step(800, "down", () => Move(Direction.Down));
+            await Step(120, "up", () => Move(Direction.Up));
+            await Step(1000, "up", () => Move(Direction.Up));
+            for (int i = 0; i < 3; i++) await Step(450, "left (buttons)", () => Move(Direction.Left));
+            for (int i = 0; i < 3; i++) await Step(450, "right (buttons)", () => Move(Direction.Right));
             await Step(1400, "style shelf", () => { SaveUi(_prefs with { Home = HomeStyle.Shelf }); CsMorphStyle(); });
         });
         await Clip("insert", async Step =>

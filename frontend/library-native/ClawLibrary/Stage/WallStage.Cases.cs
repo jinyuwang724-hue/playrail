@@ -34,6 +34,7 @@ public sealed partial class WallStage
         public int Sel, Prev;
         public bool Acts;   // 焦点在信息区的按钮上
         public int Act;
+        public Vector2 ActsAt;
         public SpriteVisual? InfoA, InfoB, ActsV;
         public bool InfoFront;
         public ContainerVisual? Row;
@@ -52,6 +53,9 @@ public sealed partial class WallStage
         public int Ai;
         public float GridTop;
         public long Built;
+        public bool BgReady;
+        public long BgReadyAt;
+        public readonly List<Action> OnBgReady = new();
     }
 
     private sealed class CsState
@@ -78,8 +82,8 @@ public sealed partial class WallStage
     // 展架（规格 2）
     private const float ShW0 = 228, ShH0 = 342, ShGap = 28, ShW1 = 308, ShH1 = 462, ShBottom = CsH - 64;
     // 分类页（规格 4）
-    private const int GridCols = 7;
-    private const float GridGapX = 28, GridGapY = 44, CatTop = 112;
+    private const int GridCols = 5;
+    private const float GridGapX = 32, GridGapY = 48, CatTop = 112;
     private static float GridW => (CsW - 192 - (GridCols - 1) * GridGapX) / GridCols;
     private static float GridH => GridW * 1.5f;
     private static float GridPitch => GridH + 12 + 50 + GridGapY;
@@ -317,19 +321,36 @@ public sealed partial class WallStage
         double ms = CsMs(220);
         if (old != null)
         {
-            _cs.Leaving.Add(old);
+            // 旧页面：内容滑走、淡出；背景留在下面，等新页面的背景整层淡进来盖住再拆（不会先暗一下）
+            CsLeave(old, page);
             if (dir != 0) old.Content.StartAnimation("Offset", CsV3(new Vector3(-40 * dir, 0, 0), ms, CsQuart));
-            old.Root.StartAnimation("Opacity", CsS(0, dir != 0 ? ms : CsMs(160), CsQuart));
-            After(ms + 60, () => CsDrop(old));
+            old.Content.StartAnimation("Opacity", CsS(0, dir != 0 ? ms : CsMs(160), CsQuart));
             if (dir != 0)
             {
                 CsSet(page.Content, offset: new Vector3(40 * dir, 0, 0));
                 page.Content.StartAnimation("Offset", CsV3(Vector3.Zero, ms, CsQuart));
+                CsSet(page.Content, opacity: 0);
+                page.Content.StartAnimation("Opacity", CsS(1, ms, CsQuart));
             }
-            CsSet(page.Root, opacity: 0);
-            page.Root.StartAnimation("Opacity", CsS(1, dir != 0 ? ms : CsMs(160), CsQuart));
         }
         CsNoteSpot();
+    }
+
+    /// <summary>页面离场：新页面的背景到位（或 1.5 s 兜底）后拆掉。</summary>
+    private void CsLeave(CsPage old, CsPage next)
+    {
+        if (_cs == null) return;
+        if (!_cs.Leaving.Contains(old)) _cs.Leaving.Add(old);
+        foreach (var l in _cs.Leaving.ToList()) if (l != old) CsDropWhenCovered(l, next);
+        CsDropWhenCovered(old, next);
+    }
+
+    private void CsDropWhenCovered(CsPage old, CsPage next)
+    {
+        next.OnBgReady.Add(() => After(40, () => CsDrop(old)));
+        After(1500, () => CsDrop(old));
+        // 背景已经开始淡入：等它淡完再拆（不是马上拆，否则下面露出空底）
+        if (next.BgReady) { var list = next.OnBgReady.ToList(); next.OnBgReady.Clear(); After(Math.Max(1, next.BgReadyAt - NowMs), () => { foreach (var a in list) a(); }); }
     }
 
     private void CsDrop(CsPage page)
@@ -392,11 +413,9 @@ public sealed partial class WallStage
         var page = CsBuildHome(_prefs.Home, spot, entry: false);
         _cs.Page = page;
         _cs.Pages.Children.InsertAtTop(page.Root);
-        _cs.Leaving.Add(old);
         double ms = CsMs(450);
-        old.Root.StartAnimation("Opacity", CsS(0, ms, CsQuart));
-        CsSet(page.Bg, opacity: 1);
-        page.Bg.Opacity = 1;
+        CsLeave(old, page);
+        old.Content.StartAnimation("Opacity", CsS(0, ms, CsQuart));
         CsSet(page.Content, opacity: 0);
         page.Content.StartAnimation("Opacity", CsS(1, ms, CsQuart));
         // 卡盒从旧位置补间过去：旧页面里那一盒藏起来，新页面里这一盒从它的矩形起飞，飞行期间不跟着淡入
@@ -404,7 +423,7 @@ public sealed partial class WallStage
         {
             from.Root.Opacity = 0;
             var fromOff = from.Offset; var fromSize = from.Size;
-            page.Content.Children.Remove(to.Root);
+            page.Row!.Children.Remove(to.Root);
             page.Root.Children.InsertAtTop(to.Root);
             to.Root.StopAnimation("Offset"); to.Root.StopAnimation("Size"); to.Root.StopAnimation("Scale"); to.Root.StopAnimation("RotationAngle");
             to.Root.Offset = fromOff; to.Root.Size = fromSize; to.Root.Scale = Vector3.One; to.Root.RotationAngle = 0;
@@ -420,7 +439,6 @@ public sealed partial class WallStage
                 if (page.Style == HomeStyle.Stack) CsLayoutStack(page, animate: false);
             });
         }
-        After(ms + 60, () => CsDrop(old));
     }
 
     private void CsNoteSpot()
@@ -438,6 +456,11 @@ public sealed partial class WallStage
     {
         var bg = G.Container(relative: false);
         bg.Size = new Vector2(CsW, CsH);
+        // 整层不透明（自带底色）：第一张图解码好了整层淡进来，盖住下面离场的页面，不会透出更暗的底
+        bg.Opacity = 0;
+        var floor = G.Sprite(G.Solid(Gfx.Rgba(0x0f, 0x0f, 0x10)), relative: false);
+        floor.Size = new Vector2(CsW, CsH);
+        bg.Children.InsertAtTop(floor);
         var imgs = new SpriteVisual[2];
         for (int i = 0; i < 2; i++)
         {
@@ -485,41 +508,113 @@ public sealed partial class WallStage
     /// <summary>背景换成这款游戏的横幅图：新图解码好了再交叉淡入 400 ms（首页清晰铺满，分类页小图放大 = 模糊）。</summary>
     private void CsSetBackground(LibraryItem? g, bool force = false, bool entry = false)
     {
-        if (_cs?.Page is not { } p || g == null || p.BgImg.Length < 2) return;
+        if (_cs?.Page is not { } p || p.BgImg.Length < 2) return;
+        if (g == null) { CsBgReady(p, entry); return; }
         bool cat = p.Tab != 0;
         var k = g.Art;
         string? path = k == null ? null : !cat && k.Has('g') ? k.File('g') : k.Has('h') ? k.File('h') : k.Has('q') ? k.File('q') : k.Has('p') ? k.File('p') : null;
-        if (path == null || (path == p.BgPath && !force)) return;
+        if (path == null) { CsBgReady(p, entry); return; }
+        if (path == p.BgPath && !force) return;
         p.BgPath = path;
         int next = 1 - p.BgFront;
-        var surf = cat ? Images.Acquire(path, 112, 64) : Images.AcquireReuse(path, (int)Math.Ceiling(CsW * CsRaster), (int)Math.Ceiling(CsH * CsRaster));
-        if (surf == null) return;
-        Images.Release(p.BgSurf[next]);
-        p.BgSurf[next] = surf;
         var sprite = p.BgImg[next];
         var brush = (CompositionSurfaceBrush)sprite.Brush;
         var fx = (float)CsLookOf(g).Fx;
-        Images.WhenLoaded(surf, () =>
+        void Show(ICompositionSurface surface)
         {
-            if (_cs?.Page != p && !_cs!.Leaving.Contains(p)) return;
-            if (p.BgSurf[next] != surf) return;
-            brush.Surface = surf;
+            if (_cs == null || (_cs.Page != p && !_cs.Leaving.Contains(p)) || p.BgPath != path) return;
+            brush.Surface = surface;
             brush.HorizontalAlignmentRatio = fx;
             p.BgFront = next;
-            double ms = CsMs(400);
             float target = cat ? 0.4f : 1;
+            var other = p.BgImg[1 - next];
+            // 新图叠在旧图上面淡进来，淡完再撤旧图（中途不会透出底色变暗）
+            p.Bg.Children.Remove(sprite);
+            p.Bg.Children.InsertAbove(sprite, other);
             sprite.StopAnimation("Opacity");
-            sprite.Opacity = 0;
-            if (entry && !cat && !Reduced)
+            if (!p.BgReady)
             {
-                sprite.Scale = new Vector3(1.04f, 1.04f, 1);
-                sprite.StartAnimation("Scale", CsV3(Vector3.One, 900, CsQuart));
-                sprite.StartAnimation("Opacity", CsS(target, 600, CsQuart));
+                sprite.Opacity = target;
+                if (entry && !cat && !Reduced)
+                {
+                    sprite.Scale = new Vector3(1.04f, 1.04f, 1);
+                    sprite.StartAnimation("Scale", CsV3(Vector3.One, 900, CsQuart));
+                }
+                CsBgReady(p, entry);
+                return;
             }
-            else sprite.StartAnimation("Opacity", CsS(target, ms, Bezier.EaseOut));
-            p.BgImg[1 - next].StartAnimation("Opacity", CsS(0, ms, Bezier.EaseOut));
+            double ms = CsMs(400);
+            sprite.Opacity = 0;
+            sprite.StartAnimation("Opacity", CsS(target, ms, Bezier.EaseOut));
+            int front = next;
+            After(ms + 30, () => { if (p.BgFront == front) { other.StopAnimation("Opacity"); other.Opacity = 0; } });
+        }
+        if (cat) { CsBlurred(path, Show); return; }
+        var surf = Images.AcquireReuse(path, (int)Math.Ceiling(CsW * CsRaster), (int)Math.Ceiling(CsH * CsRaster));
+        if (surf == null) { CsBgReady(p, entry); return; }
+        Images.Release(p.BgSurf[next]);
+        p.BgSurf[next] = surf;
+        Images.WhenLoaded(surf, () => { if (p.BgSurf[next] == surf) Show(surf); });
+    }
+
+    /// <summary>这一页的背景整层淡进来（进场 600 ms，其余 300 ms），盖住之后拆掉下面离场的页面。</summary>
+    private void CsBgReady(CsPage p, bool entry)
+    {
+        if (p.BgReady) return;
+        p.BgReady = true;
+        double ms = CsMs(entry ? 600 : 300);
+        p.BgReadyAt = NowMs + (long)ms;
+        p.Bg.StopAnimation("Opacity");
+        p.Bg.StartAnimation("Opacity", CsS(1, ms, CsQuart));
+        var waiting = p.OnBgReady.ToList();
+        p.OnBgReady.Clear();
+        After(ms, () => { foreach (var a in waiting) a(); });
+    }
+
+    private readonly Dictionary<string, CompositionDrawingSurface> _csBlur = new();
+    private readonly List<string> _csBlurOrder = new();
+
+    /// <summary>分类页背景：横幅图缩小后高斯模糊（相当于原尺寸模糊 36 px），再拉伸铺开。按路径缓存最近 12 张。</summary>
+    private void CsBlurred(string path, Action<ICompositionSurface> done)
+    {
+        if (_csBlur.TryGetValue(path, out var hit)) { done(hit); return; }
+        var dev = G.Device;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var bmp = await CanvasBitmap.LoadAsync(dev, path, 96);
+                _dq.TryEnqueue(() =>
+                {
+                    try
+                    {
+                        const float w = 400, h = 225;
+                        var surface = G.Surface((int)w, (int)h);
+                        using (var ds = Microsoft.Graphics.Canvas.UI.Composition.CanvasComposition.CreateDrawingSession(surface))
+                        {
+                            ds.Clear(Gfx.Rgba(0x0f, 0x0f, 0x10));
+                            double cover = Math.Max(w / bmp.Bounds.Width, h / bmp.Bounds.Height) * 1.12;
+                            var dest = new Windows.Foundation.Rect((w - bmp.Bounds.Width * cover) / 2, (h - bmp.Bounds.Height * cover) / 2, bmp.Bounds.Width * cover, bmp.Bounds.Height * cover);
+                            using var small = new CanvasCommandList(ds);
+                            using (var s = small.CreateDrawingSession()) s.DrawImage(bmp, dest, bmp.Bounds);
+                            using var blur = new Microsoft.Graphics.Canvas.Effects.GaussianBlurEffect { Source = small, BlurAmount = 7.5f, BorderMode = Microsoft.Graphics.Canvas.Effects.EffectBorderMode.Hard };
+                            ds.DrawImage(blur);
+                        }
+                        bmp.Dispose();
+                        _csBlur[path] = surface;
+                        _csBlurOrder.Add(path);
+                        if (_csBlurOrder.Count > 12) { var drop = _csBlurOrder[0]; _csBlurOrder.RemoveAt(0); if (_csBlur.Remove(drop, out var old) && !CsBlurInUse(old)) old.Dispose(); }
+                        done(surface);
+                    }
+                    catch (Exception ex) { Log.Warn($"cases blur {path}: {ex.Message}"); }
+                });
+            }
+            catch (Exception ex) { Log.Warn($"cases blur load {path}: {ex.Message}"); }
         });
     }
+
+    private bool CsBlurInUse(CompositionDrawingSurface s) =>
+        _cs != null && _cs.Leaving.Append(_cs.Page).Any(p => p != null && p.BgImg.Any(v => (v.Brush as CompositionSurfaceBrush)?.Surface == s));
 
     // ---------------- 首页 ----------------
 
@@ -570,7 +665,7 @@ public sealed partial class WallStage
     private static float ShelfRailX(int s, int n)
     {
         float total = n * (ShW0 + ShGap) - ShGap + (ShW1 - ShW0);
-        float x = 96 - Math.Max(0, s - 1) * (ShW0 + ShGap);
+        float x = 96 - s * (ShW0 + ShGap);
         return Math.Max(Math.Min(96, CsW - 96 - total), x);
     }
 
@@ -641,15 +736,17 @@ public sealed partial class WallStage
                     double delay = 80 + order++ * 30;
                     c.Root.StartAnimation("Offset", CsV3(off, 600, CsQuart, delay));
                     c.Root.StartAnimation("Opacity", CsS(1, 420, CsQuart, delay));
-                    if (c.Label is { } l0) { l0.Offset = new Vector3(off.X, labY + 40, 0); l0.Opacity = 0; l0.StartAnimation("Offset", CsV3(new Vector3(off.X, labY, 0), 600, CsQuart, delay)); l0.StartAnimation("Opacity", CsS(1, 420, CsQuart, delay)); }
+                    if (c.Label is { } l0) { l0.Offset = new Vector3(off.X, labY + 40, 0); l0.Opacity = 0; l0.StartAnimation("Offset", CsV3(new Vector3(off.X, labY, 0), 600, CsQuart, delay)); l0.StartAnimation("Opacity", CsS(i == s ? 0 : 1, 420, CsQuart, delay)); }
                 }
-                else { c.Root.Offset = off; if (c.Label is { } l1) l1.Offset = new Vector3(off.X, labY, 0); }
+                else { c.Root.Offset = off; if (c.Label is { } l1) { l1.Offset = new Vector3(off.X, labY, 0); l1.StopAnimation("Opacity"); l1.Opacity = i == s ? 0 : 1; } }
             }
             else
             {
                 c.Root.StartAnimation("Offset", CsV3(off, ms, CsQuart));
                 c.Root.StartAnimation("Size", CsV2(size, ms, CsQuart));
                 c.Label?.StartAnimation("Offset", CsV3(new Vector3(off.X, labY, 0), ms, CsQuart));
+                // 选中那盒的分组标签藏起来（meta 里已经写了「昨天」之类）
+                c.Label?.StartAnimation("Opacity", CsS(i == s ? 0 : 1, CsMs(300), CsQuart));
             }
             if (i == s) CsSelect(c, true, shine: animate && i != p.Prev);
             else if (c.Selected || !animate) { CsSelect(c, false, false); if (!animate) { c.Dim.StopAnimation("Opacity"); c.Dim.Opacity = 0.22f; } }
@@ -817,12 +914,13 @@ public sealed partial class WallStage
         string meta = g != null ? CsMetaFull(g) : $"{p.Items.Count} 款";
         bool stack = p.Style == HomeStyle.Stack;
         float actsW = CsActsWidth(g);
-        float w = stack ? 640 : CsW - 192 - actsW - 48;
+        float w = stack ? 640 : CsW - 192;
+        float gap = stack ? 12 : 10;
         var dev = G.Device;
         float titleH;
         using (var probe = TextKit.Layout(dev, title, TextKit.Ui(600), 64, w, CanvasHorizontalAlignment.Left, lineHeight: 70, maxLines: stack ? 2 : 1, balance: stack))
             titleH = Math.Max(70, (float)probe.LayoutBounds.Height);
-        float h = titleH + 12 + 28;
+        float h = titleH + gap + 28;
         var front = p.InfoFront ? p.InfoB : p.InfoA;
         var back = p.InfoFront ? p.InfoA : p.InfoB;
         var target = animate && !Reduced ? back : front;
@@ -831,29 +929,30 @@ public sealed partial class WallStage
             using var t = TextKit.Layout(ds, title, TextKit.Ui(600), 64, w, CanvasHorizontalAlignment.Left, lineHeight: 70, maxLines: stack ? 2 : 1, balance: stack);
             ds.DrawTextLayout(t, 0, 0, Gfx.Rgba(242, 242, 242));
             using var m = TextKit.Layout(ds, meta, TextKit.Num(400), 20, w, CanvasHorizontalAlignment.Left);
-            ds.DrawTextLayout(m, 0, titleH + 12, Gfx.Rgba(242, 242, 242, 0.6));
+            ds.DrawTextLayout(m, 0, titleH + gap, Gfx.Rgba(242, 242, 242, 0.6));
         });
-        float actsY;
         if (stack)
         {
             float total = h + 30 + 64;
             float top = CsH / 2 - total / 2 + 20;
             target.Offset = new Vector3(96, top, 0);
-            actsY = top + h + 30;
-            p.ActsV.Offset = new Vector3(96, actsY, 0);
+            p.ActsAt = new Vector2(96, top + h + 30);
         }
         else
         {
-            float bottom = CsH - 596;
-            target.Offset = new Vector3(96, bottom - h, 0);
-            actsY = bottom - 64;
-            p.ActsV.Offset = new Vector3(CsW - 96 - actsW, actsY, 0);
+            // 展架（19:20 修订）：信息区左对齐叠在选中卡盒正上方，按钮底边距卡盒顶 28 px
+            float actsBottom = ShBottom - ShH1 - 8 - 28;
+            p.ActsAt = new Vector2(96, actsBottom - 64);
+            target.Offset = new Vector3(96, actsBottom - 64 - 22 - h, 0);
         }
         if (target == back)
         {
             p.InfoFront = !p.InfoFront;
-            back.StartAnimation("Opacity", CsS(1, 180, Bezier.EaseOut));
-            front.StartAnimation("Opacity", CsS(0, 140, Bezier.EaseOut));
+            // 旧标题先很快退掉，新标题稍后淡入：连按时不会两行字叠在一起
+            back.StopAnimation("Opacity");
+            back.Opacity = 0;
+            back.StartAnimation("Opacity", CsS(1, 180, Bezier.EaseOut, 70));
+            front.StartAnimation("Opacity", CsS(0, 70, Bezier.EaseOut));
         }
         else { front.StopAnimation("Opacity"); front.Opacity = 1; back.StopAnimation("Opacity"); back.Opacity = 0; }
         CsPaintActs(p, g, actsW);
@@ -901,12 +1000,12 @@ public sealed partial class WallStage
                 bx += 64 + 16;
             }
         });
-        var o = p.ActsV.Offset;
-        p.ActRects.Add((o.X + 6, o.Y + 6, pill, 64, 0));
-        float hx = o.X + 6 + pill + 16;
-        for (int a = 1; a < CsActCount(g); a++) { p.ActRects.Add((hx, o.Y + 6, 64, 64, a)); hx += 80; }
+        // 位置只由 ActsAt 决定：焦点在按钮间移动只重画描边，不挪位置
+        var o = p.ActsAt;
         p.ActsV.Offset = new Vector3(o.X - 6, o.Y - 6, 0);
-        for (int i = 0; i < p.ActRects.Count; i++) { var r = p.ActRects[i]; p.ActRects[i] = (r.X - 6, r.Y - 6, r.W, r.H, r.Act); }
+        p.ActRects.Add((o.X, o.Y, pill, 64, 0));
+        float hx = o.X + pill + 16;
+        for (int a = 1; a < CsActCount(g); a++) { p.ActRects.Add((hx, o.Y, 64, 64, a)); hx += 80; }
     }
 
     private static void CsIconSliders(CanvasDrawingSession ds, float x, float y, Color c)
@@ -1108,6 +1207,7 @@ public sealed partial class WallStage
 
     private void CsHomeMove(CsPage p, Direction dir)
     {
+        if (p.Style == HomeStyle.Stack) { CsStackMove(p, dir); return; }
         if (p.Acts)
         {
             var g = p.Sel < p.Items.Count ? p.Items[p.Sel] : null;
@@ -1135,6 +1235,42 @@ public sealed partial class WallStage
         }
         if (dir == Direction.Down) { Cue(Sfx.Bump); return; }
         CsStep(p, dir == Direction.Left ? -1 : 1);
+    }
+
+    /// <summary>
+    /// 叠放（19:20 修订）：牌堆在按钮右边。上 / 下翻牌；牌堆上按左进按钮，先落到最右边那个（收藏），再往左是设置、开始游戏；
+    /// 最右边的按钮上按右、或按钮上按上 / 下，回到牌堆。
+    /// </summary>
+    private void CsStackMove(CsPage p, Direction dir)
+    {
+        var g = p.Sel < p.Items.Count ? p.Items[p.Sel] : null;
+        int n = g != null ? CsActCount(g) : 0;
+        if (!p.Acts)
+        {
+            if (dir is Direction.Up or Direction.Down) { CsStep(p, dir == Direction.Up ? -1 : 1); return; }
+            if (dir == Direction.Left && n > 0)
+            {
+                p.Acts = true; p.Act = n - 1;
+                CsPaintActs(p, g, CsActsWidth(g));
+                if (p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(0, CsMs(250), CsQuart));
+                CuePan(-0.4f);
+                return;
+            }
+            Cue(Sfx.Bump, pan: dir == Direction.Left ? -0.6f : 0.6f);
+            return;
+        }
+        if (dir is Direction.Up or Direction.Down || (dir == Direction.Right && p.Act == n - 1))
+        {
+            p.Acts = false;
+            CsPaintActs(p, g, CsActsWidth(g));
+            if (p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(1, CsMs(300), CsQuart));
+            CuePan(0.4f);
+            return;
+        }
+        int next = p.Act + (dir == Direction.Left ? -1 : 1);
+        if (next < 0) { Cue(Sfx.Bump, pan: -0.6f); return; }
+        p.Act = next;
+        CsPaintActs(p, g, CsActsWidth(g));
     }
 
     private void CsStep(CsPage p, int d)
@@ -1174,8 +1310,8 @@ public sealed partial class WallStage
             else if (dir == Direction.Down && nG > 0)
             {
                 // 落到网格里最近的一列
-                float cx = 96 + p.Ai * 424 - p.RecentX + 200;
-                int col = Math.Clamp((int)Math.Floor((cx - 96) / colW), 0, GridCols - 1);
+                // 卡带和格子宽度不同：按列宽换算到最近的一列
+                int col = Math.Clamp((int)Math.Round(p.Ai * 424 / colW), 0, GridCols - 1);
                 p.InRecent = false; p.Ai = Math.Min(nG - 1, col);
             }
             else { Cue(Sfx.Bump); return; }
@@ -1194,10 +1330,7 @@ public sealed partial class WallStage
                 if (j >= 0 && j < nG) p.Ai = j;
                 else if (j < 0 && nR > 0)
                 {
-                    float cx = 96 + (p.Ai % GridCols) * colW + GridW / 2;
-                    int best = 0; float bd = float.MaxValue;
-                    for (int i = 0; i < nR; i++) { float d = Math.Abs(96 + i * 424 - p.RecentX + 200 - cx); if (d < bd) { bd = d; best = i; } }
-                    p.InRecent = true; p.Ai = best;
+                    p.InRecent = true; p.Ai = Math.Min(nR - 1, (int)Math.Round((p.Ai % GridCols) * colW / 424));
                 }
                 else if (j >= nG && p.Ai / GridCols < (nG - 1) / GridCols) p.Ai = nG - 1;
                 else { Cue(Sfx.Bump); return; }

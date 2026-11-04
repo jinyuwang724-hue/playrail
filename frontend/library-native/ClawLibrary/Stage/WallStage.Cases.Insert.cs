@@ -108,7 +108,7 @@ public sealed partial class WallStage
     {
         if (_csInsert != null) return;
         Cue(Sfx.Activate);
-        if (_game != null || !g.Installed || Reduced)
+        if (!_csDemo && (_game != null || !g.Installed || Reduced))
         {
             _lmFromRect = CsScreenRect(rect);
             LaunchOrInstall(g);
