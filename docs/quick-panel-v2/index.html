@@ -149,8 +149,8 @@ const IC={
 
 /* state */
 const PRE=[10,17,25];                       /* 省电 / 均衡 / 性能 presets, W */
-const S={mode:1,tdp:17,pg:true,fps:0,bri:62,vol:40,fan:0,osd:1,osdPos:2,hz:2,mag:false,lsfg:false,open:true,sub:null,r:0,c:1,sr:0,sc:0,exitArm:0};
-const FPS=["不限","30","40","60","90"],FAN=["自动","静音","均衡","全速"],OSD=["关","简洁","详细"],HZ=["60 Hz","90 Hz","120 Hz"];
+const S={mode:1,tdp:17,pg:true,fps:0,bri:62,vol:40,fan:1,osd:1,osdPos:2,hz:2,mag:false,lsfg:false,open:true,sub:null,r:0,c:1,sr:0,sc:0,exitArm:0};
+const FPS=["不限","30","40","45","60"],FAN=["静音","均衡","性能"],OSD=["关","简洁","详细"],HZ=["60 Hz","90 Hz","120 Hz"];
 const TILES=[
  {k:"fan",n:"风扇",i:"fan",v:()=>FAN[S.fan],sub:"fan"},
  {k:"osd",n:"性能显示",i:"osd",v:()=>OSD[S.osd],sub:"osd",on:()=>S.osd>0},
