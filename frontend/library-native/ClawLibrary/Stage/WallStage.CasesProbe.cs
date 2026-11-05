@@ -1,6 +1,7 @@
 // 卡盒版的录屏自测（--state=reccases）：首页展架的进场和翻页（含中途打断）、信息区按钮、切到分类页走一圈、回首页、
 // 切到叠放翻几张、插卡（只放启动画面，不真的启动游戏）后按 B 退卡，最后切回原来的首页样式。
 // 每段用 FrameRecorder 录本窗口合成出来的每一帧，存到 rec\cases-*，再拼成 mp4。
+using ClawLibrary.Data;
 using ClawLibrary.Engine;
 
 namespace ClawLibrary.Stage;
@@ -29,6 +30,18 @@ public sealed partial class WallStage
         {
             if (_cs != null && _prefs.Home != HomeStyle.Shelf) Style(HomeStyle.Shelf);
             await Still("shelf");
+            // 电池三种状态（照 Windows 11 任务栏）：充电中 = 闪电、插着电没在充 = 插头、低电量 = 红
+            foreach (var (name, b) in new[] { ("charging", new BatteryState(true, 62, true, true)), ("plugged", new BatteryState(true, 100, false, true)), ("low", new BatteryState(true, 9, false, false)) })
+            {
+                SystemInfo.Override = b;
+                _railModel.Battery = b;
+                CsPaintStatus();
+                await Still("bat-" + name);
+                if (name == "charging") { ToggleControlCenter(); await Still("bat-cc-" + name); ToggleControlCenter(); await Task.Delay(800); }
+            }
+            SystemInfo.Override = null;
+            _railModel.Battery = SystemInfo.Battery();
+            CsPaintStatus();
             if (_cs != null) { SwitchTab(1); await Still("all"); for (int i = 0; i < 3; i++) { Move(Direction.Up); await Task.Delay(300); } await Still("recent"); Back(); }
             if (_cs != null) { Style(HomeStyle.Wall); await Still("wall"); }
             ToggleControlCenter(); await Still("cc"); ToggleControlCenter();
@@ -46,8 +59,11 @@ public sealed partial class WallStage
         await Task.Delay(1500);
         var style = _prefs.Home;
         _csDemo = true;
+        // --clips=a,b 只录这几段
+        var only = Program.Args.FirstOrDefault(a => a.StartsWith("--clips="))?.Substring(8).Split(',');
         async Task Clip(string name, Func<Func<int, string, Action, Task>, Task> body)
         {
+            if (only != null && !only.Contains(name)) return;
             var rec = new FrameRecorder();
             if (!rec.Start(HostWindow)) return;
             await Task.Delay(300);
@@ -108,6 +124,13 @@ public sealed partial class WallStage
             for (int i = 0; i < 2; i++) await Step(450, "right (buttons)", () => Move(Direction.Right));
             await Step(450, "left (buttons)", () => Move(Direction.Left));
             await Step(700, "up (pile)", () => Move(Direction.Up));
+            // 最右边的按钮上按 → 回牌堆；按钮上按 B 回牌堆
+            await Step(600, "down (buttons)", () => Move(Direction.Down));
+            for (int i = 0; i < 2; i++) await Step(450, "right (buttons)", () => Move(Direction.Right));
+            await Step(700, "right at last button (pile)", () => Move(Direction.Right));
+            await Step(600, "down (buttons)", () => Move(Direction.Down));
+            await Step(700, "B (pile)", Back);
+            await Step(700, "up on pile (nothing)", () => Move(Direction.Up));
             await Step(1400, "style shelf", () => { SaveUi(_prefs with { Home = HomeStyle.Shelf }); CsMorphStyle(); });
         });
         await Clip("wall", async Step =>
@@ -126,6 +149,11 @@ public sealed partial class WallStage
         {
             // 展台：慢按两下、连按三下（上一段直接做完再开始下一段）、往回一下
             await Step(1600, "style stand", () => { SaveUi(_prefs with { Home = HomeStyle.Stand }); CsMorphStyle(); });
+            // 焦点：一直按 → 再一直按 ← 回来，排里的小卡盒不能留下焦点框，一屏只有一个焦点
+            for (int i = 0; i < 4; i++) await Step(450, "right (walk)", () => Move(Direction.Right));
+            for (int i = 0; i < 4; i++) await Step(450, "left (walk back)", () => Move(Direction.Left));
+            await Step(900, "up (buttons)", () => Move(Direction.Up));
+            await Step(900, "down (row)", () => Move(Direction.Down));
             await Step(900, "right", () => Move(Direction.Right));
             await Step(900, "right", () => Move(Direction.Right));
             for (int i = 0; i < 3; i++) await Step(140, "right fast", () => Move(Direction.Right));
@@ -140,6 +168,44 @@ public sealed partial class WallStage
             await Step(1600, "style stand", () => { SaveUi(_prefs with { Home = HomeStyle.Stand }); CsMorphStyle(); });
             await Step(900, "left", () => Move(Direction.Left));
             await Step(1600, "style shelf", () => { SaveUi(_prefs with { Home = HomeStyle.Shelf }); CsMorphStyle(); });
+        });
+        await Clip("carts", async Step =>
+        {
+            // 分类页「最近」一排的新卡带：进最近、左右走两步
+            await Step(1300, "tab all", () => SwitchTab(1));
+            for (int i = 0; i < 4; i++) await Step(500, "up", () => Move(Direction.Up));
+            await Step(800, "right", () => Move(Direction.Right));
+            await Step(800, "right", () => Move(Direction.Right));
+            await Step(800, "left", () => Move(Direction.Left));
+            await Step(1200, "back home", Back);
+        });
+        await Clip("banner", async Step =>
+        {
+            // 横幅：游戏库 → 游戏设置（同一张横幅，不跳不闪）→ 返回；分类页 → 游戏设置 → 返回；游戏库 → 控制中心 → 设置；开关切换
+            // 先选一款装好的游戏（没装的按 Y 只提示未安装）
+            await Step(1500, "select installed", () =>
+            {
+                if (_cs?.Page is not { Tab: 0 } p) return;
+                int j = p.Items.FindIndex(g => g.Installed && g.Platform != "folder");
+                if (j >= 0 && j != p.Sel) CsStep(p, j - p.Sel);
+            });
+            await Step(2200, "Y game settings", PadY);
+            await Step(1800, "back to library", Back);
+            await Step(1300, "tab all", () => SwitchTab(1));
+            await Step(2200, "Y game settings (cat)", PadY);
+            await Step(1800, "back to library", Back);
+            await Step(1300, "back home", Back);
+            await Step(2000, "control center", ToggleControlCenter);
+            await Step(2000, "settings page", OpenSettingsPage);
+            await Step(1200, "close settings", () => CloseSettingsPage());
+            await Step(1600, "close cc", ToggleControlCenter);
+            await Step(2000, "banner off", () => SetGameBanner(false));
+            await Step(900, "right", () => Move(Direction.Right));
+            await Step(1500, "tab all", () => SwitchTab(1));
+            await Step(1500, "back home", Back);
+            await Step(2200, "Y game settings (off)", PadY);
+            await Step(1800, "back to library", Back);
+            await Step(2000, "banner on", () => SetGameBanner(true));
         });
         await Clip("saver", async Step =>
         {

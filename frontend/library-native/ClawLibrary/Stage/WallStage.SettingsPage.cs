@@ -193,7 +193,10 @@ public sealed partial class WallStage
         if (_cc == null || _st == null || !_ccOpen) { CloseSettingsPage(); return; }
         var st = _st;
         float k = _ccK;
+        // 游戏设置的横幅留到墙淡进来盖住为止（墙下面就是同一张横幅）
+        _gsBannerHold = true;
         CloseSettingsPage();
+        _gsBannerHold = false;
         foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 0; }
         double ms = Reduced ? 1 : 240;
         if (!Reduced)
@@ -213,6 +216,7 @@ public sealed partial class WallStage
         {
             if (v != _ccVersion) return;
             HideControlCenter();
+            GsBannerClose(instant: true);
             foreach (var p in new[] { "Offset", "Scale" }) st.StopAnimation(p);
             st.Offset = Vector3.Zero;
             st.Scale = Vector3.One;
@@ -255,6 +259,7 @@ public sealed partial class WallStage
         GsArtReset();
         GsPadReset();
         if (_stOver != null) _stOver.IsVisible = false;
+        if (!_gsBannerHold) GsBannerClose();
         _gsItem = null;
         _gsState = null;
         _stBrowsePick = null;
@@ -776,6 +781,8 @@ public sealed partial class WallStage
                 break;
         }
         _stRows.Add(StToggle("动态背景", _backdropOn, on => { _backdropOn = on; UpdateBackdropRunning(); SaveUi(_prefs with { Backdrop = on }); Repaint(); }, true));
+        // 卡盒版首页、分类页、游戏设置、屏保用当前游戏的横幅；关掉后它们也用上面的样式
+        if (_cs != null) _stRows.Add(StToggle("游戏页面用横幅", _backgroundSettings.GameBanner, on => { SetGameBanner(on); Repaint(); }, true));
 
         // 墙面（folia 的海报灯光、海报叠色）
         void SetLook(UiPrefs next) { SaveUi(next); ApplyWallLook(); Repaint(); }

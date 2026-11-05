@@ -792,7 +792,7 @@ public sealed partial class WallStage
         UpdateWallBackgroundVisibility();
         _backdrop.Visible = _backdropOn || _backgroundSettingsOpen;
         bool recent = NowMs - _lastInput < BackdropIdleMs;
-        bool run = _backdropOn && _windowActive && !Reduced && recent && !_ccOpen && _ob == null && !CsHidesWall;   // 整屏可见，不再依赖侧边栏开口；控制中心 / 首次启动引导开着时墙冻住
+        bool run = _backdropOn && _windowActive && !Reduced && recent && !_ccOpen && _ob == null && (!CsHidesWall || !BannerOn);   // 整屏可见，不再依赖侧边栏开口；控制中心 / 首次启动引导开着时墙冻住
         _backdrop.Run(run);
         CcBackRun();
         ObBackRun();

@@ -21,6 +21,8 @@ public sealed record BackgroundSettings
     /// <summary>莫奈 / 漫游用本地壁纸（不跟着游戏封面换）；Wallpaper 是图片路径，关掉时路径留着下次直接用。</summary>
     public bool UseWallpaper { get; init; }
     public string Wallpaper { get; init; } = "";
+    /// <summary>游戏页面（卡盒版首页、分类页、游戏设置、屏保）用当前游戏的横幅（WallStage.Banner.cs）；关掉 = 也用上面选的样式。</summary>
+    public bool GameBanner { get; init; } = true;
     /// <summary>现在该用的壁纸（莫奈 / 漫游、开着、文件还在），否则 null。</summary>
     public string? WallpaperInUse => UseWallpaper && Kind is BackgroundKind.Monet or BackgroundKind.Nomand
         && Wallpaper.Length > 0 && File.Exists(Wallpaper) ? Wallpaper : null;
@@ -56,6 +58,7 @@ public sealed record BackgroundSettings
                     case "filmDarkness" when int.TryParse(p[1], out var fd): result = result with { FilmDarkness = Math.Clamp(fd, 0, 90) }; break;
                     case "useWallpaper" when bool.TryParse(p[1], out var uw): result = result with { UseWallpaper = uw }; break;
                     case "wallpaper": result = result with { Wallpaper = p[1].Trim() }; break;
+                    case "gameBanner" when bool.TryParse(p[1], out var gb): result = result with { GameBanner = gb }; break;
                 }
             }
         }
@@ -67,7 +70,7 @@ public sealed record BackgroundSettings
         try
         {
             Directory.CreateDirectory(App.CacheDir);
-            File.WriteAllLines(FilePath + ".tmp", new[] { $"kind={Kind}", $"latent={Latent}", $"nomand={Nomand}", $"drift={MonetDrift}", $"streaks={MonetStreaks}", $"filmLayout={FilmLayout}", $"filmStrips={FilmStripCount}", $"filmSpeed={FilmSpeed}", $"filmAngle={FilmAngle}", $"filmDarkness={FilmDarkness}", $"useWallpaper={UseWallpaper}", $"wallpaper={Wallpaper}" });
+            File.WriteAllLines(FilePath + ".tmp", new[] { $"kind={Kind}", $"latent={Latent}", $"nomand={Nomand}", $"drift={MonetDrift}", $"streaks={MonetStreaks}", $"filmLayout={FilmLayout}", $"filmStrips={FilmStripCount}", $"filmSpeed={FilmSpeed}", $"filmAngle={FilmAngle}", $"filmDarkness={FilmDarkness}", $"useWallpaper={UseWallpaper}", $"wallpaper={Wallpaper}", $"gameBanner={GameBanner}" });
             File.Move(FilePath + ".tmp", FilePath, true);
         }
         catch (Exception ex) { Log.Warn($"background settings save: {ex.Message}"); }

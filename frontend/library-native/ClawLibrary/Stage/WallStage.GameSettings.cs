@@ -42,7 +42,9 @@ public sealed partial class WallStage
         _gsState = null;
         _gsLosslessError = null;
         _stCat = 0;
+        bool fromLibrary = !_ccOpen;
         OpenSettingsFromLibrary();
+        GsBannerOpen(item, fromLibrary);
         _ = GsLoad();
         Log.Info($"game settings open {item.Id} {item.Title}");
     }

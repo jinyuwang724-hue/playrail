@@ -23,8 +23,12 @@ public static class SystemInfo
     [DllImport("secur32.dll", CharSet = CharSet.Unicode)]
     private static extern bool GetUserNameEx(int format, StringBuilder buffer, ref uint size);
 
+    /// <summary>录屏自测（--state=recstatus）临时换成指定的电池状态，核对充电 / 插电 / 低电量的图标；平时 null。</summary>
+    public static BatteryState? Override;
+
     public static BatteryState Battery()
     {
+        if (Override is { } o) return o;
         try
         {
             if (!GetSystemPowerStatus(out var s)) return default;

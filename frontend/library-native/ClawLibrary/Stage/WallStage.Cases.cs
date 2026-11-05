@@ -38,10 +38,8 @@ public sealed partial class WallStage
         public SpriteVisual? InfoA, InfoB, ActsV;
         public bool InfoFront;
         public ContainerVisual? Row;
-        public SpriteVisual[] BgImg = Array.Empty<SpriteVisual>();
-        public LoadedImageSurface?[] BgSurf = new LoadedImageSurface?[2];
-        public int BgFront;
-        public string? BgPath;
+        public BnLayer? Bn;
+
         public readonly List<(float X, float Y, float W, float H, int Act)> ActRects = new();
         // 分类页
         public List<LibraryItem> Recent = new();
@@ -252,7 +250,20 @@ public sealed partial class WallStage
     // 顶栏和控制中心同一套尺寸：控制中心按 1280×800 设计、放大 1.5 倍到 1920×1200（CcBoost），这里直接用 1920 坐标，
     // 所以数值是控制中心的 1.5 倍——标签 = 标题字号 24 → 36，状态栏同字号常规字重、图标 22 → 33，上沿 32 → 48。
     // 和控制中心一样只随屏幕缩放、不随系统缩放（150% / 175% 下物理大小相同）。
-    private const float HdTop = 48, HdFont = 36, HdCount = 24, HdIcon = 33, HdGap = 48, HdLine = 54, HdBaseline = 40, HdMid = 27;
+    private const float HdTop = 48, HdFont = 36, HdCount = 24, HdIcon = 33, HdGap = 48, HdLine = 54;
+    // 基线和中线不写死：照控制中心状态栏的算法（精灵上沿 = 32 × 1.5，文字画在 −LayoutBounds.Y，基线 = 其上 + 字体基线），
+    // 这样切到控制中心时时间、电量、图标纹丝不动；标签的字形中线对齐到数字中线（基线 − 数字高 / 2）。
+    private float? _hdBase, _hdCap;
+    private float HdBaseline { get { HdMeasure(); return _hdBase!.Value; } }
+    private float HdMid { get { HdMeasure(); return _hdBase!.Value - _hdCap!.Value / 2; } }
+    private void HdMeasure()
+    {
+        if (_hdBase != null) return;
+        using var l = TextKit.Layout(G.Device, "00:00", TextKit.Ui(400), HdFont, 1000, CanvasHorizontalAlignment.Left);
+        var (baseL, cap) = TextInk.Metrics(G.Device, TextKit.Ui(400), HdFont, "0", "0");
+        _hdBase = -(float)l.LayoutBounds.Y + baseL;
+        _hdCap = cap;
+    }
 
     private void CsPaintTabs(bool animate)
     {
@@ -342,10 +353,10 @@ public sealed partial class WallStage
             // 数字的实际高度和基线：电池外框和数字一样高、垂直居中（照 Windows 任务栏），网络图标也对齐数字中线
             var (baseL, cap) = TextInk.Metrics(G.Device, TextKit.Ui(400), HdFont, "0", "0");
             float battW = bat.HasBattery ? MathF.Round(cap * 1.9f) + MathF.Max(1.2f, cap * 0.09f) * 0.5f + MathF.Max(1.5f, cap * 0.11f) : 0;
-            const float gap = 39, pctGap = 10;
+            const float gap = 39, pctGap = 9;   // 控制中心 26 / 6 × 1.5
             float w = HdIcon + (bat.HasBattery ? gap + battW : 0);
             for (int i = 0; i < layouts.Count; i++) w += (i == 0 && bat.HasBattery ? pctGap : gap) + (float)layouts[i].LayoutBounds.Width;
-            w = MathF.Ceiling(w) + 2;
+            w += 3;   // 控制中心 +2 × 1.5（不取整，右边沿和控制中心一致）
             CsRepaint(_cs.Status, w, HdLine, ds =>
             {
                 var ink = Gfx.WithAlpha(CcText, 0.9);
@@ -452,7 +463,8 @@ public sealed partial class WallStage
     {
         bool show = !CsHidesWall;
         foreach (var v in new Visual[] { _seamHost, _edgeLeft, _edgeRight }) v.IsVisible = show;
-        if (_cs != null) _cs.Floor.IsVisible = !show;
+        // 横幅关掉（且动态背景开着）：卡盒版页面不铺底，墙下面的老样式露出来
+        if (_cs != null) _cs.Floor.IsVisible = !show && (BannerOn || !_backdropOn);
         UpdateBackdropRunning();
     }
 
@@ -481,7 +493,7 @@ public sealed partial class WallStage
         CsStandDispose(page);
         foreach (var (c, cap) in page.Grid.Values) { CsDisposeCase(c); cap.Dispose(); }
         foreach (var c in page.Carts.Values) CsDisposeCart(c);
-        foreach (var s in page.BgSurf) Images.Release(s);
+        if (page.Bn != null) BnDispose(page.Bn);
         page.Root.Dispose();
     }
 
@@ -578,132 +590,23 @@ public sealed partial class WallStage
 
     // ---------------- 背景 ----------------
 
+    /// <summary>这一页的横幅背景（WallStage.Banner.cs，和游戏设置同一份实现）；整层先透明，第一张图铺上后 CsBgReady 淡进来。</summary>
     private ContainerVisual CsBuildBg(CsPage page, HomeStyle style, bool cat)
     {
-        var bg = G.Container(relative: false);
-        bg.Size = new Vector2(CsW, CsH);
-        // 整层不透明（自带底色）：第一张图解码好了整层淡进来，盖住下面离场的页面，不会透出更暗的底
-        bg.Opacity = 0;
-        var floor = G.Sprite(G.Solid(Gfx.Rgba(0x0f, 0x0f, 0x10)), relative: false);
-        floor.Size = new Vector2(CsW, CsH);
-        bg.Children.InsertAtTop(floor);
-        var imgs = new SpriteVisual[2];
-        for (int i = 0; i < 2; i++)
-        {
-            var b = G.C.CreateSurfaceBrush();
-            b.Stretch = CompositionStretch.UniformToFill;
-            b.VerticalAlignmentRatio = 0.3f;
-            b.BitmapInterpolationMode = CompositionBitmapInterpolationMode.Linear;
-            var s = G.Sprite(b, relative: false);
-            if (cat) { s.Offset = new Vector3(-60, -60, 0); s.Size = new Vector2(CsW + 120, 900); }
-            else s.Size = new Vector2(CsW, CsH);
-            s.CenterPoint = new Vector3(s.Size.X / 2, s.Size.Y / 2, 0);
-            s.Opacity = 0;
-            bg.Children.InsertAtTop(s);
-            imgs[i] = s;
-        }
-        page.BgImg = imgs;
-        Color ink = Gfx.Rgba(0x0f, 0x0f, 0x10);
-        if (cat)
-        {
-            var fade = G.Sprite(G.LinearGradient(180, CsW + 120, 900, (0, Gfx.WithAlpha(ink, 0.15)), (0.92, ink)), relative: false);
-            fade.Offset = new Vector3(-60, -60, 0); fade.Size = new Vector2(CsW + 120, 900);
-            bg.Children.InsertAtTop(fade);
-        }
-        else if (style is HomeStyle.Shelf or HomeStyle.Stand)
-        {
-            // 比原型深一些：背景在动，标题和 meta 要始终清楚
-            bg.Children.InsertAtTop(CsShade(90, (0, 0.9), (0.45, 0.55), (0.75, 0.18), (1, 0.12)));
-            bg.Children.InsertAtTop(CsShade(180, (0, 0.6), (0.18, 0.12), (0.4, 0.2), (0.8, 0.94), (1, 1)));
-        }
-        else
-        {
-            bg.Children.InsertAtTop(CsShade(90, (0, 0.92), (0.38, 0.62), (0.7, 0.25), (1, 0.42)));
-            bg.Children.InsertAtTop(CsShade(180, (0, 0.6), (0.18, 0.1), (0.6, 0.12), (1, 0.88)));
-        }
-        return bg;
+        var l = BnBuild(style, cat);
+        page.Bn = l;
+        l.Root.Opacity = 0;
+        return l.Root;
     }
 
-    private int _csDriftDir;
-
-    private void CsDrift(SpriteVisual sprite, int dir)
-    {
-        if (Reduced) return;
-        float w = sprite.Size.X;
-        var ease = G.Ease(Bezier.EaseInOut);
-        var sc = G.C.CreateVector3KeyFrameAnimation();
-        sc.InsertKeyFrame(0, new Vector3(1.04f, 1.04f, 1), G.Linear);
-        sc.InsertKeyFrame(1, new Vector3(1.10f, 1.10f, 1), ease);
-        var off = G.C.CreateVector3KeyFrameAnimation();
-        off.InsertKeyFrame(0, new Vector3(dir * w * 0.012f, 0, 0), G.Linear);
-        off.InsertKeyFrame(1, new Vector3(-dir * w * 0.012f, -CsH * 0.01f, 0), ease);
-        foreach (var a in new Vector3KeyFrameAnimation[] { sc, off })
-        {
-            a.Duration = Gfx.Ms(24_000);
-            a.IterationBehavior = AnimationIterationBehavior.Forever;
-            a.Direction = Microsoft.UI.Composition.AnimationDirection.Alternate;
-        }
-        sprite.StartAnimation("Scale", sc);
-        sprite.StartAnimation("Offset", off);
-    }
-
-    private SpriteVisual CsShade(double deg, params (double At, double A)[] stops)
-    {
-        Color ink = Gfx.Rgba(0x0f, 0x0f, 0x10);
-        var s = G.Sprite(G.LinearGradient(deg, CsW, CsH, stops.Select(x => (x.At, Gfx.WithAlpha(ink, x.A))).ToArray()), relative: false);
-        s.Size = new Vector2(CsW, CsH);
-        return s;
-    }
-
-    /// <summary>背景换成这款游戏的横幅图：新图解码好了再交叉淡入 400 ms（首页清晰铺满，分类页小图放大 = 模糊）。</summary>
+    /// <summary>背景换成这款游戏的横幅图（首页清晰铺满，分类页小图放大 = 模糊）；横幅关掉时让墙下面的老样式跟着换色。</summary>
     private void CsSetBackground(LibraryItem? g, bool force = false, bool entry = false)
     {
-        if (_cs?.Page is not { } p || p.BgImg.Length < 2) return;
-        if (g == null) { CsBgReady(p, entry); return; }
-        bool cat = p.Tab != 0;
-        var k = g.Art;
-        string? path = k == null ? null : !cat && k.Has('g') ? k.File('g') : k.Has('h') ? k.File('h') : k.Has('q') ? k.File('q') : k.Has('p') ? k.File('p') : null;
-        if (path == null) { CsBgReady(p, entry); return; }
-        if (path == p.BgPath && !force) return;
-        p.BgPath = path;
-        int next = 1 - p.BgFront;
-        var sprite = p.BgImg[next];
-        var brush = (CompositionSurfaceBrush)sprite.Brush;
-        var fx = (float)CsLookOf(g).Fx;
-        void Show(ICompositionSurface surface)
-        {
-            if (_cs == null || (_cs.Page != p && !_cs.Leaving.Contains(p)) || p.BgPath != path) return;
-            brush.Surface = surface;
-            brush.HorizontalAlignmentRatio = fx;
-            p.BgFront = next;
-            float target = cat ? 0.4f : 1;
-            var other = p.BgImg[1 - next];
-            // 新图叠在旧图上面淡进来，淡完再撤旧图（中途不会透出底色变暗）
-            p.Bg.Children.Remove(sprite);
-            p.Bg.Children.InsertAbove(sprite, other);
-            sprite.StopAnimation("Opacity");
-            // 首页背景：和屏保同一种慢速推近平移（scale 1.04 → 1.10、横向 ±1.2 %、纵向 −1 %，24 s 来回），每次换图换方向
-            if (!cat) CsDrift(sprite, ++_csDriftDir % 2 == 0 ? 1 : -1);
-            if (!p.BgReady)
-            {
-                sprite.Opacity = target;
-                CsBgReady(p, entry);
-                return;
-            }
-            double ms = CsMs(400);
-            sprite.Opacity = 0;
-            sprite.StartAnimation("Opacity", CsS(target, ms, Bezier.EaseOut));
-            int front = next;
-            After(ms + 30, () => { if (p.BgFront == front) { other.StopAnimation("Opacity"); other.Opacity = 0; } });
-        }
-        if (cat) { CsBlurred(path, Show); return; }
-        var surf = Images.AcquireReuse(path, (int)Math.Ceiling(CsW * CsRaster), (int)Math.Ceiling(CsH * CsRaster));
-        if (surf == null) { CsBgReady(p, entry); return; }
-        Images.Release(p.BgSurf[next]);
-        p.BgSurf[next] = surf;
-        Images.WhenLoaded(surf, () => { if (p.BgSurf[next] == surf) Show(surf); });
+        if (_cs?.Page is not { } p || p.Bn == null) return;
+        if (!BannerOn) { CsBackdropFollow(); CsBgReady(p, entry); return; }
+        if (g == null || !BnShow(p.Bn, g, force, () => CsBgReady(p, entry), () => _cs != null && (_cs.Page == p || _cs.Leaving.Contains(p))))
+            CsBgReady(p, entry);
     }
-
     /// <summary>这一页的背景整层淡进来（进场 600 ms，其余 300 ms），盖住之后拆掉下面离场的页面。</summary>
     private void CsBgReady(CsPage p, bool entry)
     {
@@ -713,6 +616,8 @@ public sealed partial class WallStage
         p.BgReadyAt = NowMs + (long)ms;
         p.Bg.StopAnimation("Opacity");
         p.Bg.StartAnimation("Opacity", CsS(1, ms, CsQuart));
+        // 横幅关掉：新页面的背景是透明的，盖不住离场页面的横幅，所以把它们的横幅一起淡掉（老样式交叉淡入）
+        if (!BannerOn && _cs != null) foreach (var l in _cs.Leaving) if (l != p) l.Bg.StartAnimation("Opacity", CsS(0, CsMs(300), CsQuart));
         var waiting = p.OnBgReady.ToList();
         p.OnBgReady.Clear();
         After(ms, () =>
@@ -766,7 +671,7 @@ public sealed partial class WallStage
     }
 
     private bool CsBlurInUse(CompositionDrawingSurface s) =>
-        _cs != null && _cs.Leaving.Append(_cs.Page).Any(p => p != null && p.BgImg.Any(v => (v.Brush as CompositionSurfaceBrush)?.Surface == s));
+        BnUses(_gsBanner, s) || (_cs != null && _cs.Leaving.Append(_cs.Page).Any(p => p != null && BnUses(p.Bn, s)));
 
     // ---------------- 首页 ----------------
 
@@ -1096,9 +1001,11 @@ public sealed partial class WallStage
         });
         if (stack)
         {
-            // 叠放：左边只留标题和 meta（垂直居中）；按钮行挪到最上面那张牌正下方，左边和牌对齐，间距 28
-            target.Offset = new Vector3(CsEdge, CsH / 2 - h / 2, 0);
-            p.ActsAt = new Vector2(StX, StY + StH + 28);
+            // 叠放：布局不动（左侧信息区，标题、meta、按钮各一行，整体垂直居中）
+            float total = h + 30 + ActH;
+            float top = CsH / 2 - total / 2 + 20;
+            target.Offset = new Vector3(CsEdge, top, 0);
+            p.ActsAt = new Vector2(CsEdge, top + h + 30);
         }
         else if (stand)
         {
@@ -1247,7 +1154,7 @@ public sealed partial class WallStage
                     cart.Root.StartAnimation("Opacity", CsS(1, 420, CsQuart, 60 + i * 40));
                 }
             }
-            y += 86 + 14 + 300 + 12 + CapH + 18 + 44;
+            y += 86 + 14 + CartH + 12 + CapH + 18 + 44;
         }
         var all = CsSection("全部", items.Count.ToString());
         all.Offset = new Vector3(CsEdge, y + 16 - (page.Recent.Count > 0 ? 44 : 0) + (page.Recent.Count > 0 ? 44 : 0), 0);
@@ -1416,7 +1323,7 @@ public sealed partial class WallStage
     /// <summary>
     /// 叠放（11-05 修订，按摆放位置）：牌堆往右叠，← 上一张、→ 下一张（翻过去的牌往左下飞走，← 把它拿回来）。
     /// 在牌堆上 ← 永远只翻回上一张，绝不进按钮；已经是第一张 / 最后一张时牌堆轻轻顶一下回弹。
-    /// 按钮行在最上面那张牌正下方：牌堆上 ↓ 进按钮（落在「开始游戏」），按钮之间 ← / →，↑ 或 B 回牌堆。牌堆上 ↑ 不做事。
+    /// 按钮行在左侧信息区（布局不变）：牌堆上 ↓ 进按钮（落在「开始游戏」），按钮之间 ← / →，最右边按钮上 →、↑ 或 B 回牌堆。牌堆上 ↑ 不做事。
     /// </summary>
     private void CsStackMove(CsPage p, Direction dir)
     {
@@ -1442,7 +1349,8 @@ public sealed partial class WallStage
             Cue(Sfx.None);
             return;
         }
-        if (dir == Direction.Up) { CsStackBackToPile(p, g); return; }
+        // 最右边的按钮上按 →（牌堆就在右边）、↑ 或 B：回牌堆
+        if (dir == Direction.Up || (dir == Direction.Right && p.Act >= n - 1)) { CsStackBackToPile(p, g); return; }
         if (dir == Direction.Down) { Cue(Sfx.Bump); return; }
         int next = p.Act + (dir == Direction.Left ? -1 : 1);
         if (next < 0 || next >= n) { Cue(Sfx.Bump, pan: dir == Direction.Left ? -0.6f : 0.6f); return; }
@@ -1485,7 +1393,8 @@ public sealed partial class WallStage
     private void CsLayoutHome(CsPage p, bool animate)
     {
         if (p.Style == HomeStyle.Shelf) CsLayoutShelf(p, animate); else if (p.Style == HomeStyle.Stand) CsLayoutStand(p, animate); else CsLayoutStack(p, animate);
-        if (!p.Acts && p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(1, CsMs(300), CsQuart));
+        // 展台：焦点只画在展台上的大卡盒，排里的小卡盒不画（一屏一个焦点）
+        if (!p.Acts && p.Style != HomeStyle.Stand && p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(1, CsMs(300), CsQuart));
         p.Prev = p.Sel;
     }
 
@@ -1755,7 +1664,7 @@ public sealed partial class WallStage
             return;
         }
         var (_, fy) = CsLocal(_dragFrom.x, _dragFrom.y);
-        bool inRecent = p.RecentRow != null && fy + p.ScrollY >= p.RecentRow.Offset.Y - 12 && fy + p.ScrollY <= p.RecentRow.Offset.Y + 360;
+        bool inRecent = p.RecentRow != null && fy + p.ScrollY >= p.RecentRow.Offset.Y - 12 && fy + p.ScrollY <= p.RecentRow.Offset.Y + CartH + 60;
         if (_csDragAxis == 1 && inRecent)
         {
             float max = Math.Max(0, p.Recent.Count * 424 - 24 - (CsW - 2 * CsEdge));

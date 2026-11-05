@@ -46,6 +46,7 @@ public sealed partial class WallStage
         root.Opacity = 0;
         var black = G.Sprite(G.Solid(Microsoft.UI.Colors.Black), relative: false);
         black.Size = new Vector2(CsW, CsH);
+        black.IsVisible = BannerOn;
         root.Children.InsertAtTop(black);
         var imgs = new SpriteVisual[2];
         for (int i = 0; i < 2; i++)
@@ -75,6 +76,7 @@ public sealed partial class WallStage
         _csSs = new CsSaver { Root = root, Img = imgs, ClockV = clock, GameText = text, GameBox = box, Queue = queue };
         root.StartAnimation("Opacity", CsS(1, CsMs(900), Bezier.EaseOut));
         _cs.Header.StartAnimation("Opacity", CsS(0, CsMs(600), Bezier.EaseOut));
+        if (!BannerOn) _cs.Pages.StartAnimation("Opacity", CsS(0, CsMs(600), Bezier.EaseOut));
         CsSaverShow(first: true);
         Log.Info($"cases screensaver entered ({queue.Count} games)");
         return true;
@@ -86,6 +88,7 @@ public sealed partial class WallStage
         if (ss == null) return;
         _csSs = null;
         if (_cs != null && _csInsert == null) _cs.Header.StartAnimation("Opacity", CsS(CsWallHome ? 0 : 1, CsMs(400), CsQuart));
+        _cs?.Pages.StartAnimation("Opacity", CsS(1, CsMs(400), CsQuart));
         ss.Root.StartAnimation("Opacity", CsS(0, CsMs(500), Bezier.EaseOut));
         After(CsMs(520), () =>
         {
@@ -122,8 +125,8 @@ public sealed partial class WallStage
         int slot = ss.Round % 2;
         var sprite = ss.Img[slot];
         var other = ss.Img[1 - slot];
-        var k = g.Art;
-        string? path = k == null ? null : k.Has('g') ? k.File('g') : k.Has('h') ? k.File('h') : k.Has('q') ? k.File('q') : null;
+        // 横幅关掉：不铺图，压暗下面露出来的老样式背景
+        string? path = BannerOn ? BnPath(g, cat: false) : null;
         if (path != null && Images.AcquireReuse(path, (int)Math.Ceiling(CsW * 1.08f * CsRaster), (int)Math.Ceiling(CsH * 1.08f * CsRaster)) is { } surf)
         {
             Images.Release(ss.Surf[slot]);

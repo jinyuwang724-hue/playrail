@@ -67,8 +67,9 @@ public sealed partial class WallStage
             }
             else c.Root.StartAnimation("Offset", CsV3(off, ms, CsQuart));
         }
-        // 展台上那一盒在排里藏起来（不占格）
+        // 展台上那一盒在排里藏起来（不占格）；排里的小卡盒一律不画焦点（焦点只在展台的大卡盒或按钮上）
         if (p.Cases.TryGetValue(s, out var selRow)) { selRow.Root.StopAnimation("Opacity"); selRow.Root.Opacity = 0; }
+        foreach (var rc in p.Cases.Values) { rc.Ring.StopAnimation("Opacity"); rc.Ring.Opacity = 0; }
 
         // 展台上的那一盒（选中没变，比如从按钮回到卡盒排：只改描边）
         var g = s < p.Items.Count ? p.Items[s] : null;
@@ -121,8 +122,12 @@ public sealed partial class WallStage
         grow.Duration = fly.Duration;
         stand.Root.StartAnimation("Offset", fly);
         stand.Root.StartAnimation("Scale", grow);
+        // 飞行中不带焦点，落定后再亮
+        stand.Ring.StopAnimation("Opacity");
+        stand.Ring.Opacity = 0;
         // 旧的一盒：缩小飞回自己的位置（排同时在平移，按平移后的位置），落下后那一格再显示
-        old.Ring.StartAnimation("Opacity", CsS(0, CsMs(200), CsQuart));
+        old.Ring.StopAnimation("Opacity");
+        old.Ring.Opacity = 0;
         old.Glow.StartAnimation("Opacity", CsS(0, CsMs(300), CsQuart));
         var back = StandSlot(prevSel, s, rx);
         old.Root.StartAnimation("Offset", CsV3(back, StdFlyMs, CsQuart));
@@ -137,6 +142,7 @@ public sealed partial class WallStage
             foreach (var prop in new[] { "Offset", "Scale" }) stand.Root.StopAnimation(prop);
             stand.Root.Offset = new Vector3(StdX, StdY, 0);
             stand.Root.Scale = Vector3.One;
+            if (p.StandCase == stand) stand.Ring.StartAnimation("Opacity", CsS(p.Acts ? 0 : 1, CsMs(200), CsQuart));
             if (p.StandLeaving == old) p.StandLeaving = null;
             p.Content.Children.Remove(old.Root);
             CsDisposeCase(old);
