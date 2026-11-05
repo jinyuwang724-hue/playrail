@@ -212,6 +212,41 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 #vA[data-k="3"] .cg .lab i{display:none}
 #vA[data-k="3"] .cg .stripe{left:18px;width:116px;top:242px;height:7px;border-radius:3px;background:rgba(255,255,255,.55)}
 #vA[data-k="3"] .cg .pins{left:56px;right:56px;bottom:12px;height:22px;border-radius:2px;background:repeating-linear-gradient(90deg,#e0bf55 0 4px,#8a6d1c 4px 5px,transparent 5px 10px)}
+/* K4 插槽: the cartridge stands in a slot like it is plugged in; only its top shows, so the label is naturally wide.
+   Focus pulls it up out of the slot and lights the slot. */
+.rcard{position:relative}
+.bez,.disc{display:none}
+#vA[data-k="4"] .cgw,#vA[data-k="4"] .cgw.fo{filter:none;transform:none}
+#vA[data-k="4"] .cg{left:22px;right:22px;top:30px;bottom:auto;height:262px;border-radius:16px 16px 6px 6px;clip-path:polygon(0 0,calc(100% - 34px) 0,100% 34px,100% 100%,0 100%);
+  background:linear-gradient(180deg,#2e2e33,#1c1c20);transition:transform .45s var(--quart);filter:drop-shadow(0 -2px 8px rgba(0,0,0,.4))}
+#vA[data-k="4"] .cgw.fo .cg{transform:translateY(-40px)}
+#vA[data-k="4"] .cg .gl{border-radius:inherit;background:linear-gradient(125deg,rgba(255,255,255,.1),rgba(255,255,255,0) 30%);box-shadow:inset 0 1px 0 rgba(255,255,255,.2),inset 0 0 0 1px rgba(255,255,255,.08)}
+#vA[data-k="4"] .cg .band{display:block;inset:0;background:linear-gradient(180deg,color-mix(in srgb,var(--a) 80%,#fff),var(--a) 60%);clip-path:polygon(0 0,100% 0,100% 47px,calc(100% - 26px) 21px,0 21px)}
+#vA[data-k="4"] .cg .lab{left:12px;right:12px;top:21px;height:190px;clip-path:polygon(0 0,calc(100% - 20px) 0,100% 20px,100% 100%,0 100%)}
+#vA[data-k="4"] .cg .lab i,#vA[data-k="4"] .cg .grip,#vA[data-k="4"] .cg .stripe,#vA[data-k="4"] .cg .pins{display:none}
+#vA[data-k="4"] .cgw.fo .cg .gl{box-shadow:inset 0 0 0 3px #fff}
+#vA[data-k="4"] .bez{display:block;position:absolute;left:0;right:0;top:196px;height:104px;border-radius:16px;z-index:2;pointer-events:none;
+  background:linear-gradient(180deg,#2a2a2f,#151518 70%);box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 0 0 1px rgba(255,255,255,.05),0 22px 30px -12px rgba(0,0,0,.75)}
+#vA[data-k="4"] .bez::before{content:"";position:absolute;left:16px;right:16px;top:0;height:10px;border-radius:0 0 6px 6px;background:linear-gradient(180deg,#000,#0b0b0d);box-shadow:0 1px 0 rgba(255,255,255,.08)}
+#vA[data-k="4"] .bez::after{content:"";position:absolute;left:26px;bottom:22px;width:44px;height:5px;border-radius:3px;background:rgba(255,255,255,.12);transition:background .3s,box-shadow .3s}
+#vA[data-k="4"] .rcard:has(.cgw.fo) .bez::after{background:var(--a);box-shadow:0 0 14px 2px var(--a)}
+
+/* K5 光盘: recent games are the discs taken out of their cases; the art is printed on the disc, focus spins it */
+#vA[data-k="5"] .cg{display:none}
+#vA[data-k="5"] .disc{display:block;position:absolute;left:50px;top:0;width:300px;height:300px;border-radius:50%;background-size:cover;background-color:var(--b);
+  -webkit-mask:radial-gradient(circle at center,transparent 17px,#000 18px);mask:radial-gradient(circle at center,transparent 17px,#000 18px);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.35),inset 0 0 0 7px color-mix(in srgb,var(--a) 70%,transparent),inset 0 0 0 8px rgba(0,0,0,.25)}
+#vA[data-k="5"] .disc::before{content:"";position:absolute;left:100px;top:100px;width:100px;height:100px;border-radius:50%;
+  background:radial-gradient(circle,transparent 17px,rgba(235,238,245,.75) 18px,rgba(205,210,220,.55) 30px,rgba(170,176,188,.5) 40px,rgba(0,0,0,.35) 47px,transparent 50px)}
+#vA[data-k="5"] .disc::after{content:"";position:absolute;inset:0;border-radius:50%;mix-blend-mode:screen;
+  background:conic-gradient(from 20deg,rgba(255,255,255,.22),rgba(255,80,200,.08),rgba(80,220,255,.14),rgba(255,255,255,.24),rgba(255,230,80,.08),rgba(120,255,180,.08),rgba(255,255,255,.22)),
+  linear-gradient(120deg,rgba(255,255,255,.2),rgba(255,255,255,0) 40%)}
+#vA[data-k="5"] .cgw.fo .disc{animation:spin 8s linear infinite;box-shadow:inset 0 0 0 3px #fff,inset 0 0 0 7px color-mix(in srgb,var(--a) 70%,transparent)}
+@keyframes spin{to{transform:rotate(360deg)}}
+#vA[data-k="5"] .cgw{filter:drop-shadow(0 16px 18px rgba(0,0,0,.6))}
+#vA[data-k="5"] .rcard .cap,#vA[data-k="5"] .rcard .cap2{text-align:center}
+#vA[data-k="4"] .bez{top:212px;height:88px}
+
 /* grid cases */
 .grid button{text-align:left;min-width:0}
 .gc{position:relative;width:100%;aspect-ratio:2/3;border-radius:6px;transition:transform .4s var(--quart),box-shadow .4s var(--quart);box-shadow:0 10px 18px -6px rgba(0,0,0,.55)}
@@ -275,7 +310,7 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 </div></div>
 <div id="sw" aria-label="原型切换">
   <span class="hm"><button data-v="2" data-s="a">展架 A 等高</button><button data-v="2" data-s="b">展架 B 居中</button><button data-v="2" data-s="c">展架 C 展台</button><button data-v="3">叠放</button></span>
-  <span class="ct"><button data-k="1">卡带 1 浅灰</button><button data-k="2">卡带 2 卡片</button><button data-k="3">卡带 3 主色</button></span>
+  <span class="ct"><button data-k="2">现在 · 卡片</button><button data-k="4">插槽</button><button data-k="5">光盘</button></span>
   <button data-ss="1">屏保</button>
 </div>
 
@@ -310,8 +345,8 @@ const cvars=g=>`--a:${g.a};--b:${g.b}`;
 const TABS=[["首页",null],["全部",()=>true],["Steam",g=>!g.ns],["本地",g=>g.ns]];
 
 
-let S={v:"2",sv:"c",k:"2",page:"home",tab:0,az:"r",ai:0,idx:0,zone:"row",act:0,busy:false,sound:true,spot:G[0].id};
-try{const v=localStorage.getItem("libf");if(v&&"23".includes(v))S.v=v;const sv=localStorage.getItem("libsv");if(sv&&"abc".includes(sv))S.sv=sv;const k=localStorage.getItem("libk");if(k&&"123".includes(k))S.k=k;if(localStorage.getItem("libsnd")==="0")S.sound=false}catch(e){}
+let S={v:"2",sv:"a",k:"4",page:"home",tab:0,az:"r",ai:0,idx:0,zone:"row",act:0,busy:false,sound:true,spot:G[0].id};
+try{const v=localStorage.getItem("libf");if(v&&"23".includes(v))S.v=v;const sv=localStorage.getItem("libsv");if(sv&&"abc".includes(sv))S.sv=sv;const k=localStorage.getItem("libk");if(k&&"2345".includes(k))S.k=k;if(localStorage.getItem("libsnd")==="0")S.sound=false}catch(e){}
 const list=()=>TABS[S.tab][1]?G.filter(TABS[S.tab][1]):G;
 const byId=id=>G.find(g=>g.id===id);
 const stage=document.getElementById("stage"),views=document.getElementById("views"),run=document.getElementById("run");
@@ -421,7 +456,7 @@ function catPage(){const L=list(),Rc=recent();
   /* recent: loose cartridges (taken out of their cases); the label carries the wide art */
   const card=(g,i)=>`<button class="rcard ga" data-z="r" data-i="${i}" aria-label="${esc(g.t)}" style="${cvars(g)}"><div class="cgw f"><div class="cg">
       <i class="band"></i><i class="grip"></i><i class="lab" style="background-image:url('${g.h}');background-position:${g.fx*100}% 30%"><i></i></i><i class="stripe"></i><i class="pins"></i><i class="gl"></i><i class="sh"></i>
-    </div></div><div class="cap" style="font-weight:600">${esc(g.t)}</div><div class="cap2">${esc(rel(g))} · ${pt(g.m)}</div></button>`;
+    </div><i class="disc" style="background-image:url('${g.h}');background-position:${g.fx*100}% 30%"></i></div><i class="bez"></i><div class="cap" style="font-weight:600">${esc(g.t)}</div><div class="cap2">${esc(rel(g))} · ${pt(g.m)}</div></button>`;
   /* the grid: closed cases, same paint as the home shelf */
   const cov=(g,i)=>`<button class="ga" data-z="g" data-i="${i}" aria-label="${esc(g.t)}"><div class="gc f" style="${cvars(g)}">${caseInner(g)}</div><div class="cap">${esc(g.t)}</div><div class="cap2">${esc(g.d==null?dy(g):rel(g)+" · "+pt(g.m))}</div></button>`;
   return `<div class="view" id="vA" data-k="${S.k}"><div class="amb"><img><img></div><div class="ascroll hide-sb">
