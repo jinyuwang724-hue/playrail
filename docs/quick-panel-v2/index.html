@@ -9,8 +9,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600;700&display=swap">
 <style>
 :root{
-  --bg:#0F0F10; --fg:#F2F2F2; --fg2:rgba(242,242,242,.6); --fg3:rgba(242,242,242,.34);
-  --chip:rgba(255,255,255,.12); --chip2:rgba(255,255,255,.2); --red:#FF5A4E;
+  --bg:#0F0F10; --fg:#F2F2F2; --fg2:rgba(242,242,242,.6); --fg3:rgba(242,242,242,.32);
+  --chip:rgba(255,255,255,.1); --chip2:rgba(255,255,255,.18); --red:#FF5A4E;
   --sans:"SF Pro Display","SF Pro Text","PingFang SC","Noto Sans SC",system-ui,sans-serif;
   --quart:cubic-bezier(.165,.84,.44,1);
   color-scheme:dark;
@@ -20,283 +20,184 @@ html,body{height:100%;margin:0;background:#050505;color:var(--fg);overflow:hidde
 #stage{width:1920px;height:1200px;position:relative;overflow:hidden;background:#000;flex:none;transform-origin:center;user-select:none;-webkit-user-select:none;touch-action:none}
 button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
 svg{display:block}
-
-/* the game keeps running underneath; nothing is blurred or dimmed outside the panel */
 #game{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 
-/* panel: one column, slides in from the left edge (the quick-settings key sits on the left of the Claw) */
-#qs{position:absolute;left:0;top:0;bottom:0;width:600px;background:rgba(15,15,16,.95);box-shadow:24px 0 60px rgba(0,0,0,.45);
-  transform:translateX(-100%);transition:transform .32s var(--quart);overflow:hidden}
+/* One column from the left edge. The game keeps running and stays in focus underneath; nothing outside the panel is dimmed. */
+#qs{position:absolute;left:0;top:0;bottom:0;width:600px;box-sizing:border-box;padding:36px 40px 40px;background:rgba(15,15,16,.96);
+  box-shadow:24px 0 60px rgba(0,0,0,.45);transform:translateX(-100%);transition:transform .3s var(--quart);display:flex;flex-direction:column}
 #qs.on{transform:none}
-.pages{position:absolute;inset:0;display:flex;width:1200px;transition:transform .34s var(--quart)}
-.pages.sub{transform:translateX(-600px)}
-.page{width:600px;height:100%;box-sizing:border-box;padding:40px 40px 40px;position:relative;flex:none}
 
-/* status + live readouts (the OSD hides while the panel is open, so the panel carries the three numbers that matter) */
 .top{display:flex;justify-content:space-between;align-items:center;height:40px;font-size:26px;font-variant-numeric:tabular-nums}
-.top .r{display:flex;align-items:center;gap:28px}
-.top .bat{display:flex;align-items:center;gap:8px}
-.read{display:grid;grid-template-columns:repeat(3,1fr);margin:30px 0 34px}
-.read div{display:flex;flex-direction:column;gap:4px}
-.read b{font-size:44px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
-.read b small{font-size:22px;font-weight:400;color:var(--fg2);margin-left:4px}
-.read span{font-size:20px;color:var(--fg2)}
+.top .r{display:flex;align-items:center;gap:10px}
+.top .r em{font-style:normal;color:var(--fg2);margin-left:6px}
+/* the in-game OSD hides while the panel is open, so the three numbers that answer "is it working" sit at the top */
+.read{display:flex;gap:34px;margin:26px 0 30px;font-size:24px;color:var(--fg2);font-variant-numeric:tabular-nums}
+.read b{color:var(--fg);font-weight:600;font-size:30px;margin-right:6px}
 
-/* rows */
-.row{position:relative;border-radius:18px;margin:0 -12px;padding:12px;outline:3px solid transparent;outline-offset:-3px;transition:outline-color .12s,background .12s}
-.row.fo{outline-color:#fff}
-.lab{display:flex;justify-content:space-between;align-items:baseline;font-size:24px;color:var(--fg2);margin-bottom:12px;font-variant-numeric:tabular-nums}
-.lab b{font-size:26px;color:var(--fg);font-weight:600}
-.gap{height:14px}
+.grp{margin-top:30px}
+.grp:first-of-type{margin-top:0}
+/* value row: up/down picks it, left/right changes it at once */
+.row{display:flex;align-items:center;gap:18px;height:84px;margin:0 -14px;padding:0 14px;border-radius:18px;box-shadow:inset 0 0 0 3px transparent;transition:box-shadow .12s}
+.row.fo{box-shadow:inset 0 0 0 3px #fff}
+.row .k{width:104px;flex:none;font-size:26px}
+.row .v{flex:none;width:86px;text-align:right;font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}
+.trk{position:relative;flex:1;height:8px;border-radius:4px;background:var(--chip2)}
+.trk i{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:#F2F2F2;transition:width .12s}
+.trk em{position:absolute;top:50%;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:14px;background:#F2F2F2;box-shadow:0 2px 8px rgba(0,0,0,.5);transition:left .12s}
+.trk u{position:absolute;top:16px;width:2px;height:8px;margin-left:-1px;background:var(--fg3)}
+.trk.mute i,.trk.mute em{background:rgba(242,242,242,.4)}
+.seg{flex:1;display:flex;height:52px;border-radius:14px;background:var(--chip);padding:4px;box-sizing:border-box;position:relative}
+.seg b{position:absolute;top:4px;bottom:4px;border-radius:10px;background:#F2F2F2;transition:left .2s var(--quart),width .2s var(--quart)}
+.seg span{flex:1;position:relative;z-index:1;display:flex;align-items:center;justify-content:center;font-size:23px;color:var(--fg2);font-variant-numeric:tabular-nums;transition:color .2s}
+.seg span.on{color:#111;font-weight:600}
 
-.seg{display:flex;gap:8px}
-.seg button{flex:1;height:60px;border-radius:14px;background:var(--chip);font-size:24px;font-variant-numeric:tabular-nums;position:relative;transition:background .15s,color .15s}
-.seg button.on{background:#F2F2F2;color:#111;font-weight:600}
-.seg button.cur{box-shadow:0 0 0 3px #fff inset}
-.seg button.on.cur{box-shadow:0 0 0 3px #fff inset,0 0 0 6px #111 inset}
+/* switches and actions: left/right walks the buttons, A acts */
+.btns{display:grid;gap:10px;margin:0 -14px;padding:10px 14px;border-radius:18px}
+.btns.c4{grid-template-columns:repeat(4,1fr)}
+.btns.c3{grid-template-columns:repeat(3,1fr)}
+.b{height:116px;border-radius:18px;background:var(--chip);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;font-size:21px;transition:background .15s,color .15s}
+.b.on{background:#F2F2F2;color:#111}
+.b.cur{box-shadow:0 0 0 3px #fff}
+.b.on.cur{box-shadow:0 0 0 3px #fff,inset 0 0 0 3px #111}
+.b.act{height:84px;flex-direction:row;gap:12px;font-size:23px}
 
-.sl{display:flex;align-items:center;gap:18px}
-.sl .ico{width:32px;color:var(--fg2);flex:none}
-.trk{position:relative;flex:1;height:10px;border-radius:5px;background:var(--chip2)}
-.trk i{position:absolute;left:0;top:0;bottom:0;border-radius:5px;background:#F2F2F2}
-.trk em{position:absolute;top:50%;width:30px;height:30px;margin:-15px 0 0 -15px;border-radius:15px;background:#F2F2F2;box-shadow:0 2px 8px rgba(0,0,0,.5)}
-.sl .val{width:64px;text-align:right;font-size:24px;font-variant-numeric:tabular-nums;flex:none}
-.dis .trk i,.dis .trk em{background:rgba(242,242,242,.45)}
-.ticks{position:absolute;left:0;right:0;top:20px;height:8px}
-.ticks u{position:absolute;top:0;width:2px;height:8px;margin-left:-1px;background:var(--fg3)}
-
-.sw{display:flex;justify-content:space-between;align-items:center;font-size:24px;height:44px}
-.tg{width:64px;height:36px;border-radius:18px;background:var(--chip2);position:relative;transition:background .18s}
-.tg::after{content:"";position:absolute;left:4px;top:4px;width:28px;height:28px;border-radius:14px;background:#F2F2F2;transition:transform .18s var(--quart)}
-.tg.on{background:#F2F2F2}.tg.on::after{background:#111;transform:translateX(28px)}
-
-.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
-.tile{height:120px;border-radius:18px;background:var(--chip);display:flex;flex-direction:column;justify-content:space-between;align-items:flex-start;padding:16px 14px 14px;text-align:left;position:relative;transition:background .15s,color .15s,transform .15s}
-.tile .tn{font-size:21px;line-height:1.15}
-.tile .tv{font-size:18px;color:var(--fg2);margin-top:2px;font-variant-numeric:tabular-nums}
-.tile.on{background:#F2F2F2;color:#111}.tile.on .tv{color:rgba(17,17,17,.6)}
-.tile.cur{box-shadow:0 0 0 3px #fff}
-.tile.on.cur{box-shadow:0 0 0 3px #fff,inset 0 0 0 3px #111}
-.tile:active{transform:scale(.97)}
-
-.bot{display:flex;gap:12px;position:absolute;left:40px;right:40px;bottom:40px}
+.bot{margin-top:auto;display:flex;gap:10px}
 .bot button{height:72px;border-radius:20px;background:var(--chip);display:flex;align-items:center;justify-content:center;gap:12px;font-size:24px;transition:background .18s,color .18s}
-.bot .w{flex:1}
-.bot .i{width:72px;flex:none}
+.bot .w{flex:1}.bot .i{width:72px;flex:none}
 .bot button.cur{box-shadow:0 0 0 3px #fff inset}
 .bot button.warn{background:var(--red);color:#fff;font-weight:600}
 
-/* sub page */
-.sh{display:flex;align-items:center;gap:14px;height:40px;font-size:30px;font-weight:600;margin-bottom:28px}
-.sh button{width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:var(--fg2)}
-.opt{display:flex;justify-content:space-between;align-items:center;height:76px;padding:0 20px;margin:0 -12px;border-radius:16px;font-size:26px}
-.opt .ck{opacity:0}
-.opt.on .ck{opacity:1}
-.opt.cur{box-shadow:0 0 0 3px #fff inset}
-.slab{font-size:22px;color:var(--fg2);margin:30px 0 14px}
-.pos{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,96px);gap:10px;padding:14px;border-radius:18px;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.1)}
-.pos button{border-radius:12px;position:relative;background:rgba(255,255,255,.05)}
-.pos button i{position:absolute;width:70px;height:22px;border-radius:5px;background:var(--fg3)}
-.pos button:nth-child(-n+3) i{top:10px}.pos button:nth-child(n+4) i{bottom:10px}
-.pos button:nth-child(3n+1) i{left:10px}.pos button:nth-child(3n+2) i{left:calc(50% - 35px)}.pos button:nth-child(3n) i{right:10px}
-.pos button.on i{background:#F2F2F2}
-.pos button.cur{box-shadow:0 0 0 3px #fff inset}
-
-/* in-game OSD (hidden while the panel is open) */
 #osd{position:absolute;right:28px;top:24px;padding:10px 16px;border-radius:12px;background:rgba(0,0,0,.45);font-size:20px;font-variant-numeric:tabular-nums;display:flex;gap:16px;transition:opacity .2s}
 #qs.on~#osd{opacity:0}
 #toast{position:absolute;left:640px;bottom:48px;padding:14px 22px;border-radius:16px;background:rgba(15,15,16,.9);font-size:22px;opacity:0;transform:translateY(8px);transition:opacity .2s,transform .2s;pointer-events:none}
 #toast.on{opacity:1;transform:none}
-#hint{position:fixed;left:50%;bottom:max(10px,env(safe-area-inset-bottom,0px));transform:translateX(-50%);padding:8px 14px;border-radius:999px;background:rgba(30,30,32,.92);border:1px solid rgba(255,255,255,.1);font-size:13px;color:var(--fg2);white-space:nowrap}
-#hint button{color:var(--fg);margin-left:6px;padding:2px 10px;border-radius:999px;background:rgba(255,255,255,.12)}
+#tgl{position:fixed;left:50%;bottom:max(10px,env(safe-area-inset-bottom,0px));transform:translateX(-50%);padding:8px 16px;border-radius:999px;background:rgba(30,30,32,.92);border:1px solid rgba(255,255,255,.1);font-size:13px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 <div id="vp"><div id="stage">
   <img id="game" src="game.jpg" alt="">
-  <aside id="qs" class="on" aria-label="快设面板">
-    <div class="pages" id="pages">
-      <div class="page" id="home"></div>
-      <div class="page" id="sub"></div>
-    </div>
-  </aside>
+  <aside id="qs" class="on" aria-label="快设面板"></aside>
   <div id="osd"><span id="o1">58 fps</span><span id="o2">17.2 W</span><span id="o3">71°</span></div>
   <div id="toast"></div>
 </div></div>
-<div id="hint"><button id="tgl" style="margin:0">开关面板</button></div>
+<button id="tgl">开关面板</button>
 
 <script>
 const IC={
- sun:'<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>',
- vol:'<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
- fan:'<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><circle cx="12" cy="12" r="1.8"/><path d="M12 10.2C11 6 12.5 3 15 3.5c2.4.5 1.6 4.4-3 6.7zM13.8 12c4.2-1 7.2.5 6.7 3-.5 2.4-4.4 1.6-6.7-3zM12 13.8c1 4.2-.5 7.2-3 6.7-2.4-.5-1.6-4.4 3-6.7zM10.2 12C6 13 3 11.5 3.5 9c.5-2.4 4.4-1.6 6.7 3z"/></svg>',
- osd:'<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M6.5 8.5h5M6.5 11.5h3.5"/></svg>',
- hz:'<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h3l2-5 3.5 10 2.5-7 1.5 2H21"/></svg>',
- scale:'<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 15v5h-5M4 4l6 6M20 20l-6-6"/></svg>',
- fg:'<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="6" width="11" height="12" rx="2"/><path d="M17 8.5h2.5a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5H17"/></svg>',
- shot:'<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.8l1.4-2h4.6l1.4 2h1.8A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.5" r="3.3"/></svg>',
- kb:'<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6 9.5h.01M9 9.5h.01M12 9.5h.01M15 9.5h.01M18 9.5h.01M7.5 14.5h9"/></svg>',
- win:'<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="5" width="12" height="9" rx="2"/><path d="M9 17.5h9.5A2.5 2.5 0 0 0 21 15V9"/></svg>',
+ osd:'<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M6.5 8.5h5M6.5 11.5h3.5"/></svg>',
+ scale:'<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 15v5h-5M4 4l6 6M20 20l-6-6"/></svg>',
+ fg:'<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="6" width="11" height="12" rx="2"/><path d="M17 8.5h2.5a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-1.5 1.5H17"/></svg>',
+ mouse:'<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><rect x="6.5" y="3" width="11" height="18" rx="5.5"/><path d="M12 7v3"/></svg>',
+ shot:'<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6h1.8l1.4-2h4.6l1.4 2h1.8A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.5" r="3.3"/></svg>',
+ kb:'<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6 9.5h.01M9 9.5h.01M12 9.5h.01M15 9.5h.01M18 9.5h.01M7.5 14.5h9"/></svg>',
+ win:'<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="5" width="12" height="9" rx="2"/><path d="M9 17.5h9.5A2.5 2.5 0 0 0 21 15V9"/></svg>',
  lib:'<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/></svg>',
  exit:'<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4.5H6.5A2 2 0 0 0 4.5 6.5v11a2 2 0 0 0 2 2H14M10 12h10M16.5 8.5 20 12l-3.5 3.5"/></svg>',
  moon:'<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M19.5 14.5A7.5 7.5 0 0 1 9.5 4.5a7.5 7.5 0 1 0 10 10z"/></svg>',
- back:'<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
- ck:'<svg class="ck" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
- wifi:'<svg width="34" height="26" viewBox="0 0 22 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 5.5a14 14 0 0 1 19 0M4.8 9a9 9 0 0 1 12.4 0M8.2 12.4a4 4 0 0 1 5.6 0"/></svg>',
  bat:'<svg width="44" height="22" viewBox="0 0 48 26" fill="none" stroke="currentColor" stroke-width="2.4"><rect x="1.2" y="1.2" width="40.6" height="23.6" rx="6"/><rect x="5" y="5" width="22" height="16" rx="2.6" fill="currentColor" stroke="none"/><path d="M45.5 9v8" stroke-linecap="round" stroke-width="3"/></svg>'
 };
-
-/* state */
-const PRE=[10,17,25];                       /* 省电 / 均衡 / 性能 presets, W */
-const S={mode:1,tdp:17,pg:true,fps:0,bri:62,vol:40,fan:1,osd:1,osdPos:2,hz:2,mag:false,lsfg:false,open:true,sub:null,r:0,c:1,sr:0,sc:0,exitArm:0};
-const FPS=["不限","30","40","45","60"],FAN=["静音","均衡","性能"],OSD=["关","简洁","详细"],HZ=["60 Hz","90 Hz","120 Hz"];
-const TILES=[
- {k:"fan",n:"风扇",i:"fan",v:()=>FAN[S.fan],sub:"fan"},
- {k:"osd",n:"性能显示",i:"osd",v:()=>OSD[S.osd],sub:"osd",on:()=>S.osd>0},
- {k:"hz",n:"刷新率",i:"hz",v:()=>HZ[S.hz],sub:"hz"},
- {k:"mag",n:"画面缩放",i:"scale",v:()=>S.mag?"开":"关",on:()=>S.mag},
- {k:"lsfg",n:"补帧",i:"fg",v:()=>S.lsfg?"2×":"关",on:()=>S.lsfg},
- {k:"shot",n:"截图",i:"shot",v:()=>""},
- {k:"kb",n:"键盘",i:"kb",v:()=>""},
- {k:"win",n:"窗口",i:"win",v:()=>""}
+const FPS=["不限","30","40","45","60"],FAN=["静音","均衡","性能"],HZ=["60","90","120"];
+const S={tdp:17,fps:0,fan:1,bri:62,hz:2,vol:40,mute:false,osd:true,mag:false,lsfg:false,mouse:false,open:true,r:0,c:0,exitArm:0};
+/* rows top to bottom; "v" rows change with left/right, "b" rows are buttons */
+const ROWS=[
+ {k:"tdp",t:"v"},{k:"fps",t:"v"},{k:"fan",t:"v"},
+ {k:"bri",t:"v"},{k:"hz",t:"v"},{k:"vol",t:"v"},
+ {k:"tog",t:"b",n:4},{k:"act",t:"b",n:3},{k:"bot",t:"b",n:3}
 ];
-/* focus map: each row is a list of columns */
-const ROWS=["mode","tdp","pg","fps","bri","vol","t0","t1","bot"];
-const cols=r=>({mode:4,tdp:1,pg:1,fps:5,bri:1,vol:1,t0:4,t1:4,bot:3})[ROWS[r]];
-
-const $=s=>document.querySelector(s);
-const stage=$("#stage");
+const $=s=>document.querySelector(s),stage=$("#stage");
 function fit(){const s=Math.min(innerWidth/1920,innerHeight/1200);stage.style.transform=`scale(${s})`;stage._s=s}
 addEventListener("resize",fit);fit();
 
-const tdpNow=()=>S.mode===3?S.tdp:PRE[S.mode];
-function slider(id,v,min,max,ico,unit,dis,ticks){
-  const p=(v-min)/(max-min)*100;
-  return `<div class="sl${dis?" dis":""}" data-sl="${id}" data-min="${min}" data-max="${max}">${ico?`<span class="ico">${IC[ico]}</span>`:""}
-    <div class="trk"><i style="width:${p}%"></i><em style="left:${p}%"></em>${ticks?`<div class="ticks">${ticks.map(t=>`<u style="left:${(t-min)/(max-min)*100}%"></u>`).join("")}</div>`:""}</div>
-    ${unit!=null?`<span class="val">${v}${unit}</span>`:""}</div>`}
+const track=(k,v,min,max,ticks,cls="")=>{const p=(v-min)/(max-min)*100;
+  return `<div class="trk ${cls}" data-sl="${k}" data-min="${min}" data-max="${max}"><i style="width:${p}%"></i>${(ticks||[]).map(t=>`<u style="left:${(t-min)/(max-min)*100}%"></u>`).join("")}<em style="left:${p}%"></em></div>`};
+const seg=(k,opts,v)=>`<div class="seg" data-seg="${k}"><b style="left:calc(4px + (100% - 8px) * ${v}/${opts.length});width:calc((100% - 8px) / ${opts.length})"></b>${opts.map((o,i)=>`<span data-k="${k}" data-i="${i}" class="${i===v?"on":""}">${o}</span>`).join("")}</div>`;
+function row(i,label,ctl,val){return `<div class="row${S.r===i?" fo":""}" data-r="${i}"><span class="k">${label}</span>${ctl}${val!=null?`<span class="v">${val}</span>`:""}</div>`}
+const cur=(r,c)=>S.r===r&&S.c===c;
 
-function home(){
+function paint(){
   const t=new Date(),hh=`${t.getHours()}:${String(t.getMinutes()).padStart(2,"0")}`;
-  const cur=(r,c)=>S.r===r&&S.c===c&&!S.sub;
-  const rowFo=r=>S.r===r&&!S.sub&&["tdp","pg","bri","vol"].includes(ROWS[r])?" fo":"";
-  $("#home").innerHTML=`
-  <div class="top"><span>${hh}</span><span class="r">${IC.wifi}<span class="bat">${IC.bat}66%</span></span></div>
-  <div class="read"><div><b id="r1">58</b><span>帧率</span></div><div><b id="r2">17.2<small>W</small></b><span>功耗</span></div><div><b id="r3">71<small>°C</small></b><span>温度</span></div></div>
-  <div class="row" data-r="0"><div class="seg">${["省电","均衡","性能","自定义"].map((n,i)=>`<button data-r="0" data-c="${i}" class="${S.mode===i?"on":""}${cur(0,i)?" cur":""}">${n}</button>`).join("")}</div></div>
-  <div class="row${rowFo(1)}" data-r="1"><div class="lab"><span>功耗上限</span><b>${tdpNow()} W</b></div>${slider("tdp",tdpNow(),8,35,null,null,S.mode!==3,PRE)}</div>
-  <div class="gap" style="height:6px"></div><div class="row${rowFo(2)}" data-r="2"><div class="sw"><span>按游戏保存</span><span class="tg${S.pg?" on":""}"></span></div></div>
-  <div class="gap"></div>
-  <div class="row" data-r="3"><div class="lab"><span>限帧</span></div><div class="seg">${FPS.map((n,i)=>`<button data-r="3" data-c="${i}" class="${S.fps===i?"on":""}${cur(3,i)?" cur":""}">${n}</button>`).join("")}</div></div>
-  <div class="gap"></div>
-  <div class="row${rowFo(4)}" data-r="4">${slider("bri",S.bri,0,100,"sun","%")}</div>
-  <div class="row${rowFo(5)}" data-r="5">${slider("vol",S.vol,0,100,"vol","%")}</div>
-  <div class="gap"></div>
-  <div class="grid">${TILES.map((t,i)=>{const r=6+(i>>2),c=i&3;return `<button class="tile${t.on&&t.on()?" on":""}${cur(r,c)?" cur":""}" data-r="${r}" data-c="${c}">${IC[t.i]}<span><div class="tn">${t.n}</div>${t.v()?`<div class="tv">${t.v()}</div>`:""}</span></button>`}).join("")}</div>
+  const togs=[["osd","性能显示","osd"],["mag","画面缩放","scale"],["lsfg","补帧","fg"],["mouse","鼠标模式","mouse"]];
+  $("#qs").innerHTML=`
+  <div class="top"><span>${hh}</span><span class="r">${IC.bat}66%<em>约 2:10</em></span></div>
+  <div class="read"><span><b id="r1">58</b>fps</span><span><b id="r2">16.8</b>W</span><span><b id="r3">71</b>°C</span></div>
+  <div class="grp">
+    ${row(0,"功耗",track("tdp",S.tdp,8,35,[10,17,25]),S.tdp+" W")}
+    ${row(1,"限帧",seg("fps",FPS,S.fps))}
+    ${row(2,"风扇",seg("fan",FAN,S.fan))}
+  </div>
+  <div class="grp">
+    ${row(3,"亮度",track("bri",S.bri,0,100),S.bri+"%")}
+    ${row(4,"刷新率",seg("hz",HZ.map(h=>h+" Hz"),S.hz))}
+    ${row(5,"音量",track("vol",S.vol,0,100,null,S.mute?"mute":""),S.mute?"静音":S.vol+"%")}
+  </div>
+  <div class="grp btns c4">${togs.map(([k,n,i],c)=>`<button class="b${S[k]?" on":""}${cur(6,c)?" cur":""}" data-r="6" data-c="${c}">${IC[i]}${n}</button>`).join("")}</div>
+  <div class="btns c3" style="padding-top:0">${[["截图","shot"],["键盘","kb"],["窗口","win"]].map(([n,i],c)=>`<button class="b act${cur(7,c)?" cur":""}" data-r="7" data-c="${c}">${IC[i]}${n}</button>`).join("")}</div>
   <div class="bot">
     <button class="w${cur(8,0)?" cur":""}" data-r="8" data-c="0">${IC.lib}游戏库</button>
     <button class="w${cur(8,1)?" cur":""}${S.exitArm?" warn":""}" data-r="8" data-c="1">${IC.exit}${S.exitArm?"确认退出":"退出游戏"}</button>
     <button class="i${cur(8,2)?" cur":""}" data-r="8" data-c="2" aria-label="睡眠">${IC.moon}</button>
   </div>`;
 }
-
-/* sub pages: option lists (fan / OSD / refresh). Options apply on A immediately; B returns to the tile it came from */
-const SUBS={
- fan:{t:"风扇",opts:FAN,get:()=>S.fan,set:i=>S.fan=i},
- osd:{t:"性能显示",opts:OSD,get:()=>S.osd,set:i=>S.osd=i,pos:true},
- hz:{t:"刷新率",opts:HZ,get:()=>S.hz,set:i=>S.hz=i}
-};
-function sub(){
-  const d=SUBS[S.sub];if(!d){$("#sub").innerHTML="";return}
-  const n=d.opts.length;
-  $("#sub").innerHTML=`<div class="sh"><button id="bk" aria-label="返回">${IC.back}</button>${d.t}</div>
-   ${d.opts.map((o,i)=>`<div class="opt${d.get()===i?" on":""}${S.sr===i?" cur":""}" data-o="${i}"><span>${o}</span>${IC.ck}</div>`).join("")}
-   ${d.pos?`<div class="slab">位置</div><div class="pos">${[0,1,2,3,4,5].map(i=>`<button data-p="${i}" class="${S.osdPos===i?"on":""}${S.sr===n&&S.sc===i?" cur":""}"><i></i></button>`).join("")}</div>`:""}`;
-}
-function paint(){home();sub();$("#pages").classList.toggle("sub",!!S.sub)}
-
 let tt;function toast(s){const t=$("#toast");t.textContent=s;t.classList.add("on");clearTimeout(tt);tt=setTimeout(()=>t.classList.remove("on"),1400)}
-function disarm(){if(S.exitArm){S.exitArm=0}}
-
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function adjust(k,d){
+  if(k==="tdp")S.tdp=clamp(S.tdp+d,8,35);
+  else if(k==="fps")S.fps=clamp(S.fps+d,0,FPS.length-1);
+  else if(k==="fan")S.fan=clamp(S.fan+d,0,FAN.length-1);
+  else if(k==="bri")S.bri=clamp(S.bri+d*5,0,100);
+  else if(k==="hz")S.hz=clamp(S.hz+d,0,HZ.length-1);
+  else if(k==="vol"){S.mute=false;S.vol=clamp(S.vol+d*5,0,100)}
+}
 function move(dx,dy){
   if(!S.open)return;
-  if(S.sub){const d=SUBS[S.sub],n=d.opts.length,max=d.pos?n+1:n;
-    if(dy){if(S.sr===n&&dy<0&&S.sc>=3){S.sc-=3}else if(S.sr===n&&dy>0&&S.sc<3){S.sc+=3}else S.sr=Math.max(0,Math.min(max-1,S.sr+dy));}
-    else if(dx&&S.sr===n){const c=S.sc%3+dx;if(c>=0&&c<3)S.sc+=dx}
-    else if(dx<0)back();
-    paint();return}
-  const k=ROWS[S.r];
-  if(dx){
-    if(k==="tdp"){if(S.mode!==3){S.mode=3;S.tdp=tdpNow()}S.tdp=Math.max(8,Math.min(35,S.tdp+dx))}
-    else if(k==="bri")S.bri=Math.max(0,Math.min(100,S.bri+dx*5));
-    else if(k==="vol")S.vol=Math.max(0,Math.min(100,S.vol+dx*5));
-    else if(k==="pg"){}
-    else{S.c=Math.max(0,Math.min(cols(S.r)-1,S.c+dx))}
-    if(k!=="bot")disarm();else if(S.c!==1)disarm();
-  }else{
-    const was=S.r;S.r=Math.max(0,Math.min(ROWS.length-1,S.r+dy));
-    if(S.r!==was){const from=cols(was),to=cols(S.r);S.c=to===1?0:Math.min(to-1,Math.round(S.c*(to-1)/Math.max(1,from-1)));
-      if(was>=6&&S.r>=6&&from===to)S.c=Math.min(to-1,S.c)}
-    disarm();
-  }
+  const R=ROWS[S.r];
+  if(dx){if(R.t==="v")adjust(R.k,dx);else{S.c=clamp(S.c+dx,0,R.n-1)}if(S.r!==8||S.c!==1)S.exitArm=0}
+  else{const was=S.r;S.r=clamp(S.r+dy,0,ROWS.length-1);const N=ROWS[S.r];
+    if(N.t==="b"){const from=ROWS[was].t==="b"?ROWS[was].n:N.n;S.c=clamp(Math.round(S.c*(N.n-1)/Math.max(1,from-1)),0,N.n-1)}else S.c=0;
+    S.exitArm=0}
   paint();
 }
 function press(){
-  if(!S.open){return}
-  if(S.sub){const d=SUBS[S.sub],n=d.opts.length;if(S.sr<n){d.set(S.sr);toast(`${d.t} · ${d.opts[S.sr]}`)}else{S.osdPos=S.sc;if(!S.osd)S.osd=1}paint();return}
-  const k=ROWS[S.r];
-  if(k==="mode"){S.mode=S.c;if(S.c===3)S.tdp=S.tdp||17;toast(["省电","均衡","性能","自定义"][S.c])}
-  else if(k==="fps"){S.fps=S.c;toast(S.c?`限帧 ${FPS[S.c]}`:"不限帧")}
-  else if(k==="pg")S.pg=!S.pg;
-  else if(k==="t0"||k==="t1"){const t=TILES[(k==="t1"?4:0)+S.c];
-    if(t.sub){S.sub=t.sub;S.sr=SUBS[t.sub].get();S.sc=S.osdPos}
-    else if(t.k==="mag")S.mag=!S.mag;else if(t.k==="lsfg")S.lsfg=!S.lsfg;
-    else{toast({shot:"已截图",kb:"键盘已打开",win:"窗口切换"}[t.k]);if(t.k!=="shot")setOpen(false)}}
-  else if(k==="bot"){if(S.c===0){toast("返回游戏库");setOpen(false)}
+  if(!S.open)return;const R=ROWS[S.r];
+  if(R.k==="vol"){S.mute=!S.mute}
+  else if(R.k==="tog"){const k=["osd","mag","lsfg","mouse"][S.c];S[k]=!S[k]}
+  else if(R.k==="act"){toast(["已截图","键盘已打开","窗口切换"][S.c]);if(S.c)setOpen(false)}
+  else if(R.k==="bot"){if(S.c===0){toast("返回游戏库");setOpen(false)}
     else if(S.c===1){if(S.exitArm){S.exitArm=0;toast("已退出游戏");setOpen(false)}else{S.exitArm=1;setTimeout(()=>{if(S.exitArm){S.exitArm=0;paint()}},3000)}}
     else{toast("睡眠");setOpen(false)}}
   paint();
 }
-function back(){if(S.sub){S.sub=null;paint();return}if(S.exitArm){disarm();paint();return}setOpen(false)}
-function setOpen(o){S.open=o;$("#qs").classList.toggle("on",o);if(!o){S.sub=null;S.exitArm=0}paint()}
+function back(){if(S.exitArm){S.exitArm=0;paint();return}setOpen(false)}
+function setOpen(o){S.open=o;$("#qs").classList.toggle("on",o);S.exitArm=0;paint()}
 
-/* live readouts */
-setInterval(()=>{const f=S.fps?+FPS[S.fps]-Math.round(Math.random()*1):56+Math.round(Math.random()*6),w=(tdpNow()*(.92+Math.random()*.08)).toFixed(1),c=66+Math.round(tdpNow()/5+Math.random()*2);
-  const a=$("#r1"),b=$("#r2"),d=$("#r3");if(a){a.textContent=f;b.innerHTML=`${w}<small>W</small>`;d.innerHTML=`${c}<small>°C</small>`}
+setInterval(()=>{const cap=S.fps?+FPS[S.fps]:0,f=cap?cap-Math.round(Math.random()):Math.min(S.tdp*3.6,56+Math.round(Math.random()*6))|0,w=(S.tdp*(.92+Math.random()*.08)).toFixed(1),c=60+Math.round(S.tdp/2.2-S.fan*2+Math.random()*2);
+  const a=$("#r1");if(a){a.textContent=f;$("#r2").textContent=w;$("#r3").textContent=c}
   $("#o1").textContent=f+" fps";$("#o2").textContent=w+" W";$("#o3").textContent=c+"°"},1000);
 
-/* input: keyboard */
 addEventListener("keydown",e=>{const k=e.key;let h=true;
-  if(k==="q"||k==="Q")setOpen(!S.open);
-  else if(!S.open)h=false;
+  if(k==="q"||k==="Q")setOpen(!S.open);else if(!S.open)h=false;
   else if(k==="ArrowLeft")move(-1,0);else if(k==="ArrowRight")move(1,0);else if(k==="ArrowUp")move(0,-1);else if(k==="ArrowDown")move(0,1);
   else if(k==="Enter"||k===" ")press();else if(k==="Escape"||k==="Backspace")back();else h=false;
   if(h)e.preventDefault()});
 $("#tgl").addEventListener("click",()=>setOpen(!S.open));
-/* touch / mouse: tap anything; drag sliders; tap the game to close */
-stage.addEventListener("click",e=>{
-  if(!S.open){return}
+/* touch: tap a segment or button, drag a track, tap the game to close */
+stage.addEventListener("click",e=>{if(!S.open)return;
   if(!e.target.closest("#qs")){setOpen(false);return}
-  if(e.target.closest("#bk")){back();return}
-  const o=e.target.closest("[data-o]");if(o){S.sr=+o.dataset.o;press();return}
-  const p=e.target.closest("[data-p]");if(p){S.sr=SUBS.osd.opts.length;S.sc=+p.dataset.p;press();return}
+  const sp=e.target.closest("[data-seg] span");if(sp){const k=sp.dataset.k,i=+sp.dataset.i;S[k]=i;S.r=ROWS.findIndex(r=>r.k===k);paint();return}
   const b=e.target.closest("button[data-r]");if(b){S.r=+b.dataset.r;S.c=+b.dataset.c;press();return}
-  const r=e.target.closest(".row[data-r]");if(r&&ROWS[+r.dataset.r]==="pg"){S.r=+r.dataset.r;press()}
-});
+  const r=e.target.closest(".row");if(r){S.r=+r.dataset.r;paint()}});
 let drag=null;
-stage.addEventListener("pointerdown",e=>{const sl=e.target.closest("[data-sl]");if(!sl)return;drag=sl.dataset.sl;setSl(e,sl)});
-addEventListener("pointermove",e=>{if(!drag)return;const sl=document.querySelector(`[data-sl="${drag}"]`);if(sl)setSl(e,sl)});
-addEventListener("pointerup",()=>drag=null);
-function setSl(e,sl){const tr=sl.querySelector(".trk").getBoundingClientRect(),min=+sl.dataset.min,max=+sl.dataset.max;
-  const v=Math.round(min+Math.max(0,Math.min(1,(e.clientX-tr.left)/tr.width))*(max-min));
-  if(drag==="tdp"){S.mode=3;S.tdp=v;S.r=1}else if(drag==="bri"){S.bri=v;S.r=4}else{S.vol=v;S.r=5}paint()}
-/* gamepad */
+stage.addEventListener("pointerdown",e=>{const t=e.target.closest("[data-sl]");if(!t)return;drag=t.dataset.sl;setSl(e)});
+addEventListener("pointermove",e=>{if(drag)setSl(e)});addEventListener("pointerup",()=>drag=null);
+function setSl(e){const t=document.querySelector(`[data-sl="${drag}"]`);if(!t)return;const r=t.getBoundingClientRect(),min=+t.dataset.min,max=+t.dataset.max;
+  const v=Math.round(min+clamp((e.clientX-r.left)/r.width,0,1)*(max-min));S[drag]=v;if(drag==="vol")S.mute=false;S.r=ROWS.findIndex(x=>x.k===drag);paint()}
 const pad={h:{},n:{}};
 function poll(t){const gp=(navigator.getGamepads?[...navigator.getGamepads()]:[]).find(Boolean);
   if(gp){const ax=gp.axes||[],b=i=>gp.buttons[i]&&gp.buttons[i].pressed;
     const st={L:b(14)||ax[0]<-.5,R:b(15)||ax[0]>.5,U:b(12)||ax[1]<-.5,D:b(13)||ax[1]>.5,A:b(0),B:b(1),M:b(9)};
-    for(const[k,v]of Object.entries(st)){if(v){const rep="LRUD".includes(k);if(!pad.h[k]||(rep&&t>pad.n[k])){pad.n[k]=t+(pad.h[k]?120:360);pad.h[k]=true;
+    for(const[k,v]of Object.entries(st)){if(v){const rep="LRUD".includes(k);if(!pad.h[k]||(rep&&t>pad.n[k])){pad.n[k]=t+(pad.h[k]?100:340);pad.h[k]=true;
       ({L:()=>move(-1,0),R:()=>move(1,0),U:()=>move(0,-1),D:()=>move(0,1),A:press,B:back,M:()=>setOpen(!S.open)})[k]()}}else pad.h[k]=false}}
   requestAnimationFrame(poll)}
 requestAnimationFrame(poll);
