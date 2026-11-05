@@ -11,6 +11,26 @@ if (-not $cert) { throw 'certificate CN=ClawToolbox not found in CurrentUser\My'
 $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -products * -latest -property installationPath
 $msvc = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory | Sort-Object Name | Select-Object -Last 1
 $env:PATH = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;$($msvc.FullName)\bin\Hostx64\x64;$env:PATH"
+
+# Payload (first-run components + ClawShell for game mode) is git-ignored, so a worktree checkout has
+# almost none of it. Fill missing files from the main checkout's Payload (never overwrite or delete),
+# then refuse to package if a key file is still missing: without Payload\shell\ClawShell.exe the
+# library hides every game-mode entry (ShellMode.Available), and the first-run setup can't install.
+$payload = [IO.Path]::GetFullPath((Join-Path $here '..\ClawLibrary\Payload'))
+$common = (& git -C $here rev-parse --path-format=absolute --git-common-dir 2>$null)
+if ($common) {
+    $mainPayload = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $common) 'frontend\library-native\ClawLibrary\Payload'))
+    if ($mainPayload -ne $payload -and (Test-Path -LiteralPath $mainPayload)) {
+        robocopy $mainPayload $payload /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) { throw "payload sync from $mainPayload failed ($LASTEXITCODE)" }
+        "payload: filled missing files from $mainPayload"
+    }
+}
+$required = 'shell\ClawShell.exe', 'session\ClawGameSession.exe', 'pawnio\PawnIO_setup.exe', 'agent\agent.zip', 'fan\ClawFanService.exe'
+$missing = @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $payload $_)) })
+if (-not (Get-ChildItem -LiteralPath (Join-Path $payload 'widget') -Filter *.msix -ErrorAction SilentlyContinue)) { $missing += 'widget\*.msix' }
+if ($missing.Count) { throw "Payload incomplete, not packaging (run tools\Stage-OobePayload.ps1): $($missing -join ', ')" }
+
 dotnet publish $proj -c Release -p:Platform=x64 -r win-x64 -p:GenerateAppxPackageOnBuild=true -p:AppxPackageSigningEnabled=true `
     -p:PackageCertificateThumbprint=$($cert.Thumbprint) -p:AppxBundle=Never -p:AppxPackageDir=$out
 if ($LASTEXITCODE) { throw "publish failed ($LASTEXITCODE)" }

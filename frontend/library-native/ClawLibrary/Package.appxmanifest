@@ -8,7 +8,7 @@
   IgnorableNamespaces="uap uap3 uap4 rescap">
 
   <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。主页能力由包根目录的 SCCD 配套声明。 -->
-  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.231.0" />
+  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.232.0" />
 
   <Properties>
     <DisplayName>Claw 游戏库</DisplayName>
