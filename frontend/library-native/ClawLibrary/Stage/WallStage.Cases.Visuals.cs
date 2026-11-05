@@ -76,7 +76,7 @@ public sealed partial class WallStage
         public int Index;
     }
 
-    private CompositionSurfaceBrush? _csOverlay, _csCartShell, _csCartGloss, _csCartRing, _csAllFace;
+    private CompositionSurfaceBrush? _csOverlay, _csCartShell, _csCartBand, _csCartEdge, _csCartRing, _csAllFace, _csLabelOver;
     private CompositionNineGridBrush? _csSoft;
     private CompositionBrush? _csShadowBrush;
     private CompositionLinearGradientBrush? _csShineBrush;
@@ -160,51 +160,59 @@ public sealed partial class WallStage
 
         _csShineBrush = G.LinearGradient(105, 2.6, 1, (0.38, Gfx.Rgba(255, 255, 255, 0)), (0.5, Gfx.Rgba(255, 255, 255, 0.5)), (0.62, Gfx.Rgba(255, 255, 255, 0)));
 
-        // 卡带（规格 4.1）：深色外壳、右上切角、防滑纹、金手指；标签上的光泽和选中描边单独一层
-        const float CW = 400, CH = 300;
-        _csCartShell = G.C.CreateSurfaceBrush(CcDraw(CW, CH, 1.5f, ds =>
+        // 卡带「卡片」外壳（第三轮原型 K2，按用户反馈改）：400×300，圆角 18，右上切 40；深色 #2e2e33 → #1c1c20、1 px 内高光。
+        // 主色色条从顶边到 y = 21 横贯全宽，并且绕过切角沿斜边一直到右边 y = 53；标签贴住色条，右上再切 20。
+        // 没有防滑纹、金手指、底部色条
+        _csCartShell = G.C.CreateSurfaceBrush(CcDraw(CartW, CartH, 1.5f, ds =>
         {
-            using var shape = CartShape(ds, CW, CH);
-            using (var body = CssGradient(ds, 180, 0, 0, CW, CH, (0, Gfx.Rgba(0x34, 0x34, 0x3a)), (0.6f, Gfx.Rgba(0x23, 0x23, 0x27)), (1, Gfx.Rgba(0x1d, 0x1d, 0x21))))
+            using var shape = CartShape(ds, CartW, CartH);
+            using (var body = CssGradient(ds, 180, 0, 0, CartW, CartH, (0, Gfx.Rgba(0x2e, 0x2e, 0x33)), (1, Gfx.Rgba(0x1c, 0x1c, 0x20))))
                 ds.FillGeometry(shape, body);
             using (ds.CreateLayer(1, shape))
+            using (var sheen = CssGradient(ds, 125, 0, 0, CartW, CartH, (0, Gfx.Rgba(255, 255, 255, 0.10)), (0.30f, Gfx.Rgba(255, 255, 255, 0))))
+                ds.FillRectangle(0, 0, CartW, CartH, sheen);
+        }));
+        // 色条的形状（白色遮罩，主色由每款游戏自己的渐变填）
+        _csCartBand = G.C.CreateSurfaceBrush(CcDraw(CartW, CartH, 1.5f, ds =>
+        {
+            using var shape = CartShape(ds, CartW, CartH);
+            using var band = CanvasGeometry.CreatePolygon(ds, new[] { new Vector2(0, 0), new Vector2(CartW, 0), new Vector2(CartW, 53), new Vector2(CartW - 32, 21), new Vector2(0, 21) });
+            using var clip = band.CombineWith(shape, Matrix3x2.Identity, CanvasGeometryCombine.Intersect);
+            ds.FillGeometry(clip, Colors.White);
+        }));
+        // 外壳的内高光 + 选中描边（3 px 白，放在最上面）
+        _csCartEdge = G.C.CreateSurfaceBrush(CcDraw(CartW, CartH, 1.5f, ds =>
+        {
+            using var shape = CartShape(ds, CartW, CartH);
+            using (ds.CreateLayer(1, shape))
             {
-                using (var sheen = CssGradient(ds, 120, 0, 0, CW, CH, (0, Gfx.Rgba(255, 255, 255, 0.12)), (0.38f, Gfx.Rgba(255, 255, 255, 0))))
-                    ds.FillRectangle(0, 0, CW, CH, sheen);
-                ds.DrawLine(10, 0.5f, CW * 0.88f, 0.5f, Gfx.Rgba(255, 255, 255, 0.18), 1);
-                for (float x = 20; x + 2 <= CW - 72; x += 9) ds.FillRectangle(x, 12, 2, 16, Gfx.Rgba(255, 255, 255, 0.12));
-                ds.FillRoundedRectangle(40, CH - 30, CW - 80, 30, 4, 4, Gfx.Rgba(0x14, 0x14, 0x16));
-                ds.DrawLine(44, CH - 29.5f, CW - 44, CH - 29.5f, Gfx.Rgba(255, 255, 255, 0.06), 1);
-                for (float x = 52; x + 4 <= CW - 52; x += 10)
-                {
-                    ds.FillRectangle(x, CH - 18, 4, 18, Gfx.Rgba(0xe0, 0xbf, 0x55));
-                    ds.FillRectangle(x + 4, CH - 18, 1, 18, Gfx.Rgba(0x8a, 0x6d, 0x1c));
-                }
-                ds.FillRoundedRectangle(15, 37, CW - 30, 188, 7, 7, Gfx.Rgba(0, 0, 0, 0.6));
+                ds.DrawLine(18, 0.5f, CartW - 40, 0.5f, Gfx.Rgba(255, 255, 255, 0.2), 1);
+                ds.DrawGeometry(shape, Gfx.Rgba(255, 255, 255, 0.08), 2);
             }
-            ds.DrawGeometry(shape, Gfx.Rgba(255, 255, 255, 0.07), 1);
         }));
-        _csCartGloss = G.C.CreateSurfaceBrush(CcDraw(368, 186, 1.5f, ds =>
+        _csCartRing = G.C.CreateSurfaceBrush(CcDraw(CartW, CartH, 1.5f, ds =>
         {
-            using (var g = CssGradient(ds, 115, 0, 0, 368, 186, (0, Gfx.Rgba(255, 255, 255, 0.22)), (0.32f, Gfx.Rgba(255, 255, 255, 0))))
-                ds.FillRoundedRectangle(0, 0, 368, 186, 6, 6, g);
-            ds.DrawRoundedRectangle(0.5f, 0.5f, 367, 185, 6, 6, Gfx.Rgba(255, 255, 255, 0.14), 1);
-        }));
-        _csCartRing = G.C.CreateSurfaceBrush(CcDraw(CW, CH, 1.5f, ds =>
-        {
-            using var shape = CartShape(ds, CW, CH);
+            using var shape = CartShape(ds, CartW, CartH);
             using (ds.CreateLayer(1, shape)) ds.DrawGeometry(shape, Colors.White, 6);
         }));
     }
 
-    /// <summary>卡带外形：圆角 12 12 10 10，右上角切掉（clip-path 0 0, 88% 0, 100% 9%, 100% 100%, 0 100%）。</summary>
+    private const float CartW = 400, CartH = 300, LabX = 12, LabY = 21, LabW = CartW - 24, LabH = CartH - 21 - 12;
+    /// <summary>卡片外壳：圆角 18，右上切 40（clip-path 0 0, 100%−40 0, 100% 40, 100% 100%, 0 100%）。</summary>
     private static CanvasGeometry CartShape(ICanvasResourceCreator rc, float w, float h)
     {
-        using var round = CanvasGeometry.CreateRoundedRectangle(rc, 0, 0, w, h, 11, 11);
-        using var cut = CanvasGeometry.CreatePolygon(rc, new[] { new Vector2(0, 0), new Vector2(w * 0.88f, 0), new Vector2(w, h * 0.09f), new Vector2(w, h), new Vector2(0, h) });
+        using var round = CanvasGeometry.CreateRoundedRectangle(rc, 0, 0, w, h, 18, 18);
+        using var cut = CanvasGeometry.CreatePolygon(rc, new[] { new Vector2(0, 0), new Vector2(w - 40, 0), new Vector2(w, 40), new Vector2(w, h), new Vector2(0, h) });
         return round.CombineWith(cut, Matrix3x2.Identity, CanvasGeometryCombine.Intersect);
     }
 
+    /// <summary>标签：上边贴住色条（直角），下圆角 9，右上切 20。</summary>
+    private static CanvasGeometry LabelShape(ICanvasResourceCreator rc)
+    {
+        using var round = CanvasGeometry.CreateRoundedRectangle(rc, 0, -12, LabW, LabH + 12, 9, 9);
+        using var cut = CanvasGeometry.CreatePolygon(rc, new[] { new Vector2(0, 0), new Vector2(LabW - 20, 0), new Vector2(LabW, 20), new Vector2(LabW, LabH), new Vector2(0, LabH) });
+        return round.CombineWith(cut, Matrix3x2.Identity, CanvasGeometryCombine.Intersect);
+    }
     // ---------------- 主色和焦点 ----------------
 
     /// <summary>主色（规格里的 a）和横幅图焦点。封面缓存里有就用；没有先用种子色，后台从封面算出来写进 cases.json。</summary>
@@ -470,7 +478,7 @@ public sealed partial class WallStage
         c.Glow.StartAnimation("Opacity", CsS(on ? 1 : 0, CsMs(550), CsQuart));
         c.Shadow.StartAnimation("Opacity", CsS(on ? 0.7f : 0.45f, ms, CsQuart));
         c.Shadow.StartAnimation("Offset", CsV3(new Vector3(-CsSoftPad + 15, -CsSoftPad + 15 + (on ? 22 : 10), 0), ms, CsQuart));
-        if (dimOthers) c.Dim.StartAnimation("Opacity", CsS(on ? 0 : 0.22f, ms, CsQuart));
+        if (dimOthers) c.Dim.StartAnimation("Opacity", CsS(on ? 0 : ShDim, ms, CsQuart));
         if (on && shine && !Reduced)
         {
             var a = G.C.CreateVector3KeyFrameAnimation();
@@ -504,32 +512,46 @@ public sealed partial class WallStage
         glow.Offset = new Vector3(-CsSoftPad + 15, -CsSoftPad + 15 + 10, 0);
         glow.Opacity = 0;
         var shell = G.Sprite(_csCartShell);
+        // 主色色条：主色上浅下深，形状来自共用遮罩（绕过切角）
+        var (lookA, _) = CsLookOf(g);
+        var bandMask = G.C.CreateMaskBrush();
+        bandMask.Source = G.LinearGradient(180, CartW, 53, (0, Gfx.Mix(lookA, 0.8, Colors.White)), (0.6, lookA), (1, lookA));
+        bandMask.Mask = _csCartBand;
+        var band = G.Sprite(bandMask);
         var labelBrush = G.C.CreateSurfaceBrush();
         labelBrush.Stretch = CompositionStretch.UniformToFill;
         labelBrush.HorizontalAlignmentRatio = (float)fx;
         labelBrush.VerticalAlignmentRatio = 0.3f;
-        var label = G.Sprite(labelBrush, relative: false);
-        label.Offset = new Vector3(16, 38, 0);
-        label.Size = new Vector2(368, 186);
-        label.Clip = G.C.CreateGeometricClip(RoundRect(368, 186, 6));
+        using var labGeo = LabelShape(G.Device);
+        CompositionGeometricClip LabClip() => G.C.CreateGeometricClip(G.C.CreatePathGeometry(new CompositionPath(labGeo)));
         var labelBack = G.Sprite(tint.B, relative: false);
-        labelBack.Offset = label.Offset; labelBack.Size = label.Size; labelBack.Clip = G.C.CreateGeometricClip(RoundRect(368, 186, 6));
-        var gloss = G.Sprite(_csCartGloss, relative: false);
-        gloss.Offset = label.Offset; gloss.Size = label.Size;
-        var stripe = G.Sprite(tint.A, relative: false);
-        stripe.Offset = new Vector3(16, 236, 0);
-        stripe.Size = new Vector2(120, 6);
-        stripe.Clip = G.C.CreateGeometricClip(RoundRect(120, 6, 3));
+        labelBack.Offset = new Vector3(LabX, LabY, 0); labelBack.Size = new Vector2(LabW, LabH); labelBack.Clip = LabClip();
+        var label = G.Sprite(labelBrush, relative: false);
+        label.Offset = labelBack.Offset; label.Size = labelBack.Size; label.Clip = LabClip();
+        // 标签上叠卡盒同款的 112° 光泽和内描边
+        _csLabelOver ??= G.C.CreateSurfaceBrush(CcDraw(LabW, LabH, 1.5f, ds =>
+        {
+            using var shapeL = LabelShape(ds);
+            using (ds.CreateLayer(1, shapeL))
+            {
+                using (var gloss = CssGradient(ds, 112, 0, 0, LabW, LabH, (0, Gfx.Rgba(255, 255, 255, 0.32)), (0.15f, Gfx.Rgba(255, 255, 255, 0.08)), (0.32f, Gfx.Rgba(255, 255, 255, 0)),
+                    (0.60f, Gfx.Rgba(255, 255, 255, 0)), (0.72f, Gfx.Rgba(255, 255, 255, 0.10)), (0.735f, Gfx.Rgba(255, 255, 255, 0))))
+                    ds.FillRectangle(0, 0, LabW, LabH, gloss);
+                ds.DrawGeometry(shapeL, Gfx.Rgba(255, 255, 255, 0.22), 2);
+            }
+        }));
+        var over = G.Sprite(_csLabelOver, relative: false);
+        over.Offset = labelBack.Offset; over.Size = labelBack.Size;
+        var edge = G.Sprite(_csCartEdge);
         var ring = G.Sprite(_csCartRing);
         ring.Opacity = 0;
-        foreach (var v in new Visual[] { shadow, glow, shell, labelBack, label, gloss, stripe, ring }) body.Children.InsertAtTop(v);
-        root.Children.InsertAtTop(body);
-        var cart = new CsCart { Root = root, Body = body, Glow = glow, Ring = ring, Label = label, Stripe = stripe, Item = g, Index = index, Caption = CsCaption(g, 400, true) };
+        foreach (var v in new Visual[] { shadow, glow, shell, band, labelBack, label, over, edge, ring }) body.Children.InsertAtTop(v);        root.Children.InsertAtTop(body);
+        var cart = new CsCart { Root = root, Body = body, Glow = glow, Ring = ring, Label = label, Stripe = band, Item = g, Index = index, Caption = CsCaption(g, 400, true) };
         cart.Caption.Offset = new Vector3(0, 312, 0);
         root.Children.InsertAtTop(cart.Caption);
         if (g.Art is { } k && (k.Has('h') ? k.File('h') : k.Has('x') ? k.File('x') : null) is { } path)
         {
-            cart.Surface = Images.AcquireReuse(path, (int)Math.Ceiling(368 * CsRaster * 1.3f), (int)Math.Ceiling(368 * CsRaster));
+            cart.Surface = Images.AcquireReuse(path, (int)Math.Ceiling(LabW * CsRaster * 1.3f), (int)Math.Ceiling(LabW * CsRaster));
             labelBrush.Surface = cart.Surface;
         }
         return cart;

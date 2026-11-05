@@ -29,7 +29,7 @@ public sealed partial class WallStage
         {
             if (_cs != null && _prefs.Home != HomeStyle.Shelf) Style(HomeStyle.Shelf);
             await Still("shelf");
-            if (_cs != null) { SwitchTab(1); await Still("all"); Back(); }
+            if (_cs != null) { SwitchTab(1); await Still("all"); for (int i = 0; i < 3; i++) { Move(Direction.Up); await Task.Delay(300); } await Still("recent"); Back(); }
             if (_cs != null) { Style(HomeStyle.Wall); await Still("wall"); }
             ToggleControlCenter(); await Still("cc"); ToggleControlCenter();
             await Task.Delay(800);
@@ -115,6 +115,26 @@ public sealed partial class WallStage
             await Step(1600, "style stack", () => { SaveUi(_prefs with { Home = HomeStyle.Stack }); CsMorphStyle(); });
             await Step(1600, "style wall", () => { SaveUi(_prefs with { Home = HomeStyle.Wall }); CsMorphStyle(); });
             await Step(1600, "style shelf", () => { SaveUi(_prefs with { Home = HomeStyle.Shelf }); CsMorphStyle(); });
+        });
+        await Clip("stand", async Step =>
+        {
+            // 展台：慢按两下、连按三下（上一段直接做完再开始下一段）、往回一下
+            await Step(1600, "style stand", () => { SaveUi(_prefs with { Home = HomeStyle.Stand }); CsMorphStyle(); });
+            await Step(900, "right", () => Move(Direction.Right));
+            await Step(900, "right", () => Move(Direction.Right));
+            for (int i = 0; i < 3; i++) await Step(140, "right fast", () => Move(Direction.Right));
+            await Step(1000, "left", () => Move(Direction.Left));
+            await Step(800, "up", () => Move(Direction.Up));
+            await Step(800, "down", () => Move(Direction.Down));
+            await Step(1600, "style shelf", () => { SaveUi(_prefs with { Home = HomeStyle.Shelf }); CsMorphStyle(); });
+        });
+        await Clip("saver", async Step =>
+        {
+            // 屏保：进入、轮换一次（换边）、按 A 唤醒并选中屏幕上那款
+            await Step(1500, "home drift", () => { });
+            // 测试窗口不在前台（录屏跑在后台任务里）：按探针方式放行前台检查
+            await Step(14_500, "enter", () => { _appearanceProbeRunning = true; _screensaverProbe = true; _lastInput = NowMs - 3_600_000; if (!EnterScreensaver()) Log.Warn("reccases: screensaver refused"); });
+            await Step(1800, "wake A", () => { Activate(); _appearanceProbeRunning = false; _screensaverProbe = false; });
         });
         await Clip("insert", async Step =>
         {

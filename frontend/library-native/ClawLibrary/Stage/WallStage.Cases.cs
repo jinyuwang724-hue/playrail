@@ -52,6 +52,11 @@ public sealed partial class WallStage
         public bool InRecent;
         public int Ai;
         public float GridTop;
+        // 展台
+        public CsCase? StandCase, StandLeaving;
+        public SpriteVisual? Hole;
+        public float RailX;
+        public Action? StandFinish;
         public long Built;
         public bool BgReady;
         public long BgReadyAt;
@@ -87,7 +92,9 @@ public sealed partial class WallStage
     private SystemInfo.NetState _csNetPainted;
 
     // 展架（规格 2）
-    private const float ShW0 = 228, ShH0 = 342, ShGap = 28, ShW1 = 308, ShH1 = 462, ShBottom = CsH - 64;
+    // 展架 A「等高」（第三轮原型）：每盒一样大，选中的上抬 16、其余压暗到 .74；信息区在卡盒排上方一条固定的线上，
+    // 什么都不会从它下面滑过去（以前放大的卡盒在切换途中会穿过信息区）
+    private const float ShW0 = 260, ShH0 = 390, ShGap = 32, ShW1 = 260, ShH1 = 390, ShLift = 16, ShBottom = CsH - 64, ShDim = 0.26f;
     // 分类页（规格 4）
     private const int GridCols = 5;
     private const float GridGapX = 32, GridGapY = 48, CatTop = 140;
@@ -161,7 +168,7 @@ public sealed partial class WallStage
         return p.InRecent ? (p.Ai < p.Recent.Count ? p.Recent[p.Ai] : null) : (p.Ai < p.Items.Count ? p.Items[p.Ai] : null);
     }
 
-    private string? _csSpot;
+    private string? _csSpot, _csSpotForce;
 
     // ---------------- 建立 ----------------
 
@@ -371,7 +378,8 @@ public sealed partial class WallStage
     {
         if (_cs == null) return;
         var old = _cs.Page;
-        string? spot = CsSpotItem()?.Id ?? _csSpot;
+        string? spot = _csSpotForce ?? CsSpotItem()?.Id ?? _csSpot;
+        _csSpotForce = null;
         _cs.Tab = tab;
         CsPaintTabs(animate: old != null);
         var page = tab == 0 && _prefs.Home == HomeStyle.Wall ? CsBuildWallPage()
@@ -469,6 +477,7 @@ public sealed partial class WallStage
         if (_cs == null || !_cs.Leaving.Remove(page)) return;
         _cs.Pages.Children.Remove(page.Root);
         foreach (var c in page.Cases.Values) CsDisposeCase(c);
+        CsStandDispose(page);
         foreach (var (c, cap) in page.Grid.Values) { CsDisposeCase(c); cap.Dispose(); }
         foreach (var c in page.Carts.Values) CsDisposeCart(c);
         foreach (var s in page.BgSurf) Images.Release(s);
@@ -494,8 +503,8 @@ public sealed partial class WallStage
         CsShowTab(tab, dir == 0 ? 1 : dir, entry: true);
     }
 
-    internal static readonly HomeStyle[] CsStyleOrder = { HomeStyle.Wall, HomeStyle.Shelf, HomeStyle.Stack };
-    internal static string CsStyleName(HomeStyle s) => s switch { HomeStyle.Wall => "海报墙", HomeStyle.Stack => "叠放", _ => "展架" };
+    internal static readonly HomeStyle[] CsStyleOrder = { HomeStyle.Wall, HomeStyle.Shelf, HomeStyle.Stand, HomeStyle.Stack };
+    internal static string CsStyleName(HomeStyle s) => s switch { HomeStyle.Wall => "海报墙", HomeStyle.Stack => "叠放", HomeStyle.Stand => "展台", _ => "展架" };
 
     /// <summary>设置 › 游戏库 › 首页样式：按 A 立即生效。设置页盖着游戏库时等回到游戏库再播切换动画。</summary>
     private void CsSetHomeStyle(HomeStyle style)
@@ -523,7 +532,7 @@ public sealed partial class WallStage
         if (_cs.Tab != 0) { CsShowTab(0, -1, entry: true); return; }
         var old = _cs.Page!;
         // 和海报墙之间：墙和卡盒页整层交叉淡入淡出（卡盒页自带不透明背景，淡进来盖住墙；回墙时卡盒页淡掉）
-        if (old.Style == HomeStyle.Wall || _prefs.Home == HomeStyle.Wall) { CsShowTab(0, 0, entry: true); return; }
+        if (old.Style is HomeStyle.Wall or HomeStyle.Stand || _prefs.Home is HomeStyle.Wall or HomeStyle.Stand) { CsShowTab(0, 0, entry: true); return; }
         string? spot = CsSpotItem()?.Id;
         old.Cases.TryGetValue(old.Sel, out var from);
         var page = CsBuildHome(_prefs.Home, spot, entry: false);
@@ -600,17 +609,41 @@ public sealed partial class WallStage
             fade.Offset = new Vector3(-60, -60, 0); fade.Size = new Vector2(CsW + 120, 900);
             bg.Children.InsertAtTop(fade);
         }
-        else if (style == HomeStyle.Shelf)
+        else if (style is HomeStyle.Shelf or HomeStyle.Stand)
         {
-            bg.Children.InsertAtTop(CsShade(90, (0, 0.86), (0.42, 0.4), (0.68, 0)));
-            bg.Children.InsertAtTop(CsShade(180, (0, 0.55), (0.18, 0), (0.46, 0), (0.82, 0.92), (1, 1)));
+            // 比原型深一些：背景在动，标题和 meta 要始终清楚
+            bg.Children.InsertAtTop(CsShade(90, (0, 0.9), (0.45, 0.55), (0.75, 0.18), (1, 0.12)));
+            bg.Children.InsertAtTop(CsShade(180, (0, 0.6), (0.18, 0.12), (0.4, 0.2), (0.8, 0.94), (1, 1)));
         }
         else
         {
-            bg.Children.InsertAtTop(CsShade(90, (0, 0.9), (0.38, 0.55), (0.7, 0.15), (1, 0.35)));
-            bg.Children.InsertAtTop(CsShade(180, (0, 0.55), (0.18, 0), (0.6, 0), (1, 0.85)));
+            bg.Children.InsertAtTop(CsShade(90, (0, 0.92), (0.38, 0.62), (0.7, 0.25), (1, 0.42)));
+            bg.Children.InsertAtTop(CsShade(180, (0, 0.6), (0.18, 0.1), (0.6, 0.12), (1, 0.88)));
         }
         return bg;
+    }
+
+    private int _csDriftDir;
+
+    private void CsDrift(SpriteVisual sprite, int dir)
+    {
+        if (Reduced) return;
+        float w = sprite.Size.X;
+        var ease = G.Ease(Bezier.EaseInOut);
+        var sc = G.C.CreateVector3KeyFrameAnimation();
+        sc.InsertKeyFrame(0, new Vector3(1.04f, 1.04f, 1), G.Linear);
+        sc.InsertKeyFrame(1, new Vector3(1.10f, 1.10f, 1), ease);
+        var off = G.C.CreateVector3KeyFrameAnimation();
+        off.InsertKeyFrame(0, new Vector3(dir * w * 0.012f, 0, 0), G.Linear);
+        off.InsertKeyFrame(1, new Vector3(-dir * w * 0.012f, -CsH * 0.01f, 0), ease);
+        foreach (var a in new Vector3KeyFrameAnimation[] { sc, off })
+        {
+            a.Duration = Gfx.Ms(24_000);
+            a.IterationBehavior = AnimationIterationBehavior.Forever;
+            a.Direction = Microsoft.UI.Composition.AnimationDirection.Alternate;
+        }
+        sprite.StartAnimation("Scale", sc);
+        sprite.StartAnimation("Offset", off);
     }
 
     private SpriteVisual CsShade(double deg, params (double At, double A)[] stops)
@@ -648,14 +681,11 @@ public sealed partial class WallStage
             p.Bg.Children.Remove(sprite);
             p.Bg.Children.InsertAbove(sprite, other);
             sprite.StopAnimation("Opacity");
+            // 首页背景：和屏保同一种慢速推近平移（scale 1.04 → 1.10、横向 ±1.2 %、纵向 −1 %，24 s 来回），每次换图换方向
+            if (!cat) CsDrift(sprite, ++_csDriftDir % 2 == 0 ? 1 : -1);
             if (!p.BgReady)
             {
                 sprite.Opacity = target;
-                if (entry && !cat && !Reduced)
-                {
-                    sprite.Scale = new Vector3(1.04f, 1.04f, 1);
-                    sprite.StartAnimation("Scale", CsV3(Vector3.One, 900, CsQuart));
-                }
                 CsBgReady(p, entry);
                 return;
             }
@@ -766,6 +796,7 @@ public sealed partial class WallStage
         var prevPage = _cs!.Page;
         _cs.Page = page;   // 背景和信息区按这一页画
         if (style == HomeStyle.Shelf) CsLayoutShelf(page, animate: false, entry: entry);
+        else if (style == HomeStyle.Stand) CsLayoutStand(page, animate: false, entry: entry);
         else CsLayoutStack(page, animate: false, entry: entry);
         CsPaintInfo(page, animate: false);
         CsSetBackground(CsSpotItem(), entry: entry);
@@ -785,9 +816,9 @@ public sealed partial class WallStage
 
     private static float ShelfRailX(int s, int n)
     {
-        // 选中的始终停在最左（x = 96），翻到最后几款也不往右推
-        _ = n;
-        return 96 - s * (ShW0 + ShGap);
+        // 选中的停在最左（x = 96）；到尾巴时整排夹住，不留右边的空
+        float total = n * (ShW0 + ShGap) - ShGap + (ShW1 - ShW0);
+        return Math.Max(Math.Min(96, CsW - 96 - total), 96 - s * (ShW0 + ShGap));
     }
 
     private static (Vector3 Off, Vector2 Size) ShelfRect(int i, int s, int n)
@@ -795,7 +826,7 @@ public sealed partial class WallStage
         float x = ShelfRailX(s, n) + i * (ShW0 + ShGap) + (i > s ? ShW1 - ShW0 : 0);
         bool sel = i == s;
         float w = sel ? ShW1 : ShW0, h = sel ? ShH1 : ShH0;
-        return (new Vector3(x, ShBottom - h - (sel ? 8 : 0), 0), new Vector2(w, h));
+        return (new Vector3(x, ShBottom - h - (sel ? ShLift : 0), 0), new Vector2(w, h));
     }
 
     private static (int Lo, int Hi) ShelfWindow(int s, int n)
@@ -826,7 +857,7 @@ public sealed partial class WallStage
                 c = CsNewCase(i < p.Items.Count ? p.Items[i] : null, i, z0);
                 c.Root.Offset = o0;
                 c.Offset = o0;
-                c.Dim.Opacity = 0.22f;
+                c.Dim.Opacity = ShDim;
                 p.Cases[i] = c;
                 p.Row!.Children.InsertAtTop(c.Root);
                 if (i < p.Items.Count && (i == 0 || CsBucket(p.Items[i]) != CsBucket(p.Items[i - 1])))
@@ -837,7 +868,7 @@ public sealed partial class WallStage
                         using var l = TextKit.Layout(ds, b, TextKit.Ui(500), 22, 260, CanvasHorizontalAlignment.Left);
                         ds.DrawTextLayout(l, 0, 0, Gfx.Rgba(242, 242, 242, 0.6));
                     });
-                    lab.Offset = new Vector3(o0.X, ShBottom + 12, 0);
+                    lab.Offset = new Vector3(o0.X, ShBottom + 16, 0);
                     p.Labels[i] = lab;
                     p.Row.Children.InsertAtTop(lab);
                     c.Label = lab;
@@ -846,7 +877,7 @@ public sealed partial class WallStage
             var (off, size) = ShelfRect(i, s, n);
             c.Offset = off; c.Size = size;
             // 卡盒底边下方，所有标签同一条线（普通卡盒底在 ShBottom）
-            float labY = ShBottom + 12;
+            float labY = ShBottom + 16;
             if (!animate)
             {
                 c.Root.StopAnimation("Offset"); c.Root.StopAnimation("Size");
@@ -870,7 +901,7 @@ public sealed partial class WallStage
 
             }
             if (i == s) CsSelect(c, true, shine: animate && i != p.Prev);
-            else if (c.Selected || !animate) { CsSelect(c, false, false); if (!animate) { c.Dim.StopAnimation("Opacity"); c.Dim.Opacity = 0.22f; } }
+            else if (c.Selected || !animate) { CsSelect(c, false, false); if (!animate) { c.Dim.StopAnimation("Opacity"); c.Dim.Opacity = ShDim; } }
             if (i == s && !animate) { c.Dim.StopAnimation("Opacity"); c.Dim.Opacity = 0; }
         }
         // 窗口外的：动画走完再拆
@@ -1028,7 +1059,8 @@ public sealed partial class WallStage
     // 按钮和控制中心底坞一样高（48 → 72），字号跟设置页正文（17 → 26）；meta 同字号。触控目标都 ≥ 72（= 48 epx）
     private const float ActH = 72, ActGap = 16, ActFont = 26, MetaFont = 26, TitleFont = 64, TitleLh = 76, InfoRowGap = 28;
     // 展架（08:30 修订）：信息区在放大卡盒右侧——左边 = 选中卡盒右边 + 40，底边 = 普通卡盒顶 + 30（屏幕底上方 430）
-    private const float ShInfoX = 96 + ShW1 + 40, ShInfoBottom = ShBottom - ShH0 - 30;
+    // 展架 A：信息区左 96、右 96，按钮底边在 y = 1200 − 526（离上抬的选中卡盒顶 56）
+    private const float ShInfoX = 96, ShInfoBottom = CsH - 526;
 
     /// <summary>
     /// 展架：第一行标题（单行省略），第二行 [开始游戏][设置][收藏] 后面接 meta；叠放：标题（最多两行）、meta、按钮各占一行。
@@ -1041,13 +1073,16 @@ public sealed partial class WallStage
         string meta = g != null ? CsMetaFull(g) : $"{p.Items.Count} 款";
         bool stack = p.Style == HomeStyle.Stack;
         float actsW = CsActsWidth(g);
-        float w = stack ? 640 : CsW - 96 - ShInfoX;
+        bool stand = p.Style == HomeStyle.Stand;
+        float w = stack ? 640 : stand ? CsW - 96 - StdInfoX : CsW - 96 - ShInfoX;
+        bool rows = true;   // 标题、meta、按钮各占一行（展架 A 和叠放都是）
         var dev = G.Device;
         float titleH;
         using (var probe = TextKit.Layout(dev, title, TextKit.Ui(600), TitleFont, w, CanvasHorizontalAlignment.Left, lineHeight: TitleLh, maxLines: stack ? 2 : 1, balance: stack))
             titleH = Math.Max(TitleLh, (float)probe.LayoutBounds.Height);
-        float h = stack ? titleH + 12 + 36 : titleH + InfoRowGap + ActH;
-        float metaX = stack || g == null ? 0 : actsW + InfoRowGap, metaY = stack ? titleH + 12 : titleH + InfoRowGap + (ActH - 34) / 2;
+        float vgap = stack ? 12 : 30;   // 展架 A / 展台：标题、meta、按钮三者间距 30
+        float h = rows ? titleH + vgap + 36 : titleH + InfoRowGap + ActH;
+        float metaX = rows || g == null ? 0 : actsW + InfoRowGap, metaY = rows ? titleH + vgap : titleH + InfoRowGap + (ActH - 34) / 2;
         var front = p.InfoFront ? p.InfoB : p.InfoA;
         var back = p.InfoFront ? p.InfoA : p.InfoB;
         var target = animate && !Reduced ? back : front;
@@ -1065,10 +1100,16 @@ public sealed partial class WallStage
             target.Offset = new Vector3(96, top, 0);
             p.ActsAt = new Vector2(96, top + h + 30);
         }
+        else if (stand)
+        {
+            // 展台：信息区在大卡盒右边，左 552、顶 536，往下依次是标题、meta、按钮
+            target.Offset = new Vector3(StdInfoX, StdInfoTop, 0);
+            p.ActsAt = new Vector2(StdInfoX, StdInfoTop + h + 30);
+        }
         else
         {
-            target.Offset = new Vector3(ShInfoX, ShInfoBottom - h, 0);
             p.ActsAt = new Vector2(ShInfoX, ShInfoBottom - ActH);
+            target.Offset = new Vector3(ShInfoX, ShInfoBottom - ActH - 30 - h, 0);
         }
         if (target == back)
         {
@@ -1365,6 +1406,7 @@ public sealed partial class WallStage
             var g = p.Items[p.Sel];
             CsPaintActs(p, g, CsActsWidth(g));
             if (p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(0, CsMs(250), CsQuart));
+            p.StandCase?.Ring.StartAnimation("Opacity", CsS(0, CsMs(250), CsQuart));
             return;
         }
         if (dir == Direction.Down) { Cue(Sfx.Bump); return; }
@@ -1423,7 +1465,7 @@ public sealed partial class WallStage
 
     private void CsLayoutHome(CsPage p, bool animate)
     {
-        if (p.Style == HomeStyle.Shelf) CsLayoutShelf(p, animate); else CsLayoutStack(p, animate);
+        if (p.Style == HomeStyle.Shelf) CsLayoutShelf(p, animate); else if (p.Style == HomeStyle.Stand) CsLayoutStand(p, animate); else CsLayoutStack(p, animate);
         if (!p.Acts && p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(1, CsMs(300), CsQuart));
         p.Prev = p.Sel;
     }
@@ -1483,7 +1525,8 @@ public sealed partial class WallStage
             var g = p.Items[p.Sel];
             if (p.Acts && p.Act == 1) { CsOpenGameSettings(g); return; }
             if (p.Acts && p.Act == 2) { CsToggleFavorite(p, g); return; }
-            if (p.Cases.TryGetValue(p.Sel, out var c)) CsLaunch(g, c.Root, CsCaseRect(p, c));
+            if (p.Style == HomeStyle.Stand && p.StandCase is { } sc) CsLaunch(g, sc.Root, (StdX, StdY, StdW, StdH));
+            else if (p.Cases.TryGetValue(p.Sel, out var c)) CsLaunch(g, c.Root, CsCaseRect(p, c));
             return;
         }
         var item = CsSpotItem();
@@ -1601,7 +1644,8 @@ public sealed partial class WallStage
                     return true;
                 }
             CsCase? hit = null;
-            if (p.Style == HomeStyle.Shelf)
+            if (p.Style == HomeStyle.Stand && x >= StdX && x <= StdX + StdW && y >= StdY && y <= StdY + StdH) hit = p.Cases.GetValueOrDefault(p.Sel) ?? p.StandCase;
+            else if (p.Style is HomeStyle.Shelf or HomeStyle.Stand)
             {
                 foreach (var c in p.Cases.Values)
                     if (x >= c.Offset.X && x <= c.Offset.X + c.Size.X && y >= c.Offset.Y && y <= c.Offset.Y + c.Size.Y) hit = c;
@@ -1676,8 +1720,9 @@ public sealed partial class WallStage
         if (_csDragAxis == 0) _csDragAxis = Math.Abs(lx) >= Math.Abs(ly) ? 1 : 2;
         if (p.Tab == 0)
         {
-            float d = p.Style == HomeStyle.Shelf ? lx : (_csDragAxis == 1 ? lx : ly);
-            float unit = p.Style == HomeStyle.Shelf ? 120 : 90;
+            bool row = p.Style is HomeStyle.Shelf or HomeStyle.Stand;
+            float d = row ? lx : (_csDragAxis == 1 ? lx : ly);
+            float unit = row ? 120 : 90;
             _csDragAcc += d;
             while (Math.Abs(_csDragAcc) > unit)
             {

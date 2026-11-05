@@ -106,6 +106,16 @@ public sealed partial class WallStage
     private bool EnterScreensaver()
     {
         if (_screensaverActive || _screensaverStopped || !ScreensaverForeground || ScreensaverBlocked || _expandedKey != null) return false;
+        // 卡盒版开着（三种首页样式都算）：换成统一的新屏保（WallStage.Cases.Screensaver.cs），不再点亮墙上的海报
+        if (_cs != null)
+        {
+            if (_csInsert != null || _lm != null || !CsSaverEnter()) return false;
+            _screensaverActive = true;
+            _screensaverNextSwitch = NowMs + (long)SsHoldMs;
+            PanVelocity = Vector2.Zero;
+            Log.Info("screensaver entered (cases)");
+            return true;
+        }
         if (ScreensaverCandidates().Count == 0) return false;
         _screensaverRailFocused = _railFocused;
         _screensaverRailFocus = _railFocus;
@@ -129,6 +139,13 @@ public sealed partial class WallStage
         if (!_screensaverActive) return;
         _screensaverActive = false;
         _screensaverProbe = false;
+        if (_csSs != null)
+        {
+            CsSaverExit();
+            _lastInput = NowMs;
+            Log.Info("screensaver exited (cases)");
+            return;
+        }
         _screensaverLitKey = null;
         if (_screensaverClock != null) _screensaverClock.IsVisible = false;
         _railFocused = _screensaverRailFocused && _prefs.LibraryRail;
@@ -202,6 +219,7 @@ public sealed partial class WallStage
     private void PickScreensaverGame()
     {
         if (!_screensaverActive) return;
+        if (_csSs != null) { CsSaverShow(); _screensaverNextSwitch = _csSs?.NextSwitch ?? NowMs + 12_000; return; }
         var candidates = ScreensaverCandidates();
         int index = ScreensaverPolicy.PickGame(candidates.Select(t => t.Shown!).ToArray(), _screensaverPreviousGame, Random.Shared);
         if (index < 0) { ExitScreensaver(); return; }
@@ -214,7 +232,7 @@ public sealed partial class WallStage
     /// <summary>窗口缩放或裁剪补进新卡时，同步其屏保外观，并检查当前点亮卡是否仍看得见。</summary>
     private void RefreshScreensaverTiles()
     {
-        if (!_screensaverActive) return;
+        if (!_screensaverActive || _csSs != null) return;
         var candidates = ScreensaverCandidates();
         if (_screensaverLitKey == null || !candidates.Any(t => t.Slot.Key == _screensaverLitKey)) PickScreensaverGame();
         else ApplyWallLook();
@@ -223,6 +241,7 @@ public sealed partial class WallStage
     private void RefreshScreensaverClock(bool force = false)
     {
         if (!_screensaverActive) return;
+        if (_csSs != null) { CsSaverPaintClock(force); return; }
         string text = DateTime.Now.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
         if (!force && text == _screensaverClockText && Chrome.Dpi == _screensaverClockDpi && View.Width == _screensaverClockWidth) return;
         _screensaverClock ??= G.Sprite(G.C.CreateSurfaceBrush(), relative: false);

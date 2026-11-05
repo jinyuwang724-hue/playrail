@@ -833,6 +833,8 @@ public sealed partial class WallStage : IDisposable
     /// <summary>A：游戏卡展开聚焦卡；聚焦卡上再按 = 启动；集合卡 = 进入。</summary>
     public void Activate() => WithCue(Sfx.Activate, () =>
     {
+        // 屏保里按 A：回到首页并选中屏幕上那款（只唤醒，不启动）
+        if (_screensaverActive && CsSaverWakeWithGame()) return;
         if (ConsumeScreensaverWake()) return;
         MarkInput();
         NavHaptic("confirm");
