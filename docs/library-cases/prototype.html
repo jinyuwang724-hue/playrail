@@ -118,8 +118,9 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 .floor{position:absolute;left:calc(50% - 380px);width:760px;bottom:70px;height:80px;border-radius:50%;background:radial-gradient(closest-side,rgba(0,0,0,.65),transparent);z-index:1}
 
 /* ---- C2 卡盒架 (Selene-style larger selected cover) ---- */
-#v2 .info{position:absolute;left:96px;right:96px;bottom:562px;display:flex;flex-direction:column;align-items:flex-start;gap:22px}
-#v2 .info .tx{min-width:0;max-width:100%;display:flex;flex-direction:column;gap:10px}
+#v2 .info{position:absolute;left:444px;right:96px;bottom:430px;display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-areas:"t t" "a m";column-gap:28px;row-gap:22px;align-items:center}
+#v2 .info .tx{display:contents}
+#v2 .info h2.t{grid-area:t}#v2 .info .meta{grid-area:m;overflow:hidden;text-overflow:ellipsis}#v2 .info .acts{grid-area:a}
 #v2 h2.t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row{position:absolute;left:0;right:0;bottom:64px;height:470px}
 .rail{position:absolute;left:0;bottom:0;display:flex;align-items:flex-end;gap:28px;transition:transform .55s var(--quart)}
@@ -127,8 +128,8 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 .it .wrap{position:absolute;inset:0;transition:transform .55s var(--quart),filter .4s,box-shadow .55s;border-radius:6px;box-shadow:0 10px 18px rgba(0,0,0,.45);filter:brightness(.78)}
 .it.sel{width:308px;height:462px}
 .it.sel .wrap{filter:none;transform:translateY(-8px);box-shadow:0 26px 50px -8px rgba(0,0,0,.7),0 0 0 3px #fff,0 18px 60px -10px var(--a)}
-.glab{position:absolute;left:0;top:-36px;font-size:15px;color:var(--fg2);white-space:nowrap;transition:opacity .3s}
-.it.sel .glab{opacity:0}
+.glab{position:absolute;left:0;bottom:-32px;font-size:15px;color:var(--fg2);white-space:nowrap;transition:opacity .3s}
+.it.sel .glab{opacity:1}
 
 /* ---- C3 叠放 (CollectionViewPagingLayout stack) ---- */
 #v3 .info{position:absolute;left:96px;top:0;bottom:0;width:640px;display:flex;flex-direction:column;justify-content:center;gap:14px}
