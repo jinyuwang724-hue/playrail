@@ -84,7 +84,7 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 
 /* background: the game's art, full width (from the previous C1) */
 .bgw{position:absolute;inset:0;overflow:hidden}
-.bgw img{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;transition:opacity .4s ease}
+.bgw img{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;transition:opacity .4s ease;will-change:transform}
 .bgw::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(15,15,16,.86) 0,rgba(15,15,16,.4) 42%,rgba(15,15,16,0) 68%),linear-gradient(to bottom,rgba(15,15,16,.55) 0,rgba(15,15,16,0) 18%,rgba(15,15,16,0) 46%,rgba(15,15,16,.92) 82%,#0F0F10)}
 #v1 .bgw::after,#v3 .bgw::after{background:linear-gradient(90deg,rgba(15,15,16,.9) 0,rgba(15,15,16,.55) 38%,rgba(15,15,16,.15) 70%,rgba(15,15,16,.35) 100%),linear-gradient(to bottom,rgba(15,15,16,.55) 0,rgba(15,15,16,0) 18%,rgba(15,15,16,0) 60%,rgba(15,15,16,.85) 100%)}
 
@@ -142,7 +142,10 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 #v2[data-s="c"]{--w0:200px;--h0:300px;--w1:200px;--h1:300px;--g:24px;--lift:-12px}
 #v2[data-s="c"] .row{left:552px;clip-path:inset(-300px -300px -300px 0)}
 #v2[data-s="c"] .info{left:552px;right:96px;top:536px}
-.stand{position:absolute;left:96px;bottom:64px;width:400px;height:600px}
+.stand{position:absolute;left:96px;bottom:64px;width:400px;height:600px;z-index:2}
+.stand>.wrap{transform-origin:0 0}
+.it.hole .wrap,.it.ret .wrap{opacity:0;transition:none}
+.it.hole::before{content:"";position:absolute;inset:0;border-radius:6px;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 2px rgba(255,255,255,.16),inset 0 14px 28px rgba(0,0,0,.55)}
 .stand>.wrap{position:absolute;inset:0;border-radius:6px;box-shadow:0 34px 60px -12px rgba(0,0,0,.8),0 22px 80px -16px var(--a)}
 
 /* ---- C3 叠放 (CollectionViewPagingLayout stack) ---- */
@@ -172,6 +175,7 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 .cg{position:absolute;inset:0;overflow:hidden}
 .cg>i{position:absolute;display:block}
 .cg .gl{inset:0;pointer-events:none}
+.cg .band{display:none}
 .cgw.fo .cg .gl{box-shadow:inset 0 0 0 3px #fff}
 .cg .lab{background-size:cover;background-color:var(--b)}
 /* label paint shared with the cases: colour strip, 112° gloss, inner strokes */
@@ -194,7 +198,9 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 /* K2 卡片: a thin dark card that is almost all label, one cut corner, the case paint on the label; no fake grip or pins */
 #vA[data-k="2"] .cg{border-radius:18px;clip-path:polygon(0 0,calc(100% - 40px) 0,100% 40px,100% 100%,0 100%);background:linear-gradient(180deg,#2e2e33,#1c1c20)}
 #vA[data-k="2"] .cg .gl{border-radius:inherit;background:linear-gradient(125deg,rgba(255,255,255,.1),rgba(255,255,255,0) 30%);box-shadow:inset 0 1px 0 rgba(255,255,255,.2),inset 0 0 0 1px rgba(255,255,255,.08)}
-#vA[data-k="2"] .cg .lab{left:12px;right:12px;top:12px;bottom:12px;border-radius:9px;clip-path:polygon(0 0,calc(100% - 30px) 0,100% 30px,100% 100%,0 100%)}
+#vA[data-k="2"] .cg .lab{left:12px;right:12px;top:21px;bottom:12px;border-radius:0 0 9px 9px;clip-path:polygon(0 0,calc(100% - 20px) 0,100% 20px,100% 100%,0 100%)}
+#vA[data-k="2"] .cg .lab i{display:none}
+#vA[data-k="2"] .cg .band{display:block;inset:0;background:linear-gradient(180deg,color-mix(in srgb,var(--a) 80%,#fff),var(--a) 60%);clip-path:polygon(0 0,100% 0,100% 53px,368px 21px,0 21px)}
 #vA[data-k="2"] .cg .grip,#vA[data-k="2"] .cg .stripe,#vA[data-k="2"] .cg .pins{display:none}
 
 /* K3 主色: the K1 shape moulded in the game's own colour, like a coloured plastic cartridge */
@@ -238,7 +244,7 @@ h2.t{margin:0;font-size:64px;font-weight:600;line-height:1.1;letter-spacing:.01e
 #ss.on{opacity:1;pointer-events:auto}
 #ss .ssi{position:absolute;inset:0;overflow:hidden}
 #ss .ssi img{position:absolute;left:-4%;top:-4%;width:108%;height:108%;object-fit:cover;opacity:0;transition:opacity 1.8s ease;will-change:transform,opacity}
-#ss .ssi::after{content:"";position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,.25),rgba(0,0,0,0) 30%,rgba(0,0,0,0) 52%,rgba(0,0,0,.82))}
+#ss .ssi::after{content:"";position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,.5),rgba(0,0,0,.32) 30%,rgba(0,0,0,.36) 52%,rgba(0,0,0,.9))}
 #ss .blk{position:absolute;bottom:92px;transition:opacity .6s ease}
 #ss .clk{font-size:150px;font-weight:300;line-height:1;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
 #ss .dt{margin-top:16px;font-size:26px;color:var(--fg2);display:flex;gap:18px;align-items:center}
@@ -363,19 +369,27 @@ function lay2(){
   if(S.sv==="b")x=960-(s*(W0+G0)+W1/2);
   else if(S.sv==="a"){x=96-s*(W0+G0);x=Math.max(Math.min(96,1824-total),x)}
   else{x=(W0+G0)*(1-s);x=Math.max(Math.min(0,1272-total),Math.min(0,x))}
-  document.getElementById("items").style.transform=`translateX(${x}px)`;
+  document.getElementById("items").style.transform=`translateX(${x}px)`;S.railX=x;
   if(S.sv==="c")standShow(s);
 }
-/* C: the stand swaps its case with a short slide in the direction of travel; a newer swap cuts an older one short */
-let standPrev=-1;
-function standShow(s){const st=document.getElementById("stand");if(!st)return;const L=list(),g=L[s];
-  const dir=standPrev<0?0:Math.sign(s-standPrev);if(s===standPrev)return;standPrev=s;
+/* C: the selected case is taken off the shelf onto the stand, leaving its slot empty; the next one comes out
+   of its own slot while the previous one goes back into its place. A newer move finishes an older one at once. */
+let standPrev=-1,standFx=[];
+const slotXY=i=>{const[W0,G0]=SV.c;return[552+S.railX+i*(W0+G0)-96,1200-64-300-536]};
+function standShow(s){const st=document.getElementById("stand");if(!st)return;
+  standFx.splice(0).forEach(a=>a.finish());
+  const prev=standPrev;if(s===prev)return;standPrev=s;
+  const L=list(),g=L[s],items=[...document.querySelectorAll("#items .it")];
+  items.forEach((el,i)=>el.classList.toggle("hole",i===s));
+  const old=st.querySelector(".wrap");
   const el=document.createElement("div");el.className="wrap sel";el.style.cssText=g?cvars(g):"--a:#555";el.innerHTML=g?caseInner(g):allInner(L.length);
-  [...st.children].forEach(o=>{if(o._out){o.remove();return}o._out=true;
-    if(!dir){o.remove();return}
-    o.animate([{opacity:1,transform:"none"},{opacity:0,transform:`translateX(${-dir*48}px) scale(.97)`}],{duration:240,easing:"ease-in",fill:"forwards"}).finished.then(()=>o.remove(),()=>{})});
   st.appendChild(el);
-  if(dir)el.animate([{opacity:0,transform:`translateX(${dir*48}px) scale(.97)`},{opacity:1,transform:"none"}],{duration:420,easing:"cubic-bezier(.165,.84,.44,1)"});
+  if(prev<0){old&&old.remove();return}
+  const ez="cubic-bezier(.165,.84,.44,1)",[ax,ay]=slotXY(s);
+  standFx.push(el.animate([{transform:`translate(${ax}px,${ay}px) scale(.5)`},{transform:"translate(0,-24px) scale(1.02)",offset:.55},{transform:"none"}],{duration:520,easing:ez}));
+  if(old){const[bx_,by]=slotXY(prev),slot=items[prev];slot&&slot.classList.add("ret");
+    const a=old.animate([{transform:"none"},{transform:`translate(${bx_}px,${by}px) scale(.5)`}],{duration:520,easing:ez,fill:"forwards"});
+    const done=()=>{old.remove();slot&&slot.classList.remove("ret")};a.finished.then(done,done);standFx.push(a)}
 }
 /* ---------- C3: stack ---------- */
 const ST={scaleFactor:.08,minScale:.2,maxStackSize:6,spacingFactor:.2,perspectiveRatio:.15,popAngle:Math.PI/10,popW:-1.45,popH:.3,topAlphaSpeed:.1,bottomAlphaSpeed:10,posX:1,posY:0};
@@ -406,7 +420,7 @@ const COLS=5;const CW=(1728-(COLS-1)*32)/COLS+32,RW=424;
 function catPage(){const L=list(),Rc=recent();
   /* recent: loose cartridges (taken out of their cases); the label carries the wide art */
   const card=(g,i)=>`<button class="rcard ga" data-z="r" data-i="${i}" aria-label="${esc(g.t)}" style="${cvars(g)}"><div class="cgw f"><div class="cg">
-      <i class="grip"></i><i class="lab" style="background-image:url('${g.h}');background-position:${g.fx*100}% 30%"><i></i></i><i class="stripe"></i><i class="pins"></i><i class="gl"></i><i class="sh"></i>
+      <i class="band"></i><i class="grip"></i><i class="lab" style="background-image:url('${g.h}');background-position:${g.fx*100}% 30%"><i></i></i><i class="stripe"></i><i class="pins"></i><i class="gl"></i><i class="sh"></i>
     </div></div><div class="cap" style="font-weight:600">${esc(g.t)}</div><div class="cap2">${esc(rel(g))} · ${pt(g.m)}</div></button>`;
   /* the grid: closed cases, same paint as the home shelf */
   const cov=(g,i)=>`<button class="ga" data-z="g" data-i="${i}" aria-label="${esc(g.t)}"><div class="gc f" style="${cvars(g)}">${caseInner(g)}</div><div class="cap">${esc(g.t)}</div><div class="cap2">${esc(g.d==null?dy(g):rel(g)+" · "+pt(g.m))}</div></button>`;
@@ -423,7 +437,10 @@ let bgTok=0;
 function setBg(g){const a=document.querySelector(".bgw .b0"),b=document.querySelector(".bgw .b1");if(!a)return;
   const cur=+a.style.opacity===0?b:a,nx=cur===a?b:a;
   if(cur.getAttribute("src")===g.h)return;const tok=++bgTok;const im=new Image();
-  im.onload=im.onerror=()=>{if(tok!==bgTok)return;nx.src=g.h;nx.style.objectPosition=`${g.fx*100}% 30%`;nx.style.opacity=1;cur.style.opacity=0};im.src=g.h}
+  im.onload=im.onerror=()=>{if(tok!==bgTok)return;nx.src=g.h;nx.style.objectPosition=`${g.fx*100}% 30%`;drift(nx,tok);nx.style.opacity=1;cur.style.opacity=0};im.src=g.h}
+/* same slow pan as the screensaver: 1.04 -> 1.10 with a small sideways drift, back and forth */
+function drift(img,k){img.getAnimations().forEach(a=>a.cancel());const d=k%2?1:-1;
+  img.animate([{transform:`scale(1.04) translateX(${d*1.2}%)`},{transform:`scale(1.1) translateX(${-d*1.2}%) translateY(-1%)`}],{duration:24000,iterations:Infinity,direction:"alternate",easing:"ease-in-out"})}
 function paintInfo(){const L=list(),g=L[S.idx];
   const t=document.getElementById("t"),m=document.getElementById("m");if(!t)return;
   if(g){S.spot=g.id;t.textContent=g.t;m.textContent=metaFull(g);setBg(g)}
