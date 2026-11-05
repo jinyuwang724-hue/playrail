@@ -559,6 +559,7 @@ public static class Bench
                 case "reclook" or "recstack": await RecLookAsync(s, state == "recstack"); break;
                 case "reclaunch": await RecLaunchAsync(s); break;
                 case "reccases": await s.RecCasesAsync(); break;
+                case "recstatus": await s.RecStatusAsync(); break;
                 case "gstest": s.DemoGameSessionProbe(); break;
                 case "npattach": s.DemoAttachRunningGame(); break;
                 case "recplaying": await RecPlayingAsync(s); break;

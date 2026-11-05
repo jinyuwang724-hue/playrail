@@ -10,6 +10,36 @@ public sealed partial class WallStage
     /// <summary>录屏时插卡不真的启动游戏：插到底只放启动画面。</summary>
     private bool _csDemo;
 
+    /// <summary>--state=recstatus：原分辨率静帧核对顶栏 / 状态栏 / 竖条 / 快捷面板的对齐（中英混排基线、电池和数字等高）。</summary>
+    internal async Task RecStatusAsync()
+    {
+        await Task.Delay(2500);
+        var style = _prefs.Home;
+        async Task Still(string name)
+        {
+            await Task.Delay(1200);
+            var r = new FrameRecorder { Full = true };
+            if (!r.Start(HostWindow)) return;
+            await Task.Delay(400);
+            int n = await r.StopAndSaveAsync(Path.Combine(App.CacheDir, "rec", "status-" + name), System.Diagnostics.Stopwatch.GetTimestamp());
+            Log.Info($"recstatus {name}: {n} frames");
+        }
+        void Style(HomeStyle s) { SaveUi(_prefs with { Home = s }); CsMorphStyle(); }
+        try
+        {
+            if (_cs != null && _prefs.Home != HomeStyle.Shelf) Style(HomeStyle.Shelf);
+            await Still("shelf");
+            if (_cs != null) { SwitchTab(1); await Still("all"); Back(); }
+            if (_cs != null) { Style(HomeStyle.Wall); await Still("wall"); }
+            ToggleControlCenter(); await Still("cc"); ToggleControlCenter();
+            await Task.Delay(800);
+            OpenQuickPanel(0); await Still("quick"); CloseQuickPanel(hideWindow: false, instant: true);
+        }
+        catch (Exception ex) { Log.Error("recstatus", ex); }
+        if (_cs != null) { SaveUi(_prefs with { Home = style }); CsMorphStyle(); }
+        Log.Info("reccases done");
+    }
+
     internal async Task RecCasesAsync()
     {
         if (_cs == null) { Log.Warn("reccases: cases view off"); return; }

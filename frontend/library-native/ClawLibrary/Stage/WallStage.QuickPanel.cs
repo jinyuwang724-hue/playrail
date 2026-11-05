@@ -646,12 +646,14 @@ public sealed partial class WallStage
         var bat = SystemInfo.Battery();
         if (bat.HasBattery)
         {
-            float bx = QsW - QbPad - 28, by = sy - 6;
-            ds.DrawRectangle(bx + 0.75f, by + 0.75f, 24.5f, 10.5f, fg2, 1.5f);
-            ds.FillRectangle(bx + 26, by + 3, 2, 6, fg2);
-            ds.FillRectangle(bx + 3, by + 3, 20 * Math.Clamp(bat.Percent, 0, 100) / 100f, 6, bat.Charging ? QbAcc : fg2);
+            // 电池和百分比数字一样高、居中在数字中线上（照 Windows 任务栏），电池在右、数字在左
             using var pl = TextKit.Layout(ds, $"{bat.Percent}%", TextKit.Num(500), 15, 80, CanvasHorizontalAlignment.Left);
-            ds.DrawTextLayout(pl, bx - 10 - (float)pl.LayoutBounds.Width - (float)pl.LayoutBounds.X, sy - (float)pl.LayoutBounds.Height / 2 - (float)pl.LayoutBounds.Y, fg2);
+            var (baseL, cap) = TextInk.Metrics(ds, TextKit.Num(500), 15, "0", "0");
+            float battW = MathF.Round(cap * 1.9f) + MathF.Max(1.2f, cap * 0.09f) * 0.5f + MathF.Max(1.5f, cap * 0.11f);
+            float textY = sy - (float)pl.LayoutBounds.Height / 2 - (float)pl.LayoutBounds.Y, baseY = textY + baseL;
+            float bx = QsW - QbPad - battW;
+            BatteryGlyph.Draw(ds, bx, baseY - cap, cap, fg2, bat, QbAcc, Gfx.Rgba(0xef, 0x44, 0x44));
+            ds.DrawTextLayout(pl, bx - 6 - (float)pl.LayoutBounds.Width - (float)pl.LayoutBounds.X, textY, fg2);
         }
 
         for (int i = 0; i < _qsItems.Count; i++) QsDrawCell(ds, _qsItems[i], i == _qsFocus);

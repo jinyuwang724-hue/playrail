@@ -244,7 +244,7 @@ public sealed partial class WallStage
     // 顶栏和控制中心同一套尺寸：控制中心按 1280×800 设计、放大 1.5 倍到 1920×1200（CcBoost），这里直接用 1920 坐标，
     // 所以数值是控制中心的 1.5 倍——标签 = 标题字号 24 → 36，状态栏同字号常规字重、图标 22 → 33，上沿 32 → 48。
     // 和控制中心一样只随屏幕缩放、不随系统缩放（150% / 175% 下物理大小相同）。
-    private const float HdTop = 48, HdFont = 36, HdCount = 24, HdIcon = 33, HdGap = 48, HdLine = 54;
+    private const float HdTop = 48, HdFont = 36, HdCount = 24, HdIcon = 33, HdGap = 48, HdLine = 54, HdBaseline = 40, HdMid = 27;
 
     private void CsPaintTabs(bool animate)
     {
@@ -261,13 +261,15 @@ public sealed partial class WallStage
             float w = MathF.Ceiling(lw + (cw > 0 ? 10 + cw : 0)) + 2;
             var v = CsSprite(w, HdLine, ds =>
             {
+                // 「Steam」是 SF Pro、「首页」是苹方：两套字体的行框和基线都不一样，中文字形还比拉丁基线低一截。
+                // 标签按实际字形的垂直中心对齐到同一条中线（看起来一样高）；数量的数字底边对齐到拉丁大写字母底边那条线。
                 using var l = TextKit.Layout(ds, label, TextKit.Ui(600), HdFont, w, CanvasHorizontalAlignment.Left);
-                ds.DrawTextLayout(l, 0, 0, Gfx.Rgba(242, 242, 242));
+                var ink = l.DrawBounds;
+                float cap = TextInk.Metrics(ds, TextKit.Ui(600), HdFont, "H").Cap;
+                ds.DrawTextLayout(l, 0, HdMid - (float)(ink.Y + ink.Height / 2), Gfx.Rgba(242, 242, 242));
                 if (count.Length == 0) return;
                 using var c = TextKit.Layout(ds, count, TextKit.Num(400), HdCount, w, CanvasHorizontalAlignment.Left);
-                // 数量和标签同一条基线
-                float baseL = (float)(l.LayoutBounds.Y + l.LayoutBounds.Height), baseC = (float)(c.LayoutBounds.Y + c.LayoutBounds.Height);
-                ds.DrawTextLayout(c, lw + 10, baseL - baseC - 2, Gfx.Rgba(242, 242, 242, 0.57));
+                ds.DrawTextLayout(c, lw + 10, HdMid + cap / 2 - TextInk.Metrics(ds, TextKit.Num(400), HdCount, count, "0").Baseline, Gfx.Rgba(242, 242, 242, 0.57));
             });
             v.Offset = new Vector3(x, HdTop, 0);
             v.Opacity = tab == _cs.Tab ? 1 : 0.6f;
@@ -294,11 +296,33 @@ public sealed partial class WallStage
         foreach (var tab in _cs.Tabs) tab.V.StartAnimation("Opacity", CsS(tab.Tab == _cs.Tab ? 1 : 0.6f, CsMs(220), CsQuart));
     }
 
+    private bool _csNetBusy;
+    private long _csNetRead = -1_000_000;   // 不能用 long.MinValue：NowMs - MinValue 会溢出成负数，永远不读
+
+    /// <summary>网络状态自己在后台读（不等控制中心的蓝牙查询），10 s 一次，变了才重画状态栏。</summary>
+    private void CsReadNet()
+    {
+        if (_csNetBusy || NowMs - _csNetRead < 10_000) return;
+        _csNetBusy = true;
+        _csNetRead = NowMs;
+        _ = Task.Run(() =>
+        {
+            SystemInfo.NetState net = default;
+            try { net = SystemInfo.Network(); } catch (Exception ex) { Log.Warn($"cases net: {ex.Message}"); }
+            _dq.TryEnqueue(() =>
+            {
+                _csNetBusy = false;
+                _ccNet = net;
+                if (_cs != null && !net.Equals(_csNetPainted)) CsPaintStatus();
+            });
+        });
+    }
+
     /// <summary>右上角：和控制中心的状态栏同一套（网络、电池 + 电量、时间），同字号、同基线、常规字重。</summary>
     private void CsPaintStatus()
     {
         if (_cs == null) return;
-        CcReadSystem();
+        CsReadNet();
         _csNetPainted = _ccNet;
         var bat = _railModel.Battery;
         var texts = new List<string>();
@@ -307,32 +331,28 @@ public sealed partial class WallStage
         var layouts = texts.Select(t => TextKit.Layout(G.Device, t, TextKit.Ui(400), HdFont, 1000, CanvasHorizontalAlignment.Left)).ToList();
         try
         {
-            int icons = bat.HasBattery ? 2 : 1;
-            const float gap = 39, pctGap = 9;
-            float w = icons * HdIcon + (icons - 1) * gap;
+            // 数字的实际高度和基线：电池外框和数字一样高、垂直居中（照 Windows 任务栏），网络图标也对齐数字中线
+            var (baseL, cap) = TextInk.Metrics(G.Device, TextKit.Ui(400), HdFont, "0", "0");
+            float battW = bat.HasBattery ? MathF.Round(cap * 1.9f) + MathF.Max(1.2f, cap * 0.09f) * 0.5f + MathF.Max(1.5f, cap * 0.11f) : 0;
+            const float gap = 39, pctGap = 10;
+            float w = HdIcon + (bat.HasBattery ? gap + battW : 0);
             for (int i = 0; i < layouts.Count; i++) w += (i == 0 && bat.HasBattery ? pctGap : gap) + (float)layouts[i].LayoutBounds.Width;
             w = MathF.Ceiling(w) + 2;
-            var lb = layouts[^1].LayoutBounds;
             CsRepaint(_cs.Status, w, HdLine, ds =>
             {
-                float x = 0, iy = (float)(lb.Y + lb.Height / 2) - HdIcon / 2;
+                var ink = Gfx.WithAlpha(CcText, 0.9);
+                float mid = HdBaseline - cap / 2, x = 0;
                 var t0 = ds.Transform;
-                ds.Transform = Matrix3x2.CreateScale(HdIcon / CcIcon) * Matrix3x2.CreateTranslation(x, iy) * t0;
-                CcIconNet(ds, Gfx.WithAlpha(CcText, 0.9));
-                x += HdIcon + gap;
-                if (bat.HasBattery)
-                {
-                    ds.Transform = Matrix3x2.CreateScale(HdIcon / CcIcon) * Matrix3x2.CreateTranslation(x, iy) * t0;
-                    CcIconBattery(ds, Gfx.WithAlpha(CcText, 0.9), bat);
-                    x += HdIcon;
-                }
-                else x -= gap;
+                ds.Transform = Matrix3x2.CreateScale(HdIcon / CcIcon) * Matrix3x2.CreateTranslation(x, mid - HdIcon / 2 - HdIcon * 0.08f) * t0;
+                CcIconNet(ds, ink);
                 ds.Transform = t0;
+                x += HdIcon;
+                if (bat.HasBattery) { x += gap; x += BatteryGlyph.Draw(ds, x, HdBaseline - cap, cap, ink, bat, Theme.ChargingGreen, Gfx.Rgba(0xef, 0x44, 0x44)); }
                 for (int i = 0; i < layouts.Count; i++)
                 {
                     x += i == 0 && bat.HasBattery ? pctGap : gap;
                     var b = layouts[i].LayoutBounds;
-                    ds.DrawTextLayout(layouts[i], x - (float)b.X, 0, Gfx.WithAlpha(CcText, 0.9));
+                    ds.DrawTextLayout(layouts[i], x - (float)b.X, HdBaseline - baseL, ink);
                     x += (float)b.Width;
                 }
             });
@@ -361,7 +381,9 @@ public sealed partial class WallStage
         double ms = CsMs(220);
         if (page.Style == HomeStyle.Wall && page.Tab == 0)
         {
-            // 回到海报墙：墙马上在下面亮出来，上面的页面整层淡掉
+            // 回到海报墙：墙马上在下面亮出来，上面的页面整层淡掉。墙有自己的竖条（页签、时间、电量），
+            // 顶栏叠上去会和竖条打架、页签也重复，所以顶栏跟着淡出；LB / RB 照样切到全部 / Steam / 本地，那边顶栏再回来
+            _cs.Header.StartAnimation("Opacity", CsS(0, CsMs(220), CsQuart));
             _csWallShown = true;
             CsWallVisuals();
             if (old != null)
@@ -385,6 +407,7 @@ public sealed partial class WallStage
             CsNoteSpot();
             return;
         }
+        if (_csInsert == null) _cs.Header.StartAnimation("Opacity", CsS(1, CsMs(220), CsQuart));
         if (old != null)
         {
             // 旧页面：内容滑走、淡出；背景留在下面，等新页面的背景整层淡进来盖住再拆（不会先暗一下）
@@ -402,18 +425,15 @@ public sealed partial class WallStage
         CsNoteSpot();
     }
 
-    /// <summary>海报墙作为首页：卡盒版这一页只有顶栏后面的一层渐暗（标签压在墙上也看得清），其余都是下面的墙。</summary>
+    /// <summary>海报墙作为首页：卡盒版这一页是空的，看到的全是下面的墙（顶栏也藏起来，见 CsShowTab）。</summary>
     private CsPage CsBuildWallPage()
     {
         var root = G.Container(relative: false);
         root.Size = new Vector2(CsW, CsH);
         var bg = G.Container(relative: false);
         var content = G.Container(relative: false);
-        var scrim = G.Sprite(G.LinearGradient(180, CsW, 240, (0, Gfx.Rgba(0x0f, 0x0f, 0x10, 0.7)), (1, Gfx.Rgba(0x0f, 0x0f, 0x10, 0))), relative: false);
-        scrim.Size = new Vector2(CsW, 240);
         root.Children.InsertAtTop(bg);
         root.Children.InsertAtTop(content);
-        content.Children.InsertAtTop(scrim);
         var page = new CsPage { Root = root, Bg = bg, Content = content, Tab = 0, Style = HomeStyle.Wall, Items = CsList(0), Built = NowMs, BgReady = true };
         return page;
     }
@@ -1551,7 +1571,7 @@ public sealed partial class WallStage
     /// <summary>顶栏的标签（海报墙首页也能点）。点中了返回 true。</summary>
     private bool CsHeaderClick(double sx, double sy)
     {
-        if (_cs == null || _csInsert != null) return false;
+        if (_cs == null || _csInsert != null || CsWallHome) return false;
         var (x, y) = CsLocal(sx, sy);
         if (y < HdTop - 16 || y > HdTop + HdLine + 20) return false;
         foreach (var t in _cs.Tabs)

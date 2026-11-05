@@ -225,10 +225,6 @@ public sealed partial class WallStage
         if (!force && key == _ccStatusDrawn) return;
         _ccStatusDrawn = key;
 
-        var icons = new List<Action<CanvasDrawingSession, Color>>();
-        icons.Add((ds, c) => CcIconNet(ds, c));
-        if (bat.HasBattery) icons.Add((ds, c) => CcIconBattery(ds, c, bat));
-
         const float font = 24, icon = 22, iconGap = 26, groupGap = 26, pctGap = 6;
         var spec = TextKit.Ui(400);   // 和标题同字号、同基线，但用常规字重：右上只是状态，不跟标题抢分量
         var texts = new List<string>();
@@ -239,23 +235,24 @@ public sealed partial class WallStage
         {
             var lb = layouts[^1].LayoutBounds;
             float H = (float)lb.Height + 4, top = -(float)lb.Y;   // 和标题一样：精灵高 = 字高 + 4，字画在 -bb.Y
-            float iconsW = icons.Count * icon + (icons.Count - 1) * iconGap;
-            float W = iconsW;
+            // 电池和百分比数字一样高、居中在数字中线上（照 Windows 任务栏）；网络图标也对齐这条中线
+            var (baseL, cap) = TextInk.Metrics(G.Device, spec, font, "0", "0");
+            float baseY = top + baseL;
+            float battW = bat.HasBattery ? MathF.Round(cap * 1.9f) + MathF.Max(1.2f, cap * 0.09f) * 0.5f + MathF.Max(1.5f, cap * 0.11f) : 0;
+            float W = icon + (bat.HasBattery ? iconGap + battW : 0);
             for (int i = 0; i < layouts.Count; i++) W += (i == 0 && bat.HasBattery ? pctGap : groupGap) + (float)layouts[i].LayoutBounds.Width;
             W += 2;
             float raster = _ccK * Chrome.Dpi;
             CcSet(_ccStatus, CcDraw(W, H, raster, ds =>
             {
-                float x = 0, iy = (H - 4) / 2 - icon / 2 + 1;
+                float x = 0, iy = baseY - cap / 2 - icon / 2 - icon * 0.08f;
+                var ink = Gfx.WithAlpha(CcText, 0.9);
                 var t0 = ds.Transform;
-                foreach (var draw in icons)
-                {
-                    ds.Transform = Matrix3x2.CreateScale(icon / CcIcon) * Matrix3x2.CreateTranslation(x, iy) * t0;
-                    draw(ds, Gfx.WithAlpha(CcText, 0.9));
-                    x += icon + iconGap;
-                }
+                ds.Transform = Matrix3x2.CreateScale(icon / CcIcon) * Matrix3x2.CreateTranslation(x, iy) * t0;
+                CcIconNet(ds, ink);
                 ds.Transform = t0;
-                x -= iconGap;
+                x += icon;
+                if (bat.HasBattery) { x += iconGap; x += BatteryGlyph.Draw(ds, x, baseY - cap, cap, ink, bat, Theme.ChargingGreen, Gfx.Rgba(0xef, 0x44, 0x44)); }
                 for (int i = 0; i < layouts.Count; i++)
                 {
                     x += i == 0 && bat.HasBattery ? pctGap : groupGap;
@@ -318,30 +315,6 @@ public sealed partial class WallStage
         pb.EndFigure(CanvasFigureLoop.Open);
         using var g = CanvasGeometry.CreatePath(pb);
         ds.DrawGeometry(g, c, CcIconStroke, CcRound);
-    }
-
-    /// <summary>电池：圆角外框 + 正极小头 + 按电量填充（低于 15 % 且没在充电时填红色），充电时中间一道闪电。</summary>
-    private static void CcIconBattery(CanvasDrawingSession ds, Color c, BatteryState bat)
-    {
-        bool plug = bat.Charging || bat.OnAc;
-        if (plug) c = Theme.ChargingGreen;
-        ds.DrawRoundedRectangle(1, 5, 14.2f, 8.4f, 2.4f, 2.4f, c, CcIconStroke);
-        ds.FillRoundedRectangle(16, 7.6f, 1.6f, 3.2f, 0.8f, 0.8f, c);
-        float full = 14.2f - 3.6f, w = MathF.Max(1.2f, full * Math.Clamp(bat.Percent, 0, 100) / 100f);
-        var fill = !plug && bat.Percent < 15 ? Gfx.Rgba(0xef, 0x44, 0x44) : c;
-        ds.FillRoundedRectangle(2.8f, 6.8f, w, 4.8f, 1.2f, 1.2f, fill);
-        if (!plug) return;
-        using var pb = new CanvasPathBuilder(ds);
-        pb.BeginFigure(9.3f, 5.6f);
-        pb.AddLine(6.2f, 9.6f);
-        pb.AddLine(8.3f, 9.6f);
-        pb.AddLine(7.4f, 12.8f);
-        pb.AddLine(10.6f, 8.6f);
-        pb.AddLine(8.5f, 8.6f);
-        pb.EndFigure(CanvasFigureLoop.Closed);
-        using var g = CanvasGeometry.CreatePath(pb);
-        ds.FillGeometry(g, Microsoft.UI.Colors.White);
-        ds.DrawGeometry(g, Microsoft.UI.Colors.White, 0.6f);
     }
 
     // ---------------- 开 / 关 / 每秒刷新 ----------------

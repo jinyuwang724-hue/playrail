@@ -1,4 +1,4 @@
-﻿// 中间的竖条（首页窄缝，120 px）：参照 folia 首页窄缝的排法（自己实现），并按需求加了系统信息与快捷入口。
+// 中间的竖条（首页窄缝，120 px）：参照 folia 首页窄缝的排法（自己实现），并按需求加了系统信息与快捷入口。
 // 从上到下：导航区（竖排页签、分隔线、合集直达入口）→ 账户（头像在上、用户名在下）
 // → 工具列（搜索、添加游戏、设置、Steam 竖着排）→ 时间、电池各一行。搜索打开时整条缝换成搜索面板（Chrome.SeamSearch）。导航区是唯一可伸缩的一段：放不下全名时页签缩成一个字，再放不下就在里面滚，
 // 保证焦点那一项露出来。设置打开时导航区换成设置列表。
@@ -200,11 +200,15 @@ public sealed class Rail
         ds.DrawTextLayout(time, cx - (float)tb.Width / 2 - (float)tb.X, statusY - (float)tb.Y, Gfx.WithAlpha(Theme.Ink, 0.92));
         if (pct != null)
         {
+            // 电池和百分比数字一样高、居中在数字中线上（照 Windows 任务栏）
             var pb = pct.LayoutBounds;
-            float rowW = 22 + 5 + (float)pb.Width;
+            var (baseL, cap) = TextInk.Metrics(ds, TextKit.Ui(600), 11, "0", "0");
+            float battW = MathF.Round(cap * 1.9f) + MathF.Max(1.2f, cap * 0.09f) * 0.5f + MathF.Max(1.5f, cap * 0.11f);
+            float rowW = battW + 4 + (float)pb.Width;
             float bx = cx - rowW / 2, rowY = statusY + timeH + 5;
-            DrawBattery(ds, bx, rowY + battRowH / 2 - 5, m.Battery);
-            ds.DrawTextLayout(pct, bx + 27 - (float)pb.X, rowY + battRowH / 2 - (float)pb.Height / 2 - (float)pb.Y, Theme.SeamInkSoft);
+            float textY = rowY + battRowH / 2 - (float)pb.Height / 2 - (float)pb.Y, baseY = textY + baseL;
+            BatteryGlyph.Draw(ds, bx, baseY - cap, cap, Theme.SeamInkSoft, m.Battery, Theme.ChargingGreen, Gfx.Rgba(0xfd, 0x5c, 0x47));
+            ds.DrawTextLayout(pct, bx + battW + 4 - (float)pb.X, textY, Theme.SeamInkSoft);
         }
 
         // 焦点高亮画在最上面（导航区之外的几项）
@@ -223,21 +227,6 @@ public sealed class Rail
 
     private void Add(RailKind kind, int index, Rect r, int row = -1) =>
         Items.Add(new RailItem { Kind = kind, Index = index, Bounds = r, Row = row });
-
-    private void DrawBattery(CanvasDrawingSession ds, float x, float y, BatteryState b)
-    {
-        bool plug = b.Charging || b.OnAc;
-        var outline = plug ? Theme.ChargingGreen : Theme.SeamInkSoft;
-        ds.DrawRoundedRectangle(new Rect(x + 0.5, y + 0.5, 19, 9), 2.5f, 2.5f, outline, 1);
-        ds.FillRoundedRectangle(new Rect(x + 20.5, y + 3, 1.5, 4), 0.75f, 0.75f, outline);
-        float fill = 16 * Math.Clamp(b.Percent, 0, 100) / 100f;
-        var color = plug ? Theme.ChargingGreen : b.Percent <= 15 ? Gfx.Rgba(0xfd, 0x5c, 0x47) : Theme.Ink;
-        ds.FillRoundedRectangle(new Rect(x + 2, y + 2, Math.Max(1, fill), 6), 1.2f, 1.2f, color);
-        if (plug)
-        {
-            LineIcons.Draw(ds, "", x + 10, y + 5, 9, Colors.White, fill: true);
-        }
-    }
 
     private void DrawAvatar(CanvasDrawingSession ds, RailModel m, Rect r)
     {
