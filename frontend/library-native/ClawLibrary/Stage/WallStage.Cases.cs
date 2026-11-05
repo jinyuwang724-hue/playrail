@@ -54,7 +54,6 @@ public sealed partial class WallStage
         public float GridTop;
         // 展台
         public CsCase? StandCase, StandLeaving;
-        public SpriteVisual? Hole;
         public float RailX;
         public Action? StandFinish;
         public long Built;
@@ -79,6 +78,8 @@ public sealed partial class WallStage
     private readonly HashSet<string> _csFav = new();
 
     private const float CsW = 1920, CsH = 1200;
+    /// <summary>页边距：和控制中心、设置、性能、系统、显示页一样（它们按 1280 宽设计、左右各 40，换到 1920 宽是 60）。</summary>
+    private const float CsEdge = 60;
     private static readonly Bezier CsQuart = new(.165f, .84f, .44f, 1f);
     private float CsK => (float)Math.Min(View.Width / CsW, View.Height / CsH);
     private float CsRaster => CsK * Chrome.Dpi;
@@ -98,7 +99,7 @@ public sealed partial class WallStage
     // 分类页（规格 4）
     private const int GridCols = 5;
     private const float GridGapX = 32, GridGapY = 48, CatTop = 140;
-    private static float GridW => (CsW - 192 - (GridCols - 1) * GridGapX) / GridCols;
+    private static float GridW => (CsW - 2 * CsEdge - (GridCols - 1) * GridGapX) / GridCols;
     private static float GridH => GridW * 1.5f;
     private static float GridPitch => GridH + 12 + CapH + GridGapY;
     private const float CapH = 70;
@@ -258,7 +259,7 @@ public sealed partial class WallStage
         if (_cs == null) return;
         foreach (var t in _cs.Tabs) { _cs.Header.Children.Remove(t.V); t.V.Dispose(); }
         _cs.Tabs.Clear();
-        float x = 96;
+        float x = CsEdge;
         foreach (int tab in CsTabsShown())
         {
             string label = CsTabNames[tab], count = tab == 0 ? "" : CsList(tab).Count.ToString();
@@ -363,7 +364,7 @@ public sealed partial class WallStage
                     x += (float)b.Width;
                 }
             });
-            _cs.Status.Offset = new Vector3(CsW - 96 - w, HdTop, 0);
+            _cs.Status.Offset = new Vector3(CsW - CsEdge - w, HdTop, 0);
         }
         finally { foreach (var l in layouts) l.Dispose(); }
     }
@@ -816,9 +817,9 @@ public sealed partial class WallStage
 
     private static float ShelfRailX(int s, int n)
     {
-        // 选中的停在最左（x = 96）；到尾巴时整排夹住，不留右边的空
+        // 选中的停在最左（页边距）；到尾巴时整排夹住，不留右边的空
         float total = n * (ShW0 + ShGap) - ShGap + (ShW1 - ShW0);
-        return Math.Max(Math.Min(96, CsW - 96 - total), 96 - s * (ShW0 + ShGap));
+        return Math.Max(Math.Min(CsEdge, CsW - CsEdge - total), CsEdge - s * (ShW0 + ShGap));
     }
 
     private static (Vector3 Off, Vector2 Size) ShelfRect(int i, int s, int n)
@@ -837,7 +838,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>
-    /// 展架：选中的卡盒 308×462，其余 228×342，间距 28，底边距 64；选中的停在最左（x = 96）。
+    /// 展架 A：卡盒 260×390，间距 32，底边距 64；选中的上抬 16，停在最左（页边距）。
     /// 宽高和平移 550 ms quart-out，从此刻的值接着走（可打断）。分组标签在每组第一盒下方（08:30 修订），选中的也显示。
     /// </summary>
     private void CsLayoutShelf(CsPage p, bool animate, bool entry = false)
@@ -1059,8 +1060,8 @@ public sealed partial class WallStage
     // 按钮和控制中心底坞一样高（48 → 72），字号跟设置页正文（17 → 26）；meta 同字号。触控目标都 ≥ 72（= 48 epx）
     private const float ActH = 72, ActGap = 16, ActFont = 26, MetaFont = 26, TitleFont = 64, TitleLh = 76, InfoRowGap = 28;
     // 展架（08:30 修订）：信息区在放大卡盒右侧——左边 = 选中卡盒右边 + 40，底边 = 普通卡盒顶 + 30（屏幕底上方 430）
-    // 展架 A：信息区左 96、右 96，按钮底边在 y = 1200 − 526（离上抬的选中卡盒顶 56）
-    private const float ShInfoX = 96, ShInfoBottom = CsH - 526;
+    // 展架 A：信息区左右贴页边距，按钮底边在 y = 1200 − 526（离上抬的选中卡盒顶 56）
+    private const float ShInfoX = CsEdge, ShInfoBottom = CsH - 526;
 
     /// <summary>
     /// 展架：第一行标题（单行省略），第二行 [开始游戏][设置][收藏] 后面接 meta；叠放：标题（最多两行）、meta、按钮各占一行。
@@ -1074,7 +1075,7 @@ public sealed partial class WallStage
         bool stack = p.Style == HomeStyle.Stack;
         float actsW = CsActsWidth(g);
         bool stand = p.Style == HomeStyle.Stand;
-        float w = stack ? 640 : stand ? CsW - 96 - StdInfoX : CsW - 96 - ShInfoX;
+        float w = stack ? 640 : stand ? CsW - CsEdge - StdInfoX : CsW - CsEdge - ShInfoX;
         bool rows = true;   // 标题、meta、按钮各占一行（展架 A 和叠放都是）
         var dev = G.Device;
         float titleH;
@@ -1095,14 +1096,13 @@ public sealed partial class WallStage
         });
         if (stack)
         {
-            float total = h + 30 + ActH;
-            float top = CsH / 2 - total / 2 + 20;
-            target.Offset = new Vector3(96, top, 0);
-            p.ActsAt = new Vector2(96, top + h + 30);
+            // 叠放：左边只留标题和 meta（垂直居中）；按钮行挪到最上面那张牌正下方，左边和牌对齐，间距 28
+            target.Offset = new Vector3(CsEdge, CsH / 2 - h / 2, 0);
+            p.ActsAt = new Vector2(StX, StY + StH + 28);
         }
         else if (stand)
         {
-            // 展台：信息区在大卡盒右边，左 552、顶 536，往下依次是标题、meta、按钮
+            // 展台：信息区在大卡盒右边（大卡盒右边 + 56）、顶 536，往下依次是标题、meta、按钮
             target.Offset = new Vector3(StdInfoX, StdInfoTop, 0);
             p.ActsAt = new Vector2(StdInfoX, StdInfoTop + h + 30);
         }
@@ -1227,10 +1227,10 @@ public sealed partial class WallStage
         if (page.Recent.Count > 0)
         {
             var sec = CsSection("最近", null);
-            sec.Offset = new Vector3(96, y + 16, 0);
+            sec.Offset = new Vector3(CsEdge, y + 16, 0);
             scroll.Children.InsertAtTop(sec);
             var row = G.Container(relative: false);
-            row.Offset = new Vector3(96, y + 86 + 14, 0);
+            row.Offset = new Vector3(CsEdge, y + 86 + 14, 0);
             scroll.Children.InsertAtTop(row);
             page.RecentRow = row;
             for (int i = 0; i < page.Recent.Count; i++)
@@ -1250,7 +1250,7 @@ public sealed partial class WallStage
             y += 86 + 14 + 300 + 12 + CapH + 18 + 44;
         }
         var all = CsSection("全部", items.Count.ToString());
-        all.Offset = new Vector3(96, y + 16 - (page.Recent.Count > 0 ? 44 : 0) + (page.Recent.Count > 0 ? 44 : 0), 0);
+        all.Offset = new Vector3(CsEdge, y + 16 - (page.Recent.Count > 0 ? 44 : 0) + (page.Recent.Count > 0 ? 44 : 0), 0);
         scroll.Children.InsertAtTop(all);
         y += 16 + 46 + 22;
         var grid = G.Container(relative: false);
@@ -1298,7 +1298,7 @@ public sealed partial class WallStage
     private float CsCatContentH(CsPage p) => p.GridTop + (float)Math.Ceiling(p.Items.Count / (double)GridCols) * GridPitch - GridGapY + 120;
 
     /// <summary>网格里第 i 格在滚动层里的位置。</summary>
-    private static Vector3 GridCell(int i) => new(96 + (i % GridCols) * (GridW + GridGapX), (i / GridCols) * GridPitch, 0);
+    private static Vector3 GridCell(int i) => new(CsEdge + (i % GridCols) * (GridW + GridGapX), (i / GridCols) * GridPitch, 0);
 
     /// <summary>可见的几行建出来（滚动目标和此刻位置都覆盖到），远离的拆掉。</summary>
     private void CsCatRealize(CsPage p, float scrollA, float scrollB)
@@ -1359,12 +1359,12 @@ public sealed partial class WallStage
         else p.Scroll!.StartAnimation("Offset", CsV3(new Vector3(0, -target, 0), ms, CsQuart));
         if (p.InRecent && p.RecentRow != null)
         {
-            float l = 96 + p.Ai * 424 - p.RecentX, r = l + 400;
+            float l = CsEdge + p.Ai * 424 - p.RecentX, r = l + 400;
             float rx = p.RecentX;
-            if (l < 96) rx -= 96 - l; else if (r > CsW - 96) rx += r - (CsW - 96);
+            if (l < CsEdge) rx -= CsEdge - l; else if (r > CsW - CsEdge) rx += r - (CsW - CsEdge);
             rx = Math.Max(0, rx);
             p.RecentX = rx;
-            var to = new Vector3(96 - rx, p.RecentRow.Offset.Y, 0);
+            var to = new Vector3(CsEdge - rx, p.RecentRow.Offset.Y, 0);
             if (instant) CsSet(p.RecentRow, offset: to); else p.RecentRow.StartAnimation("Offset", CsV3(to, ms, CsQuart));
             if (p.Carts.TryGetValue(p.Ai, out var cart)) CsFocusCart(cart, true);
         }
@@ -1414,8 +1414,9 @@ public sealed partial class WallStage
     }
 
     /// <summary>
-    /// 叠放（19:20 修订）：牌堆在按钮右边。上 / 下翻牌；牌堆上按左进按钮，先落到最右边那个（收藏），再往左是设置、开始游戏；
-    /// 最右边的按钮上按右、或按钮上按上 / 下，回到牌堆。
+    /// 叠放（11-05 修订，按摆放位置）：牌堆往右叠，← 上一张、→ 下一张（翻过去的牌往左下飞走，← 把它拿回来）。
+    /// 在牌堆上 ← 永远只翻回上一张，绝不进按钮；已经是第一张 / 最后一张时牌堆轻轻顶一下回弹。
+    /// 按钮行在最上面那张牌正下方：牌堆上 ↓ 进按钮（落在「开始游戏」），按钮之间 ← / →，↑ 或 B 回牌堆。牌堆上 ↑ 不做事。
     /// </summary>
     private void CsStackMove(CsPage p, Direction dir)
     {
@@ -1423,32 +1424,50 @@ public sealed partial class WallStage
         int n = g != null ? CsActCount(g) : 0;
         if (!p.Acts)
         {
-            if (dir is Direction.Up or Direction.Down) { CsStep(p, dir == Direction.Up ? -1 : 1); return; }
-            if (dir == Direction.Left && n > 0)
+            if (dir is Direction.Left or Direction.Right)
             {
-                p.Acts = true; p.Act = n - 1;
-                CsPaintActs(p, g, CsActsWidth(g));
-                if (p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(0, CsMs(250), CsQuart));
-                CuePan(-0.4f);
+                int d = dir == Direction.Left ? -1 : 1;
+                int j = p.Sel + d;
+                if (j < 0 || j >= CsCount(p)) { CsStackBounce(p, d); Cue(Sfx.Bump, pan: d < 0 ? -0.6f : 0.6f); return; }
+                CsStep(p, d);
                 return;
             }
-            Cue(Sfx.Bump, pan: dir == Direction.Left ? -0.6f : 0.6f);
+            if (dir == Direction.Down && n > 0)
+            {
+                p.Acts = true; p.Act = 0;
+                CsPaintActs(p, g, CsActsWidth(g));
+                if (p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(0, CsMs(250), CsQuart));
+                return;
+            }
+            Cue(Sfx.None);
             return;
         }
-        if (dir is Direction.Up or Direction.Down || (dir == Direction.Right && p.Act == n - 1))
-        {
-            p.Acts = false;
-            CsPaintActs(p, g, CsActsWidth(g));
-            if (p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(1, CsMs(300), CsQuart));
-            CuePan(0.4f);
-            return;
-        }
+        if (dir == Direction.Up) { CsStackBackToPile(p, g); return; }
+        if (dir == Direction.Down) { Cue(Sfx.Bump); return; }
         int next = p.Act + (dir == Direction.Left ? -1 : 1);
-        if (next < 0) { Cue(Sfx.Bump, pan: -0.6f); return; }
+        if (next < 0 || next >= n) { Cue(Sfx.Bump, pan: dir == Direction.Left ? -0.6f : 0.6f); return; }
         p.Act = next;
         CsPaintActs(p, g, CsActsWidth(g));
     }
 
+    private void CsStackBackToPile(CsPage p, LibraryItem? g)
+    {
+        p.Acts = false;
+        CsPaintActs(p, g, CsActsWidth(g));
+        if (p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(1, CsMs(300), CsQuart));
+    }
+
+    /// <summary>到头了：整个牌堆朝按键方向的反面顶一下再弹回（第一张按 ← 时往右顶）。</summary>
+    private void CsStackBounce(CsPage p, int d)
+    {
+        if (Reduced || p.Row == null) return;
+        var a = G.C.CreateVector3KeyFrameAnimation();
+        a.InsertKeyFrame(0, Vector3.Zero, G.Linear);
+        a.InsertKeyFrame(0.3f, new Vector3(-d * 22, 0, 0), G.Ease(Bezier.EaseOut));
+        a.InsertKeyFrame(1, Vector3.Zero, G.Ease(new Bezier(.34f, 1.56f, .64f, 1)));
+        a.Duration = Gfx.Ms(360);
+        p.Row.StartAnimation("Offset", a);
+    }
     private void CsStep(CsPage p, int d)
     {
         int n = CsCount(p);
@@ -1556,6 +1575,7 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return false;
         if (_csInsert != null) { CsInsertBack(); return true; }
         if (p.Tab != 0) { Cue(Sfx.Tab); CsShowTab(0, -1, entry: true); return true; }
+        if (p.Acts && p.Style == HomeStyle.Stack) { CsStackBackToPile(p, p.Sel < p.Items.Count ? p.Items[p.Sel] : null); return true; }
         if (p.Acts) { CsHomeMove(p, Direction.Down); return true; }
         return false;
     }
@@ -1692,8 +1712,8 @@ public sealed partial class WallStage
         float gy = sy2 - p.GridTop;
         if (gy >= 0)
         {
-            int row = (int)Math.Floor(gy / GridPitch), col = (int)Math.Floor((x - 96) / (GridW + GridGapX));
-            float inCol = (x - 96) - col * (GridW + GridGapX);
+            int row = (int)Math.Floor(gy / GridPitch), col = (int)Math.Floor((x - CsEdge) / (GridW + GridGapX));
+            float inCol = (x - CsEdge) - col * (GridW + GridGapX);
             int i = row * GridCols + col;
             if (col >= 0 && col < GridCols && inCol <= GridW && gy - row * GridPitch <= GridH + 62 && i < p.Items.Count) CsCatTap(p, false, i);
         }
@@ -1721,7 +1741,8 @@ public sealed partial class WallStage
         if (p.Tab == 0)
         {
             bool row = p.Style is HomeStyle.Shelf or HomeStyle.Stand;
-            float d = row ? lx : (_csDragAxis == 1 ? lx : ly);
+            // 叠放：横向拖动翻牌（左拖下一张、右拖上一张）
+            float d = lx;
             float unit = row ? 120 : 90;
             _csDragAcc += d;
             while (Math.Abs(_csDragAcc) > unit)
@@ -1737,9 +1758,9 @@ public sealed partial class WallStage
         bool inRecent = p.RecentRow != null && fy + p.ScrollY >= p.RecentRow.Offset.Y - 12 && fy + p.ScrollY <= p.RecentRow.Offset.Y + 360;
         if (_csDragAxis == 1 && inRecent)
         {
-            float max = Math.Max(0, p.Recent.Count * 424 - 24 - (CsW - 192));
+            float max = Math.Max(0, p.Recent.Count * 424 - 24 - (CsW - 2 * CsEdge));
             p.RecentX = Math.Clamp(p.RecentX - lx, 0, max);
-            CsSet(p.RecentRow!, offset: new Vector3(96 - p.RecentX, p.RecentRow!.Offset.Y, 0));
+            CsSet(p.RecentRow!, offset: new Vector3(CsEdge - p.RecentX, p.RecentRow!.Offset.Y, 0));
         }
         else if (_csDragAxis == 2)
         {

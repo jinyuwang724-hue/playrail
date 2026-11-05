@@ -1,7 +1,7 @@
 // 首页样式「展台」（第三轮原型 C）：左边一个 400×600 的大卡盒站在展台上，右边是信息区和一排 200×300 的小卡盒。
-// 为了不重复：排里选中的那一格变成空槽（浅色凹痕），表示那一盒被拿到展台上了。换游戏时新的一盒从自己的空槽
-// 放大飞上展台（520 ms quart-out，途中上浮 24），旧的一盒缩小飞回自己的位置，落下后那一格才重新显示。
-// 连按时先把上一段直接做完再开始下一段。
+// 为了不重复：被拿上展台的那一盒从排里抽走，后面的往前补（以前留一个空槽，停在原地像卡住的空白封面）。
+// 换游戏时新的一盒从它在排里的位置放大飞上展台（520 ms quart-out，途中上浮 24），旧的一盒缩小飞回排里
+// 让出来的那个位置，落下后才显示。连按时先把上一段直接做完再开始下一段。
 using System.Numerics;
 using ClawLibrary.Engine;
 using Microsoft.UI.Composition;
@@ -10,34 +10,21 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private const float StdX = 96, StdW = 400, StdH = 600, StdY = CsH - 64 - StdH;
-    private const float StdInfoX = 552, StdInfoTop = 536;
-    private const float StdRowX = 552, StdW0 = 200, StdH0 = 300, StdGap = 24, StdRowY = CsH - 64 - StdH0;
+    private const float StdX = CsEdge, StdW = 400, StdH = 600, StdY = CsH - 64 - StdH;
+    private const float StdInfoX = StdX + StdW + 56, StdInfoTop = 536;
+    private const float StdRowX = StdInfoX, StdW0 = 200, StdH0 = 300, StdGap = 24, StdRowY = CsH - 64 - StdH0;
     private const double StdFlyMs = 520;
 
-    private CompositionSurfaceBrush? _csHoleFace;
-
-    /// <summary>选中的空槽前面保留一格；到尾巴时夹住，不留右边的空。</summary>
+    /// <summary>排里前面保留一格（上一款）；到尾巴时夹住，不留右边的空。排里少了展台上那一盒，所以按 n − 1 盒算。</summary>
     private static float StandRailX(int s, int n)
     {
-        float total = n * (StdW0 + StdGap) - StdGap;
+        float total = (n - 1) * (StdW0 + StdGap) - StdGap;
         float x = (StdW0 + StdGap) * (1 - s);
-        return Math.Max(Math.Min(0, CsW - 96 - StdRowX - total), Math.Min(0, x));
+        return Math.Max(Math.Min(0, CsW - CsEdge - StdRowX - total), Math.Min(0, x));
     }
 
-    private static Vector3 StandSlot(int i, float railX) => new(StdRowX + railX + i * (StdW0 + StdGap), StdRowY, 0);
-
-    private CompositionSurfaceBrush CsHoleFace()
-    {
-        // 空槽：白 .05 底、2 px 白 .16 内描边、上沿一道内阴影
-        return _csHoleFace ??= G.C.CreateSurfaceBrush(CcDraw(StdW0, StdH0, 1.5f, ds =>
-        {
-            ds.FillRoundedRectangle(0, 0, StdW0, StdH0, CsRadius, CsRadius, Gfx.Rgba(255, 255, 255, 0.05));
-            using (var sh = CssGradient(ds, 180, 0, 0, StdW0, 40, (0, Gfx.Rgba(0, 0, 0, 0.55)), (1, Gfx.Rgba(0, 0, 0, 0))))
-                ds.FillRoundedRectangle(0, 0, StdW0, 40, CsRadius, CsRadius, sh);
-            ds.DrawRoundedRectangle(1, 1, StdW0 - 2, StdH0 - 2, CsRadius - 1, CsRadius - 1, Gfx.Rgba(255, 255, 255, 0.16), 2);
-        }));
-    }
+    /// <summary>第 i 盒在排里的位置（展台上那一盒 s 不占格，它后面的往前补一格）。</summary>
+    private static Vector3 StandSlot(int i, int s, float railX) => new(StdRowX + railX + (i < s ? i : i - 1) * (StdW0 + StdGap), StdRowY, 0);
 
     private void CsLayoutStand(CsPage p, bool animate, bool entry = false)
     {
@@ -58,12 +45,12 @@ public sealed partial class WallStage
             if (!p.Cases.TryGetValue(i, out var c))
             {
                 c = CsNewCase(i < p.Items.Count ? p.Items[i] : null, i, new Vector2(StdW0, StdH0));
-                c.Root.Offset = StandSlot(i, animate ? prx : rx);
+                c.Root.Offset = StandSlot(i, animate ? p.Prev : s, animate ? prx : rx);
                 c.Dim.Opacity = ShDim;
                 p.Cases[i] = c;
                 p.Row.Children.InsertAtTop(c.Root);
             }
-            var off = StandSlot(i, rx);
+            var off = StandSlot(i, s, rx);
             c.Offset = off; c.Size = new Vector2(StdW0, StdH0);
             if (!animate)
             {
@@ -80,16 +67,7 @@ public sealed partial class WallStage
             }
             else c.Root.StartAnimation("Offset", CsV3(off, ms, CsQuart));
         }
-        // 空槽跟着选中那一格走
-        if (p.Hole == null)
-        {
-            p.Hole = G.Sprite(CsHoleFace(), relative: false);
-            p.Hole.Size = new Vector2(StdW0, StdH0);
-            p.Row.Children.InsertAtBottom(p.Hole);
-            p.Hole.Offset = StandSlot(s, rx);
-        }
-        if (animate) p.Hole.StartAnimation("Offset", CsV3(StandSlot(s, rx), ms, CsQuart));
-        else { p.Hole.StopAnimation("Offset"); p.Hole.Offset = StandSlot(s, rx); }
+        // 展台上那一盒在排里藏起来（不占格）
         if (p.Cases.TryGetValue(s, out var selRow)) { selRow.Root.StopAnimation("Opacity"); selRow.Root.Opacity = 0; }
 
         // 展台上的那一盒（选中没变，比如从按钮回到卡盒排：只改描边）
@@ -126,7 +104,7 @@ public sealed partial class WallStage
         }
         // 新的一盒：从自己的空槽（缩成一半）放大飞上展台，途中上浮 24 再落下
         int prevSel = p.Prev;
-        var from = StandSlot(s, prx);
+        var from = StandSlot(s, p.Prev, prx);
         var ez = G.Ease(CsQuart);
         stand.Root.StopAnimation("Offset");
         stand.Root.Offset = from;
@@ -146,7 +124,7 @@ public sealed partial class WallStage
         // 旧的一盒：缩小飞回自己的位置（排同时在平移，按平移后的位置），落下后那一格再显示
         old.Ring.StartAnimation("Opacity", CsS(0, CsMs(200), CsQuart));
         old.Glow.StartAnimation("Opacity", CsS(0, CsMs(300), CsQuart));
-        var back = StandSlot(prevSel, rx);
+        var back = StandSlot(prevSel, s, rx);
         old.Root.StartAnimation("Offset", CsV3(back, StdFlyMs, CsQuart));
         old.Root.StartAnimation("Scale", CsV3(new Vector3(0.5f, 0.5f, 1), StdFlyMs, CsQuart));
         p.StandLeaving = old;
@@ -174,6 +152,6 @@ public sealed partial class WallStage
         p.StandFinish = null;
         if (p.StandCase != null) { CsDisposeCase(p.StandCase); p.StandCase = null; }
         if (p.StandLeaving != null) { CsDisposeCase(p.StandLeaving); p.StandLeaving = null; }
-        p.Hole?.Dispose();
+
     }
 }

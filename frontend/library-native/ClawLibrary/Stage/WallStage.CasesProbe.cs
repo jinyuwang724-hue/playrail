@@ -96,12 +96,18 @@ public sealed partial class WallStage
         {
             await Step(1400, "style stack", () => { SaveUi(_prefs with { Home = HomeStyle.Stack }); CsMorphStyle(); });
             await Step(1300, "entry", () => CsShowTab(0, 0, entry: true));
-            await Step(800, "down", () => Move(Direction.Down));
-            await Step(800, "down", () => Move(Direction.Down));
-            await Step(120, "up", () => Move(Direction.Up));
-            await Step(1000, "up", () => Move(Direction.Up));
-            for (int i = 0; i < 3; i++) await Step(450, "left (buttons)", () => Move(Direction.Left));
-            for (int i = 0; i < 3; i++) await Step(450, "right (buttons)", () => Move(Direction.Right));
+            // 叠放（11-05）：→ 下一张、← 上一张，第一张再按 ← 回弹；↓ 进按钮，按钮间 ← →，↑ 回牌堆
+            await Step(800, "right", () => Move(Direction.Right));
+            await Step(800, "right", () => Move(Direction.Right));
+            await Step(120, "left", () => Move(Direction.Left));
+            await Step(900, "left", () => Move(Direction.Left));
+            await Step(700, "left", () => Move(Direction.Left));
+            await Step(700, "left at first (bounce)", () => Move(Direction.Left));
+            await Step(700, "left at first again (bounce)", () => Move(Direction.Left));
+            await Step(600, "down (buttons)", () => Move(Direction.Down));
+            for (int i = 0; i < 2; i++) await Step(450, "right (buttons)", () => Move(Direction.Right));
+            await Step(450, "left (buttons)", () => Move(Direction.Left));
+            await Step(700, "up (pile)", () => Move(Direction.Up));
             await Step(1400, "style shelf", () => { SaveUi(_prefs with { Home = HomeStyle.Shelf }); CsMorphStyle(); });
         });
         await Clip("wall", async Step =>
@@ -126,6 +132,13 @@ public sealed partial class WallStage
             await Step(1000, "left", () => Move(Direction.Left));
             await Step(800, "up", () => Move(Direction.Up));
             await Step(800, "down", () => Move(Direction.Down));
+            // 切标签再回来、切样式再回来：展台上和排里都不能留下多余的卡盒
+            await Step(1200, "tab all", () => SwitchTab(1));
+            await Step(1400, "back home", Back);
+            await Step(900, "right", () => Move(Direction.Right));
+            await Step(1600, "style stack", () => { SaveUi(_prefs with { Home = HomeStyle.Stack }); CsMorphStyle(); });
+            await Step(1600, "style stand", () => { SaveUi(_prefs with { Home = HomeStyle.Stand }); CsMorphStyle(); });
+            await Step(900, "left", () => Move(Direction.Left));
             await Step(1600, "style shelf", () => { SaveUi(_prefs with { Home = HomeStyle.Shelf }); CsMorphStyle(); });
         });
         await Clip("saver", async Step =>

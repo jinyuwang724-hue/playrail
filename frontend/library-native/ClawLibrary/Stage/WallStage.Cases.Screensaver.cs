@@ -222,7 +222,7 @@ public sealed partial class WallStage
             x += BatteryGlyph.Draw(ds, x, baseY - cap, cap, ink, bat, Theme.ChargingGreen, Gfx.Rgba(0xef, 0x44, 0x44)) + 8;
             ds.DrawTextLayout(p, x - (float)p.LayoutBounds.X, baseY - baseL, ink);
         });
-        ss.ClockV.Offset = new Vector3(right ? CsW - 96 - w : 96, CsH - 92 - h, 0);
+        ss.ClockV.Offset = new Vector3(right ? CsW - CsEdge - w : CsEdge, CsH - 92 - h, 0);
     }
 
     /// <summary>游戏一块：卡盒（160×240）+ 名字（32 px）+ 上次游玩（22 px）；在右边时卡盒在右、文字右对齐。</summary>
@@ -248,7 +248,7 @@ public sealed partial class WallStage
             ds.DrawTextLayout(m, 0, 52, Gfx.Rgba(242, 242, 242, 0.6));
         });
         float bottom = CsH - 92, boxW = 160 + 28 + tw;
-        float x0 = rightSide ? CsW - 96 - boxW : 96;
+        float x0 = rightSide ? CsW - CsEdge - boxW : CsEdge;
         c.Root.Offset = new Vector3(rightSide ? boxW - 160 : 0, 0, 0);
         ss.GameText.Offset = new Vector3(rightSide ? 0 : 160 + 28, 240 - th, 0);
         ss.GameBox.Offset = new Vector3(x0, bottom - 240, 0);
