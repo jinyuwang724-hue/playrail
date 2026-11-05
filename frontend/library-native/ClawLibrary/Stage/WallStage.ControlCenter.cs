@@ -1293,7 +1293,7 @@ public sealed partial class WallStage
     /// </summary>
     private bool MorphExit()
     {
-        if (_cs != null) return false;
+        if (CsHidesWall) return false;
         Sync();
         long now = NowMs;
         var tiles = VisibleTiles(now);
@@ -1408,7 +1408,7 @@ public sealed partial class WallStage
     /// </summary>
     private bool MorphEnter()
     {
-        if (_cs != null) return false;
+        if (CsHidesWall) return false;
         Sync();
         long now = NowMs;
         var tiles = VisibleTiles(now);

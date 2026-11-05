@@ -8,8 +8,8 @@ public enum AfterLaunch { Keep, Hide }
 /// <summary>游戏中回到游戏库：先给「正在游戏」面板，还是直接回墙面（顶上一条「正在游戏」）。</summary>
 public enum NowPlayingStyle { Panel, Bar }
 public enum SteamShortcutTarget { Library, BigPicture }
-/// <summary>卡盒版首页的样式：展架（底部一排卡盒）/ 叠放（一摞卡盒）。</summary>
-public enum HomeStyle { Shelf, Stack }
+/// <summary>首页的样式：展架（底部一排卡盒）/ 叠放（一摞卡盒）/ 海报墙（原来的墙）。</summary>
+public enum HomeStyle { Shelf, Stack, Wall }
 
 public sealed record UiPrefs
 {
@@ -68,7 +68,8 @@ public sealed record UiPrefs
     public string PosterTintColor { get; init; } = DefaultTintColor;
     public int PosterTintIntensity { get; init; } = 50;
     public const string DefaultTintColor = "#161419";
-    public HomeStyle Home { get; init; }
+    /// <summary>全新安装默认海报墙；ui.ini 里还没有这一项的老用户（装过 0.1.223/0.1.224）保留展架。</summary>
+    public HomeStyle Home { get; init; } = FreshInstall ? HomeStyle.Wall : HomeStyle.Shelf;
     /// <summary>插卡启动 / 退卡的音效。</summary>
     public bool InsertSound { get; init; } = true;
 

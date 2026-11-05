@@ -55,7 +55,7 @@ public sealed partial class WallStage
         : _wsOpen ? 0
         : _ob != null ? 0
         : _qsOpen || _lm is { Leaving: false } ? 0
-        : _ccOpen || _searchOpen || _backgroundSettingsOpen || _expandedKey != null || _stack.Count > 1 ? 0 : 2;
+        : 0;   // 游戏库左上角的三道杠去掉了（≡ 键照旧打开控制中心）
 
     private bool TouchFilterHit(double x, double y) => _shOpen && !_shViewer
         && x >= 96 * TouchScale && x < 140 * TouchScale && y >= 24 * TouchScale && y < 72 * TouchScale;

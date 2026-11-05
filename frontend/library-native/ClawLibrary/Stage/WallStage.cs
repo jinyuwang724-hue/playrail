@@ -1159,7 +1159,7 @@ public sealed partial class WallStage : IDisposable
         if (_ccOpen && _gpOpen) { GpSwitchTab(delta); return; }   // 手柄页「选择指令」里 LB / RB 换页签
         if (_ccOpen && _stOpen && GsOverlayTab(delta)) return;     // 游戏设置：按键选择换页签 / 封面换图种
         if (_ccOpen && _shOpen) { if (!MorphIntercept()) ShSwitchTab(delta); return; }   // 截图页换游戏
-        if (CsActive) { if (!MorphIntercept()) CsSwitchTab(delta); return; }
+        if (CsActive || (CsWallHome && !_csRailTab && _stack.Count <= 1)) { if (!MorphIntercept()) CsSwitchTab(delta); return; }
         if (_stack.Count > 1 || _ccOpen || MorphIntercept()) { Cue(Sfx.Bump); return; }
         if (_expandedKey != null) Collapse(false);
         if (_searchOpen) CloseSearch();
@@ -1303,6 +1303,7 @@ public sealed partial class WallStage : IDisposable
         if (MorphIntercept()) return;
         if (_ccOpen) { CcClick(sx, sy); return; }
         if (CsActive && CsClick(sx, sy)) return;
+        if (CsWallHome && CsHeaderClick(sx, sy)) return;
         if (RailClick(sx, sy)) return;
         Sync();
         var geo = SeamGeometry(_anchorX, _center, _openWidth, View);

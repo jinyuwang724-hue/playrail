@@ -491,7 +491,7 @@ public sealed partial class WallStage
         var tint = CsTint(g);
         var (_, fx) = CsLookOf(g);
         var root = G.Container(relative: false);
-        root.Size = new Vector2(400, 380);
+        root.Size = new Vector2(400, 300 + 12 + CapH);
         var body = G.Container(relative: false);
         body.Size = new Vector2(400, 300);
         body.CenterPoint = new Vector3(200, 150, 0);
@@ -591,14 +591,14 @@ public sealed partial class WallStage
     /// <summary>卡下面的两行：标题（17 px）和上次游玩 / 开发商（15 px，60% 白）。</summary>
     private SpriteVisual CsCaption(LibraryItem g, float w, bool bold)
     {
-        return CsSprite(w, 50, ds =>
+        return CsSprite(w, CapH, ds =>
         {
-            using var t = TextKit.Layout(ds, g.Title, TextKit.Ui(bold ? (ushort)600 : (ushort)500), 17, w, CanvasHorizontalAlignment.Left);
+            using var t = TextKit.Layout(ds, g.Title, TextKit.Ui(bold ? (ushort)600 : (ushort)500), 24, w, CanvasHorizontalAlignment.Left);
             ds.DrawTextLayout(t, 0, 0, Gfx.Rgba(242, 242, 242));
             var meta = CsMetaShort(g);
             if (meta.Length == 0) return;
-            using var m = TextKit.Layout(ds, meta, TextKit.Ui(400), 15, w, CanvasHorizontalAlignment.Left);
-            ds.DrawTextLayout(m, 0, 27, Gfx.Rgba(242, 242, 242, 0.6));
+            using var m = TextKit.Layout(ds, meta, TextKit.Ui(400), 20, w, CanvasHorizontalAlignment.Left);
+            ds.DrawTextLayout(m, 0, 38, Gfx.Rgba(242, 242, 242, 0.6));
         });
     }
 }

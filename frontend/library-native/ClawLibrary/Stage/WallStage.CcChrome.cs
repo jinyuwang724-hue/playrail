@@ -392,6 +392,7 @@ public sealed partial class WallStage
                 _ccNet = net;
                 _ccBt = bt;
                 if (_ccOpen) CcPaintStatus();
+                if (_cs != null && !net.Equals(_csNetPainted)) CsPaintStatus();
             });
         });
     }

@@ -74,6 +74,18 @@ public sealed partial class WallStage
             for (int i = 0; i < 3; i++) await Step(450, "right (buttons)", () => Move(Direction.Right));
             await Step(1400, "style shelf", () => { SaveUi(_prefs with { Home = HomeStyle.Shelf }); CsMorphStyle(); });
         });
+        await Clip("wall", async Step =>
+        {
+            // 海报墙作为首页：三种样式互切，墙上走两步，切到分类页再回来
+            await Step(1600, "style wall", () => { SaveUi(_prefs with { Home = HomeStyle.Wall }); CsMorphStyle(); });
+            await Step(700, "wall right", () => Move(Direction.Right));
+            await Step(900, "wall down", () => Move(Direction.Down));
+            await Step(1300, "tab all", () => SwitchTab(1));
+            await Step(1300, "back to wall", Back);
+            await Step(1600, "style stack", () => { SaveUi(_prefs with { Home = HomeStyle.Stack }); CsMorphStyle(); });
+            await Step(1600, "style wall", () => { SaveUi(_prefs with { Home = HomeStyle.Wall }); CsMorphStyle(); });
+            await Step(1600, "style shelf", () => { SaveUi(_prefs with { Home = HomeStyle.Shelf }); CsMorphStyle(); });
+        });
         await Clip("insert", async Step =>
         {
             await Step(3400, "insert", Activate);
