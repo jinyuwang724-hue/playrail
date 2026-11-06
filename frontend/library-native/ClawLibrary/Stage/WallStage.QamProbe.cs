@@ -1,12 +1,89 @@
 ﻿// 快捷面板的录屏自测（--state=recqam [--qsgame=游戏名]）：在游戏库里打开面板，原分辨率静帧（默认 / 选项行焦点 / 网格提示 /
 // 电源展开 / 退出确认），再真速录一段：进场、光标在行间走、改值、LB/LT 一键调、进网格、电源展开收回、B 收起。
 // 每一步的焦点写进日志（手柄导航日志），帧存到 %LOCALAPPDATA%\ClawLibrary\rec\qam-*。
+using ClawLibrary.Data;
 using ClawLibrary.Engine;
 
 namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
+    /// <summary>
+    /// --state=qampress：选项行连按自测。每行（帧率上限、性能显示、震动）→ 连按 10 次（间隔 90 ms，比手柄连发还快），
+    /// 每按一次记界面上的值；停 4 s 等写入和回读，记界面值和后台真实值，两者应等于第 10 次的值；最后按回原值。
+    /// </summary>
+    /// <summary>自测输入（LibraryWindow 收到 wp 100+ 的注册消息）：0–3 上下左右、4 A、5 B、6/7 LB/RB、8/9 LT/RT、10 记状态。</summary>
+    internal void TestInput(string code)
+    {
+        switch (code)
+        {
+            case "0": Move(Direction.Up); break;
+            case "1": Move(Direction.Down); break;
+            case "2": Move(Direction.Left); break;
+            case "3": Move(Direction.Right); break;
+            case "4": Activate(); break;
+            case "5": Back(); break;
+            case "6": QsHot("bri", -1); break;
+            case "7": QsHot("bri", 1); break;
+            case "8": QsHot("vol", -1); break;
+            case "9": QsHot("vol", 1); break;
+        }
+        Log.Info($"test input {code} -> {(_qsOpen ? QsFocusTest + " " + string.Join(" ", QsRowIds.Select(id => id + "=" + QuickPanelTestValue(id))) : "panel closed")}");
+    }
+    internal async Task QamPressAsync()
+    {
+        await Task.Delay(2500);
+        OpenQuickPanel(0);
+        await Task.Delay(2500);
+        _agent ??= new AgentClient();
+        async Task<string> Backend(string id)
+        {
+            var s = await _agent.Call("widget_state") as System.Text.Json.Nodes.JsonObject;
+            return id switch
+            {
+                "fps" => $"{(double?)s?["system"]?["fpsLimit"] ?? -1:0}",
+                "osd" => $"{s?["power"]?["settings"]?["osd"]?["enabled"]}/{s?["power"]?["settings"]?["osd"]?["level"]}",
+                "rumble" => $"{s?["rumble"]?["strength"]}",
+                _ => "?",
+            };
+        }
+        foreach (var id in new[] { "fps", "osd", "rumble" })
+        {
+            QsSetFocus(id);
+            string start = QuickPanelTestValue(id), startBackend = await Backend(id);
+            Log.Info($"qampress {id} start ui={start} backend={startBackend}");
+            var seen = new List<string>();
+            for (int i = 0; i < 10; i++) { Move(Direction.Right); seen.Add(QuickPanelTestValue(id)); await Task.Delay(90); }
+            Log.Info($"qampress {id} presses: {string.Join(" → ", seen)}");
+            string want = seen[^1];
+            var trail = new List<string>();
+            for (int i = 0; i < 16; i++) { await Task.Delay(250); trail.Add(QuickPanelTestValue(id)); }
+            string ui = QuickPanelTestValue(id), backend = await Backend(id);
+            bool jumped = trail.Any(x => x != want);
+            Log.Info($"qampress {id} after 4 s ui={ui} backend={backend} expected={want} ui-trail-stable={!jumped} [{string.Join(",", trail.Distinct())}] {(ui == want && !jumped ? "PASS" : "FAIL")}");
+            // 按回原值
+            for (int i = 0; i < 12 && QuickPanelTestValue(id) != start; i++) { Move(Direction.Right); await Task.Delay(150); }
+            await Task.Delay(1500);
+            Log.Info($"qampress {id} restored ui={QuickPanelTestValue(id)} backend={await Backend(id)}");
+        }
+        CloseQuickPanel(hideWindow: false, instant: true);
+        Log.Info("qampress done");
+    }
+
+    /// <summary>--state=qamhalf：面板停在半开（左移 200）8 秒，外面截屏看面板窗口没画到的地方是不是透明。</summary>
+    internal async Task QamHalfAsync()
+    {
+        await Task.Delay(2500);
+        OpenQuickPanel(0);
+        await Task.Delay(1500);
+        ++_qsSlideGen;
+        _qsSlide.StopAnimation("Offset");
+        _qsSlide.Offset = new System.Numerics.Vector3(-200 * QsK, 0, 0);
+        Log.Info("qamhalf holding");
+        await Task.Delay(8000);
+        CloseQuickPanel(hideWindow: false, instant: true);
+        Log.Info("qamhalf done");
+    }
     internal async Task RecQamAsync()
     {
         await Task.Delay(2500);

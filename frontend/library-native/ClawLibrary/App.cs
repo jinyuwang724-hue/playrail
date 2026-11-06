@@ -1,4 +1,4 @@
-// 应用与窗口：全屏无边框，一个可获得焦点的根元素收键盘 / 鼠标，墙面挂在它的合成视觉层上。
+﻿// 应用与窗口：全屏无边框，一个可获得焦点的根元素收键盘 / 鼠标，墙面挂在它的合成视觉层上。
 using System.Diagnostics;
 using ClawLibrary.Data;
 using ClawLibrary.Stage;
@@ -176,6 +176,7 @@ public sealed partial class MainWindow : Window
                 _stage.StartupShieldRequested = _pendingRoute == "activate" && !Program.Args.Any(a => a.StartsWith("--state="));   // 录屏 / 测试状态：窗口不在前台，盖板会一直等
                 _stage.Start();
                 _shortcutWindow?.EnsureFullscreenBounds();
+                _stage.After(1500, _stage.WarmQuickPanel);
                 if (_pendingRoute != "activate") ActivateRoute(_pendingRoute, returnWindow);
                 else _stage.ActivateShortcut("library");
             }
@@ -250,6 +251,8 @@ public sealed partial class MainWindow : Window
         if (_pendingRoute is "activate" or "library") _stage?.NowPlayingBeforeShow();
         else if (quick) _stage?.OpenQuickPanel(returnWindow);   // 窗口出来之前先铺好游戏画面和面板
         else _stage?.NowPlayingYield();   // Claw 键唤控制中心：正在游戏画面让开，不挡控制中心也不抢它的按键
+        // 面板有自己的窗口：游戏库主窗口不出来（游戏一直在前台）
+        if (quick && _stage?.QuickPanelOwnWindow == true) return;
         if (quick) { ShowAfterFrames(route, 1); return; }
         ShowShortcutWindow(route);
     }

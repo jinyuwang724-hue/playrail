@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using ClawLibrary.Data;
 using Microsoft.UI.Dispatching;
 
@@ -25,6 +25,7 @@ public sealed partial class MainWindow
 
     private async Task ActivateOverlayRoute(string route, nint returnWindow)
     {
+        if (route.StartsWith("test:", StringComparison.Ordinal)) { _stage?.TestInput(route[5..]); return; }
         await _overlayRoutes.WaitAsync();
         try
         {
@@ -68,6 +69,9 @@ public sealed partial class MainWindow
             nint target = foreground != self ? foreground : returnWindow;
             bool candidate = game && !closing && LibraryWindow.CanOverlay(target)
                 && !ToolboxWindow.ShellCloaked(self);
+            // 快捷面板有自己的窗口：先把面板弹出来（不等后台），输入隔离随后补上
+            bool fastQuick = quick && game && !closing && _stage?.QuickPanelOwnWindow == true && _stage?.QuickPanelOpen != true;
+            if (fastQuick) ActivateRouteCore(route, returnWindow);
             if (!closing && (candidate || special) && _overlayAgent == null)
             {
                 _overlayAgent = new AgentClient();
@@ -98,7 +102,7 @@ public sealed partial class MainWindow
                 _shortcutWindow?.SetOverlayTarget(target);
                 _shortcutWindow?.EnsureFullscreenBounds();
             }
-            ActivateRouteCore(route, returnWindow);
+            if (!fastQuick) ActivateRouteCore(route, returnWindow);
         }
         catch (Exception ex) { Log.Error("shortcut route", ex); }
         finally { _overlayRoutes.Release(); }
@@ -148,6 +152,18 @@ public sealed partial class MainWindow
     }
 
     private void RestoreOrdinaryPresenter() => _shortcutWindow?.EnsureFullscreenBounds();
+
+    /// <summary>快捷面板（自己的窗口）收起：游戏库主窗口没动过，只放掉输入隔离、结束这次唤出。</summary>
+    internal void EndQuickOverlay()
+    {
+        _stage?.SetSpecialInput(false);
+        _surfaceSession = _surfaceHideWindow = false;
+        if (!_shortcutVisible || !Stage.ShellMode.GameMode || _shortcutWindow?.IsForeground != true) ReleaseOverlay();
+        Log.Info("quick panel ended (library window untouched)");
+    }
+
+    /// <summary>面板里点了要交给游戏库的事（窗口切换、回游戏库）：走一遍正常的唤出路由。</summary>
+    internal void RouteFromPanel(string route, nint returnWindow) => ActivateRoute(route, returnWindow);
 
     internal void EndSpecialSurface()
     {

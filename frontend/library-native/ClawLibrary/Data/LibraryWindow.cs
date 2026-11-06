@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 
 namespace ClawLibrary.Data;
 
@@ -38,6 +38,12 @@ internal sealed class LibraryWindow : IDisposable
         {
             try { _activate("minimize-library", 0); }
             catch (Exception ex) { Log.Error("window minimize", ex); return DefSubclassProc(hwnd, message, wp, lp); }
+            return 0;
+        }
+        if (message == _message && wp >= 100 && wp < 120)
+        {
+            // 自测输入（同一条注册消息，wp 100+）：方向 / A / B / 肩键，走的和手柄同一组调用
+            try { _activate("test:" + (wp - 100), lp); } catch (Exception ex) { Log.Error("window test input", ex); }
             return 0;
         }
         if (message == _message)

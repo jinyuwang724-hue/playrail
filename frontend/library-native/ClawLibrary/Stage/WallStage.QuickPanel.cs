@@ -142,56 +142,115 @@ public sealed partial class WallStage
 
     // ---------------- 开 / 关 ----------------
 
-    /// <summary>窗口出来之前调用：缩略图把游戏画面先铺满，面板从左边外面开始滑。</summary>
+    /// <summary>面板有自己的窗口（不透明部分只有面板本身，不碰游戏库主窗口）。建不出来时退回旧办法：画在游戏库窗口里。</summary>
+    internal bool QuickPanelOwnWindow => _qsWin != null;
+    private QamWindow? _qsWin;
+    private int _qsSlideGen;
+    private bool _qsCurShown;
+    private long _qsOpenAt;
+
+    /// <summary>启动后预先建好面板窗口和画面（第一次唤出不用现建）。</summary>
+    internal void WarmQuickPanel()
+    {
+        try { EnsureQsVisuals(); QsBuild(); QsPaintAll(); _ = QsRefresh(_qsVersion, first: true, warm: true); Log.Info($"quick panel warm own-window={_qsWin != null}"); }
+        catch (Exception ex) { Log.Warn($"quick panel warm: {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// 唤出：面板窗口放到游戏所在的显示器左边、显示（不激活），面板从左边外面弹簧滑入（合成层）。
+    /// 冻结帧在后面截，截到了玻璃底再淡入，不等它。
+    /// </summary>
     internal void OpenQuickPanel(nint returnWindow)
     {
+        _qsOpenAt = NowMs;
         ExitScreensaver(); MarkInput();
         EnsureQsVisuals();
         bool again = _qsOpen;
         _qsOpen = true;
         int v = ++_qsVersion;
         _qsHideWindowAfter = false;
+        nint self = WinRT.Interop.WindowNative.GetWindowHandle(_window);
         if (!again)
         {
             _qsFocusId = "tdp"; _qsGc = 0; _qsGr = 0; _qsPm = false; _qsArmed = null;
             _qsTw.Clear(); _qsCurPlaced = false;
             _qsThumb?.Dispose(); _qsThumb = null;
-            nint self = WinRT.Interop.WindowNative.GetWindowHandle(_window);
             _qsGame = returnWindow != 0 && returnWindow != self && OpenWindows.Alive(returnWindow) ? returnWindow : 0;
-            if (_qsGame != 0 && GetWindowRect(_qsGame, out var r))
-            {
-                _qsGameRect = (r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
-                _qsThumb = DwmThumb.Register(self, _qsGame);
-            }
-            _qsPx = QsHideX; _qsPv = 0; _qsShow = 0;
+            if (_qsGame != 0 && GetWindowRect(_qsGame, out var r)) _qsGameRect = (r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
+            if (_qsWin == null && _qsGame != 0) _qsThumb = DwmThumb.Register(self, _qsGame);
             if (_ccOpen) CloseControlCenter();
+            _qsGlass.StopAnimation("Opacity");
             _qsGlass.Opacity = 0;
             _qsLosslessKnown = false;   // 手柄模式 / VRR 留着上次读到的，开面板时不先变暗再亮
-            // 没有游戏画面（在游戏库里按的）：截自己的窗口当底，截到之前面板先不动（最多 140 ms），免得截进半块面板
-            _qsWaitBackdrop = _qsGame == 0 && !Reduced;
-            _ = QsCaptureBackdrop(v);
-            if (_qsWaitBackdrop) After(140, () => { if (v == _qsVersion) _qsWaitBackdrop = false; });
+            _qsSlide.StopAnimation("Offset");
+            _qsSlide.Offset = new Vector3(QsHideX * QsK, 0, 0);
         }
         _qsPt = 0; _qsShowTo = 1;
         _qsUnderLibrary = ShellMode.GameMode;
-        if (_qsUnder != null) _qsUnder.IsVisible = false;   // 新面板不压暗游戏，底下不用垫黑
+        if (_qsUnder != null) _qsUnder.IsVisible = false;   // 不压暗游戏，底下不用垫黑
         _qs!.IsVisible = true;
-        _top.Children.Remove(_qs); _top.Children.InsertAtTop(_qs);
         QsBuild();
         QsSync();
         QsPaintAll();
-        if (Reduced) { _qsPx = 0; _qsShow = 1; }
-        QsStartTicking();
+        if (_qsWin != null)
+        {
+            if (!again || !_qsWin.Shown) QsPlaceWindow(_qsGame != 0 ? _qsGame : self);
+            _qsWin.Show();
+        }
+        else { _top.Children.Remove(_qs); _top.Children.InsertAtTop(_qs); }
+        QsSlideTo(0);
+        if (!again) _ = Task.Run(() => QsCaptureBackdrop(v));
         _ = QsRefresh(v, first: !again);
         _qsPoll ??= _dq.CreateTimer();
         _qsPoll.Interval = TimeSpan.FromMilliseconds(1500);
         _qsPoll.Tick -= QsPollTick; _qsPoll.Tick += QsPollTick;
         _qsPoll.Start();
         Cue(Sfx.MenuIn);
-        Log.Info($"quick panel open game={_qsGame} thumb={_qsThumb != null}");
+        Log.Info($"quick panel open game={_qsGame} own-window={_qsWin != null} in {NowMs - _qsOpenAt} ms");
     }
 
-    /// <summary>收起：面板滑回去，缩略图跟着铺满；走完再把窗口收起来（游戏原样露出来，和缩略图同一幅画面）。</summary>
+    /// <summary>面板窗口：游戏（或游戏库）所在显示器的左边一条，宽 = 面板宽，高 = 整屏。</summary>
+    private void QsPlaceWindow(nint over)
+    {
+        nint mon = MonitorFromWindow(over, 2);
+        var mi = new QsMonInfo { Size = Marshal.SizeOf<QsMonInfo>() };
+        if (!GetMonitorInfo(mon, ref mi)) return;
+        float k = QsK, dpi = Chrome.Dpi;
+        int w = (int)Math.Ceiling(QsW * k * dpi), h = mi.Monitor.Bottom - mi.Monitor.Top;
+        _qsMon = (mi.Monitor.Left, mi.Monitor.Top, mi.Monitor.Right - mi.Monitor.Left, h);
+        _qsWin!.Place(mi.Monitor.Left, mi.Monitor.Top, w, h);
+        _qs!.Size = new Vector2(w / dpi, h / dpi);
+    }
+
+    private (int L, int T, int W, int H) _qsMon;
+
+    /// <summary>面板平移：合成层弹簧（stiffness 300 / damping 34），从此刻的位置和速度接着走（可打断）。收起走完再关窗口。</summary>
+    private void QsSlideTo(float x)
+    {
+        _qsPt = x;
+        float k = QsK;
+        int gen = ++_qsSlideGen;
+        if (Reduced)
+        {
+            _qsSlide.StopAnimation("Offset");
+            _qsSlide.Offset = new Vector3(x * k, 0, 0);
+            if (!_qsOpen) QsFinishClose();
+            return;
+        }
+        var batch = G.C.CreateScopedBatch(CompositionBatchTypes.Animation);
+        _qsSlide.StartAnimation("Offset", G.SpringV3(new Vector3(x * k, 0, 0), new Spring(300, 34)));
+        batch.End();
+        long t0 = NowMs;
+        batch.Completed += (_, _) =>
+        {
+            batch.Dispose();
+            if (gen != _qsSlideGen) return;
+            Log.Info($"quick panel slide {(x < 0 ? "out" : "in")} settled {NowMs - t0} ms");
+            if (!_qsOpen) QsFinishClose();
+        };
+    }
+
+    /// <summary>收起：面板滑回去，走完再把面板窗口藏起来（游戏一直在前台，没有别的窗口要退）。</summary>
     internal void CloseQuickPanel(bool hideWindow = true, bool instant = false)
     {
         if (!_qsOpen || _qs == null) return;
@@ -200,23 +259,36 @@ public sealed partial class WallStage
         _qsHideWindowAfter = hideWindow;
         _qsArmed = null;
         Cue(Sfx.MenuOut);
-        _qsPt = QsHideX; _qsShowTo = 0;
-        if (instant || Reduced) { _qsPx = QsHideX; _qsShow = 0; QsLayout(); QsFinishClose(); return; }
-        QsStartTicking();
+        _qsShowTo = 0;
+        if (instant || Reduced)
+        {
+            ++_qsSlideGen;
+            _qsSlide.StopAnimation("Offset");
+            _qsSlide.Offset = new Vector3(QsHideX * QsK, 0, 0);
+            QsFinishClose();
+            return;
+        }
+        QsSlideTo(QsHideX);
         int v = ++_qsVersion;
-        After(900, () => { if (v == _qsVersion && !_qsOpen && _qs.IsVisible) QsFinishClose(); });
+        After(1500, () => { if (v == _qsVersion && !_qsOpen && _qs.IsVisible) QsFinishClose(); });
         Log.Info("quick panel close");
     }
 
     private void QsFinishClose()
     {
-        if (_qs == null) return;
+        if (_qs == null || _qsOpen) return;
         bool hide = _qsHideWindowAfter;
         _qsHideWindowAfter = false;
+        if (_qsWin != null)
+        {
+            _qsWin.Hide();
+            _qs.IsVisible = false;
+            if (!_wsOpen) (_window as MainWindow)?.EndQuickOverlay();
+            return;
+        }
         if (!hide && !_wsOpen) SetSpecialInput(false);
         if (hide && _qsGame != 0 && (_window as MainWindow)?.OverlayAcceptsGamepad != true) LibraryWindow.BringForward(_qsGame);
         if (hide) (_window as MainWindow)?.HideAfterQuickPanel();
-        // 窗口收起之后再拆缩略图，免得最后一帧露出底下
         After(hide ? 260 : 0, () =>
         {
             if (_qsOpen) return;
@@ -225,12 +297,20 @@ public sealed partial class WallStage
         });
     }
 
+    /// <summary>别的入口接手时（CloseSpecialSurfaces）：面板窗口马上藏起来。</summary>
+    internal void QsHideNow()
+    {
+        ++_qsSlideGen;
+        _qsWin?.Hide();
+    }
+
     private void EnsureQsVisuals()
     {
         if (_qs != null) return;
-        _qs = G.Container();
+        try { _qsWin = new QamWindow(); }
+        catch (Exception ex) { _qsWin = null; Log.Warn($"quick panel window: {ex.Message}; drawing in the library window"); }
+        _qs = _qsWin != null ? G.Container(relative: false) : G.Container();
         _qs.IsVisible = false;
-        // 面板外不画任何东西（游戏不压暗）；点面板外收起由 QsClick 处理
         _qsScrim = G.C.CreateSpriteVisual();
         _qsScrim.RelativeSizeAdjustment = Vector2.One;
         _qs.Children.InsertAtTop(_qsScrim);
@@ -247,12 +327,12 @@ public sealed partial class WallStage
         _qsGlassBox.Children.InsertAtTop(_qsGlassBase);
         _qsGlassBox.Children.InsertAtTop(_qsGlass);
         _qs.Children.InsertAtTop(_qsGlassBox);
-        // 面板内容：随弹簧平移
         _qsSlide = G.Container(relative: false);
         _qsTopV = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _qsRowsV = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _qsGridV = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _qsCurV = G.C.CreateSpriteVisual();
+        _qsCurV.Opacity = 0;
         _qsEdgeV = G.Sprite(G.Solid(Gfx.WithAlpha(QsInk, 0.10)), relative: false);
         _qsPanel = _qsTopV;
         _qsSlide.Children.InsertAtTop(_qsTopV);
@@ -260,67 +340,63 @@ public sealed partial class WallStage
         _qsSlide.Children.InsertAtTop(_qsCurV);
         _qsSlide.Children.InsertAtTop(_qsGridV);
         _qsSlide.Children.InsertAtTop(_qsEdgeV);
+        _qsSlide.Offset = new Vector3(QsHideX * QsK, 0, 0);
         _qs.Children.InsertAtTop(_qsSlide);
-        _top.Children.InsertAtTop(_qs);
+        if (_qsWin != null)
+        {
+            _qs.Size = new Vector2(QsW * QsK + 2, (float)View.Height);
+            _qsWin.SetContent(_qs);
+        }
+        else _top.Children.InsertAtTop(_qs);
     }
 
     // ---------------- 底：截一帧画面，模糊一次 ----------------
 
     /// <summary>
-    /// 游戏：Windows.Graphics.Capture 截游戏窗口一帧（截不到 / 全黑就截整个显示器，截的时候把自己的窗口排除在外）；
-    /// 没有游戏：截游戏库自己的窗口。只截一次，烤成一张模糊图，之后不再实时模糊。
+    /// 截整块显示器（DWM 合成好的那一帧），截的那一下把面板窗口排除在外，看到的就是底下的游戏 / 游戏库。
+    /// 管理员权限的游戏不让普通权限程序按窗口截（「拒绝访问」），按显示器截不受影响。只截一次，烤成一张模糊图。
     /// </summary>
     private async Task QsCaptureBackdrop(int v)
     {
-        nint self = WinRT.Interop.WindowNative.GetWindowHandle(_window);
-        GetWindowRect(self, out var sr);
-        CanvasBitmap? frame = null;
-        var at = (L: 0, T: 0, W: 0, H: 0);
         long t0 = NowMs;
-        string how = "none";
+        CanvasBitmap? frame = null;
+        string how = "monitor";
         try
         {
-            if (_qsGame != 0)
-            {
-                frame = await QsGrab(GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId { Value = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_qsGame).Value }), 450);
-                at = (_qsGameRect.L - sr.Left, _qsGameRect.T - sr.Top, _qsGameRect.W, _qsGameRect.H);
-                how = "window";
-                if (frame != null && QsAllBlack(frame)) { frame.Dispose(); frame = null; }
-                if (frame == null && v == _qsVersion)
-                {
-                    // 管理员权限的游戏 / 独占全屏：截整个显示器，截的那一下把自己的窗口排除掉，看到的就是底下的游戏
-                    nint mon = MonitorFromWindow(self, 2);
-                    var did = Microsoft.UI.Win32Interop.GetDisplayIdFromMonitor(mon);
-                    SetWindowDisplayAffinity(self, 0x11);
-                    try { frame = await QsGrab(GraphicsCaptureItem.TryCreateFromDisplayId(new Windows.Graphics.DisplayId { Value = did.Value }), 450); }
-                    finally { SetWindowDisplayAffinity(self, 0); }
-                    var mi = new QsMonInfo { Size = Marshal.SizeOf<QsMonInfo>() };
-                    if (GetMonitorInfo(mon, ref mi)) at = (mi.Monitor.Left - sr.Left, mi.Monitor.Top - sr.Top, mi.Monitor.Right - mi.Monitor.Left, mi.Monitor.Bottom - mi.Monitor.Top);
-                    how = "monitor";
-                }
-            }
-            else
-            {
-                frame = await QsGrab(GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId { Value = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(self).Value }), 300);
-                at = (0, 0, sr.Right - sr.Left, sr.Bottom - sr.Top);
-                how = "self";
-            }
+            var (bmp, _) = await CaptureMonitorFrameAsync(_qsWin?.Hwnd ?? 0, 500);
+            frame = bmp;
         }
         catch (Exception ex) { Log.Warn($"quick panel backdrop: {ex.Message}"); }
         _dq.TryEnqueue(() =>
         {
-            _qsWaitBackdrop = false;
             if (frame == null || v != _qsVersion || !_qsOpen) { frame?.Dispose(); if (frame == null) Log.Warn($"quick panel backdrop: none ({how})"); return; }
-            try { QsBakeBackdrop(frame, at); }
+            try { QsBakeBackdrop(frame, (0, 0, (int)frame.SizeInPixels.Width, (int)frame.SizeInPixels.Height)); }
             catch (Exception ex) { Log.Warn($"quick panel backdrop bake: {ex.Message}"); }
             frame.Dispose();
-            Log.Info($"quick panel backdrop {how} {NowMs - t0} ms");
+            Log.Info($"quick panel backdrop {how} {NowMs - t0} ms (open +{NowMs - _qsOpenAt} ms)");
         });
+    }
+
+    private static bool _qsCaptureAsked;
+
+    /// <summary>按程序截别的窗口 / 显示器要 graphicsCaptureProgrammatic（清单里声明了），第一次还要向系统要一次许可。</summary>
+    private static async Task QsCaptureAccess()
+    {
+        if (_qsCaptureAsked) return;
+        _qsCaptureAsked = true;
+        try
+        {
+            var a = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Programmatic);
+            var b = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Borderless);
+            Log.Info($"capture access programmatic={a} borderless={b}");
+        }
+        catch (Exception ex) { Log.Warn($"capture access: {ex.Message}"); }
     }
 
     private static async Task<CanvasBitmap?> QsGrab(GraphicsCaptureItem? item, int timeoutMs)
     {
         if (item == null) return null;
+        await QsCaptureAccess();
         var dev = CanvasDevice.GetSharedDevice();
         var done = new TaskCompletionSource<CanvasBitmap?>();
         using var pool = Direct3D11CaptureFramePool.CreateFreeThreaded(dev, DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, item.Size);
@@ -344,15 +420,22 @@ public sealed partial class WallStage
         return await Task.WhenAny(done.Task, Task.Delay(timeoutMs)) == done.Task ? await done.Task : null;
     }
 
-    private static bool QsAllBlack(CanvasBitmap frame)
+    /// <summary>截 hwnd 所在显示器的一帧，exclude（面板窗口）在截的时候排除在外。返回帧和显示器矩形（物理像素）。</summary>
+    internal async Task<(CanvasBitmap? Frame, (int L, int T, int W, int H) Rect)> CaptureMonitorFrameAsync(nint exclude, int timeoutMs, nint on = 0)
     {
+        nint self = WinRT.Interop.WindowNative.GetWindowHandle(_window);
+        nint mon = MonitorFromWindow(on != 0 ? on : _qsGame != 0 ? _qsGame : self, 2);
+        var mi = new QsMonInfo { Size = Marshal.SizeOf<QsMonInfo>() };
+        GetMonitorInfo(mon, ref mi);
+        var rect = (mi.Monitor.Left, mi.Monitor.Top, mi.Monitor.Right - mi.Monitor.Left, mi.Monitor.Bottom - mi.Monitor.Top);
+        var did = Microsoft.UI.Win32Interop.GetDisplayIdFromMonitor(mon);
+        if (exclude != 0) SetWindowDisplayAffinity(exclude, 0x11);
         try
         {
-            using var small = new CanvasRenderTarget(frame.Device, 8, 8, 96);
-            using (var ds = small.CreateDrawingSession()) ds.DrawImage(frame, new Windows.Foundation.Rect(0, 0, 8, 8), frame.Bounds);
-            return small.GetPixelColors().All(c => c.R + c.G + c.B < 6);
+            var item = GraphicsCaptureItem.TryCreateFromDisplayId(new Windows.Graphics.DisplayId { Value = did.Value });
+            return (await QsGrab(item, timeoutMs), rect);
         }
-        catch { return false; }
+        finally { if (exclude != 0) SetWindowDisplayAffinity(exclude, 0); }
     }
 
     /// <summary>CSS filter: blur(24px) brightness(.82) saturate(1.15)，再叠 #09090B 36 %。画在物理像素里，盖住面板能走到的整条左边。</summary>
@@ -385,23 +468,27 @@ public sealed partial class WallStage
         brush.Surface = s;
         _qsGlassS = s;
         _qsGlass.Size = new Vector2(pw / dpi, ph / dpi);
-        _qsGlass.StartAnimation("Opacity", G.Scalar(_qsGlass.Opacity, 1, Reduced ? 1 : 140, Bezier.EaseOut));
+        _qsGlass.StartAnimation("Opacity", G.Scalar(_qsGlass.Opacity, 1, Reduced ? 1 : 160, Bezier.EaseOut));
     }
 
     // ---------------- 数据 ----------------
 
     private bool _qsLosslessKnown;
 
-    private async Task QsRefresh(int v, bool first = false)
+    private async Task QsRefresh(int v, bool first = false, bool warm = false)
     {
         if (_pagePointer.Active || _qsTouchWrites?.IsBusy == true) return;
         _agent ??= new AgentClient();
+        // 读的途中有新的写入排进来：这次读到的是旧值，丢掉（写完会再读一次）
+        long rev = _qsTouchWrites?.Revision ?? 0;
         try
         {
-            if (await _agent.Call("widget_state") is JsonObject s && v == _qsVersion && _qsOpen && !_pagePointer.Active && _qsTouchWrites?.IsBusy != true)
+            if (await _agent.Call("widget_state") is JsonObject s && (warm || (v == _qsVersion && _qsOpen)) && !_pagePointer.Active && _qsTouchWrites?.IsBusy != true && (_qsTouchWrites?.Revision ?? 0) == rev)
             {
                 _qsState = s;
                 if (_qsDraft == null || !_qsSaving) _qsDraft = s["power"]?["settings"]?.DeepClone() as JsonObject;
+                // 主要数值先画上（不等 Wi-Fi / 蓝牙 / 显示这些慢的读完）
+                if (first && _qsOpen) QsRebuild();
             }
         }
         catch (Exception ex) { Log.Warn($"quick panel state: {ex.Message}"); }
@@ -442,6 +529,7 @@ public sealed partial class WallStage
             }
             catch { _qsLosslessKnown = true; _qsLossless = null; }
         }
+        if (warm) { QsBuild(); QsPaintAll(); return; }
         if (v != _qsVersion || !_qsOpen) return;
         QsRebuild();
     }
@@ -707,19 +795,18 @@ public sealed partial class WallStage
             }
         }
         QsTo("t.dis.tdp", QsFind("tdp")?.Disabled == true ? 1 : 0, 200, Bezier.Ease_);
-        // 光标只给功耗块和选项行
+        // 光标只给功耗块和选项行；刚出现（从网格回来 / 刚打开）时直接落位，之后在行间弹簧移动
         bool blk = f == "tdp" || QsRowIds.Contains(f);
-        QsTo("c.on", blk ? 1 : 0, 160, Bezier.Ease_);
         if (blk)
         {
             var it = QsFind(f)!;
-            _qsCty = f == "tdp" ? it.Y - 2 : it.Y;
-            _qsCth = f == "tdp" ? it.H + 4 : it.H;
-            if (!_qsCurPlaced || Reduced || QsTv("c.on") < 0.01f) { _qsCy = _qsCty; _qsCh = _qsCth; _qsCvy = _qsCvh = 0; _qsCurPlaced = true; }
-            QsStartTicking();
+            float y = f == "tdp" ? it.Y - 2 : it.Y, h = f == "tdp" ? it.H + 4 : it.H;
+            bool snap = !_qsCurPlaced || !_qsCurShown;
+            _qsCurPlaced = true;
+            QsCursorTo(y, h, true, snap);
         }
+        else QsCursorTo(0, 0, false, false);
     }
-
     // ---------------- 绘制 ----------------
 
     private void QsDrawInto(ref CompositionDrawingSurface? surface, SpriteVisual v, float w, float h, Action<CanvasDrawingSession> paint)
@@ -1043,6 +1130,7 @@ public sealed partial class WallStage
     private int _qsAnimFrames, _qsAnimJanks;
     private long _qsAnimMax;
 
+    /// <summary>只给面板里的小补间（颜色、箭头、提示）逐帧重画；面板平移和光标都是合成层弹簧，不在这里。</summary>
     private void QsStartTicking()
     {
         if (_qsTicking) return;
@@ -1056,32 +1144,7 @@ public sealed partial class WallStage
     {
         long now = NowMs, gap = now - _qsFrameAt;
         if (_qsAnimFrames++ > 0) { _qsAnimMax = Math.Max(_qsAnimMax, gap); if (gap > 25) _qsAnimJanks++; }
-        float dt = Math.Clamp(gap / 1000f, 0, 0.032f);
         _qsFrameAt = now;
-        bool panelMoving = false;
-        if (!_qsWaitBackdrop)
-        {
-            // 面板：可打断弹簧 300 / 34（质量 1），两半步积分
-            for (int i = 0; i < 2; i++)
-            {
-                float h = dt / 2, a = -300 * (_qsPx - _qsPt) - 34 * _qsPv;
-                _qsPv += a * h; _qsPx += _qsPv * h;
-            }
-            if (MathF.Abs(_qsPx - _qsPt) < 0.3f && MathF.Abs(_qsPv) < 0.3f) { _qsPx = _qsPt; _qsPv = 0; }
-            else panelMoving = true;
-        }
-        else panelMoving = true;
-        _qsShow = (_qsPx - QsHideX) / -QsHideX;
-        // 光标：460 / 36 / 0.9
-        bool curMoving = false;
-        for (int i = 0; i < 2; i++)
-        {
-            float h = dt / 2;
-            float a = (-460 * (_qsCy - _qsCty) - 36 * _qsCvy) / 0.9f; _qsCvy += a * h; _qsCy += _qsCvy * h;
-            a = (-460 * (_qsCh - _qsCth) - 36 * _qsCvh) / 0.9f; _qsCvh += a * h; _qsCh += _qsCvh * h;
-        }
-        if (MathF.Abs(_qsCy - _qsCty) < 0.2f && MathF.Abs(_qsCvy) < 0.2f && MathF.Abs(_qsCh - _qsCth) < 0.2f) { _qsCy = _qsCty; _qsCh = _qsCth; _qsCvy = _qsCvh = 0; }
-        else curMoving = true;
         bool any = false;
         foreach (var (layer, idx) in new[] { ('t', 0), ('r', 1), ('g', 2) })
         {
@@ -1090,42 +1153,71 @@ public sealed partial class WallStage
             _qsLayerWas[idx] = on;
             any |= on;
         }
-        bool curFade = QsLayerAnimating('c');
-        QsLayout();
-        if (panelMoving || curMoving || any || curFade) return;
+        if (any) return;
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= QsFrame;
         _qsTicking = false;
-        if (_qsAnimFrames > 3) Log.Info($"quick panel anim {(_qsPt > QsHideX ? "in" : "out")} frames={_qsAnimFrames} max={_qsAnimMax}ms janks={_qsAnimJanks}");
-        if (!_qsOpen && _qsPx <= QsHideX + 0.5f) QsFinishClose();
+        if (_qsAnimFrames > 20 || _qsAnimJanks > 0) Log.Info($"quick panel repaint frames={_qsAnimFrames} max={_qsAnimMax}ms janks={_qsAnimJanks}");
     }
 
-    /// <summary>面板平移、冻结帧按面板右沿裁、光标、游戏缩略图只画面板右边那一块（位置和游戏窗口原来一样）。</summary>
+    /// <summary>静态排布（尺寸变了才要重摆）：各层位置、右边线、冻结帧按面板右沿裁（表达式绑在面板平移上，合成线程算）。</summary>
     private void QsLayout()
     {
         if (_qs == null) return;
         float k = QsK, dpi = Chrome.Dpi, H = QsViewH;
-        float x = _qsPx;
-        _qsSlide.Offset = new Vector3(x * k, 0, 0);
-        _qsSlide.Opacity = x > QsHideX + 1 ? 1 : 0;
         _qsTopV.Offset = Vector3.Zero;
         _qsRowsV.Offset = new Vector3(0, QsRowsY * k, 0);
         _qsGridV.Offset = new Vector3(0, QsGridLY * k, 0);
         _qsEdgeV.Offset = new Vector3((QsW - 1) * k, 0, 0);
         _qsEdgeV.Size = new Vector2(Math.Max(1 / dpi, k), H * k);
-        _qsCurV.Offset = new Vector3(0, (_qsCy - 20) * k, 0);
-        _qsCurV.Size = new Vector2(QsW * k, (_qsCh + 40) * k);
-        _qsCurV.Opacity = QsTv("c.on");
-        float right = Math.Max(0, (QsW + x) * k), boxW = (QsW + 4) * k;
-        _qsGlassBox.Size = new Vector2(boxW, H * k);
-        _qsGlassBase.Size = new Vector2(boxW, H * k);
-        _qsGlassClip.RightInset = Math.Max(0, boxW - right);
-        if (_qsThumb is not { } th) return;
-        int edge = (int)MathF.Round((x + QsW) * k * dpi);
-        var (gl, gt, gw, gh) = _qsGameRect;
-        int left = Math.Max(edge, gl), r = gl + gw;
-        if (r <= left) { th.PlaceCropped(0, 0, 0, 0, 0, 0, 0, 0); return; }
-        double sx = (double)th.SourceW / gw, sy = (double)th.SourceH / gh;
-        th.PlaceCropped(left, gt, r - left, gh, (int)Math.Round((left - gl) * sx), 0, (int)Math.Round((r - left) * sx), (int)Math.Round(gh * sy), 1);
+        float boxW = (QsW + 4) * k;
+        if (_qsGlassBox.Size.X != boxW || _qsGlassBox.Size.Y != H * k)
+        {
+            _qsGlassBox.Size = new Vector2(boxW, H * k);
+            _qsGlassBase.Size = new Vector2(boxW, H * k);
+            var clip = G.C.CreateExpressionAnimation("Max(0, w - (pw + s.Offset.X))");
+            clip.SetReferenceParameter("s", _qsSlide);
+            clip.SetScalarParameter("w", boxW);
+            clip.SetScalarParameter("pw", QsW * k);
+            _qsGlassClip.StartAnimation("RightInset", clip);
+        }
+        if (_qsThumb is { } th)
+        {
+            // 退回旧办法（面板画在游戏库窗口里）时：游戏画面从面板右沿开始
+            int edge = (int)MathF.Round(QsW * k * dpi);
+            var (gl, gt, gw, gh) = _qsGameRect;
+            int left = Math.Max(edge, gl), r = gl + gw;
+            if (r <= left) th.PlaceCropped(0, 0, 0, 0, 0, 0, 0, 0);
+            else
+            {
+                double sx = (double)th.SourceW / gw, sy = (double)th.SourceH / gh;
+                th.PlaceCropped(left, gt, r - left, gh, (int)Math.Round((left - gl) * sx), 0, (int)Math.Round((r - left) * sx), (int)Math.Round(gh * sy), 1);
+            }
+        }
+    }
+
+    /// <summary>光标：合成层弹簧（460 / 36 / 0.9）挪到目标行；snap = 直接放过去（刚出现时）。</summary>
+    private void QsCursorTo(float y, float h, bool show, bool snap)
+    {
+        float k = QsK;
+        var off = new Vector3(0, (y - 20) * k, 0);
+        var size = new Vector2(QsW * k, (h + 40) * k);
+        if (show != _qsCurShown)
+        {
+            _qsCurShown = show;
+            _qsCurV.StartAnimation("Opacity", G.Scalar(_qsCurV.Opacity, show ? 1 : 0, Reduced ? 1 : 160, Bezier.Ease_));
+        }
+        if (!show) return;
+        if (snap || Reduced)
+        {
+            _qsCurV.StopAnimation("Offset"); _qsCurV.StopAnimation("Size");
+            _qsCurV.Offset = off; _qsCurV.Size = size;
+            return;
+        }
+        var spring = new Spring(460, 36, 0.9);
+        _qsCurV.StartAnimation("Offset", G.SpringV3(off, spring));
+        var sz = G.C.CreateSpringVector2Animation();
+        sz.FinalValue = size; sz.DampingRatio = spring.Zeta; sz.Period = spring.Period;
+        _qsCurV.StartAnimation("Size", sz);
     }
 
     // ---------------- 输入 ----------------
@@ -1291,7 +1383,7 @@ public sealed partial class WallStage
                 if (cur < 0) { double now = QsNum("system.fpsLimit"); cur = s > 0 ? Array.FindLastIndex(QsFps, x => x < now) : Array.FindIndex(QsFps, x => x > now) + 1; }
                 int next = QsFps[QsStep(cur, QsFps.Length, s)];
                 if (_qsState?["system"] is JsonObject sys) sys["fpsLimit"] = next;
-                _ = QsCall("帧率上限", "set_fps_limit", JsonValue.Create(next));
+                QsQueueTouchValue("set_fps_limit", JsonValue.Create(next));
                 break;
             }
             case "refresh":
@@ -1300,7 +1392,7 @@ public sealed partial class WallStage
                 if (rates.Count < 2) return;
                 double hz = rates[QsStep(rates.IndexOf(QsNum("system.refresh")), rates.Count, s)];
                 if (_qsState?["system"] is JsonObject sys) sys["refresh"] = hz;
-                _ = QsCall("刷新率", "set_refresh_rate", JsonValue.Create(hz));
+                QsQueueTouchValue("set_refresh_rate", JsonValue.Create(hz));
                 break;
             }
             case "scale":
@@ -1318,7 +1410,7 @@ public sealed partial class WallStage
                 if (d["osd"] is not JsonObject osd) { osd = new JsonObject(); d["osd"] = osd; }
                 osd["enabled"] = next > 0;
                 if (next > 0) osd["level"] = next;
-                _ = QsSavePower("性能显示");
+                QsQueueTouchValue("save_power", d.DeepClone());
                 break;
             }
             case "fan" when d != null:
@@ -1329,7 +1421,7 @@ public sealed partial class WallStage
                 if (next == 0) { fan["control"] = "auto"; fan["full"] = false; }
                 else if (next == 1) { fan["control"] = "custom"; fan["mode"] = "quiet"; fan["full"] = false; }
                 else { fan["control"] = "custom"; fan["full"] = true; }
-                _ = QsSavePower("风扇");
+                QsQueueTouchValue("save_power", d.DeepClone());
                 break;
             }
             case "rumble":
@@ -1338,23 +1430,35 @@ public sealed partial class WallStage
                 int i = Array.IndexOf(QsRumble, QsRumble.OrderBy(r => Math.Abs(r.V - cur)).First());
                 int v = QsRumble[QsStep(i, QsRumble.Length, s)].V;
                 if (_qsState?["rumble"] is JsonObject ru) ru["strength"] = v;
-                _ = QsCall("震动", "set_rumble_strength", JsonValue.Create(v));
+                QsQueueTouchValue("set_rumble_strength", JsonValue.Create(v));
                 break;
             }
         }
     }
 
-    /// <summary>画面缩放三选一：Magpie 和小黄鸭互斥，先关掉另一个。</summary>
-    private async Task QsSetScale(string want, bool mg, bool ls)
+    /// <summary>
+    /// 画面缩放三选一：本地先变，后台写入排队（连按只做最后一次）。执行时先读后台此刻的真实状态再补到目标
+    /// （toggle_magpie 是开关，不能按次数发）；Magpie 和小黄鸭互斥，先关掉另一个。
+    /// </summary>
+    private string _qsScaleWant = "关";
+    private Task QsSetScale(string want, bool mg, bool ls)
     {
         if (_qsState?["magpie"] is JsonObject m) m["enabled"] = want == "Magpie";
         _qsLossless = _qsLossless == null ? null : want == "小黄鸭";
-        QsRebuild();
-        if (ls && want != "小黄鸭") await QsCall("小黄鸭", "set_lossless_running", JsonValue.Create(false));
-        if (mg != (want == "Magpie")) await QsCall("画面缩放", "toggle_magpie");
-        if (!ls && want == "小黄鸭") await QsCall("小黄鸭", "set_lossless_running", JsonValue.Create(true));
+        _qsScaleWant = want;
+        QsQueue("scale", async () =>
+        {
+            _agent ??= new AgentClient();
+            string target = _qsScaleWant;
+            bool mgNow = Bool((await _agent.Call("widget_state"))?["magpie"]?["enabled"]);
+            bool lsNow = Bool((await _agent.Call("get_lossless_settings"))?["running"]);
+            if (lsNow && target != "小黄鸭") await _agent.Call("set_lossless_running", JsonValue.Create(false));
+            if (mgNow != (target == "Magpie")) await _agent.Call("toggle_magpie");
+            if (!lsNow && target == "小黄鸭") await _agent.Call("set_lossless_running", JsonValue.Create(true));
+            Log.Info($"quick panel scale -> {target} (was magpie={mgNow} lossless={lsNow})");
+        });
+        return Task.CompletedTask;
     }
-
     private void QsActivate()
     {
         string f = _qsFocusId;
@@ -1389,7 +1493,7 @@ public sealed partial class WallStage
                 _qsVrr = next;
                 Cue(next ? Sfx.ToggleOn : Sfx.ToggleOff);
                 QsRebuild();
-                _ = QsCall("可变刷新率", "set_vrr", JsonValue.Create(next)).ContinueWith(_ => _dq.TryEnqueue(() => _ = QsReadVrr()));
+                QsQueue("set_vrr", async () => { _agent ??= new AgentClient(); await _agent.Call("set_vrr", JsonValue.Create(next)); _dq.TryEnqueue(() => _ = QsReadVrr()); });
                 break;
             }
             case "pwr":
@@ -1401,8 +1505,8 @@ public sealed partial class WallStage
             {
                 CloseQuickPanel();
                 nint game = _qsGame;
-                if (_qsUnderLibrary)
-                    After(500, async () =>
+                if (_qsUnderLibrary || _qsWin != null)
+                    After(_qsWin != null ? 350 : 500, async () =>
                     {
                         string? path = await CaptureScreenshotAsync(game);
                         if (path == null) Toast("截图没能保存");
@@ -1447,12 +1551,14 @@ public sealed partial class WallStage
                 if (!Program.Args.Contains("--power-dry")) _ = CcRequestAnimatedPower(id == "off" ? "shutdown" : "restart");
                 break;
             case "win":
-                OpenSwitcherShortcut();   // 面板滑出去，控制中心「窗口」页同时进来
+                if (_qsWin != null) { CloseQuickPanel(hideWindow: false, instant: true); (_window as MainWindow)?.RouteFromPanel("window-switcher", _qsGame); }
+                else OpenSwitcherShortcut();   // 面板滑出去，控制中心「窗口」页同时进来
                 break;
             case "lib":
                 // 留在游戏库：面板收起、窗口不退下（游戏留在后面）
                 _nowPlayingDismissed = true;
                 CloseQuickPanel(hideWindow: false);
+                if (_qsWin != null) (_window as MainWindow)?.KeepLibraryAfterSurface();
                 break;
             case "quit":
                 if (_game is { } g) QuitGame(g);
@@ -1567,7 +1673,7 @@ public sealed partial class WallStage
         bool m = !Bool(QsGet("system.muted"));
         if (_qsState?["system"] is JsonObject s2) s2["muted"] = m;
         Cue(m ? Sfx.ToggleOff : Sfx.ToggleOn);
-        _ = QsCall("静音", "set_mute", JsonValue.Create(m));
+        QsQueueTouchValue("set_mute", JsonValue.Create(m));
         QsHotMark("vol");
         QsBuild(); QsPaintLayer('t');
     }
@@ -1600,6 +1706,13 @@ public sealed partial class WallStage
     // In-memory transport is used only by the opt-in input probe.
     private Func<string, JsonNode, Task>? _qsTouchTransport;
     private Task _qsTouchPending = Task.CompletedTask;
+    /// <summary>同一项只留最新的一次写入，按顺序发；写入没完成前不拿后台回读覆盖界面（QsRefresh 看 IsBusy / Revision）。</summary>
+    private void QsQueue(string key, Func<Task> write)
+    {
+        _qsTouchWrites ??= new SettingsWriteQueue(ex => QsFlash(ex.Message), () => { if (_qsOpen) _ = QsRefresh(_qsVersion); });
+        Log.Info($"quick panel write queued {key}");
+        _qsTouchPending = _qsTouchWrites.Enqueue(key, 60, write);
+    }
     private void QsQueueTouchValue(string method, JsonNode value)
     {
         _qsTouchWrites ??= new SettingsWriteQueue(ex => QsFlash(ex.Message), () => { if (_qsOpen) _ = QsRefresh(_qsVersion); });

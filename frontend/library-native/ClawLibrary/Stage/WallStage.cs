@@ -1,4 +1,4 @@
-// 舞台（照 src/stage/stage.ts）：一面常驻的墙 + 一道缝，全部画在合成视觉层上。
+﻿// 舞台（照 src/stage/stage.ts）：一面常驻的墙 + 一道缝，全部画在合成视觉层上。
 // - 相机与缝的开口是一个 CompositionPropertySet 里的几个数（cx、cy、open…），两半墙、缝、边缘标签的位置都是表达式动画，
 //   相机补间 / 缝补间就是对这几个数做关键帧动画 —— 全在合成线程跑，UI 线程不逐帧干活。
 // - UI 线程用同一条曲线解析地算出「此刻相机在哪」，供导航、裁剪、点击命中用。
@@ -284,6 +284,7 @@ public sealed partial class WallStage : IDisposable
 
     private bool IsForeground()
     {
+        if (_qsOpen && QuickPanelOwnWindow) return true;   // 快捷面板（自己的不激活窗口）开着：游戏在前台，手柄归面板
         return (_window as MainWindow)?.AcceptsGamepad != false && !ToolboxWindow.IsIconic(_windowHandle) && (GetForegroundWindow() == _windowHandle || (_window as MainWindow)?.OverlayAcceptsGamepad == true);
     }
 

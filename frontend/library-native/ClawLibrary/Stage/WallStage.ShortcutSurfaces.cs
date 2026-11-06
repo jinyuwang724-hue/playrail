@@ -1,4 +1,4 @@
-using ClawLibrary.Data;
+﻿using ClawLibrary.Data;
 
 namespace ClawLibrary.Stage;
 
@@ -58,6 +58,7 @@ public sealed partial class WallStage
         _qsTicking = false; _qsShow = _qsShowTo = 0;
         _qsThumb?.Dispose(); _qsThumb = null;
         if (_qs != null) _qs.IsVisible = false;
+        QsHideNow();
         if (_wsOpen) CloseSwitcher(instant: true);
         _wsStandalone = false;
         SetSpecialInput(false);

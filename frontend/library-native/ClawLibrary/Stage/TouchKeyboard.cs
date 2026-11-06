@@ -1,4 +1,4 @@
-// 屏幕键盘：输入框拿到焦点时把触摸键盘叫出来，打完收回去。
+﻿// 屏幕键盘：输入框拿到焦点时把触摸键盘叫出来，打完收回去。
 // 先走系统的 InputPane（InputPaneInterop.TryShow）；掌机的手柄会被 Windows 当成接了硬件键盘，这时 TryShow 常常不出，
 // 就退回老办法：TabTip 的 ITipInvocation.Toggle（COM，按虚表直接调，AOT 下不能用 ComImport）。
 // 键盘到底出没出来看 InputPane.OccludedRect（挡住窗口的那块）。
@@ -18,11 +18,16 @@ internal static class TouchKeyboard
         catch (Exception ex) { Log.Warn($"touch keyboard: {ex.Message}"); return false; }
     }
 
+    /// <summary>InputPaneInterop 在这个窗口上会抛「Specified cast is not valid」（每次约 50 ms，拖慢快设唤出）：抛过一次就不再用它。</summary>
+    private static bool _paneBroken;
+
     public static void Hide(nint hwnd)
     {
         bool hidden = false;
-        try { hidden = Windows.UI.ViewManagement.InputPaneInterop.GetForWindow(hwnd)?.TryHide() == true; }
-        catch (Exception ex) { Log.Warn($"touch keyboard hide: {ex.Message}"); }
+        if (!_paneBroken)
+            try { hidden = Windows.UI.ViewManagement.InputPaneInterop.GetForWindow(hwnd)?.TryHide() == true; }
+            catch (Exception ex) { _paneBroken = true; Log.Warn($"touch keyboard hide: {ex.Message} (InputPane skipped from now on)"); }
+        if (_paneBroken) return;
         if (!hidden && Visible(hwnd)) Toggle();
     }
 
@@ -32,6 +37,7 @@ internal static class TouchKeyboard
     /// </summary>
     public static bool Visible(nint hwnd)
     {
+        if (_paneBroken) return false;
         try
         {
             var p = Windows.UI.ViewManagement.InputPaneInterop.GetForWindow(hwnd);

@@ -8,7 +8,7 @@
   IgnorableNamespaces="uap uap3 uap4 rescap">
 
   <!-- 与 Game Bar 小组件同一张自签名证书（CN=ClawToolbox）。主页能力由包根目录的 SCCD 配套声明。 -->
-  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.234.0" />
+  <Identity Name="ClawToolbox.Library" Publisher="CN=ClawToolbox" Version="0.1.237.0" />
 
   <Properties>
     <DisplayName>Claw 游戏库</DisplayName>
@@ -49,6 +49,8 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="graphicsCaptureProgrammatic" />
+    <rescap:Capability Name="graphicsCaptureWithoutBorder" />
     <uap4:CustomCapability Name="Microsoft.appCategory.gamingHome_8wekyb3d8bbwe" />
     <DeviceCapability Name="radios" />
   </Capabilities>
