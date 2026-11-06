@@ -25,7 +25,7 @@ public sealed partial class MainWindow
 
     private async Task ActivateOverlayRoute(string route, nint returnWindow)
     {
-        if (route.StartsWith("test:", StringComparison.Ordinal)) { _stage?.TestInput(route[5..]); return; }
+        if (route.StartsWith("test:", StringComparison.Ordinal)) { _stage?.TestInput(route[5..], returnWindow); return; }
         await _overlayRoutes.WaitAsync();
         try
         {

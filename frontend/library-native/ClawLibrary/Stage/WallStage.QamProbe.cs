@@ -13,8 +13,16 @@ public sealed partial class WallStage
     /// 每按一次记界面上的值；停 4 s 等写入和回读，记界面值和后台真实值，两者应等于第 10 次的值；最后按回原值。
     /// </summary>
     /// <summary>自测输入（LibraryWindow 收到 wp 100+ 的注册消息）：0–3 上下左右、4 A、5 B、6/7 LB/RB、8/9 LT/RT、10 记状态。</summary>
-    internal void TestInput(string code)
+    internal void TestInput(string code, nint lp = 0)
     {
+        if (code == "12")
+        {
+            // 切换器里把焦点放到 lp 那个窗口的卡上（之后再发 A，走真实的切换路径）
+            int i = _wsOpen ? _wsCards.FindIndex(c => c.Win.Hwnd == lp) : -1;
+            if (i >= 0) WsSetFocus(i);
+            Log.Info($"test input 12 -> switcher open={_wsOpen} cards={_wsCards.Count} focus={(i >= 0 ? _wsCards[i].Win.Process : "none")}");
+            return;
+        }
         switch (code)
         {
             case "0": Move(Direction.Up); break;
