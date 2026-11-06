@@ -346,6 +346,7 @@ public sealed partial class WallStage
         {
             _qs.Size = new Vector2(QsW * QsK + 2, (float)View.Height);
             _qsWin.SetContent(_qs);
+            _qsWin.Prime((int)Math.Ceiling(QsW * QsK * Chrome.Dpi), (int)Math.Ceiling(View.Height * Chrome.Dpi));
         }
         else _top.Children.InsertAtTop(_qs);
     }

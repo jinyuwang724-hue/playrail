@@ -60,18 +60,43 @@ internal sealed class QamWindow
 
     public void SetContent(Visual v) => ElementCompositionPreview.SetElementChildVisual(_root, v);
 
-    /// <summary>按物理像素摆到 (x, y, w, h)，置顶、不激活。</summary>
-    public void Place(int x, int y, int w, int h) => SetWindowPos(Hwnd, -1, x, y, w, h, 0x0010 /* NOACTIVATE */ | 0x0200 /* NOOWNERZORDER */ | 0x0020 /* FRAMECHANGED */);
+    private (int X, int Y, int W, int H) _rect;
+    private bool _everShown;
+    private const int Parked = -30000;
 
+    /// <summary>按物理像素定下面板的位置（显示时才真的摆过去）。</summary>
+    public void Place(int x, int y, int w, int h)
+    {
+        _rect = (x, y, w, h);
+        if (Shown) Show();
+    }
+
+    /// <summary>
+    /// 窗口一直是「显示」状态：收起时挪到屏幕外面停着，唤出时只挪回来（不重新显示一个藏着的 WinUI 窗口——
+    /// 那要等它恢复渲染，实测按键到第一帧多出约 200 ms）。
+    /// </summary>
     public void Show()
     {
-        ShowWindow(Hwnd, 4);   // SW_SHOWNOACTIVATE
-        SetWindowPos(Hwnd, -1, 0, 0, 0, 0, 0x0010 | 0x0001 | 0x0002 | 0x0200 | 0x0040);
+        if (!_everShown) { ShowWindow(Hwnd, 4); _everShown = true; }   // SW_SHOWNOACTIVATE
+        SetWindowPos(Hwnd, -1, _rect.X, _rect.Y, _rect.W, _rect.H, 0x0010 | 0x0200 | 0x0040 /* NOACTIVATE | NOOWNERZORDER | SHOWWINDOW */);
         Shown = true;
     }
 
-    public void Hide() { ShowWindow(Hwnd, 0); Shown = false; }
+    public void Hide()
+    {
+        if (!_everShown) return;
+        SetWindowPos(Hwnd, -1, Parked, Parked, Math.Max(1, _rect.W), Math.Max(1, _rect.H), 0x0010 | 0x0200);
+        Shown = false;
+    }
 
+    /// <summary>启动时先显示一次、停到屏幕外，让它把第一帧渲染好。</summary>
+    public void Prime(int w, int h)
+    {
+        _rect = (Parked, Parked, w, h);
+        ShowWindow(Hwnd, 4); _everShown = true;
+        SetWindowPos(Hwnd, -1, Parked, Parked, w, h, 0x0010 | 0x0200 | 0x0040 | 0x0020);
+        Shown = false;
+    }
     /// <summary>截屏时把面板排除在外（截的是底下的游戏）。</summary>
     public void ExcludeFromCapture(bool on) => SetWindowDisplayAffinity(Hwnd, on ? 0x11u : 0u);
 
