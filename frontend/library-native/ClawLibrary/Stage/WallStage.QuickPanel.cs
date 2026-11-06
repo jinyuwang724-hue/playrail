@@ -152,7 +152,7 @@ public sealed partial class WallStage
     /// <summary>启动后预先建好面板窗口和画面（第一次唤出不用现建）。</summary>
     internal void WarmQuickPanel()
     {
-        try { EnsureQsVisuals(); QsBuild(); QsPaintAll(); _ = QsRefresh(_qsVersion, first: true, warm: true); Log.Info($"quick panel warm own-window={_qsWin != null}"); }
+        try { EnsureQsVisuals(); QsBuild(); QsPaintAll(); _ = QsRefresh(_qsVersion, first: true, warm: true); AskCaptureAccessIfForeground(); Log.Info($"quick panel warm own-window={_qsWin != null}"); }
         catch (Exception ex) { Log.Warn($"quick panel warm: {ex.Message}"); }
     }
 
@@ -377,26 +377,56 @@ public sealed partial class WallStage
         });
     }
 
-    private static bool _qsCaptureAsked;
+    private static bool _qsCaptureAsking;
 
-    /// <summary>按程序截别的窗口 / 显示器要 graphicsCaptureProgrammatic（清单里声明了），第一次还要向系统要一次许可。</summary>
-    private static async Task QsCaptureAccess()
+    /// <summary>
+    /// 系统「屏幕截图访问」里本应用的许可（HKCU ConsentStore\graphicsCaptureProgrammatic\&lt;包族名&gt;）：Allow / Deny / Prompt。
+    /// 只读，不改。没打包运行（自测）时是 NonPackaged。
+    /// </summary>
+    internal static string CaptureConsent()
     {
-        if (_qsCaptureAsked) return;
-        _qsCaptureAsked = true;
         try
         {
-            var a = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Programmatic);
-            var b = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Borderless);
-            Log.Info($"capture access programmatic={a} borderless={b}");
+            string name = Windows.ApplicationModel.Package.Current.Id.FamilyName;
+            using var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\graphicsCaptureProgrammatic\" + name);
+            return k?.GetValue("Value") as string ?? "Prompt";
         }
-        catch (Exception ex) { Log.Warn($"capture access: {ex.Message}"); }
+        catch { return "NonPackaged"; }
     }
 
+    /// <summary>
+    /// 按程序截别的窗口 / 显示器要用户许可。还没许可时只在游戏库自己在前台时向系统要一次（会弹系统提示，用户点允许）；
+    /// 面板 / 游戏在前台时不弹（弹不出来，会一直挂着），直接当没许可。
+    /// </summary>
+    private async Task<bool> QsCaptureAccess(bool mayPrompt)
+    {
+        string c = CaptureConsent();
+        if (c is "Allow" or "NonPackaged") return true;
+        if (c == "Deny" || !mayPrompt || _qsCaptureAsking) return false;
+        _qsCaptureAsking = true;
+        try
+        {
+            var op = GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Programmatic).AsTask();
+            var done = await Task.WhenAny(op, Task.Delay(60000)) == op ? await op : Windows.Security.Authorization.AppCapabilityAccess.AppCapabilityAccessStatus.UserPromptRequired;
+            Log.Info($"capture access request: {done} (consent now {CaptureConsent()})");
+            if (done == Windows.Security.Authorization.AppCapabilityAccess.AppCapabilityAccessStatus.Allowed)
+                try { await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Borderless); } catch { }
+            return done == Windows.Security.Authorization.AppCapabilityAccess.AppCapabilityAccessStatus.Allowed;
+        }
+        catch (Exception ex) { Log.Warn($"capture access: {ex.Message}"); return false; }
+        finally { _qsCaptureAsking = false; }
+    }
+
+    /// <summary>游戏库在前台时（启动后）先把截屏许可要下来，免得第一次在游戏里唤出时没有玻璃底、截图失败。</summary>
+    internal void AskCaptureAccessIfForeground()
+    {
+        if (CaptureConsent() != "Prompt") return;
+        if (GetForegroundWindow() != WinRT.Interop.WindowNative.GetWindowHandle(_window)) { Log.Info("capture access: not asked (library not in front)"); return; }
+        _ = QsCaptureAccess(mayPrompt: true);
+    }
     private static async Task<CanvasBitmap?> QsGrab(GraphicsCaptureItem? item, int timeoutMs)
     {
         if (item == null) return null;
-        await QsCaptureAccess();
         var dev = CanvasDevice.GetSharedDevice();
         var done = new TaskCompletionSource<CanvasBitmap?>();
         using var pool = Direct3D11CaptureFramePool.CreateFreeThreaded(dev, DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, item.Size);
@@ -428,6 +458,7 @@ public sealed partial class WallStage
         var mi = new QsMonInfo { Size = Marshal.SizeOf<QsMonInfo>() };
         GetMonitorInfo(mon, ref mi);
         var rect = (mi.Monitor.Left, mi.Monitor.Top, mi.Monitor.Right - mi.Monitor.Left, mi.Monitor.Bottom - mi.Monitor.Top);
+        if (!await QsCaptureAccess(mayPrompt: false)) { Log.Warn($"capture: no screen-capture permission yet (consent {CaptureConsent()})"); return (null, rect); }
         var did = Microsoft.UI.Win32Interop.GetDisplayIdFromMonitor(mon);
         if (exclude != 0) SetWindowDisplayAffinity(exclude, 0x11);
         try
@@ -1509,7 +1540,7 @@ public sealed partial class WallStage
                     After(_qsWin != null ? 350 : 500, async () =>
                     {
                         string? path = await CaptureScreenshotAsync(game);
-                        if (path == null) Toast("截图没能保存");
+                        if (path == null) Toast(_shotNeedsPermission ? "截图没能保存：在游戏库里允许「屏幕截图」权限" : "截图没能保存");
                         else { Cue(Sfx.Shutter); Toast("已截图"); }
                     });
                 else After(500, () => _ = QsCall("截图", "screenshot"));

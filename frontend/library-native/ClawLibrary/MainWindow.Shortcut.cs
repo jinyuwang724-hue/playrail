@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using ClawLibrary.Data;
 using ClawLibrary.Engine;
 using Microsoft.UI.Composition;
@@ -45,6 +45,8 @@ public sealed partial class MainWindow
             {
                 _stage?.ResumeFromTray();
                 if (_shortcutVisible && !_shortcutHiding) _shortcutWindow?.SetTopmost(true);
+                // 游戏库自己在前台：截屏许可还没给就在这时向系统要（弹系统提示）；面板 / 游戏在前台时弹不出来
+                _stage?.AskCaptureAccessIfForeground();
             }
         };
     }

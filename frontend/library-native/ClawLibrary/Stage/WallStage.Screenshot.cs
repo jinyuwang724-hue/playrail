@@ -11,6 +11,8 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     private bool _shotBusy;
+    /// <summary>上一次截图失败是因为还没有屏幕截图许可（提示里说清楚要去哪儿开）。</summary>
+    internal bool _shotNeedsPermission;
 
     /// <summary>
     /// 截 target 窗口。先按窗口截；管理员权限的游戏（Steam 以管理员运行时游戏也是）不让普通权限程序按窗口截，
@@ -20,6 +22,7 @@ public sealed partial class WallStage
     {
         if (_shotBusy) return null;
         _shotBusy = true;
+        _shotNeedsPermission = false;
         try
         {
             string title = target != 0 ? OpenWindows.List().FirstOrDefault(w => w.Hwnd == target)?.Title ?? "" : "";
@@ -55,7 +58,28 @@ public sealed partial class WallStage
                 frame = mon;
                 if (title.Length == 0) title = "Screenshot";
             }
-            if (frame == null) { Log.Warn("screenshot: no frame"); return null; }
+            if (frame == null)
+            {
+                // 还没有截屏许可：交给 Game Bar 截（游戏模式保留 explorer 时 Win+Alt+PrtScn 有人接），图同样进「捕获」文件夹
+                Log.Warn($"screenshot: no frame (consent {CaptureConsent()}); asking Game Bar");
+                try
+                {
+                    var since = DateTime.Now.AddSeconds(-1);
+                    _agent ??= new AgentClient(); await _agent.Call("screenshot");
+                    // Game Bar 截没截到看文件：3 秒内「捕获」文件夹里出现新图才算
+                    string dir = Captures.GameBarFolder();
+                    for (int i = 0; i < 15; i++)
+                    {
+                        await Task.Delay(200);
+                        var hit = Directory.Exists(dir) ? new DirectoryInfo(dir).GetFiles().Where(fi => fi.LastWriteTime > since).OrderByDescending(fi => fi.LastWriteTime).FirstOrDefault() : null;
+                        if (hit != null) { Log.Info($"screenshot saved (Game Bar) {hit.FullName}"); return hit.FullName; }
+                    }
+                    Log.Warn("screenshot: Game Bar saved nothing");
+                    _shotNeedsPermission = CaptureConsent() != "Allow";
+                    return null;
+                }
+                catch (Exception ex) { Log.Warn($"screenshot via Game Bar: {ex.Message}"); return null; }
+            }
             using var _f = frame;
             string folder = Captures.GameBarFolder();
             Directory.CreateDirectory(folder);
