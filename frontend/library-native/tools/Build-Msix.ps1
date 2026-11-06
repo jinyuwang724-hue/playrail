@@ -30,6 +30,15 @@ $required = 'shell\ClawShell.exe', 'session\ClawGameSession.exe', 'pawnio\PawnIO
 $missing = @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $payload $_)) })
 if (-not (Get-ChildItem -LiteralPath (Join-Path $payload 'widget') -Filter *.msix -ErrorAction SilentlyContinue)) { $missing += 'widget\*.msix' }
 if ($missing.Count) { throw "Payload incomplete, not packaging (run tools\Stage-OobePayload.ps1): $($missing -join ', ')" }
+# The shell launcher must be the version in native\ClawShell: 0.1.232/0.1.233 shipped a stale 1.0.1 that
+# overwrote the installed 1.0.9 (keep-explorer game mode silently gone). Program.Version is stamped as file version.
+$shellSource = [IO.Path]::GetFullPath((Join-Path $here '..\..\..\native\ClawShell\Program.cs'))
+$shellWant = [regex]::Match([IO.File]::ReadAllText($shellSource), 'const string Version = "([\d.]+)"').Groups[1].Value
+$shellHave = (Get-Item -LiteralPath (Join-Path $payload 'shell\ClawShell.exe')).VersionInfo.FileVersion
+if (-not $shellWant -or $shellHave -ne $shellWant) {
+    throw "Payload\shell\ClawShell.exe is '$shellHave' but native\ClawShell is '$shellWant'; run tools\Build-ClawShell.ps1 -Out `"$payload\shell`" -NoTests (and copy it to the main checkout's Payload)"
+}
+"shell: ClawShell $shellHave"
 
 dotnet publish $proj -c Release -p:Platform=x64 -r win-x64 -p:GenerateAppxPackageOnBuild=true -p:AppxPackageSigningEnabled=true `
     -p:PackageCertificateThumbprint=$($cert.Thumbprint) -p:AppxBundle=Never -p:AppxPackageDir=$out

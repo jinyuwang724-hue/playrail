@@ -1,4 +1,4 @@
-// ClawShell.exe：游戏模式的外壳启动器。极小、只用 .NET Framework、不依赖工具箱后台。
+﻿// ClawShell.exe：游戏模式的外壳启动器。极小、只用 .NET Framework、不依赖工具箱后台。
 //
 //   shell                    Winlogon 外壳（HKCU Winlogon Shell）。开机检查强制桌面，拉起游戏库并一直看着它。
 //   watch                    登录项里的监视进程：桌面登录时也在，负责手柄 视图+菜单 切换和游戏模式下的崩溃保护。
@@ -13,6 +13,10 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading;
+
+// 文件版本 = Program.Version：游戏库打包时按它核对 Payload 里的外壳是不是源码当前版本
+[assembly: System.Reflection.AssemblyFileVersion(ClawShell.Program.Version)]
+[assembly: System.Reflection.AssemblyVersion(ClawShell.Program.Version)]
 
 namespace ClawShell
 {
