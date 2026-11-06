@@ -41,8 +41,11 @@ public sealed partial class WallStage
 
     // ---------------- 尺寸（设计 px） ----------------
     private const float QsW = 416, QsL = 32, QsR = 384, QsHideX = -440;
-    private const float QsStatusY = 24, QsPwY = 76, QsPwH = 100, QsPairY = 192, QsRowY = 260, QsRowH = 48, QsGridY = 569, QsCell = 62.4f, QsPitch = 72.4f;
-    private const float QsTopH = 250, QsRowsY = 250, QsRowsH = 310, QsGridLY = 500, QsGridLH = 300;
+    // 亮度、音量是两行细滑条（和选项行一样能拿焦点），选项行和滑条行都是 44 高；所有数值的右边缘都在 QsVR 这一条线上（右边留出 > 的位置）
+    private const float QsStatusY = 24, QsPwY = 76, QsPwH = 100, QsPairY = 192, QsSlH = 44, QsRowY = 284, QsRowH = 44, QsGridY = 569, QsCell = 62.4f, QsPitch = 72.4f, QsVR = 358;
+    /// <summary>滑条行的轨道宽：图标后面到「&lt; 数值 &gt;」前面（数值按 3 位数留宽，&lt; 也一直留着位置）。</summary>
+    private const float QsSlTrack = QsVR - 30 - 10 - 16 - 10 - (QsL + 30);
+    private const float QsTopH = 190, QsRowsY = 190, QsRowsH = 370, QsGridLY = 500, QsGridLH = 300;
     private static readonly Color QsInk = Theme.Ink, QsBg = Theme.Bg, QsAcc = Theme.Accent, QsRed = Gfx.Rgba(0xff, 0x5a, 0x4e);
     private static readonly Color QsInk2 = Gfx.WithAlpha(Theme.Ink, 0.55), QsOffBg = Gfx.WithAlpha(Theme.Ink, 0.08);
     private static readonly Bezier QsEase = new(.22f, 1f, .36f, 1f);
@@ -51,7 +54,7 @@ public sealed partial class WallStage
     private static readonly (int V, string N)[] QsRumble = { (0, "关"), (35, "弱"), (70, "中"), (100, "强") };
     private static readonly string[] QsOsdNames = { "关", "简洁", "标准", "详细", "完整" };
     private static readonly string[] QsRowIds = { "fps", "refresh", "scale", "osd", "fan", "rumble" };
-    private static readonly string[] QsCol = { "tdp", "fps", "refresh", "scale", "osd", "fan", "rumble", "grid" };
+    private static readonly string[] QsCol = { "tdp", "brightness", "volume", "fps", "refresh", "scale", "osd", "fan", "rumble", "grid" };
     /// <summary>网格：id、列、行、跨列。左 3×3 靠屏幕外沿，右两列三张宽卡。电源展开时第三行左三格换成 关机 / 重启 / 睡眠。</summary>
     private static readonly (string Id, int C, int R, int W)[] QsLay =
     {
@@ -192,6 +195,7 @@ public sealed partial class WallStage
         QsBuild();
         QsSync();
         QsPaintAll();
+        if (!again) QsKnobsUpdate(true);
         if (_qsWin != null)
         {
             if (!again || !_qsWin.Shown) QsPlaceWindow(_qsGame != 0 ? _qsGame : self);
@@ -650,8 +654,8 @@ public sealed partial class WallStage
         double bright = QsNum("system.brightness", -1), vol = QsNum("system.volume", -1);
         bool muted = Bool(QsGet("system.muted"));
         // 滑条的 X / W 是轨道（触控按轨道位置换算）
-        _qsItems.Add(new QsItem { Id = "brightness", Kind = QsKind.Slider, Name = "亮度", Glyph = "qam.sun", Value = bright < 0 ? "--" : $"{bright:0}", Level = (float)Math.Clamp(Math.Max(0, bright) / 100, 0, 1), Disabled = bright < 0, X = QsL + 30, Y = QsPairY, W = 94, H = 44 });
-        _qsItems.Add(new QsItem { Id = "volume", Kind = QsKind.Slider, Name = "音量", Glyph = muted ? "qam.mute" : "qam.vol", Value = vol < 0 ? "--" : $"{vol:0}", On = muted, Level = muted ? 0 : (float)Math.Clamp(Math.Max(0, vol) / 100, 0, 1), Disabled = vol < 0, X = 220 + 30, Y = QsPairY, W = 94, H = 44 });
+        _qsItems.Add(new QsItem { Id = "brightness", Kind = QsKind.Slider, Name = "亮度", Glyph = "qam.sun", Value = bright < 0 ? "--" : $"{bright:0}", Level = (float)Math.Clamp(Math.Max(0, bright) / 100, 0, 1), Disabled = bright < 0, X = QsL + 30, Y = QsPairY, W = QsSlTrack, H = QsSlH });
+        _qsItems.Add(new QsItem { Id = "volume", Kind = QsKind.Slider, Name = "音量", Glyph = muted ? "qam.mute" : "qam.vol", Value = vol < 0 ? "--" : $"{vol:0}", On = muted, Level = muted ? 0 : (float)Math.Clamp(Math.Max(0, vol) / 100, 0, 1), Disabled = vol < 0, X = QsL + 30, Y = QsPairY + QsSlH, W = QsSlTrack, H = QsSlH });
 
         for (int i = 0; i < QsRowIds.Length; i++)
         {
@@ -742,11 +746,33 @@ public sealed partial class WallStage
                 it.Name = "窗口切换"; it.Glyph = "qam.win"; it.Sub = $"{n} 个窗口"; break;
             }
             case "lib": it.Name = "游戏库"; it.Glyph = "qam.lib"; it.Sub = $"{_lib.Games.Count} 款"; break;
-            case "quit": it.Name = "退出游戏"; it.Glyph = "qam.quit"; it.Sub = QsTitle(); it.Disabled = !game; break;
+            case "quit": it.Name = "退出游戏"; it.Glyph = "qam.quit"; it.Sub = QsPlayTime(); it.Disabled = !game; break;
         }
         return it;
     }
 
+    /// <summary>
+    /// 退出游戏卡的小字：这次玩了多久（游戏名不写：退出的就是当前这个，名字长了还会被截断）。
+    /// 一行放不下就换短的写法，不截断。
+    /// </summary>
+    private string QsPlayTime()
+    {
+        DateTime? start = _game?.ProcessStart is { } ps && ps > DateTime.MinValue ? ps : null;
+        if (start == null && _qsGame != 0) start = QsProcessStart(_qsGame);
+        if (start == null) return "";
+        var d = DateTime.Now - start.Value;
+        if (d.TotalMinutes < 1) return "刚开始";
+        return d.TotalHours < 1 ? $"{(int)d.TotalMinutes} 分钟" : $"{(int)d.TotalHours} 小时 {d.Minutes} 分";
+    }
+
+    private static DateTime? QsProcessStart(nint hwnd)
+    {
+        GetWindowThreadProcessIdQs(hwnd, out uint pid);
+        nint p = OpenProcessQs(0x1000, false, pid);
+        if (p == 0) return null;
+        try { return GetProcessTimes(p, out long c, out _, out _, out _) ? DateTime.FromFileTime(c) : null; }
+        finally { CloseHandleQs(p); }
+    }
     private string QsFanName()
     {
         var d = _qsDraft;
@@ -811,6 +837,10 @@ public sealed partial class WallStage
         {
             switch (it.Kind)
             {
+                case QsKind.Slider:
+                    QsTo("r.ch." + it.Id, f == it.Id ? 1 : 0, 160, Bezier.Ease_);
+                    QsTo("r.dis." + it.Id, it.Disabled ? 1 : 0, 200, Bezier.Ease_);
+                    break;
                 case QsKind.Row:
                     QsTo("r.ch." + it.Id, f == it.Id ? 1 : 0, 160, Bezier.Ease_);
                     QsTo("r.lamp." + it.Id, it.Lamp ? 1 : 0, 300);
@@ -829,18 +859,11 @@ public sealed partial class WallStage
             }
         }
         QsTo("t.dis.tdp", QsFind("tdp")?.Disabled == true ? 1 : 0, 200, Bezier.Ease_);
-        // 光标只给功耗块和选项行；刚出现（从网格回来 / 刚打开）时直接落位，之后在行间弹簧移动
-        bool blk = f == "tdp" || QsRowIds.Contains(f);
-        if (blk)
-        {
-            var it = QsFind(f)!;
-            float y = f == "tdp" ? it.Y - 2 : it.Y, h = f == "tdp" ? it.H + 4 : it.H;
-            bool snap = !_qsCurPlaced || !_qsCurShown;
-            _qsCurPlaced = true;
-            QsCursorTo(y, h, true, snap);
-        }
-        else QsCursorTo(0, 0, false, false);
+        // 不再有整行的白框光标：功耗 / 亮度 / 音量的焦点是轨道上的圆球把手，选项行的焦点是数值胶囊
+        QsCursorTo(0, 0, false, false);
+        QsKnobsUpdate(false);
     }
+
     // ---------------- 绘制 ----------------
 
     private void QsDrawInto(ref CompositionDrawingSurface? surface, SpriteVisual v, float w, float h, Action<CanvasDrawingSession> paint)
@@ -879,7 +902,7 @@ public sealed partial class WallStage
         {
             switch (layer)
             {
-                case 't': QsDrawInto(ref _qsTopS, _qsTopV, QsW, QsTopH, QsPaintTop); break;
+                case 't': QsDrawInto(ref _qsTopS, _qsTopV, QsW, QsTopH, QsPaintTop); QsKnobsUpdate(false); break;
                 case 'r': QsDrawInto(ref _qsRowsS, _qsRowsV, QsW, QsRowsH, ds => { ds.Transform = Matrix3x2.CreateTranslation(0, -QsRowsY) * ds.Transform; QsPaintRows(ds); }); break;
                 case 'g': QsDrawInto(ref _qsGridS, _qsGridV, QsW, QsGridLH, ds => { ds.Transform = Matrix3x2.CreateTranslation(0, -QsGridLY) * ds.Transform; QsPaintGrid(ds); }); break;
             }
@@ -957,8 +980,8 @@ public sealed partial class WallStage
             const float base_ = 122.2f;
             QsIcon(ds, "qam.bolt", QsL + 9, base_ - 9, 18, QsInk2, 1.35f);
             QsTextB(ds, "功耗", TextKit.Ui(600), 15, QsL + 26, base_, QsInk2);
-            float wW = QsTextB(ds, "W", TextKit.Ui(600), 17, QsR, base_, QsInk2, right: true);
-            QsTextB(ds, tdp.Value, TextKit.Num(700), 40, QsR - wW - 4, base_, QsInk, right: true);
+            float wW = QsTextB(ds, "W", TextKit.Ui(600), 17, QsVR, base_, QsInk2, right: true);
+            QsTextB(ds, tdp.Value, TextKit.Num(700), 40, QsVR - wW - 4, base_, QsInk, right: true);
             // 实际 x W · y °C
             double pkg = QsNum("power.actual.package", -1), temp = QsNum("power.live.cpuTemp", -1);
             float sx = QsL + 26, sb = 143.6f;
@@ -974,7 +997,6 @@ public sealed partial class WallStage
             float ty = QsPwY + QsPwH - 12 - 3, tw = QsR - QsL;
             ds.FillRoundedRectangle(QsL, ty, tw, 3, 1.5f, 1.5f, Gfx.WithAlpha(QsInk, 0.22));
             float p = Math.Clamp(tdp.Level, 0, 1);
-            if (p > 0) ds.FillRoundedRectangle(QsL, ty, tw * p, 3, 1.5f, 1.5f, QsInk);
             double now = lo + p * (hi - lo);
             foreach (var t in new[] { 8.0, 15, 25, 35 })
             {
@@ -984,50 +1006,45 @@ public sealed partial class WallStage
             }
         }
 
-        // 亮度 / 音量：细滑条，被调的那条点亮、数字弹一下
-        foreach (var (id, x0, key) in new[] { ("brightness", QsL, "bri"), ("volume", 220f, "vol") })
-        {
-            var it = QsFind(id);
-            if (it == null) continue;
-            float hot = QsTv("t.hot." + key), pop = QsTv("t.pop." + key);
-            float mcy = QsPairY + 22;
-            using var dis = ds.CreateLayer(it.Disabled ? 0.25f : 1);
-            QsIcon(ds, it.Glyph, x0 + 10, mcy, 20, QsLerp(QsInk2, QsInk, hot));
-            float tx = x0 + 30, tw = 94;
-            ds.FillRoundedRectangle(tx, mcy - 1.5f, tw, 3, 1.5f, 1.5f, Gfx.WithAlpha(QsInk, 0.22));
-            bool muted = id == "volume" && it.On;
-            using (ds.CreateLayer(muted ? 0.3f : 1))
-            {
-                float lvl = Math.Clamp(it.Level, 0, 1);
-                if (lvl > 0) ds.FillRoundedRectangle(tx, mcy - 1.5f, tw * lvl, 3, 1.5f, 1.5f, QsLerp(Gfx.WithAlpha(QsInk, 0.7), QsInk, hot));
-                float s = 1 + 0.22f * pop, nx = x0 + 164;
-                var t0 = ds.Transform;
-                float w = QsTextW(ds, it.Value, TextKit.Num(600), 15);
-                ds.Transform = Matrix3x2.CreateScale(s, new Vector2(nx - w / 2, mcy)) * t0;
-                QsTextC(ds, it.Value, TextKit.Num(600), 15, nx, mcy, QsLerp(QsInk2, QsInk, hot), right: true);
-                ds.Transform = t0;
-            }
-        }
     }
 
     private void QsPaintRows(CanvasDrawingSession ds)
     {
+        // 亮度 / 音量：一行一条细滑条（图标 + 3 px 轨道 + 数值）；填充和圆球把手是合成层上的（QsKnobs），焦点就是把手
         foreach (var it in _qsItems)
+        {
+            if (it.Kind != QsKind.Slider) continue;
+            float cy = it.Y + it.H / 2, dis = QsTv("r.dis." + it.Id), ch = QsTv("r.ch." + it.Id);
+            using var layer = ds.CreateLayer(1 - 0.75f * dis);
+            QsIcon(ds, it.Glyph, QsL + 10, cy, 20, QsLerp(QsInk2, QsInk, ch));
+            ds.FillRoundedRectangle(it.X, cy - 1.5f, it.W, 3, 1.5f, 1.5f, Gfx.WithAlpha(QsInk, 0.22));
+            bool muted = it.Id == "volume" && it.On;
+            QsTextC(ds, muted ? "静音" : it.Value, muted ? TextKit.Ui(600) : TextKit.Num(600), 15, QsVR, cy, muted ? QsInk2 : QsLerp(QsInk2, QsInk, ch), right: true);
+        }        foreach (var it in _qsItems)
         {
             if (it.Kind != QsKind.Row) continue;
             float cy = it.Y + it.H / 2, dis = QsTv("r.dis." + it.Id);
             using var layer = ds.CreateLayer(1 - 0.75f * dis);
             QsTextC(ds, it.Name, TextKit.Ui(400), 15, QsL, cy, QsInk);
             float ch = QsTv("r.ch." + it.Id), kl = QsTv("r.kl." + it.Id), kr = QsTv("r.kr." + it.Id);
-            if (ch > 0.004f) QsIcon(ds, "qam.r", QsR - 8 + 4 * kr, cy, 16, Gfx.WithAlpha(QsInk2, QsInk2.A / 255f * ch));
-            float vx = QsR - 16 - 10;
-            float vw = QsTextC(ds, it.Value, TextKit.Num(it.Off ? (ushort)400 : (ushort)600), 15, vx, cy, it.Off ? QsInk2 : QsInk, right: true);
-            float lx = vx - vw - 10 - 16;
-            if (ch > 0.004f) QsIcon(ds, "qam.l", lx + 8 - 4 * kl, cy, 16, Gfx.WithAlpha(QsInk2, QsInk2.A / 255f * ch));
-            float lamp = QsTv("r.lamp." + it.Id);
+            var vf = TextKit.Num(it.Off && ch < 0.5f ? (ushort)400 : (ushort)600);
+            float vw = QsTextW(ds, it.Value, vf, 15);
+            const float padX = 9, pillH = 26;
+            float px0 = QsVR - vw - padX, pw = vw + 2 * padX;
+            if (ch > 0.004f)
+            {
+                var glow = QsPillGlow(ds, pw, pillH);
+                ds.DrawImage(glow, new Windows.Foundation.Rect(px0 - 12, cy - pillH / 2 - 12, pw + 24, pillH + 24), glow.Bounds, ch);
+                ds.FillRoundedRectangle(px0, cy - pillH / 2, pw, pillH, pillH / 2, pillH / 2, Gfx.WithAlpha(QsInk, ch));
+                QsIcon(ds, "qam.r", px0 + pw + 2 + 7 + 3 * kr, cy, 14, Gfx.WithAlpha(QsInk2, QsInk2.A / 255f * ch));
+                QsIcon(ds, "qam.l", px0 - 2 - 7 - 3 * kl, cy, 14, Gfx.WithAlpha(QsInk2, QsInk2.A / 255f * ch));
+            }
+            var vc = QsLerp(it.Off ? QsInk2 : QsInk, QsBg, ch);
+            QsTextC(ds, it.Value, vf, 15, QsVR, cy, vc, right: true);
+            float lx = px0 - 2 - 14 - 4;            float lamp = QsTv("r.lamp." + it.Id);
             if (lamp > 0.004f)
             {
-                float s = 6 * (0.4f + 0.6f * lamp), lcx = lx - 8 - 3;
+                float s = 6 * (0.4f + 0.6f * lamp), lcx = lx - 6 - 3;
                 ds.FillRoundedRectangle(lcx - s / 2, cy - s / 2, s, s, 2 * s / 6, 2 * s / 6, Gfx.WithAlpha(QsAcc, lamp));
             }
         }
@@ -1106,6 +1123,9 @@ public sealed partial class WallStage
                     string title = armed ? (it.Id == "quit" ? "再按一次退出" : "再按一次") : it.Name;
                     string sub = armed ? "未保存的进度会丢失" : it.Sub;
                     QsTextC(ds, title, TextKit.Ui(600), 15, tx, sub.Length > 0 ? y + 21.85f : y + h / 2, fg);
+                    // 小字一行放得下才写（放不下换短写法：「1 小时 5 分」→「1:05」），绝不截断
+                    if (sub.Length > 0 && !armed && QsTextW(ds, sub, TextKit.Num(400), 12) > x + w - 10 - tx && sub.Contains("小时"))
+                    { var p = sub.Split(' '); sub = $"{p[0]}:{int.Parse(p[2]):00}"; }
                     if (sub.Length > 0) QsTextC(ds, sub, TextKit.Num(400), 12, tx, y + 42.85f, armed ? Gfx.WithAlpha(QsBg, 0.7) : QsInk2);
                 }
             }
@@ -1161,6 +1181,131 @@ public sealed partial class WallStage
 
     // ---------------- 逐帧：弹簧 + 补间 ----------------
 
+    // ---------------- 轨道把手（功耗 / 亮度 / 音量）：合成层上的圆球 + 填充，弹簧跟随 ----------------
+
+    private sealed class QsKnob
+    {
+        public required string Id;
+        public required ContainerVisual C;
+        public required SpriteVisual Solid, Hollow, Fill;
+        public Vector3 Target = new(float.NaN, 0, 0);
+        public bool? Focus;
+    }
+    private readonly List<QsKnob> _qsKnobs = new();
+    private CompositionDrawingSurface? _qsKnobSolid, _qsKnobHollow;
+    private float _qsKnobFor;
+    private readonly Dictionary<(int W, int H, CanvasDevice D), CanvasRenderTarget> _qsPillGlows = new();
+    private const float QsKnobBase = 24, QsKnobPad = 12;   // 把手实心直径 24；四周留 12 画两圈光晕（4 px、10 px）
+
+    /// <summary>数值胶囊外面那圈 4 px 柔光，按尺寸缓存。</summary>
+    private CanvasRenderTarget QsPillGlow(CanvasDrawingSession ds, float w, float h)
+    {
+        var key = ((int)MathF.Round(w), (int)h, ds.Device);
+        if (_qsPillGlows.TryGetValue(key, out var hit)) return hit;
+        float raster = QsK * Chrome.Dpi;
+        var rt = new CanvasRenderTarget(ds, w + 24, h + 24, 96 * raster);
+        using (var cl = new CanvasCommandList(ds))
+        {
+            using (var c = cl.CreateDrawingSession()) c.FillRoundedRectangle(12, 12, w, h, h / 2, h / 2, Gfx.WithAlpha(QsInk, 0.35));
+            using var g = rt.CreateDrawingSession();
+            g.Clear(Colors.Transparent);
+            using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 4, BorderMode = EffectBorderMode.Soft };
+            g.DrawImage(blur);
+        }
+        _qsPillGlows[key] = rt;
+        return rt;
+    }
+
+    private void QsEnsureKnobs()
+    {
+        float raster = QsK * Chrome.Dpi;
+        if (_qsKnobSolid == null || _qsKnobFor != raster)
+        {
+            _qsKnobFor = raster;
+            float S = QsKnobBase + 2 * QsKnobPad, c = S / 2;
+            _qsKnobSolid = G.Surface((int)Math.Ceiling(S * raster), (int)Math.Ceiling(S * raster));
+            using (var ds = CanvasComposition.CreateDrawingSession(_qsKnobSolid))
+            {
+                ds.Clear(Colors.Transparent); ds.Transform = Matrix3x2.CreateScale(raster);
+                ds.FillCircle(c, c, 12 + 10, Gfx.WithAlpha(QsInk, 0.08));   // 外圈 10 px 8 %
+                ds.FillCircle(c, c, 12 + 4, Gfx.WithAlpha(QsInk, 0.24));    // 内圈 4 px 24 %
+                ds.FillCircle(c, c, 12, QsInk);
+            }
+            // 空心：按 24 画，平时缩到 16（2/3）显示，线宽 3.75 × 2/3 = 2.5
+            _qsKnobHollow = G.Surface((int)Math.Ceiling(S * raster), (int)Math.Ceiling(S * raster));
+            using (var ds = CanvasComposition.CreateDrawingSession(_qsKnobHollow))
+            {
+                ds.Clear(Colors.Transparent); ds.Transform = Matrix3x2.CreateScale(raster);
+                ds.FillCircle(c, c, 12, Gfx.WithAlpha(QsBg, 0.85));
+                ds.DrawCircle(c, c, 12 - 1.875f, QsInk, 3.75f);
+            }
+            foreach (var kn in _qsKnobs) { ((CompositionSurfaceBrush)kn.Solid.Brush).Surface = _qsKnobSolid; ((CompositionSurfaceBrush)kn.Hollow.Brush).Surface = _qsKnobHollow; }
+        }
+        if (_qsKnobs.Count > 0) return;
+        foreach (var id in new[] { "tdp", "brightness", "volume" })
+        {
+            float k = QsK, S = (QsKnobBase + 2 * QsKnobPad) * k;
+            var fill = G.Sprite(G.Solid(QsInk), relative: false);
+            var cont = G.Container(relative: false);
+            var solid = G.Sprite(G.C.CreateSurfaceBrush(_qsKnobSolid), relative: false);
+            var hollow = G.Sprite(G.C.CreateSurfaceBrush(_qsKnobHollow), relative: false);
+            foreach (var s in new[] { solid, hollow }) { s.Size = new Vector2(S, S); s.Offset = new Vector3(-S / 2, -S / 2, 0); }
+            cont.Children.InsertAtTop(hollow); cont.Children.InsertAtTop(solid);
+            cont.Scale = new Vector3(2f / 3, 2f / 3, 1);
+            solid.Opacity = 0;
+            // 填充宽度跟着把手走（同一个弹簧，表达式在合成线程上算）
+            _qsSlide.Children.InsertAbove(fill, _qsRowsV);
+            _qsSlide.Children.InsertAbove(cont, fill);
+            _qsKnobs.Add(new QsKnob { Id = id, C = cont, Solid = solid, Hollow = hollow, Fill = fill });
+        }
+    }
+
+    /// <summary>把手摆到当前值的位置（弹簧跟随，snap = 直接放过去）、焦点放大成实心带光晕（弹簧）。</summary>
+    private void QsKnobsUpdate(bool snap)
+    {
+        if (_qs == null) return;
+        QsEnsureKnobs();
+        float k = QsK;
+        foreach (var kn in _qsKnobs)
+        {
+            var it = QsFind(kn.Id);
+            if (it == null) continue;
+            float x0, y, w;
+            if (kn.Id == "tdp") { x0 = QsL; w = QsR - QsL; y = QsPwY + QsPwH - 12 - 1.5f; }
+            else { x0 = it.X; w = it.W; y = it.Y + it.H / 2; }
+            bool muted = kn.Id == "volume" && it.On;
+            float lvl = muted ? 0 : Math.Clamp(it.Level, 0, 1);
+            var target = new Vector3((x0 + w * lvl) * k, y * k, 0);
+            kn.C.Opacity = it.Disabled ? 0.25f : 1;
+            kn.Fill.Opacity = it.Disabled || muted ? 0 : 1;
+            ((CompositionColorBrush)kn.Fill.Brush).Color = kn.Id == "tdp" || _qsFocusId == kn.Id ? QsInk : Gfx.WithAlpha(QsInk, 0.7);
+            if (snap || float.IsNaN(kn.Target.X) || Reduced)
+            {
+                kn.C.StopAnimation("Offset");
+                kn.C.Offset = target;
+            }
+            else if (kn.Target != target) kn.C.StartAnimation("Offset", G.SpringV3(target, new Spring(460, 36, 0.9)));
+            if (kn.Target.Y != target.Y || kn.Fill.Size.Y == 0 || snap)
+            {
+                kn.Fill.Offset = new Vector3(x0 * k, (y - 1.5f) * k, 0);
+                kn.Fill.Size = new Vector2(0, 3 * k);
+                var e = G.C.CreateExpressionAnimation("Vector2(Max(0, c.Offset.X - x), h)");
+                e.SetReferenceParameter("c", kn.C); e.SetScalarParameter("x", x0 * k); e.SetScalarParameter("h", 3 * k);
+                kn.Fill.StartAnimation("Size", e);
+            }
+            kn.Target = target;
+            bool focus = _qsFocusId == kn.Id && _qsOpen;
+            if (kn.Focus != focus || snap)
+            {
+                kn.Focus = focus;
+                float sc = focus ? 1 : 2f / 3;
+                if (snap || Reduced) { kn.C.StopAnimation("Scale"); kn.C.Scale = new Vector3(sc, sc, 1); }
+                else kn.C.StartAnimation("Scale", G.SpringV3(new Vector3(sc, sc, 1), new Spring(460, 30, 0.9)));
+                kn.Solid.StartAnimation("Opacity", G.Scalar(kn.Solid.Opacity, focus ? 1 : 0, snap || Reduced ? 1 : 140, Bezier.Ease_));
+                kn.Hollow.StartAnimation("Opacity", G.Scalar(kn.Hollow.Opacity, focus ? 0 : 1, snap || Reduced ? 1 : 140, Bezier.Ease_));
+            }
+        }
+    }
     private int _qsAnimFrames, _qsAnimJanks;
     private long _qsAnimMax;
 
@@ -1334,7 +1479,8 @@ public sealed partial class WallStage
     }
 
     /// <summary>LB / RB：亮度 ±5（面板开着时任何焦点都生效）。</summary>
-    internal void QsTab(int delta) => QsHot("bri", delta);
+    /// <summary>LB / RB：快设面板里没有别的键调节的功能（只有一页，没得翻）。</summary>
+    internal void QsTab(int delta) => Cue(Sfx.Bump);
 
     /// <summary>LB/RB 调亮度、LT/RT 调音量：被调的那条点亮 0.9 s、数字弹一下。</summary>
     internal void QsHot(string which, int d)
@@ -1347,19 +1493,10 @@ public sealed partial class WallStage
         if (_qsState?["system"] is JsonObject sys) { sys[path] = v; if (path == "volume") sys["muted"] = false; }
         QsQueueTouchValue(path == "brightness" ? "set_brightness" : "set_volume", JsonValue.Create(v));
         Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown);
-        QsHotMark(which);
-        QsBuild(); QsPaintLayer('t');
+        QsBuild(); QsPaintLayer('r');
     }
 
-    private long _qsHotAtBri, _qsHotAtVol;
-    private void QsHotMark(string which)
-    {
-        QsTo("t.hot." + which, 1, 200, Bezier.Ease_);
-        QsKick("t.pop." + which, 1, 0, 320);
-        long at = NowMs;
-        if (which == "bri") _qsHotAtBri = at; else _qsHotAtVol = at;
-        After(900, () => { if ((which == "bri" ? _qsHotAtBri : _qsHotAtVol) == at && _qsOpen) QsTo("t.hot." + which, 0, 200, Bezier.Ease_); });
-    }
+    private void QsHotMark(string which) { }   // 滑条行有焦点后不再单独点亮
 
     /// <summary>B：先取消确认、收起电源，再收起面板。</summary>
     private void QsBack()
@@ -1373,6 +1510,12 @@ public sealed partial class WallStage
     private void QsAdjust(int s)
     {
         string f = _qsFocusId;
+        if (f is "brightness" or "volume")
+        {
+            QsHot(f == "brightness" ? "bri" : "vol", s);
+            QsKick(s < 0 ? "r.kl." + f : "r.kr." + f, 1, 0, 140);
+            return;
+        }
         if (f == "tdp")
         {
             var it = QsFind("tdp");
@@ -1497,6 +1640,7 @@ public sealed partial class WallStage
     {
         string f = _qsFocusId;
         if (QsRowIds.Contains(f)) { QsAdjust(1); return; }
+        if (f == "volume") { if (QsFind(f) is { Disabled: false }) QsToggleMute(); else Cue(Sfx.Bump); return; }
         if (!QsIsGrid(f)) return;
         var it = QsFind(f);
         if (it == null || it.Disabled) { Cue(Sfx.Bump); return; }
@@ -1665,7 +1809,7 @@ public sealed partial class WallStage
             switch (it.Kind)
             {
                 case QsKind.Meter when x >= QsL && x < QsR && y >= QsPwY && y < QsPwY + QsPwH: return it;
-                case QsKind.Slider when y >= QsPairY && y < QsPairY + 44 && x >= it.X - 30 && x < it.X + it.W + 40: return it;
+                case QsKind.Slider when x >= QsL && x < QsR && y >= it.Y && y < it.Y + it.H: return it;
                 case QsKind.Row when x >= QsL && x < QsR && y >= it.Y && y < it.Y + it.H: return it;
                 case QsKind.Cell or QsKind.Card when QsCellShown(it.Id) && x >= it.X && x < it.X + it.W && y >= it.Y && y < it.Y + it.H: return it;
             }
@@ -1687,6 +1831,7 @@ public sealed partial class WallStage
                 if (y > QsPwY + QsPwH - 35) QsSetLevel(it, QsLevelAt(it, x));
                 return;
             case QsKind.Slider:
+                QsSetFocus(it.Id);
                 if (it.Id == "volume" && x < it.X) { QsToggleMute(); return; }
                 QsSetLevel(it, QsLevelAt(it, x));
                 return;
@@ -1708,8 +1853,7 @@ public sealed partial class WallStage
         if (_qsState?["system"] is JsonObject s2) s2["muted"] = m;
         Cue(m ? Sfx.ToggleOff : Sfx.ToggleOn);
         QsQueueTouchValue("set_mute", JsonValue.Create(m));
-        QsHotMark("vol");
-        QsBuild(); QsPaintLayer('t');
+        QsBuild(); QsPaintLayer('r');
     }
 
     /// <summary>触控：功耗按整条轨道，亮度 / 音量按各自的细轨道。</summary>
@@ -1724,7 +1868,6 @@ public sealed partial class WallStage
             double v = Math.Round(level * 20) * 5;
             if (_qsState?["system"] is JsonObject sys) { sys[it.Id] = v; if (it.Id == "volume") sys["muted"] = false; }
             QsQueueTouchValue(it.Id == "volume" ? "set_volume" : "set_brightness", JsonValue.Create(v));
-            QsHotMark(it.Id == "volume" ? "vol" : "bri");
         }
         else if (it.Id == "tdp" && _qsDraft != null)
         {
@@ -1733,7 +1876,7 @@ public sealed partial class WallStage
             QsSetTdp(v);
             QsQueueTouchValue("save_power", _qsDraft.DeepClone());
         }
-        QsBuild(); QsPaintLayer('t');
+        QsBuild(); QsPaintLayer('t'); QsPaintLayer('r');
     }
 
     private SettingsWriteQueue? _qsTouchWrites;
@@ -1859,6 +2002,10 @@ public sealed partial class WallStage
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(nint monitor, ref QsMonInfo info);
     [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
     [DllImport("kernel32.dll")] private static extern bool GetSystemPowerStatus(out QsPowerStatus s);
+    [DllImport("user32.dll", EntryPoint = "GetWindowThreadProcessId")] private static extern uint GetWindowThreadProcessIdQs(nint hwnd, out uint pid);
+    [DllImport("kernel32.dll", EntryPoint = "OpenProcess")] private static extern nint OpenProcessQs(uint access, bool inherit, uint pid);
+    [DllImport("kernel32.dll", EntryPoint = "CloseHandle")] private static extern bool CloseHandleQs(nint h);
+    [DllImport("kernel32.dll")] private static extern bool GetProcessTimes(nint p, out long creation, out long exit, out long kernel, out long user);
 }
 
 /// <summary>

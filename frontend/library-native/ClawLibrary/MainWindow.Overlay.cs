@@ -182,13 +182,33 @@ public sealed partial class MainWindow
         if (Stage.ShellMode.GameMode) RestoreGameShell(true);
     }
 
+    /// <summary>
+    /// 切到 target：先收起开始菜单 / 搜索（它们攥着前台时谁都拿不到前台），再切；拿不到前台就重试（最多 3 次，每次带
+    /// AttachThreadInput 和一次 Alt 键解锁前台），还是不行就把游戏库拿到前台（绝不留空屏）。返回是否切到了目标。
+    /// </summary>
     internal bool SwitchToWindow(OpenWindow target)
     {
         if (!OpenWindows.Matches(target)) return false;
+        long t0 = Environment.TickCount64;
         CancelShortcutTransition();
         _stage?.CloseSpecialSurfaces();
+        ShellSurfaces.DismissForeground(250, "(before switch)");
         CompleteShortcutHide(returnToPrevious: false);
-        return LibraryWindow.BringForward(target.Hwnd);
+        for (int attempt = 1; attempt <= 3; attempt++)
+        {
+            if (!OpenWindows.Matches(target)) break;
+            if (LibraryWindow.BringForward(target.Hwnd, unlock: attempt > 1))
+            {
+                if (attempt > 1) Log.Info($"switch ok on attempt {attempt}");
+                Log.Info($"switch done in {Environment.TickCount64 - t0} ms");
+                return true;
+            }
+            ShellSurfaces.DismissForeground(150, "(retry)");
+            Thread.Sleep(40);
+        }
+        Log.Warn($"switch to {target.Process} failed after retries; library to front");
+        if (Stage.ShellMode.GameMode) RestoreGameShell(true);
+        return false;
     }
 
     internal void BeginDesktopHandoff()

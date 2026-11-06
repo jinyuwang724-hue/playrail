@@ -1,4 +1,4 @@
-// 测试用：用 Windows.Graphics.Capture 录本窗口 DWM 合成出来的每一帧（显示器刷新率），半分辨率存 JPEG。
+﻿// 测试用：用 Windows.Graphics.Capture 录本窗口 DWM 合成出来的每一帧（显示器刷新率），半分辨率存 JPEG。
 // 用来逐帧检查形变动画（真实速度下的闪烁、跳变），而不是靠截屏工具慢慢截。只由 Bench 的 rec* 状态调用。
 using System.Diagnostics;
 using Microsoft.Graphics.Canvas;
@@ -22,12 +22,17 @@ public sealed class FrameRecorder
 
     public static double QpcMs(long qpc) => qpc * 1000.0 / Stopwatch.Frequency;
 
+    /// <summary>录 window 所在的整块显示器（快捷面板在自己的窗口里，只录游戏库窗口录不到它）。</summary>
+    public bool Display;
+
     public bool Start(Window window)
     {
         try
         {
             _dev = CanvasDevice.GetSharedDevice();
-            var item = GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId { Value = window.AppWindow.Id.Value });
+            var item = Display
+                ? GraphicsCaptureItem.TryCreateFromDisplayId(new Windows.Graphics.DisplayId { Value = Microsoft.UI.Win32Interop.GetDisplayIdFromMonitor(MonitorFromWindow(WinRT.Interop.WindowNative.GetWindowHandle(window), 2)).Value })
+                : GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId { Value = window.AppWindow.Id.Value });
             if (item == null) { Log.Warn("recorder: no capture item"); return false; }
             _pool = Direct3D11CaptureFramePool.CreateFreeThreaded(_dev, DirectXPixelFormat.B8G8R8A8UIntNormalized, 3, item.Size);
             _pool.FrameArrived += OnFrame;
@@ -84,4 +89,6 @@ public sealed class FrameRecorder
         File.WriteAllLines(Path.Combine(dir, "frames.tsv"), lines);
         return frames.Count;
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern nint MonitorFromWindow(nint hwnd, uint flags);
 }

@@ -23,10 +23,6 @@ public sealed partial class WallStage
             case "3": Move(Direction.Right); break;
             case "4": Activate(); break;
             case "5": Back(); break;
-            case "6": QsHot("bri", -1); break;
-            case "7": QsHot("bri", 1); break;
-            case "8": QsHot("vol", -1); break;
-            case "9": QsHot("vol", 1); break;
             case "11": _qsTestNoExclude = true; Log.Info("test: panel stays visible to screen capture"); return;
         }
         Log.Info($"test input {code} -> {(_qsOpen ? QsFocusTest + " " + string.Join(" ", QsRowIds.Select(id => id + "=" + QuickPanelTestValue(id))) : "panel closed")}");
@@ -93,7 +89,7 @@ public sealed partial class WallStage
         async Task Still(string name)
         {
             await Task.Delay(900);
-            var r = new FrameRecorder { Full = true };
+            var r = new FrameRecorder { Full = true, Display = true };
             if (!r.Start(HostWindow)) return;
             await Task.Delay(300);
             int n = await r.StopAndSaveAsync(Path.Combine(root, "qam-" + name), System.Diagnostics.Stopwatch.GetTimestamp());
@@ -125,7 +121,7 @@ public sealed partial class WallStage
             await Task.Delay(800);
 
             // 真速录一段
-            var rec = new FrameRecorder();
+            var rec = new FrameRecorder { Display = true };
             if (rec.Start(HostWindow))
             {
                 await Task.Delay(300);
@@ -141,13 +137,13 @@ public sealed partial class WallStage
                 await Step(350, "down", () => Move(Direction.Down));
                 await Step(120, "down", () => Move(Direction.Down));
                 await Step(400, "up (interrupt)", () => Move(Direction.Up));
-                await Step(300, "right", () => Move(Direction.Right));
-                await Step(500, "left", () => Move(Direction.Left));
+                await Step(300, "right (volume +5)", () => Move(Direction.Right));
+                await Step(500, "left (volume -5)", () => Move(Direction.Left));
                 await Step(250, "LB", () => QsHot("bri", -1));
                 await Step(250, "RB", () => QsHot("bri", 1));
                 await Step(700, "LT", () => QsHot("vol", -1));
                 await Step(250, "RT", () => QsHot("vol", 1));
-                for (int i = 0; i < 6; i++) await Step(160, "down", () => Move(Direction.Down));
+                for (int i = 0; i < 9; i++) await Step(160, "down", () => Move(Direction.Down));   // 走到网格，不在选项行上按 ←→（不改真实设置）
                 await Step(400, "right", () => Move(Direction.Right));
                 await Step(400, "down", () => Move(Direction.Down));
                 await Step(400, "down", () => Move(Direction.Down));

@@ -1,4 +1,4 @@
-// 游戏模式窗口管理（试验，设置 › 通用里的开关，默认关）：系统一有窗口出现、最小化、关掉就收到通知（SetWinEventHook），
+﻿// 游戏模式窗口管理（试验，设置 › 通用里的开关，默认关）：系统一有窗口出现、最小化、关掉就收到通知（SetWinEventHook），
 // 不再等 0.5 秒的轮询 ——
 //   新出现的应用窗口：能调大小的直接最大化铺满（游戏本来就全屏的不动；弹窗、对话框不管）；
 //   应用窗口最小化 / 关掉、前台没有应用了：游戏库马上回到前台（游戏模式没有任务栏，最小化的窗口只能从切换器找回）。
@@ -33,6 +33,9 @@ public sealed partial class MainWindow
 
     private void OnWinEvent(nint hook, uint ev, nint hwnd, int idObject, int idChild, uint thread, uint time)
     {
+        // 游戏模式下开始菜单 / 搜索一到前台就收起（底边上滑、Ctrl+Esc 叫出来的；它们攥着前台会让切换失败、留空屏）
+        if (ev == 0x0003 && idObject == 0 && _wasGameMode && !_desktopHandoff && ShellSurfaces.Is(hwnd))
+        { _ = Task.Run(() => ShellSurfaces.DismissForeground(300, "(game mode)")); return; }
         if (idObject != 0 || idChild != 0 || hwnd == 0 || !WmActive) return;   // 只管窗口本身（OBJID_WINDOW）
         try
         {

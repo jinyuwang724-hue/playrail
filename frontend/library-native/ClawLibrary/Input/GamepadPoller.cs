@@ -1,4 +1,4 @@
-// 手柄：XInput 在独立线程上 250 Hz 轮询（照 src/input.ts 的映射与手感参数）。
+﻿// 手柄：XInput 在独立线程上 250 Hz 轮询（照 src/input.ts 的映射与手感参数）。
 // 十字键 / 左摇杆 = 方向导航（按住按间隔连走），右摇杆 = 平移相机，A 打开，B 返回，LB / RB 换页签，
 // X 显示 / 隐藏信息栏，Y 游戏设置，≡ 开关控制中心，视图键开性能读数。只在本窗口在前台时响应。
 using System.Numerics;
@@ -212,22 +212,8 @@ public sealed unsafe class GamepadPoller : IDisposable
         bool Edge(ushort m) => (b & m) != 0 && (_prev & m) == 0;
         if (Edge(A)) Post(_stage.Activate);
         if (Edge(B)) Post(_stage.Back);
-        if (_stage.QuickPanelOpen)
-        {
-            // 快捷面板：LB/RB 调亮度、LT/RT 调音量，按住连续（350 ms 后每 90 ms 一格）
-            _ltOn = g.LeftTrigger > (_ltOn ? 100 : 140);
-            _rtOn = g.RightTrigger > (_rtOn ? 100 : 140);
-            Hot(0, (b & LB) != 0, now, () => _stage.QsHot("bri", -1));
-            Hot(1, (b & RB) != 0, now, () => _stage.QsHot("bri", 1));
-            Hot(2, _ltOn, now, () => _stage.QsHot("vol", -1));
-            Hot(3, _rtOn, now, () => _stage.QsHot("vol", 1));
-        }
-        else
-        {
-            Array.Clear(_hotNext);
-            if (Edge(LB)) Post(() => _stage.SwitchTab(-1));
-            if (Edge(RB)) Post(() => _stage.SwitchTab(1));
-        }
+        if (Edge(LB)) Post(() => _stage.SwitchTab(-1));
+        if (Edge(RB)) Post(() => _stage.SwitchTab(1));
         if (Edge(Y)) Post(_stage.PadY);
         if (Edge(Menu)) Post(_stage.ToggleControlCenter);
         if (Edge(X)) Post(_stage.PadX);
@@ -251,16 +237,6 @@ public sealed unsafe class GamepadPoller : IDisposable
         bool panning = s != Vector2.Zero;
         if (panning && !Panning) { Panning = true; Post(_stage.RequestPanLoop); }
         else if (!panning) Panning = false;
-    }
-
-    private readonly long[] _hotNext = new long[4];
-    private bool _ltOn, _rtOn;
-
-    private void Hot(int i, bool active, long now, Action a)
-    {
-        if (!active) { _hotNext[i] = 0; return; }
-        if (_hotNext[i] == 0) { Post(a); _hotNext[i] = now + 350; }
-        else if (now >= _hotNext[i]) { Post(a); _hotNext[i] = now + 90; }
     }
 
     private void Repeat(Direction d, bool active, long now)

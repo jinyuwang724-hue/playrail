@@ -171,9 +171,11 @@ internal sealed class LibraryWindow : IDisposable
         AllowSetForegroundWindow(unchecked((uint)-1)); // ASFW_ANY
     }
 
-    public static bool BringForward(nint window)
+    public static bool BringForward(nint window, bool unlock = false)
     {
         if (window == 0 || !IsWindow(window)) return false;
+        // 前台锁：按一下 Alt（系统认为有用户输入，放行 SetForegroundWindow）
+        if (unlock) { keybd_event(0x12, 0, 0, 0); keybd_event(0x12, 0, 2, 0); }
         if (ToolboxWindow.IsIconic(window)) ShowWindow(window, 9);
         nint popup = GetLastActivePopup(window);
         if (popup != 0 && IsWindowVisible(popup)) window = popup;
@@ -227,6 +229,7 @@ internal sealed class LibraryWindow : IDisposable
     [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(uint processId);
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(nint hwnd, int attr, ref int value, int size);
     [DllImport("user32.dll")] private static extern nint SetFocus(nint hwnd);
+    [DllImport("user32.dll")] private static extern void keybd_event(byte vk, byte scan, uint flags, nuint extra);
     [DllImport("user32.dll")] private static extern bool BringWindowToTop(nint hwnd);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(nint hwnd, nint after, int x, int y, int w, int h, uint flags);
     [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] private static extern nint SetWindowLongPtr(nint hwnd, int index, nint value);
