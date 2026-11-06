@@ -27,6 +27,7 @@ public sealed partial class WallStage
             case "7": QsHot("bri", 1); break;
             case "8": QsHot("vol", -1); break;
             case "9": QsHot("vol", 1); break;
+            case "11": _qsTestNoExclude = true; Log.Info("test: panel stays visible to screen capture"); return;
         }
         Log.Info($"test input {code} -> {(_qsOpen ? QsFocusTest + " " + string.Join(" ", QsRowIds.Select(id => id + "=" + QuickPanelTestValue(id))) : "panel closed")}");
     }

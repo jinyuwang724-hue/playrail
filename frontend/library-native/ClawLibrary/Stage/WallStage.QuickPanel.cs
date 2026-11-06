@@ -223,6 +223,8 @@ public sealed partial class WallStage
     }
 
     private (int L, int T, int W, int H) _qsMon;
+    /// <summary>自测（测试输入 11）：截冻结帧时不把面板排除在外，好让外面的截屏量到面板第一帧。</summary>
+    private bool _qsTestNoExclude;
 
     /// <summary>面板平移：合成层弹簧（stiffness 300 / damping 34），从此刻的位置和速度接着走（可打断）。收起走完再关窗口。</summary>
     private void QsSlideTo(float x)
@@ -364,7 +366,7 @@ public sealed partial class WallStage
         string how = "monitor";
         try
         {
-            var (bmp, _) = await CaptureMonitorFrameAsync(_qsWin?.Hwnd ?? 0, 500);
+            var (bmp, _) = await CaptureMonitorFrameAsync(_qsTestNoExclude ? 0 : _qsWin?.Hwnd ?? 0, 500);
             frame = bmp;
         }
         catch (Exception ex) { Log.Warn($"quick panel backdrop: {ex.Message}"); }
