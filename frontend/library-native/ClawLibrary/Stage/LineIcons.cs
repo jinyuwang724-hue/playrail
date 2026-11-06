@@ -58,7 +58,28 @@ public static class LineIcons
         Paths["qs.exit"] = "M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4 M10 8l-4 4 4 4 M6 12h10";
         // 关机（实心，画的时候 fill: true），和电源触发图标区分
         Paths["qs.powerSolid"] = "M12 2a1.6 1.6 0 0 1 1.6 1.6v7.2a1.6 1.6 0 0 1-3.2 0V3.6A1.6 1.6 0 0 1 12 2z M6.2 5.6a1.5 1.5 0 0 1 .2 2.1A7 7 0 1 0 17.6 7.7a1.5 1.5 0 1 1 2.3-1.9A10 10 0 1 1 4.1 5.8a1.5 1.5 0 0 1 2.1-.2z";
-        Paths["qs.mode"] = "M5,4 H19 A2,2 0 0 1 21,6 V14 A2,2 0 0 1 19,16 H5 A2,2 0 0 1 3,14 V6 A2,2 0 0 1 5,4 Z M8 20h8M12 16v4";
+        // 快捷面板（QAM 定稿 2026-11-05）的一套：照设计稿 docs/qam-final-20261105.html 原样
+        Paths["qam.bolt"] = "M13 3L5 13.5h6L10 21l8-10.5h-6z";
+        Paths["qam.sun"] = "M12 8.5a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7z M12 3v1.5 M12 19.5V21 M3 12h1.5 M19.5 12H21 M5.6 5.6l1.1 1.1 M17.3 17.3l1.1 1.1 M5.6 18.4l1.1-1.1 M17.3 6.7l1.1-1.1";
+        Paths["qam.vol"] = "M4 10h3l5-4v12l-5-4H4z M16 9.5a3.5 3.5 0 0 1 0 5 M18.5 7a7 7 0 0 1 0 10";
+        Paths["qam.mute"] = "M4 10h3l5-4v12l-5-4H4z M16 9.5l5 5 M21 9.5l-5 5";
+        Paths["qam.shot"] = "M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8 M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8 M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16 M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16 M12 9.5a2.5 2.5 0 1 0 0 5a2.5 2.5 0 1 0 0-5z";
+        Paths["qam.win"] = "M4 9h11v11H4z M9 4h11v11";
+        Paths["qam.kbd"] = "M3 6.5h18v11H3z M7 10.5h.01 M11 10.5h.01 M15 10.5h.01 M8 14h8";
+        Paths["qam.desk"] = "M3 5h18v11H3z M9 20h6 M12 16v4";
+        Paths["qam.sleep"] = "M19 14.5A7.5 7.5 0 1 1 9.5 5a6 6 0 0 0 9.5 9.5z";
+        Paths["qam.restart"] = "M4 12a8 8 0 1 0 2.4-5.7 M4 4v4.5h4.5";
+        Paths["qam.off"] = "M12 3v8 M6.3 6.8a8 8 0 1 0 11.4 0";
+        Paths["qam.wifi"] = "M2.5 9a14 14 0 0 1 19 0 M5.5 12.5a9.5 9.5 0 0 1 13 0 M8.7 16a5 5 0 0 1 6.6 0 M12 19.5h.01";
+        Paths["qam.bt"] = "M7 7l10 10-5 4V3l5 4L7 17";
+        Paths["qam.pad"] = "M7 9h3 M8.5 7.5v3 M15 8.5h.01 M17 10.5h.01 M6.5 5h11a4 4 0 0 1 4 4.2l-.6 6.3a2.8 2.8 0 0 1-5 1.4L14.3 15H9.7l-1.6 1.9a2.8 2.8 0 0 1-5-1.4l-.6-6.3A4 4 0 0 1 6.5 5z";
+        Paths["qam.mouse"] = "M12 3a6 6 0 0 1 6 6v6a6 6 0 0 1-12 0V9a6 6 0 0 1 6-6z M12 7v3";
+        Paths["qam.air"] = "M10.5 4.5c0-1 .7-2 1.5-2s1.5 1 1.5 2v5l7 4v2l-7-2v4l2 1.5v1.5L12 20l-3.5 1v-1.5l2-1.5v-4l-7 2v-2l7-4z";
+        Paths["qam.lib"] = "M5 4h4v16H5z M11 4h4v16h-4z M17 5l3 .6-2.6 14.4-3-.6";
+        Paths["qam.quit"] = "M7 7l10 10 M17 7L7 17";
+        Paths["qam.l"] = "M15 5l-7 7 7 7";
+        Paths["qam.r"] = "M9 5l7 7-7 7";
+        Paths["qs.mode"] ="M5,4 H19 A2,2 0 0 1 21,6 V14 A2,2 0 0 1 19,16 H5 A2,2 0 0 1 3,14 V6 A2,2 0 0 1 5,4 Z M8 20h8M12 16v4";
     }
 
     private static readonly Dictionary<(string, bool, float), CanvasSvgDocument> Docs = new();

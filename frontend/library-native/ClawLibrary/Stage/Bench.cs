@@ -1,4 +1,4 @@
-// 自测（--bench）：按固定脚本跑一遍（静止、右摇杆平移、十字键走位、展开 / 收起、换页签、进出合集），
+﻿// 自测（--bench）：按固定脚本跑一遍（静止、右摇杆平移、十字键走位、展开 / 收起、换页签、进出合集），
 // 每段用 DWM 合成时间戳量帧间隔（后台线程 2 ms 轮询 qpcCompose），同时记进程 CPU 与内存，写进日志和 logs\bench.json。
 // --state=expand|collection|styleb|tab 则只把墙摆到某个状态停住（截图对比用）。
 using System.Diagnostics;
@@ -560,6 +560,7 @@ public static class Bench
                 case "reclaunch": await RecLaunchAsync(s); break;
                 case "reccases": await s.RecCasesAsync(); break;
                 case "recstatus": await s.RecStatusAsync(); break;
+                case "recqam": await s.RecQamAsync(); break;
                 case "gstest": s.DemoGameSessionProbe(); break;
                 case "npattach": s.DemoAttachRunningGame(); break;
                 case "recplaying": await RecPlayingAsync(s); break;

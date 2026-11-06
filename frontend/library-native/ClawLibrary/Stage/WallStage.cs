@@ -1425,6 +1425,13 @@ public sealed partial class WallStage : IDisposable
         MarkInput();
         if (!_wsOpen && !_qsOpen && e.OriginalSource is Microsoft.UI.Xaml.Controls.TextBox) return;   // 搜索框里打字不当快捷键
         bool repeat = e.KeyStatus.RepeatCount > 1 || e.KeyStatus.WasKeyDown;
+        if (_qsOpen && (int)e.Key is 187 or 189 or 219 or 221)
+        {
+            // 快捷面板：[ ] 调亮度、- = 调音量（和设计稿原型同一套键位）
+            if ((int)e.Key is 219 or 221) QsHot("bri", (int)e.Key == 221 ? 1 : -1); else QsHot("vol", (int)e.Key == 187 ? 1 : -1);
+            e.Handled = true;
+            return;
+        }
         switch (e.Key)
         {
             case VirtualKey.Up: Move(Direction.Up); break;

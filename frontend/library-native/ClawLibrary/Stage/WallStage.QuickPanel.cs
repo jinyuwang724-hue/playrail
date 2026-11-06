@@ -1,7 +1,9 @@
-// 快捷设置（快速设置键）：从左边滑出一列（左侧快捷栏，定稿 2026-10-30）。只有一栏，没有分区页和图标栏。
-// 游戏不切走：游戏库窗口到前台，面板右边用 DWM 实时缩略图铺游戏画面（按游戏窗口原来的位置裁），看上去面板压在游戏上。
-// 面板是实底暖黑（Braun 配色），硬边，不截图、不模糊。版式见下面「排版」。
-// 焦点：整格反白；左右在功耗、亮度、音量上调值，其余格子左右上下按位置走。B 先取消退出确认，再收起面板。
+﻿// 游戏模式快捷面板（QAM，定稿 2026-11-05，设计稿 docs/qam-final-20261105.html）。
+// 左侧一栏 416 宽，从左滑入（可打断弹簧 stiffness 300 / damping 34）。不抢焦点：游戏留在前台继续渲染，
+// 面板右边是游戏窗口的 DWM 实时缩略图（不压暗），面板底是开面板那一刻截的一帧游戏画面，做一次模糊（24 px，亮度 82 %，饱和 1.15）+ #09090B 36 %。
+// 从上到下：状态栏 → 功耗块 → 亮度 / 音量两条细滑条（不是焦点停靠点：LB/RB 调亮度、LT/RT 调音量）→ 6 行文字选项 → 5 × 3 网格。
+// 焦点：功耗块和选项行共用一个白框光标，在行间弹簧移动（460 / 36 / 0.9）；网格里是格子自己的白外框。没有按键提示栏。
+// 坐标都是设计 px（1280 × 800），k = 设计 px → DIP。
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
@@ -9,123 +11,151 @@ using ClawLibrary.Data;
 using ClawLibrary.Engine;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Effects;
+using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.Graphics.Canvas.Text;
+using Microsoft.Graphics.Canvas.UI.Composition;
 using Microsoft.UI.Composition;
 using Windows.Devices.Radios;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
 using Windows.UI;
+using Colors = Microsoft.UI.Colors;
 
 namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private enum QsKind { Slider, Tile, Entry, Meter, Choice, Nav, Rail }
+    private enum QsKind { Slider, Meter, Row, Cell, Card }
 
     private sealed class QsItem
     {
         public required string Id;
         public required QsKind Kind;
-        public string Name = "", Value = "", Glyph = "", Section = "now";
-        public bool On, Disabled;
+        public string Name = "", Value = "", Glyph = "", Tip = "", Sub = "";
+        public bool On, Disabled, Off, Lamp;
+        /// <summary>命中 / 绘制区域（设计 px）；滑条是轨道本身。</summary>
         public float X, Y, W, H;
-        /// <summary>滑条 0–1。</summary>
         public float Level;
-        /// <summary>磁贴大小：S 1×1、M 2×1、L 2×2。</summary>
-        public char Size = 'S';
-        public string[] Options = Array.Empty<string>();
-        /// <summary>几选一：当前值（-1 = 都不是）；Sub = 焦点在哪一项。</summary>
-        public int Choice = -1, Sub;
+        public int Col, Row, Span = 1;
     }
 
-    // 设计 px（1280 宽）：面板 384 = 4 列 × 96
-    private const float QsW = 384, QsRailW = 0, QsCx = 108, QsCw = 312, QsCellH = 64, QsCellGap = 10, QsGap = 24;
-    private static readonly Color QsInk = Gfx.Rgba(0x09, 0x09, 0x0b), QsOff = Gfx.Rgba(244, 244, 245, 0.13), QsRed = Gfx.Rgba(0xff, 0x8a, 0x7a);
-    private static readonly int[] QsFps = { 0, 30, 40, 45, 60 };
-    private static readonly (int V, string N)[] QsRumble = { (0, "关"), (35, "弱"), (70, "中"), (100, "强") };
-    private static readonly (string Id, string N)[] QsFan = { ("quiet", "静音"), ("balanced", "均衡"), ("performance", "性能") };
-    private static readonly (string Id, string Glyph, string Name)[] QsSections =
-    {
-        ("now", "\uE7FC", "正在游戏"), ("perf", "\uE945", "性能"), ("disp", "qs.sun", "显示"), ("osd", "qs.osd", "性能读数"),
-        ("snd", "qs.vol", "声音"), ("fan", "\uE9CA", "风扇"), ("pad", "\uE7FC", "手柄"), ("net", "\uE701", "连接"), ("sys", "\uE770", "系统"),
-    };
-    /// <summary>可放进磁贴区的功能（id、图标、名字）。</summary>
-    private static readonly (string Id, string Glyph, string Name)[] QsTilePool =
-    {
-        ("magpie", "qs.magpie", "画面缩放"), ("osd", "qs.osd", "性能读数"), ("fan", "\uE9CA", "风扇"), ("fps", "qs.fps", "帧率上限"),
-        ("lossless", "qs.duck", "小黄鸭"), ("wifi", "\uE701", "Wi-Fi"), ("bluetooth", "\uE702", "蓝牙"), ("rumble", "\uE877", "震动"),
-        ("refresh", "\uE895", "刷新率"), ("screenshot", "\uF406", "截图"), ("keyboard", "\uE765", "屏幕键盘"), ("windows", "\uE7C4", "窗口"),
-    };
-    private static readonly (string Id, char Size)[] QsTileDefault =
-        { ("magpie", 'L'), ("osd", 'M'), ("fan", 'M'), ("fps", 'S'), ("lossless", 'S'), ("wifi", 'S') };
+    // ---------------- 尺寸（设计 px） ----------------
+    private const float QsW = 416, QsL = 32, QsR = 384, QsHideX = -440;
+    private const float QsStatusY = 24, QsPwY = 76, QsPwH = 100, QsPairY = 192, QsRowY = 260, QsRowH = 48, QsGridY = 569, QsCell = 62.4f, QsPitch = 72.4f;
+    private const float QsTopH = 250, QsRowsY = 250, QsRowsH = 310, QsGridLY = 500, QsGridLH = 300;
+    private static readonly Color QsInk = Theme.Ink, QsBg = Theme.Bg, QsAcc = Theme.Accent, QsRed = Gfx.Rgba(0xff, 0x5a, 0x4e);
+    private static readonly Color QsInk2 = Gfx.WithAlpha(Theme.Ink, 0.55), QsOffBg = Gfx.WithAlpha(Theme.Ink, 0.08);
+    private static readonly Bezier QsEase = new(.22f, 1f, .36f, 1f);
 
+    private static readonly int[] QsFps = { 0, 30, 40, 60 };
+    private static readonly (int V, string N)[] QsRumble = { (0, "关"), (35, "弱"), (70, "中"), (100, "强") };
+    private static readonly string[] QsOsdNames = { "关", "简洁", "标准", "详细", "完整" };
+    private static readonly string[] QsRowIds = { "fps", "refresh", "scale", "osd", "fan", "rumble" };
+    private static readonly string[] QsCol = { "tdp", "fps", "refresh", "scale", "osd", "fan", "rumble", "grid" };
+    /// <summary>网格：id、列、行、跨列。左 3×3 靠屏幕外沿，右两列三张宽卡。电源展开时第三行左三格换成 关机 / 重启 / 睡眠。</summary>
+    private static readonly (string Id, int C, int R, int W)[] QsLay =
+    {
+        ("wifi", 0, 0, 1), ("bt", 1, 0, 1), ("air", 2, 0, 1),
+        ("shot", 0, 1, 1), ("kbd", 1, 1, 1), ("pad", 2, 1, 1),
+        ("pwr", 0, 2, 1), ("desk", 1, 2, 1), ("vrr", 2, 2, 1),
+        ("off", 0, 2, 1), ("restart", 1, 2, 1), ("sleep", 2, 2, 1),
+        ("win", 3, 0, 2), ("lib", 3, 1, 2), ("quit", 3, 2, 2),
+    };
+    private static readonly string[] QsPm = { "off", "restart", "sleep" }, QsR2 = { "pwr", "desk", "vrr" };
+    private static readonly HashSet<string> QsRisk = new() { "quit", "restart", "off" };
+
+    // ---------------- 状态 ----------------
     private ContainerVisual? _qs;
     private SpriteVisual _qsScrim = null!, _qsPanel = null!;
-    private bool _qsOpen, _qsTicking, _qsHideWindowAfter;
+    private ContainerVisual _qsSlide = null!, _qsGlassBox = null!;
+    private SpriteVisual _qsGlassBase = null!, _qsGlass = null!, _qsTopV = null!, _qsRowsV = null!, _qsGridV = null!, _qsCurV = null!, _qsEdgeV = null!;
+    private InsetClip _qsGlassClip = null!;
+    private CompositionDrawingSurface? _qsTopS, _qsRowsS, _qsGridS, _qsCurS, _qsGlassS;
+    private float _qsCurFor;
+    private bool _qsOpen, _qsTicking, _qsHideWindowAfter, _qsWaitBackdrop;
+    /// <summary>旧接口：0 = 收着，1 = 开着（外面只用来清零）。</summary>
     private float _qsShow, _qsShowTo;
+    private float _qsPx = QsHideX, _qsPv, _qsPt = QsHideX;
+    private float _qsCy, _qsCh, _qsCvy, _qsCvh, _qsCty, _qsCth;
+    private bool _qsCurPlaced;
     private long _qsFrameAt;
-    private int _qsFocus, _qsVersion;
-    private string? _qsFocusId;
+    private int _qsVersion, _qsPolls;
+    private string _qsFocusId = "tdp";
+    private int _qsGc, _qsGr;
+    private bool _qsPm;
+    private string? _qsArmed;
     private readonly List<QsItem> _qsItems = new();
-    private JsonObject? _qsState;
-    private JsonObject? _qsDraft;
-    private bool? _qsWifi, _qsBt, _qsLossless;
-    private bool _qsLosslessKnown;
+    private JsonObject? _qsState, _qsDraft;
+    private bool? _qsWifi, _qsBt, _qsAir, _qsLossless, _qsVrr;
+    private string? _qsSsid, _qsPadMode, _qsVrrRange;
+    private int _qsBtCount = -1;
     private DwmThumb? _qsThumb;
     private bool _qsUnderLibrary;
     private SpriteVisual? _qsUnder;
-    private const float QsDim = 0.45f;
     private nint _qsGame;
     private (int L, int T, int W, int H) _qsGameRect;
-    private string? _qsNote;
-    private long _qsNoteAt;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _qsPoll;
-    // 列表滚动（设计 px）、各分区在列表里的起点
-    private float _qsScroll, _qsContentH;
-    private readonly Dictionary<string, float> _qsSecTop = new();
-    // 电源：0 收着、1 展开；第几个圆有焦点（1 起，0 = 电源图标本身）；哪个圆在等二次确认
-    private bool _qsPwrOpen;
-    private int _qsPwrFocus;
-    private string? _qsPwrArmed;
-    // 磁贴编辑
-    private bool _qsEditing;
-    private List<(string Id, char Size)>? _qsTiles;
-    // 底：截的游戏帧（已模糊压暗，按设计 px 448×H 栅格化）、封面、取色
-    private CanvasRenderTarget? _qsBack;
-    private CanvasBitmap? _qsCover;
-    private string? _qsCoverId;
-    /// <summary>封面上带 logo（用的是 header）时，上面那行游戏名不再写（名字只出现一次）。</summary>
-    private bool _qsCoverHasLogo;
-    // 当前页（now = 首页）、每页上次的焦点、混排磁贴往右走时记下的来路、退出游戏等二次确认的时刻
-    private string _qsPage = "now";
-    private readonly Dictionary<string, string> _qsLastFocus = new();
-    private string? _qsBackLeft;
-    private long _qsQuitArmedAt;
-    private Color _qsTint = Gfx.Rgba(0xa9, 0xdf, 0xd3), _qsTintInk = Gfx.Rgba(0x0b, 0x1a, 0x17);
+    private bool _qsSaving;
 
     internal bool QuickPanelOpen => _qsOpen;
     /// <summary>旧的列表式设计预览已去掉；触控导航还在读它。</summary>
     private static bool QsRowsStyle => false;
+    private float QsK => Math.Min((float)View.Width / 1280, (float)View.Height / 800);
+    private float QsViewH => (float)(View.Height / QsK);
+
+    // ---------------- 小补间（只给面板里的颜色 / 透明度 / 位移用） ----------------
+
+    private sealed class QsTw { public float From, To; public long T0; public float Dur; public Bezier E; }
+    private readonly Dictionary<string, QsTw> _qsTw = new();
+    private readonly bool[] _qsLayerWas = new bool[3];
+
+    /// <summary>取补间此刻的值；没有这个键就是 idle。</summary>
+    private float QsTv(string key, float idle = 0)
+    {
+        if (!_qsTw.TryGetValue(key, out var t)) return idle;
+        float p = t.Dur <= 0 ? 1 : Math.Clamp((NowMs - t.T0) / t.Dur, 0, 1);
+        return t.From + (t.To - t.From) * (float)t.E.Ease(p);
+    }
+
+    /// <summary>补到 to；第一次出现的键直接落在 to（打开面板时不重放整组动画）。</summary>
+    private void QsTo(string key, float to, float ms, Bezier? ease = null)
+    {
+        if (!_qsTw.TryGetValue(key, out var t)) { _qsTw[key] = new QsTw { From = to, To = to, Dur = 0, E = QsEase }; return; }
+        if (t.To == to) return;
+        _qsTw[key] = new QsTw { From = QsTv(key), To = to, T0 = NowMs, Dur = Reduced ? 0 : ms, E = ease ?? QsEase };
+        QsStartTicking();
+    }
+
+    /// <summary>从 from 放一段到 to（数字弹一下、按下缩一下）。</summary>
+    private void QsKick(string key, float from, float to, float ms)
+    {
+        _qsTw[key] = new QsTw { From = from, To = to, T0 = NowMs, Dur = Reduced ? 0 : ms, E = QsEase };
+        QsStartTicking();
+    }
+
+    private bool QsLayerAnimating(char layer)
+    {
+        long now = NowMs;
+        foreach (var (k, t) in _qsTw) if (k[0] == layer && now - t.T0 < t.Dur + 17) return true;
+        return false;
+    }
 
     // ---------------- 开 / 关 ----------------
 
-    /// <summary>窗口出来之前调用：把游戏画面先铺满（第一帧就是游戏，不闪墙面 / 黑底），面板从左边外面开始滑。</summary>
+    /// <summary>窗口出来之前调用：缩略图把游戏画面先铺满，面板从左边外面开始滑。</summary>
     internal void OpenQuickPanel(nint returnWindow)
     {
         ExitScreensaver(); MarkInput();
         EnsureQsVisuals();
         bool again = _qsOpen;
         _qsOpen = true;
-        ++_qsVersion;
+        int v = ++_qsVersion;
         _qsHideWindowAfter = false;
         if (!again)
         {
-            _qsFocusId = null;
-            _qsScroll = 0;
-            _qsPage = "now"; _qsLastFocus.Clear(); _qsBackLeft = null; _qsQuitArmedAt = 0;
-            _qsPwrOpen = false; _qsPwrArmed = null; _qsEditing = false;
+            _qsFocusId = "tdp"; _qsGc = 0; _qsGr = 0; _qsPm = false; _qsArmed = null;
+            _qsTw.Clear(); _qsCurPlaced = false;
             _qsThumb?.Dispose(); _qsThumb = null;
-            _qsBack?.Dispose(); _qsBack = null;
             nint self = WinRT.Interop.WindowNative.GetWindowHandle(_window);
             _qsGame = returnWindow != 0 && returnWindow != self && OpenWindows.Alive(returnWindow) ? returnWindow : 0;
             if (_qsGame != 0 && GetWindowRect(_qsGame, out var r))
@@ -133,25 +163,26 @@ public sealed partial class WallStage
                 _qsGameRect = (r.Left, r.Top, r.Right - r.Left, r.Bottom - r.Top);
                 _qsThumb = DwmThumb.Register(self, _qsGame);
             }
-            _qsShow = 0;
+            _qsPx = QsHideX; _qsPv = 0; _qsShow = 0;
             if (_ccOpen) CloseControlCenter();
-            // The owning window acquires the input/OSD lease before showing.
+            _qsGlass.Opacity = 0;
+            _qsLosslessKnown = false;   // 手柄模式 / VRR 留着上次读到的，开面板时不先变暗再亮
+            // 没有游戏画面（在游戏库里按的）：截自己的窗口当底，截到之前面板先不动（最多 140 ms），免得截进半块面板
+            _qsWaitBackdrop = _qsGame == 0 && !Reduced;
+            _ = QsCaptureBackdrop(v);
+            if (_qsWaitBackdrop) After(140, () => { if (v == _qsVersion) _qsWaitBackdrop = false; });
         }
-        _qsShowTo = 1;
-        // 有游戏画面时底下铺黑（缩略图盖住右边）；没有（在游戏库里按的）就压暗当前画面
-        // 有游戏画面时：游戏模式下游戏库本来就垫在它后面，所以底下照样是游戏库（压暗），窗口画面按原位原尺寸盖在上面 ——
-        // 以前铺纯黑，窗口不满屏时整屏变黑、游戏库像是没了。桌面模式没有游戏库垫底，仍铺黑
+        _qsPt = 0; _qsShowTo = 1;
         _qsUnderLibrary = ShellMode.GameMode;
-        // 游戏模式：游戏库和游戏窗口原位原尺寸，一起压暗同样的一层（窗口画面底下垫一块纯黑，画面按 1 - 压暗 的透明度画上去）
-        _qsScrim.Brush = G.C.CreateColorBrush(_qsThumb != null && !_qsUnderLibrary ? Gfx.Rgba(0, 0, 0) : Gfx.Rgba(0, 0, 0, QsDim));
-        QsPlaceUnder();
+        if (_qsUnder != null) _qsUnder.IsVisible = false;   // 新面板不压暗游戏，底下不用垫黑
         _qs!.IsVisible = true;
         _top.Children.Remove(_qs); _top.Children.InsertAtTop(_qs);
         QsBuild();
-        QsPaint();
-        if (Reduced) _qsShow = 1;
+        QsSync();
+        QsPaintAll();
+        if (Reduced) { _qsPx = 0; _qsShow = 1; }
         QsStartTicking();
-        _ = QsRefresh(_qsVersion);
+        _ = QsRefresh(v, first: !again);
         _qsPoll ??= _dq.CreateTimer();
         _qsPoll.Interval = TimeSpan.FromMilliseconds(1500);
         _qsPoll.Tick -= QsPollTick; _qsPoll.Tick += QsPollTick;
@@ -166,31 +197,15 @@ public sealed partial class WallStage
         if (!_qsOpen || _qs == null) return;
         _qsOpen = false;
         _qsPoll?.Stop();
-        // Keep the lease through the complete close animation.
-        if (_qsEditing) { _qsEditing = false; QsSaveTiles(); }
         _qsHideWindowAfter = hideWindow;
+        _qsArmed = null;
         Cue(Sfx.MenuOut);
-        _qsShowTo = 0;
-        if (instant || Reduced) { _qsShow = 0; QsFinishClose(); return; }
+        _qsPt = QsHideX; _qsShowTo = 0;
+        if (instant || Reduced) { _qsPx = QsHideX; _qsShow = 0; QsLayout(); QsFinishClose(); return; }
         QsStartTicking();
         int v = ++_qsVersion;
-        After(800, () => { if (v == _qsVersion && !_qsOpen && _qs.IsVisible) QsFinishClose(); });
+        After(900, () => { if (v == _qsVersion && !_qsOpen && _qs.IsVisible) QsFinishClose(); });
         Log.Info("quick panel close");
-    }
-
-    /// <summary>
-    /// 告诉后台面板开着 / 收起：性能显示（OSD）这段时间让开（它带 uiAccess、每帧重新置顶，面板压不过它）；
-    /// 输入层在跑时，前台游戏的虚拟手柄归零（为以后不抢前台的面板准备）。
-    /// </summary>
-    private async Task QsHold(bool on)
-    {
-        try
-        {
-            _agent ??= new AgentClient();
-            var r = await _agent.Call("set_overlay_hold", JsonValue.Create(on));
-            Log.Info($"quick panel hold {on}: {r?.ToJsonString()}");
-        }
-        catch (Exception ex) { Log.Warn($"quick panel hold {on}: {ex.Message}"); }
     }
 
     private void QsFinishClose()
@@ -201,7 +216,7 @@ public sealed partial class WallStage
         if (!hide && !_wsOpen) SetSpecialInput(false);
         if (hide && _qsGame != 0 && (_window as MainWindow)?.OverlayAcceptsGamepad != true) LibraryWindow.BringForward(_qsGame);
         if (hide) (_window as MainWindow)?.HideAfterQuickPanel();
-        // 窗口收起之后再拆缩略图，免得最后一帧露出黑底
+        // 窗口收起之后再拆缩略图，免得最后一帧露出底下
         After(hide ? 260 : 0, () =>
         {
             if (_qsOpen) return;
@@ -215,172 +230,174 @@ public sealed partial class WallStage
         if (_qs != null) return;
         _qs = G.Container();
         _qs.IsVisible = false;
+        // 面板外不画任何东西（游戏不压暗）；点面板外收起由 QsClick 处理
         _qsScrim = G.C.CreateSpriteVisual();
         _qsScrim.RelativeSizeAdjustment = Vector2.One;
-        _qsPanel = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         _qs.Children.InsertAtTop(_qsScrim);
         _qsUnder = G.C.CreateSpriteVisual();
         _qsUnder.Brush = G.C.CreateColorBrush(Gfx.Rgba(0, 0, 0));
+        _qsUnder.IsVisible = false;
         _qs.Children.InsertAtTop(_qsUnder);
-        _qs.Children.InsertAtTop(_qsPanel);
+        // 底：冻结帧（不跟面板走，固定在屏幕上，只按面板右沿裁），没截到时是实底
+        _qsGlassBox = G.Container(relative: false);
+        _qsGlassClip = G.C.CreateInsetClip();
+        _qsGlassBox.Clip = _qsGlassClip;
+        _qsGlassBase = G.Sprite(G.Solid(Gfx.Rgba(0x17, 0x17, 0x1a)), relative: false);
+        _qsGlass = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+        _qsGlassBox.Children.InsertAtTop(_qsGlassBase);
+        _qsGlassBox.Children.InsertAtTop(_qsGlass);
+        _qs.Children.InsertAtTop(_qsGlassBox);
+        // 面板内容：随弹簧平移
+        _qsSlide = G.Container(relative: false);
+        _qsTopV = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+        _qsRowsV = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+        _qsGridV = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+        _qsCurV = G.C.CreateSpriteVisual();
+        _qsEdgeV = G.Sprite(G.Solid(Gfx.WithAlpha(QsInk, 0.10)), relative: false);
+        _qsPanel = _qsTopV;
+        _qsSlide.Children.InsertAtTop(_qsTopV);
+        _qsSlide.Children.InsertAtTop(_qsRowsV);
+        _qsSlide.Children.InsertAtTop(_qsCurV);
+        _qsSlide.Children.InsertAtTop(_qsGridV);
+        _qsSlide.Children.InsertAtTop(_qsEdgeV);
+        _qs.Children.InsertAtTop(_qsSlide);
         _top.Children.InsertAtTop(_qs);
     }
 
-    // ---------------- 底：截一帧游戏画面 ----------------
+    // ---------------- 底：截一帧画面，模糊一次 ----------------
 
     /// <summary>
-    /// 用 Windows.Graphics.Capture 截游戏窗口的一帧：面板那一块模糊、压暗后当面板底（DWM 缩略图压在窗口内容上面，没法模糊，只能另截）。
-    /// 同时从这一帧取主色给开着的磁贴。截不到（独占全屏、权限）就用深色实底。
+    /// 游戏：Windows.Graphics.Capture 截游戏窗口一帧（截不到 / 全黑就截整个显示器，截的时候把自己的窗口排除在外）；
+    /// 没有游戏：截游戏库自己的窗口。只截一次，烤成一张模糊图，之后不再实时模糊。
     /// </summary>
-    private async Task QsCaptureBackdrop(nint hwnd, int v)
+    private async Task QsCaptureBackdrop(int v)
     {
+        nint self = WinRT.Interop.WindowNative.GetWindowHandle(_window);
+        GetWindowRect(self, out var sr);
+        CanvasBitmap? frame = null;
+        var at = (L: 0, T: 0, W: 0, H: 0);
+        long t0 = NowMs;
+        string how = "none";
         try
         {
-            var dev = G.Device;
-            var id = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd);
-            var item = GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId { Value = id.Value });
-            if (item == null) { Log.Warn("quick panel backdrop: no capture item"); return; }
-            var done = new TaskCompletionSource<CanvasBitmap?>();
-            using var pool = Direct3D11CaptureFramePool.CreateFreeThreaded(dev, DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, item.Size);
-            using var session = pool.CreateCaptureSession(item);
-            try { session.IsCursorCaptureEnabled = false; } catch { }
-            try { session.IsBorderRequired = false; } catch { }
-            pool.FrameArrived += (p, _) =>
+            if (_qsGame != 0)
             {
-                using var f = p.TryGetNextFrame();
-                if (f == null) return;
-                try
+                frame = await QsGrab(GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId { Value = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(_qsGame).Value }), 450);
+                at = (_qsGameRect.L - sr.Left, _qsGameRect.T - sr.Top, _qsGameRect.W, _qsGameRect.H);
+                how = "window";
+                if (frame != null && QsAllBlack(frame)) { frame.Dispose(); frame = null; }
+                if (frame == null && v == _qsVersion)
                 {
-                    using var src = CanvasBitmap.CreateFromDirect3D11Surface(dev, f.Surface);
-                    var copy = new CanvasRenderTarget(dev, src.SizeInPixels.Width, src.SizeInPixels.Height, 96);
-                    using (var ds = copy.CreateDrawingSession()) ds.DrawImage(src);
-                    done.TrySetResult(copy);
+                    // 管理员权限的游戏 / 独占全屏：截整个显示器，截的那一下把自己的窗口排除掉，看到的就是底下的游戏
+                    nint mon = MonitorFromWindow(self, 2);
+                    var did = Microsoft.UI.Win32Interop.GetDisplayIdFromMonitor(mon);
+                    SetWindowDisplayAffinity(self, 0x11);
+                    try { frame = await QsGrab(GraphicsCaptureItem.TryCreateFromDisplayId(new Windows.Graphics.DisplayId { Value = did.Value }), 450); }
+                    finally { SetWindowDisplayAffinity(self, 0); }
+                    var mi = new QsMonInfo { Size = Marshal.SizeOf<QsMonInfo>() };
+                    if (GetMonitorInfo(mon, ref mi)) at = (mi.Monitor.Left - sr.Left, mi.Monitor.Top - sr.Top, mi.Monitor.Right - mi.Monitor.Left, mi.Monitor.Bottom - mi.Monitor.Top);
+                    how = "monitor";
                 }
-                catch (Exception ex) { done.TrySetException(ex); }
-            };
-            session.StartCapture();
-            var frame = await Task.WhenAny(done.Task, Task.Delay(700)) == done.Task ? await done.Task : null;
-            if (frame == null) { Log.Warn("quick panel backdrop: no frame"); return; }
-            _dq.TryEnqueue(() =>
+            }
+            else
             {
-                if (v != _qsVersion || !_qsOpen) { frame.Dispose(); return; }
-                QsBakeBackdrop(frame);
-                frame.Dispose();
-                QsPaint();
-            });
+                frame = await QsGrab(GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId { Value = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(self).Value }), 300);
+                at = (0, 0, sr.Right - sr.Left, sr.Bottom - sr.Top);
+                how = "self";
+            }
         }
         catch (Exception ex) { Log.Warn($"quick panel backdrop: {ex.Message}"); }
-    }
-
-    private void QsBakeBackdrop(CanvasBitmap frame)
-    {
-        float k = _ccK > 0 ? _ccK : (float)(View.Width / 1280), raster = k * Chrome.Dpi;
-        float H = (float)(View.Height / k);
-        var dev = G.Device;
-        _qsBack?.Dispose();
-        _qsBack = new CanvasRenderTarget(dev, QsW, H, 96 * raster);
-        var (gl, gt, gw, gh) = _qsGameRect;
-        float px = k * Chrome.Dpi;   // 设计 px → 屏幕像素
-        var dest = new Windows.Foundation.Rect(gl / px, gt / px, gw / px, gh / px);
-        using (var ds = _qsBack.CreateDrawingSession())
+        _dq.TryEnqueue(() =>
         {
-            ds.Clear(Gfx.Rgba(10, 12, 14));
-            using var blur = new GaussianBlurEffect { Source = frame, BlurAmount = 18 * px, BorderMode = EffectBorderMode.Hard };
-            ds.DrawImage(blur, dest, frame.Bounds);
-            ds.FillRectangle(0, 0, QsW, H, Gfx.Rgba(0, 0, 0, 0.6));
-        }
-        // 取色：缩到 12×12 求平均，提亮成开着的磁贴色
-        try
-        {
-            using var small = new CanvasRenderTarget(dev, 12, 12, 96);
-            using (var ds = small.CreateDrawingSession()) ds.DrawImage(frame, new Windows.Foundation.Rect(0, 0, 12, 12), frame.Bounds);
-            var px2 = small.GetPixelColors();
-            double r = px2.Average(c => c.R), g = px2.Average(c => c.G), b = px2.Average(c => c.B);
-            var (h, s, _) = QsHsl(r / 255, g / 255, b / 255);
-            _qsTint = QsFromHsl(h, Math.Clamp(s * 1.2, 0.22, 0.55), 0.82);
-            _qsTintInk = QsFromHsl(h, 0.5, 0.1);
-        }
-        catch (Exception ex) { Log.Warn($"quick panel tint: {ex.Message}"); }
-    }
-
-    private static (double H, double S, double L) QsHsl(double r, double g, double b)
-    {
-        double max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b)), l = (max + min) / 2, d = max - min;
-        if (d < 1e-6) return (0, 0, l);
-        double s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-        double h = max == r ? (g - b) / d + (g < b ? 6 : 0) : max == g ? (b - r) / d + 2 : (r - g) / d + 4;
-        return (h / 6, s, l);
-    }
-
-    private static Color QsFromHsl(double h, double s, double l)
-    {
-        double F(double t) { t = (t % 1 + 1) % 1; double q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
-            return t < 1.0 / 6 ? p + (q - p) * 6 * t : t < 0.5 ? q : t < 2.0 / 3 ? p + (q - p) * (2.0 / 3 - t) * 6 : p; }
-        return Gfx.Rgba((int)(F(h + 1.0 / 3) * 255), (int)(F(h) * 255), (int)(F(h - 1.0 / 3) * 255));
-    }
-
-    // ---------------- 封面（Steam 横版 920×430） ----------------
-
-    /// <summary>自测用（--qsgame=游戏名）：没开游戏也按这个游戏摆封面、名字和退出按钮。</summary>
-    internal string? _qsTestGame;
-
-    private LibraryItem? QsGameItem()
-    {
-        if (_game?.Item is { } g) return g;
-        string? title = _qsTestGame ?? Str(QsGet("system.game.title"));
-        return title == null ? null : _lib.Games.FirstOrDefault(i => string.Equals(i.Title, title, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private void QsLoadCover()
-    {
-        var item = QsGameItem();
-        if (item == null || item.Id == _qsCoverId) return;
-        _qsCoverId = item.Id;
-        _qsCover = null;
-        string? hero = _steamRoot != null ? Steam.ArtSources(_steamRoot, _steamUser, item.Id).Hero : null;
-        string? path = hero ?? QsHeaderPath(item.Id);
-        _qsCoverHasLogo = hero == null;
-        if (path == null) return;
-        string id = item.Id;
-        _ = Task.Run(async () =>
-        {
-            try { var b = await CanvasBitmap.LoadAsync(G.Device, path); _dq.TryEnqueue(() => { if (_qsCoverId == id) { _qsCover = b; QsBuild(); QsPaint(); } }); }
-            catch (Exception ex) { Log.Warn($"quick panel cover {id}: {ex.Message}"); }
+            _qsWaitBackdrop = false;
+            if (frame == null || v != _qsVersion || !_qsOpen) { frame?.Dispose(); if (frame == null) Log.Warn($"quick panel backdrop: none ({how})"); return; }
+            try { QsBakeBackdrop(frame, at); }
+            catch (Exception ex) { Log.Warn($"quick panel backdrop bake: {ex.Message}"); }
+            frame.Dispose();
+            Log.Info($"quick panel backdrop {how} {NowMs - t0} ms");
         });
     }
 
-    /// <summary>横版封面：自己选的 → Steam grid 里的 &lt;id&gt;.png/jpg → librarycache 的 header。</summary>
-    private string? QsHeaderPath(string id)
+    private static async Task<CanvasBitmap?> QsGrab(GraphicsCaptureItem? item, int timeoutMs)
+    {
+        if (item == null) return null;
+        var dev = CanvasDevice.GetSharedDevice();
+        var done = new TaskCompletionSource<CanvasBitmap?>();
+        using var pool = Direct3D11CaptureFramePool.CreateFreeThreaded(dev, DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, item.Size);
+        using var session = pool.CreateCaptureSession(item);
+        try { session.IsCursorCaptureEnabled = false; } catch { }
+        try { session.IsBorderRequired = false; } catch { }
+        pool.FrameArrived += (p, _) =>
+        {
+            using var f = p.TryGetNextFrame();
+            if (f == null) return;
+            try
+            {
+                using var src = CanvasBitmap.CreateFromDirect3D11Surface(dev, f.Surface);
+                var copy = new CanvasRenderTarget(dev, src.SizeInPixels.Width, src.SizeInPixels.Height, 96);
+                using (var ds = copy.CreateDrawingSession()) ds.DrawImage(src);
+                if (!done.TrySetResult(copy)) copy.Dispose();
+            }
+            catch (Exception ex) { done.TrySetException(ex); }
+        };
+        session.StartCapture();
+        return await Task.WhenAny(done.Task, Task.Delay(timeoutMs)) == done.Task ? await done.Task : null;
+    }
+
+    private static bool QsAllBlack(CanvasBitmap frame)
     {
         try
         {
-            if (LocalGames.ArtFile(id, "") is { } own) return own;
-            if (_steamUser != null)
-            {
-                var grid = Path.Combine(_steamUser, "config", "grid");
-                foreach (var ext in new[] { ".png", ".jpg", ".jpeg", ".webp" })
-                    if (File.Exists(Path.Combine(grid, id + ext))) return Path.Combine(grid, id + ext);
-            }
-            if (_steamRoot != null)
-            {
-                var cache = Path.Combine(_steamRoot, "appcache", "librarycache", id);
-                if (Directory.Exists(cache) && Directory.GetFiles(cache, "header*.jpg", SearchOption.AllDirectories).FirstOrDefault() is { } h) return h;
-                var flat = Path.Combine(_steamRoot, "appcache", "librarycache", $"{id}_header.jpg");
-                if (File.Exists(flat)) return flat;
-            }
+            using var small = new CanvasRenderTarget(frame.Device, 8, 8, 96);
+            using (var ds = small.CreateDrawingSession()) ds.DrawImage(frame, new Windows.Foundation.Rect(0, 0, 8, 8), frame.Bounds);
+            return small.GetPixelColors().All(c => c.R + c.G + c.B < 6);
         }
-        catch (Exception ex) { Log.Warn($"quick panel header {id}: {ex.Message}"); }
-        return null;
+        catch { return false; }
+    }
+
+    /// <summary>CSS filter: blur(24px) brightness(.82) saturate(1.15)，再叠 #09090B 36 %。画在物理像素里，盖住面板能走到的整条左边。</summary>
+    private void QsBakeBackdrop(CanvasBitmap frame, (int L, int T, int W, int H) at)
+    {
+        float dpi = Chrome.Dpi, kd = QsK * dpi;
+        int pw = (int)Math.Ceiling(QsW * kd) + 2, ph = (int)Math.Ceiling(View.Height * dpi);
+        var s = G.Surface(pw, ph);
+        using (var ds = CanvasComposition.CreateDrawingSession(s))
+        {
+            ds.Clear(Gfx.Rgba(0x17, 0x17, 0x1a));
+            const float sat = 1.15f, br = 0.82f;
+            using var blur = new GaussianBlurEffect { Source = frame, BlurAmount = 24 * kd, BorderMode = EffectBorderMode.Hard, Optimization = EffectOptimization.Balanced };
+            using var cm = new ColorMatrixEffect
+            {
+                Source = blur, ClampOutput = true,
+                ColorMatrix = new Matrix5x4
+                {
+                    M11 = (0.213f + 0.787f * sat) * br, M12 = (0.213f - 0.213f * sat) * br, M13 = (0.213f - 0.213f * sat) * br,
+                    M21 = (0.715f - 0.715f * sat) * br, M22 = (0.715f + 0.285f * sat) * br, M23 = (0.715f - 0.715f * sat) * br,
+                    M31 = (0.072f - 0.072f * sat) * br, M32 = (0.072f - 0.072f * sat) * br, M33 = (0.072f + 0.928f * sat) * br,
+                    M44 = 1,
+                },
+            };
+            ds.DrawImage(cm, new Windows.Foundation.Rect(at.L, at.T, at.W, at.H), frame.Bounds);
+            ds.FillRectangle(0, 0, pw, ph, Gfx.WithAlpha(QsBg, 0.36));
+        }
+        var brush = (CompositionSurfaceBrush)_qsGlass.Brush;
+        (brush.Surface as IDisposable)?.Dispose();
+        brush.Surface = s;
+        _qsGlassS = s;
+        _qsGlass.Size = new Vector2(pw / dpi, ph / dpi);
+        _qsGlass.StartAnimation("Opacity", G.Scalar(_qsGlass.Opacity, 1, Reduced ? 1 : 140, Bezier.EaseOut));
     }
 
     // ---------------- 数据 ----------------
 
-    private async Task QsRefresh(int v)
+    private bool _qsLosslessKnown;
+
+    private async Task QsRefresh(int v, bool first = false)
     {
         if (_pagePointer.Active || _qsTouchWrites?.IsBusy == true) return;
+        _agent ??= new AgentClient();
         try
         {
-            _agent ??= new AgentClient();
             if (await _agent.Call("widget_state") is JsonObject s && v == _qsVersion && _qsOpen && !_pagePointer.Active && _qsTouchWrites?.IsBusy != true)
             {
                 _qsState = s;
@@ -397,11 +414,27 @@ public sealed partial class WallStage
             }
         }
         catch (Exception ex) { Log.Warn($"quick panel radios: {ex.Message}"); }
+        _qsAir = await Task.Run(QsAirplane.Get);
+        try
+        {
+            var p = Windows.Networking.Connectivity.NetworkInformation.GetInternetConnectionProfile();
+            _qsSsid = p != null && p.IsWlanConnectionProfile ? p.ProfileName : null;
+        }
+        catch { _qsSsid = null; }
+        if (first || _qsPolls++ % 3 == 0) _qsBtCount = _qsBt == true ? await QsBluetoothConnected() : -1;
+        if (first)
+        {
+            try { if (await _agent.Call("get_display_state") is JsonObject d) _qsVrr = d["vrr"] is JsonValue ? Bool(d["vrr"]) : null; }
+            catch (Exception ex) { Log.Warn($"quick panel display: {ex.Message}"); }
+            _qsVrrRange ??= await Task.Run(QsVrrRange);
+            try { if (await _agent.Call("get_gamepad_state") is JsonObject g) _qsPadMode = Str(g["mode"]); }
+            catch (Exception ex) { Log.Warn($"quick panel gamepad: {ex.Message}"); }
+        }
         if (!_qsLosslessKnown)
         {
             try
             {
-                if (await _agent!.Call("get_lossless_settings") is JsonObject ls)
+                if (await _agent.Call("get_lossless_settings") is JsonObject ls)
                 {
                     _qsLosslessKnown = true;
                     _qsLossless = Str(ls["exe"]) != null ? Bool(ls["running"]) : null;
@@ -410,8 +443,20 @@ public sealed partial class WallStage
             catch { _qsLosslessKnown = true; _qsLossless = null; }
         }
         if (v != _qsVersion || !_qsOpen) return;
-        QsBuild();
-        QsPaint();
+        QsRebuild();
+    }
+
+    private static async Task<int> QsBluetoothConnected()
+    {
+        try
+        {
+            var sel = Windows.Devices.Bluetooth.BluetoothDevice.GetDeviceSelectorFromConnectionStatus(Windows.Devices.Bluetooth.BluetoothConnectionStatus.Connected);
+            var le = Windows.Devices.Bluetooth.BluetoothLEDevice.GetDeviceSelectorFromConnectionStatus(Windows.Devices.Bluetooth.BluetoothConnectionStatus.Connected);
+            var a = await Windows.Devices.Enumeration.DeviceInformation.FindAllAsync(sel);
+            var b = await Windows.Devices.Enumeration.DeviceInformation.FindAllAsync(le);
+            return a.Select(d => d.Name).Concat(b.Select(d => d.Name)).Where(n => !string.IsNullOrEmpty(n)).Distinct().Count();
+        }
+        catch (Exception ex) { Log.Warn($"quick panel bluetooth devices: {ex.Message}"); return -1; }
     }
 
     private void QsPollTick(Microsoft.UI.Dispatching.DispatcherQueueTimer sender, object e)
@@ -430,9 +475,6 @@ public sealed partial class WallStage
     private double QsNum(string path, double fallback = 0, JsonNode? root = null) =>
         QsGet(path, root) is JsonValue v && (v.TryGetValue(out double d) || (v.TryGetValue(out int i) && (d = i) == i) || (v.TryGetValue(out long l) && (d = l) == l)) ? d : fallback;   // 本地写进去的是 int，后台回来的是 double
 
-    private bool _qsSaving;
-
-    /// <summary>功耗 / 风扇 / 性能读数：改草稿、存回后台（save_power 收整份设置）。</summary>
     private async Task QsSavePower(string what)
     {
         if (_qsDraft == null) return;
@@ -450,138 +492,154 @@ public sealed partial class WallStage
         _ = QsRefresh(_qsVersion);
     }
 
-    /// <summary>只在出错时显示一行（成功了看控件本身的状态就知道，不另写字）。</summary>
-    private void QsFlash(string text)
-    {
-        _qsNote = text;
-        _qsNoteAt = NowMs;
-        QsPaint();
-        long at = _qsNoteAt;
-        After(2600, () => { if (_qsNoteAt == at) { _qsNote = null; if (_qsOpen) QsPaint(); } });
-    }
+    /// <summary>只在出错时提示（成功了看控件本身就知道）。</summary>
+    private void QsFlash(string text) => Toast(text);
 
-    // ---------------- 磁贴配置（qstiles.txt：一行一块「id 大小」） ----------------
+    // ---------------- 模型 ----------------
 
-    private static string QsTilesFile => Path.Combine(App.CacheDir, "qstiles.txt");
-
-    private static List<(string Id, char Size)> QsLoadTiles()
-    {
-        try
-        {
-            if (File.Exists(QsTilesFile))
-            {
-                var list = new List<(string, char)>();
-                foreach (var line in File.ReadAllLines(QsTilesFile))
-                {
-                    var p = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    if (p.Length == 2 && QsTilePool.Any(t => t.Id == p[0]) && p[1] is "S" or "M" or "L" && list.All(x => x.Item1 != p[0])) list.Add((p[0], p[1][0]));
-                }
-                return list;
-            }
-        }
-        catch (Exception ex) { Log.Warn($"quick tiles: {ex.Message}"); }
-        return QsTileDefault.ToList();
-    }
-
-    private void QsSaveTiles()
-    {
-        try { File.WriteAllLines(QsTilesFile, (_qsTiles ?? new()).Select(t => $"{t.Id} {t.Size}")); }
-        catch (Exception ex) { Log.Warn($"quick tiles save: {ex.Message}"); }
-    }
-
-    // ---------------- 排版（定稿 2026-10-30：TE / Braun ET66 式整块分格面板，Braun 配色） ----------------
-    // 一列 384 宽、整屏高，细线分格，不加容器、圆角、模糊和阴影。从上到下：
-    // 时间电量 56 → 功耗 160（大数字 + 常用档刻度）→ 亮度 | 音量 124（大数字 + 竖条）→ 4×3 格子 → 返回游戏库 | 退出游戏 100。
-    // 没开游戏时去掉底行，格子把高度吃掉；只对游戏有效的格子变暗不可选。焦点 = 整格反白；开着 = 右上角芥末黄小方灯。
-
-    private static readonly Color QbBg = Gfx.Rgba(0x17, 0x16, 0x14), QbLine = Gfx.Rgba(0x2c, 0x2a, 0x26), QbFg = Gfx.Rgba(0xec, 0xe6, 0xd6),
-        QbAcc = Gfx.Rgba(0xe0, 0xb2, 0x28), QbDanger = Gfx.Rgba(0xff, 0x5a, 0x4e);
-    private const float QbStatusH = 56, QbPowerH = 160, QbLevelH = 124, QbLeaveH = 100, QbPad = 18;
-    private static readonly string[] QbKeys = { "fps", "osd", "fan", "screenshot", "refresh", "magpie", "windows", "lossless", "keyboard", "mouse", "rumble", "sleep" };
-
-    private string QsTitle() => QsGameItem()?.Title ?? Str(QsGet("system.game.title")) ?? "快捷设置";
+    private string QsTitle() => QsGameItem()?.Title ?? Str(QsGet("system.game.title")) ?? "";
     private bool QsInGame => _qsGame != 0 || QsGet("system.game") is JsonObject;
     private bool QsHasGame => _game != null || _qsGame != 0 || _qsTestGame != null;
-    private float QsViewH => (float)(View.Height / (_ccK > 0 ? _ccK : (float)(View.Width / 1280)));
+
+    /// <summary>自测用（--qsgame=游戏名）：没开游戏也按这个游戏摆退出游戏卡和游戏相关项。</summary>
+    internal string? _qsTestGame;
+
+    private LibraryItem? QsGameItem()
+    {
+        if (_game?.Item is { } g) return g;
+        string? title = _qsTestGame ?? Str(QsGet("system.game.title"));
+        return title == null ? null : _lib.Games.FirstOrDefault(i => string.Equals(i.Title, title, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private QsItem? QsFind(string id) => _qsItems.FirstOrDefault(i => i.Id == id);
+
+    private void QsRebuild() { QsBuild(); QsSync(); QsPaintAll(); }
 
     private void QsBuild()
     {
-        string? keep = _qsFocusId ?? (_qsFocus < _qsItems.Count ? _qsItems[_qsFocus].Id : null);
         _qsItems.Clear();
-        _qsSecTop.Clear();
         var d = _qsDraft;
-        float H = QsViewH;
         bool game = QsHasGame;
 
         var (lo, hi) = QsTdpRange();
         double tdp = QsTdpNow(d, lo);
-        _qsItems.Add(new QsItem { Id = "tdp", Kind = QsKind.Meter, Value = $"{tdp:0}", Level = (float)((tdp - lo) / Math.Max(1, hi - lo)), Disabled = d == null, X = 0, Y = QbStatusH, W = QsW, H = QbPowerH });
+        _qsItems.Add(new QsItem { Id = "tdp", Kind = QsKind.Meter, Value = $"{tdp:0}", Level = (float)((tdp - lo) / Math.Max(1, hi - lo)), Disabled = d == null, X = QsL, Y = QsPwY, W = QsR - QsL, H = QsPwH });
 
-        float ly = QbStatusH + QbPowerH;
         double bright = QsNum("system.brightness", -1), vol = QsNum("system.volume", -1);
         bool muted = Bool(QsGet("system.muted"));
-        _qsItems.Add(new QsItem { Id = "brightness", Kind = QsKind.Slider, Name = "亮度", Value = bright < 0 ? "--" : $"{bright:0}", Level = (float)Math.Clamp(Math.Max(0, bright) / 100, 0, 1), Disabled = bright < 0, X = 0, Y = ly, W = QsW / 2, H = QbLevelH });
-        _qsItems.Add(new QsItem { Id = "volume", Kind = QsKind.Slider, Name = "音量", Value = vol < 0 ? "--" : muted ? "静音" : $"{vol:0}", Level = muted ? 0 : (float)Math.Clamp(Math.Max(0, vol) / 100, 0, 1), Disabled = vol < 0, X = QsW / 2, Y = ly, W = QsW / 2, H = QbLevelH });
+        // 滑条的 X / W 是轨道（触控按轨道位置换算）
+        _qsItems.Add(new QsItem { Id = "brightness", Kind = QsKind.Slider, Name = "亮度", Glyph = "qam.sun", Value = bright < 0 ? "--" : $"{bright:0}", Level = (float)Math.Clamp(Math.Max(0, bright) / 100, 0, 1), Disabled = bright < 0, X = QsL + 30, Y = QsPairY, W = 94, H = 44 });
+        _qsItems.Add(new QsItem { Id = "volume", Kind = QsKind.Slider, Name = "音量", Glyph = muted ? "qam.mute" : "qam.vol", Value = vol < 0 ? "--" : $"{vol:0}", On = muted, Level = muted ? 0 : (float)Math.Clamp(Math.Max(0, vol) / 100, 0, 1), Disabled = vol < 0, X = 220 + 30, Y = QsPairY, W = 94, H = 44 });
 
-        float gy = ly + QbLevelH, gb = H - (game ? QbLeaveH : 0), rh = (gb - gy) / 3, cw = QsW / 4;
-        for (int i = 0; i < QbKeys.Length; i++)
+        for (int i = 0; i < QsRowIds.Length; i++)
         {
-            var it = QsKeyItem(QbKeys[i]);
-            it.X = (i % 4) * cw; it.Y = gy + (i / 4) * rh; it.W = cw; it.H = rh;
+            var it = QsRowItem(QsRowIds[i], game);
+            it.X = QsL; it.Y = QsRowY + i * QsRowH; it.W = QsR - QsL; it.H = QsRowH;
             _qsItems.Add(it);
         }
-        if (game)
-        {
-            _qsItems.Add(new QsItem { Id = "library", Kind = QsKind.Entry, Glyph = "", Name = "返回游戏库", X = 0, Y = gb, W = QsW / 2, H = QbLeaveH });
-            _qsItems.Add(new QsItem { Id = "quit", Kind = QsKind.Entry, Glyph = "qs.exit", Name = _qsQuitArmedAt > 0 ? "再按一次退出" : "退出游戏", X = QsW / 2, Y = gb, W = QsW / 2, H = QbLeaveH });
-        }
-        _qsContentH = H;
 
-        int found = keep == null ? -1 : _qsItems.FindIndex(it => it.Id == keep && !it.Disabled);
-        if (found < 0) found = 0;
-        _qsFocus = found;
-        _qsFocusId = _qsItems[_qsFocus].Id;
+        foreach (var (id, c, r, w) in QsLay)
+        {
+            var it = QsCellItem(id, game, w > 1);
+            it.Col = c; it.Row = r; it.Span = w;
+            it.X = QsL + c * QsPitch; it.Y = QsGridY + r * QsPitch; it.W = w * QsCell + (w - 1) * 10; it.H = QsCell;
+            _qsItems.Add(it);
+        }
+        // 焦点项没了 / 变得不可选：回到功耗
+        var f = QsFind(_qsFocusId);
+        if (f == null || f.Disabled || (f.Kind is QsKind.Cell or QsKind.Card && !QsCellShown(f.Id))) { _qsFocusId = "tdp"; _qsArmed = null; }
     }
 
-    /// <summary>格子：值类显示当前值（左上），开关类右上角一盏灯，动作类左上一个图标；名字在左下。</summary>
-    private QsItem QsKeyItem(string id)
+    private QsItem QsRowItem(string id, bool game)
     {
-        var it = new QsItem { Id = id, Kind = QsKind.Tile };
+        var it = new QsItem { Id = id, Kind = QsKind.Row };
         var d = _qsDraft;
-        bool game = QsHasGame;
         switch (id)
         {
             case "fps":
                 double fps = QsNum("system.fpsLimit");
-                it.Name = "帧率上限"; it.Value = fps > 0 ? $"{fps:0}" : "不限"; it.On = fps > 0; it.Size = 'L'; it.Disabled = QsGet("system.fpsLimit") == null; break;
-            case "osd":
-                int osd = d != null && Bool(QsGet("osd.enabled", d)) ? (int)QsNum("osd.level", 1, d) : 0;
-                it.Name = "性能显示"; it.Value = osd == 0 ? "关" : $"{osd}"; it.On = osd > 0; it.Size = 'L'; it.Disabled = d == null; break;
-            case "fan":
-                string fan = Str(QsGet("fan.mode", d)) ?? "";
-                it.Name = "风扇"; it.Value = QsFan.FirstOrDefault(f => f.Id == fan).N ?? "自动"; it.Disabled = d == null; break;
-            case "screenshot": it.Name = "截图"; it.Glyph = ""; it.Disabled = !game; break;
+                it.Name = "帧率上限"; it.Value = fps > 0 ? $"{fps:0}" : "不限"; it.Off = fps <= 0; it.Disabled = QsGet("system.fpsLimit") == null; break;
             case "refresh":
                 double hz = QsNum("system.refresh");
-                it.Name = "刷新率"; it.Value = hz > 0 ? $"{hz:0}" : "--"; it.Disabled = QsRefreshRates().Count < 2; break;
-            case "magpie":
-                bool mgOk = QsInGame && Bool(QsGet("magpie.available"));
-                it.Name = "Magpie"; it.On = mgOk && Bool(QsGet("magpie.enabled")); it.Value = it.On ? "开" : "关"; it.Size = 'L'; it.Disabled = !mgOk; break;
-            case "windows": it.Name = "窗口切换"; it.Glyph = ""; it.Disabled = !game; break;
-            case "lossless":
-                it.Name = "小黄鸭"; it.On = _qsLossless == true; it.Value = it.On ? "开" : "关"; it.Size = 'L'; it.Disabled = _qsLossless == null || !QsInGame; break;
-            case "keyboard": it.Name = "屏幕键盘"; it.Glyph = ""; break;
-            case "mouse":
-                bool desk = Str(QsGet("gamepad.mode")) == "desktop";
-                it.Name = "鼠标模式"; it.On = desk; it.Value = desk ? "开" : "关"; it.Size = 'L'; it.Disabled = QsGet("gamepad") is not JsonObject; break;
+                it.Name = "刷新率"; it.Value = hz > 0 ? $"{hz:0} Hz" : "--"; it.Disabled = QsRefreshRates().Count < 2; break;
+            case "scale":
+            {
+                bool mg = Bool(QsGet("magpie.enabled")), ls = _qsLossless == true;
+                it.Name = "画面缩放"; it.Value = mg ? "Magpie" : ls ? "小黄鸭" : "关"; it.Off = !mg && !ls; it.Lamp = !it.Off;
+                it.Disabled = !game || QsScaleOptions().Count < 2; break;
+            }
+            case "osd":
+            {
+                int osd = d != null && Bool(QsGet("osd.enabled", d)) ? (int)QsNum("osd.level", 1, d) : 0;
+                it.Name = "性能显示"; it.Value = QsOsdNames[Math.Clamp(osd, 0, 4)]; it.Off = osd == 0; it.Disabled = d == null; break;
+            }
+            case "fan":
+                it.Name = "风扇"; it.Value = QsFanName(); it.Disabled = d == null; break;
             case "rumble":
+            {
                 double rumble = QsGet("rumble.strength") != null ? QsNum("rumble.strength") : 100;
-                var rs = QsRumble.OrderBy(r => Math.Abs(r.V - rumble)).First();
-                it.Name = "震动"; it.Value = rs.N; break;
-            case "sleep": it.Name = "睡眠"; it.Glyph = ""; break;
+                it.Name = "震动"; it.Value = QsRumble.OrderBy(r => Math.Abs(r.V - rumble)).First().N; it.Disabled = QsGet("rumble") is not JsonObject; break;
+            }
         }
-        // Size 'L' = 带灯的开关类
         return it;
+    }
+
+    private QsItem QsCellItem(string id, bool game, bool card)
+    {
+        var it = new QsItem { Id = id, Kind = card ? QsKind.Card : QsKind.Cell };
+        switch (id)
+        {
+            case "wifi":
+                it.Name = "Wi-Fi"; it.Glyph = "qam.wifi"; it.On = _qsWifi == true; it.Disabled = _qsWifi == null;
+                it.Tip = "Wi-Fi · " + (_qsWifi != true ? "关" : _qsSsid ?? "未连接"); break;
+            case "bt":
+                it.Name = "蓝牙"; it.Glyph = "qam.bt"; it.On = _qsBt == true; it.Disabled = _qsBt == null;
+                it.Tip = "蓝牙 · " + (_qsBt != true ? "关" : _qsBtCount > 0 ? $"已连接 {_qsBtCount} 个设备" : "开"); break;
+            case "air":
+                it.Name = "飞行模式"; it.Glyph = "qam.air"; it.On = _qsAir == true; it.Disabled = _qsAir == null;
+                it.Tip = "飞行模式 · " + (_qsAir == true ? "开" : "关"); break;
+            case "shot": it.Name = "截图"; it.Glyph = "qam.shot"; it.Disabled = !game; it.Tip = "截图"; break;
+            case "kbd": it.Name = "键盘"; it.Glyph = "qam.kbd"; it.Tip = "键盘"; break;
+            case "pad":
+            {
+                bool mouse = _qsPadMode == "desktop";
+                it.Name = mouse ? "键鼠模式" : "手柄模式"; it.Glyph = mouse ? "qam.mouse" : "qam.pad"; it.Disabled = _qsPadMode == null; it.Tip = it.Name; break;
+            }
+            case "pwr": it.Name = "电源"; it.Glyph = "qam.off"; it.Tip = "电源"; break;
+            case "desk": it.Name = "桌面"; it.Glyph = "qam.desk"; it.Disabled = !ShellMode.Available; it.Tip = "切换到桌面"; break;
+            case "vrr":
+                it.Name = "可变刷新率"; it.Glyph = ""; it.On = _qsVrr == true; it.Disabled = _qsVrr == null;
+                it.Tip = "可变刷新率 · " + (_qsVrr == true ? (game && _qsVrrRange != null ? "开 · " + _qsVrrRange : "开") : "关"); break;
+            case "off": it.Name = "关机"; it.Glyph = "qam.off"; it.Tip = "关机"; break;
+            case "restart": it.Name = "重启"; it.Glyph = "qam.restart"; it.Tip = "重启"; break;
+            case "sleep": it.Name = "睡眠"; it.Glyph = "qam.sleep"; it.Tip = "睡眠"; break;
+            case "win":
+            {
+                int n = 0;
+                try { n = WsList().Count(w => w.Hwnd != WsSelf); } catch { }
+                it.Name = "窗口切换"; it.Glyph = "qam.win"; it.Sub = $"{n} 个窗口"; break;
+            }
+            case "lib": it.Name = "游戏库"; it.Glyph = "qam.lib"; it.Sub = $"{_lib.Games.Count} 款"; break;
+            case "quit": it.Name = "退出游戏"; it.Glyph = "qam.quit"; it.Sub = QsTitle(); it.Disabled = !game; break;
+        }
+        return it;
+    }
+
+    private string QsFanName()
+    {
+        var d = _qsDraft;
+        if (d == null) return "--";
+        if (Str(QsGet("fan.control", d)) == "auto") return "自动";
+        if (Bool(QsGet("fan.full", d))) return "满速";
+        return Str(QsGet("fan.mode", d)) switch { "quiet" => "静音", "performance" => "性能", _ => "均衡" };
+    }
+
+    private List<string> QsScaleOptions()
+    {
+        var list = new List<string> { "关" };
+        if (Bool(QsGet("magpie.available")) || Bool(QsGet("magpie.enabled"))) list.Add("Magpie");
+        if (_qsLossless != null) list.Add("小黄鸭");
+        return list;
     }
 
     private double QsTdpNow(JsonObject? d, double lo)
@@ -600,367 +658,617 @@ public sealed partial class WallStage
     }
 
     private List<double> QsRefreshRates() =>
-        (QsGet("system.refreshRates") as JsonArray)?.Select(n => n is JsonValue v && v.TryGetValue(out double x) ? x : 0).Where(x => x >= 60).Distinct().ToList() ?? new();
+        (QsGet("system.refreshRates") as JsonArray)?.Select(n => n is JsonValue v && v.TryGetValue(out double x) ? x : 0).Where(x => x >= 60).Distinct().OrderByDescending(x => x).ToList() ?? new();
 
-    private bool QsIsRail(QsItem it) => it.Kind == QsKind.Rail;
-    private float QsDrawY(QsItem it) => it.Y;
-    private string QsCurrentSection() => _qsPage;
-    private void QsEnsureVisible() { }
+    /// <summary>这一格此刻在网格里（电源展开时第三行左三格是关机 / 重启 / 睡眠）。</summary>
+    private bool QsCellShown(string id) =>
+        QsPm.Contains(id) ? _qsPm : QsR2.Contains(id) ? !_qsPm : true;
+
+    private string? QsCellAt(int r, int c)
+    {
+        foreach (var (id, cc, rr, w) in QsLay)
+        {
+            if (rr != r || !QsCellShown(id)) continue;
+            if (c >= cc && c < cc + w) return id;
+        }
+        return null;
+    }
+
+    private static bool QsIsGrid(string id) => QsLay.Any(l => l.Id == id);
+
+    private bool QsSelectable(string id) => QsFind(id) is { Disabled: false } it && (it.Kind is not (QsKind.Cell or QsKind.Card) || QsCellShown(id));
+
+    // ---------------- 动画目标 ----------------
+
+    /// <summary>按当前状态给每个元素定补间目标（焦点、开关底色、确认红、提示、选项行箭头、小灯、电源展开）。</summary>
+    private void QsSync()
+    {
+        string f = _qsFocusId;
+        QsTo("g.pm", _qsPm ? 1 : 0, 360);
+        foreach (var it in _qsItems)
+        {
+            switch (it.Kind)
+            {
+                case QsKind.Row:
+                    QsTo("r.ch." + it.Id, f == it.Id ? 1 : 0, 160, Bezier.Ease_);
+                    QsTo("r.lamp." + it.Id, it.Lamp ? 1 : 0, 300);
+                    QsTo("r.dis." + it.Id, it.Disabled ? 1 : 0, 200, Bezier.Ease_);
+                    break;
+                case QsKind.Cell or QsKind.Card:
+                {
+                    bool arm = _qsArmed == it.Id;
+                    QsTo("g.f." + it.Id, f == it.Id && !arm ? 1 : 0, 160, Bezier.Ease_);
+                    QsTo("g.on." + it.Id, it.On && !arm ? 1 : 0, 200, Bezier.Ease_);
+                    QsTo("g.arm." + it.Id, arm ? 1 : 0, 200, Bezier.Ease_);
+                    QsTo("g.dis." + it.Id, it.Disabled ? 1 : 0, 200, Bezier.Ease_);
+                    QsTo("g.tip." + it.Id, it.Kind == QsKind.Cell && QsCellShown(it.Id) && (f == it.Id || arm) ? 1 : 0, 200);
+                    break;
+                }
+            }
+        }
+        QsTo("t.dis.tdp", QsFind("tdp")?.Disabled == true ? 1 : 0, 200, Bezier.Ease_);
+        // 光标只给功耗块和选项行
+        bool blk = f == "tdp" || QsRowIds.Contains(f);
+        QsTo("c.on", blk ? 1 : 0, 160, Bezier.Ease_);
+        if (blk)
+        {
+            var it = QsFind(f)!;
+            _qsCty = f == "tdp" ? it.Y - 2 : it.Y;
+            _qsCth = f == "tdp" ? it.H + 4 : it.H;
+            if (!_qsCurPlaced || Reduced || QsTv("c.on") < 0.01f) { _qsCy = _qsCty; _qsCh = _qsCth; _qsCvy = _qsCvh = 0; _qsCurPlaced = true; }
+            QsStartTicking();
+        }
+    }
 
     // ---------------- 绘制 ----------------
 
-    private void QsPaint()
+    private void QsDrawInto(ref CompositionDrawingSurface? surface, SpriteVisual v, float w, float h, Action<CanvasDrawingSession> paint)
+    {
+        float k = QsK, raster = k * Chrome.Dpi;
+        var size = new Windows.Foundation.Size(Math.Max(1, Math.Ceiling(w * raster)), Math.Max(1, Math.Ceiling(h * raster)));
+        if (surface == null || surface.Size != size)
+        {
+            var s = G.Surface((int)size.Width, (int)size.Height);
+            var brush = (CompositionSurfaceBrush)v.Brush;
+            (brush.Surface as IDisposable)?.Dispose();
+            brush.Surface = s;
+            surface = s;
+        }
+        using (var ds = CanvasComposition.CreateDrawingSession(surface))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(raster);
+            ds.TextAntialiasing = CanvasTextAntialiasing.Grayscale;
+            paint(ds);
+        }
+        v.Size = new Vector2(w * k, h * k);
+    }
+
+    private void QsPaintAll()
     {
         if (_qs == null) return;
-        float k = _ccK > 0 ? _ccK : (float)(View.Width / 1280), raster = k * Chrome.Dpi;
-        float H = (float)(View.Height / k);
-        CcSet(_qsPanel, CcDraw(QsW, H, raster, ds => QsPaintPanel(ds, H)));
-        _qsPanel.Size = new Vector2(QsW * k, H * k);
+        QsPaintLayer('t'); QsPaintLayer('r'); QsPaintLayer('g');
+        QsPaintCursor();
         QsLayout();
     }
 
-    private static void QbText(CanvasDrawingSession ds, string text, FontSpec f, float size, float x, float y, Color c, bool bottom = false, float width = 360)
+    private void QsPaintLayer(char layer)
     {
-        using var l = TextKit.Layout(ds, text, f, size, width, CanvasHorizontalAlignment.Left);
-        var b = l.LayoutBounds;
-        ds.DrawTextLayout(l, x - (float)b.X, (bottom ? y - (float)b.Height : y) - (float)b.Y, c);
+        try
+        {
+            switch (layer)
+            {
+                case 't': QsDrawInto(ref _qsTopS, _qsTopV, QsW, QsTopH, QsPaintTop); break;
+                case 'r': QsDrawInto(ref _qsRowsS, _qsRowsV, QsW, QsRowsH, ds => { ds.Transform = Matrix3x2.CreateTranslation(0, -QsRowsY) * ds.Transform; QsPaintRows(ds); }); break;
+                case 'g': QsDrawInto(ref _qsGridS, _qsGridV, QsW, QsGridLH, ds => { ds.Transform = Matrix3x2.CreateTranslation(0, -QsGridLY) * ds.Transform; QsPaintGrid(ds); }); break;
+            }
+        }
+        catch (Exception ex) { Log.Warn($"quick panel paint {layer}: {ex.Message}"); }
     }
 
-    private static float QbWidth(CanvasDrawingSession ds, string text, FontSpec f, float size)
+    private static CanvasTextLayout QsLay_(ICanvasResourceCreator ds, string s, FontSpec f, float size, float ls = 0) =>
+        TextKit.Layout(ds, s, f, size, 1000, CanvasHorizontalAlignment.Left, ls);
+
+    private static float QsTextW(CanvasDrawingSession ds, string s, FontSpec f, float size, float ls = 0)
     {
-        using var l = TextKit.Layout(ds, text, f, size, 600, CanvasHorizontalAlignment.Left);
+        using var l = QsLay_(ds, s, f, size, ls);
         return (float)l.LayoutBounds.Width;
     }
 
-    private static FontSpec QbNumFont(string s, ushort w) => s.Any(c => c > 127) ? TextKit.Ui(w) : TextKit.Num(w);
-
-    private void QsPaintPanel(CanvasDrawingSession ds, float H)
+    /// <summary>一行字：行框竖直居中在 cy；right = true 时 x 是右沿。返回宽度。</summary>
+    private static float QsTextC(CanvasDrawingSession ds, string s, FontSpec f, float size, float x, float cy, Color c, bool right = false, float ls = 0)
     {
-        ds.FillRectangle(0, 0, QsW, H, QbBg);
-        var fg2 = Gfx.WithAlpha(QbFg, 0.52);
+        using var l = QsLay_(ds, s, f, size, ls);
+        var b = l.LayoutBounds;
+        float w = (float)b.Width;
+        ds.DrawTextLayout(l, (right ? x - w : x) - (float)b.X, cy - (float)b.Height / 2 - (float)b.Y, c);
+        return w;
+    }
 
-        // 时间、电量
-        float sy = QbStatusH / 2;
-        using (var tl = TextKit.Layout(ds, DateTime.Now.ToString("HH:mm"), TextKit.Num(500), 15, 120, CanvasHorizontalAlignment.Left))
-            ds.DrawTextLayout(tl, QbPad - (float)tl.LayoutBounds.X, sy - (float)tl.LayoutBounds.Height / 2 - (float)tl.LayoutBounds.Y, fg2);
+    /// <summary>一段字放在基线 baseline 上（中英文各按自己的字形基线，混排对齐）。</summary>
+    private static float QsTextB(CanvasDrawingSession ds, string s, FontSpec f, float size, float x, float baseline, Color c, bool right = false)
+    {
+        using var l = QsLay_(ds, s, f, size);
+        var b = l.LayoutBounds;
+        var (bl, _) = TextInk.Metrics(ds, f, size, s, "0");
+        float w = (float)b.Width;
+        ds.DrawTextLayout(l, (right ? x - w : x) - (float)b.X, baseline - bl, c);
+        return w;
+    }
+
+    private static void QsIcon(CanvasDrawingSession ds, string glyph, float cx, float cy, float px, Color c, float stroke = 1.5f) =>
+        LineIcons.Draw(ds, glyph, cx, cy, px / 1.15f, c, stroke: stroke);
+
+    private static Color QsLerp(Color a, Color b, float t)
+    {
+        t = Math.Clamp(t, 0, 1);
+        return Color.FromArgb((byte)(a.A + (b.A - a.A) * t), (byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
+    }
+
+    private void QsPaintTop(CanvasDrawingSession ds)
+    {
+        // 状态栏：时间；剩余时间、电量、电池图标（17 号）
+        float cy = QsStatusY + 18;
+        QsTextC(ds, DateTime.Now.ToString("HH:mm"), TextKit.Num(600), 17, QsL, cy, QsInk);
         var bat = SystemInfo.Battery();
         if (bat.HasBattery)
         {
-            // 电池和百分比数字一样高、居中在数字中线上（照 Windows 任务栏），电池在右、数字在左
-            using var pl = TextKit.Layout(ds, $"{bat.Percent}%", TextKit.Num(500), 15, 80, CanvasHorizontalAlignment.Left);
-            var (baseL, cap) = TextInk.Metrics(ds, TextKit.Num(500), 15, "0", "0");
+            string pct = $"{bat.Percent}%";
+            var (bl, cap) = TextInk.Metrics(ds, TextKit.Num(600), 17, pct, "0");
+            float baseY = cy + cap / 2;
             float battW = MathF.Round(cap * 1.9f) + MathF.Max(1.2f, cap * 0.09f) * 0.5f + MathF.Max(1.5f, cap * 0.11f);
-            float textY = sy - (float)pl.LayoutBounds.Height / 2 - (float)pl.LayoutBounds.Y, baseY = textY + baseL;
-            float bx = QsW - QbPad - battW;
-            BatteryGlyph.Draw(ds, bx, baseY - cap, cap, fg2, bat, QbAcc, Gfx.Rgba(0xef, 0x44, 0x44));
-            ds.DrawTextLayout(pl, bx - 6 - (float)pl.LayoutBounds.Width - (float)pl.LayoutBounds.X, textY, fg2);
+            float x = QsR - battW;
+            BatteryGlyph.Draw(ds, x, baseY - cap, cap, QsInk, bat, QsAcc, QsRed);
+            x -= 8;
+            x -= QsTextB(ds, pct, TextKit.Num(600), 17, x, baseY, QsInk, right: true);
+            if (!bat.OnAc && QsBatteryLeft() is { } left)
+            {
+                x -= 8;
+                QsTextB(ds, $"剩余 {(int)left.TotalHours}:{left.Minutes:00}", TextKit.Num(400), 17, x, baseY, QsInk2, right: true);
+            }
         }
 
-        for (int i = 0; i < _qsItems.Count; i++) QsDrawCell(ds, _qsItems[i], i == _qsFocus);
+        // 功耗块
+        var tdp = QsFind("tdp");
+        if (tdp != null)
+        {
+            using var layer = ds.CreateLayer(1 - 0.75f * QsTv("t.dis.tdp"));
+            const float base_ = 122.2f;
+            QsIcon(ds, "qam.bolt", QsL + 9, base_ - 9, 18, QsInk2, 1.35f);
+            QsTextB(ds, "功耗", TextKit.Ui(600), 15, QsL + 26, base_, QsInk2);
+            float wW = QsTextB(ds, "W", TextKit.Ui(600), 17, QsR, base_, QsInk2, right: true);
+            QsTextB(ds, tdp.Value, TextKit.Num(700), 40, QsR - wW - 4, base_, QsInk, right: true);
+            // 实际 x W · y °C
+            double pkg = QsNum("power.actual.package", -1), temp = QsNum("power.live.cpuTemp", -1);
+            float sx = QsL + 26, sb = 143.6f;
+            const float sp = 3.6f;   // 13 号字一个空格宽（排版量宽时行尾空格不算，手动补）
+            sx += QsTextB(ds, "实际", TextKit.Ui(400), 13, sx, sb, QsInk2) + sp;
+            sx += QsTextB(ds, pkg >= 0 ? $"{pkg:0.0}" : "--", TextKit.Num(600), 13, sx, sb, QsInk) + sp;
+            sx += QsTextB(ds, "W", TextKit.Ui(400), 13, sx, sb, QsInk2) + sp;
+            sx += QsTextB(ds, "·", TextKit.Ui(400), 13, sx, sb, QsInk2) + sp;
+            sx += QsTextB(ds, temp >= 0 ? $"{temp:0}" : "--", TextKit.Num(600), 13, sx, sb, QsInk) + sp;
+            QsTextB(ds, "°C", TextKit.Ui(400), 13, sx, sb, QsInk2);
+            // 3 px 轨道 + 8/15/25/35 刻点
+            var (lo, hi) = QsTdpRange();
+            float ty = QsPwY + QsPwH - 12 - 3, tw = QsR - QsL;
+            ds.FillRoundedRectangle(QsL, ty, tw, 3, 1.5f, 1.5f, Gfx.WithAlpha(QsInk, 0.22));
+            float p = Math.Clamp(tdp.Level, 0, 1);
+            if (p > 0) ds.FillRoundedRectangle(QsL, ty, tw * p, 3, 1.5f, 1.5f, QsInk);
+            double now = lo + p * (hi - lo);
+            foreach (var t in new[] { 8.0, 15, 25, 35 })
+            {
+                if (t < lo || t > hi) continue;
+                float tx = QsL + tw * (float)((t - lo) / (hi - lo));
+                ds.FillRoundedRectangle(tx - 1, ty - 3, 2, 9, 1, 1, t <= now + 0.01 ? QsInk : Gfx.WithAlpha(QsInk, 0.35));
+            }
+        }
 
-        // 细线：横线在每一行的上沿，竖线按格子分
-        ds.FillRectangle(0, QbStatusH, QsW, 1, QbLine);
+        // 亮度 / 音量：细滑条，被调的那条点亮、数字弹一下
+        foreach (var (id, x0, key) in new[] { ("brightness", QsL, "bri"), ("volume", 220f, "vol") })
+        {
+            var it = QsFind(id);
+            if (it == null) continue;
+            float hot = QsTv("t.hot." + key), pop = QsTv("t.pop." + key);
+            float mcy = QsPairY + 22;
+            using var dis = ds.CreateLayer(it.Disabled ? 0.25f : 1);
+            QsIcon(ds, it.Glyph, x0 + 10, mcy, 20, QsLerp(QsInk2, QsInk, hot));
+            float tx = x0 + 30, tw = 94;
+            ds.FillRoundedRectangle(tx, mcy - 1.5f, tw, 3, 1.5f, 1.5f, Gfx.WithAlpha(QsInk, 0.22));
+            bool muted = id == "volume" && it.On;
+            using (ds.CreateLayer(muted ? 0.3f : 1))
+            {
+                float lvl = Math.Clamp(it.Level, 0, 1);
+                if (lvl > 0) ds.FillRoundedRectangle(tx, mcy - 1.5f, tw * lvl, 3, 1.5f, 1.5f, QsLerp(Gfx.WithAlpha(QsInk, 0.7), QsInk, hot));
+                float s = 1 + 0.22f * pop, nx = x0 + 164;
+                var t0 = ds.Transform;
+                float w = QsTextW(ds, it.Value, TextKit.Num(600), 15);
+                ds.Transform = Matrix3x2.CreateScale(s, new Vector2(nx - w / 2, mcy)) * t0;
+                QsTextC(ds, it.Value, TextKit.Num(600), 15, nx, mcy, QsLerp(QsInk2, QsInk, hot), right: true);
+                ds.Transform = t0;
+            }
+        }
+    }
+
+    private void QsPaintRows(CanvasDrawingSession ds)
+    {
         foreach (var it in _qsItems)
         {
-            if (it.Y > QbStatusH) ds.FillRectangle(it.X, it.Y, it.W, 1, QbLine);
-            if (it.X > 0) ds.FillRectangle(it.X, it.Y, 1, it.H, QbLine);
-        }
-        ds.FillRectangle(QsW - 1, 0, 1, H, QbLine);
-
-        // 出错时：顶上状态行换成一行红字条
-        if (_qsNote != null)
-        {
-            ds.FillRectangle(0, 0, QsW, QbStatusH, QbDanger);
-            using var nl = TextKit.Layout(ds, _qsNote, TextKit.Ui(600), 15, QsW - 2 * QbPad, CanvasHorizontalAlignment.Left);
-            ds.DrawTextLayout(nl, QbPad - (float)nl.LayoutBounds.X, sy - (float)nl.LayoutBounds.Height / 2 - (float)nl.LayoutBounds.Y, QbBg);
+            if (it.Kind != QsKind.Row) continue;
+            float cy = it.Y + it.H / 2, dis = QsTv("r.dis." + it.Id);
+            using var layer = ds.CreateLayer(1 - 0.75f * dis);
+            QsTextC(ds, it.Name, TextKit.Ui(400), 15, QsL, cy, QsInk);
+            float ch = QsTv("r.ch." + it.Id), kl = QsTv("r.kl." + it.Id), kr = QsTv("r.kr." + it.Id);
+            if (ch > 0.004f) QsIcon(ds, "qam.r", QsR - 8 + 4 * kr, cy, 16, Gfx.WithAlpha(QsInk2, QsInk2.A / 255f * ch));
+            float vx = QsR - 16 - 10;
+            float vw = QsTextC(ds, it.Value, TextKit.Num(it.Off ? (ushort)400 : (ushort)600), 15, vx, cy, it.Off ? QsInk2 : QsInk, right: true);
+            float lx = vx - vw - 10 - 16;
+            if (ch > 0.004f) QsIcon(ds, "qam.l", lx + 8 - 4 * kl, cy, 16, Gfx.WithAlpha(QsInk2, QsInk2.A / 255f * ch));
+            float lamp = QsTv("r.lamp." + it.Id);
+            if (lamp > 0.004f)
+            {
+                float s = 6 * (0.4f + 0.6f * lamp), lcx = lx - 8 - 3;
+                ds.FillRoundedRectangle(lcx - s / 2, cy - s / 2, s, s, 2 * s / 6, 2 * s / 6, Gfx.WithAlpha(QsAcc, lamp));
+            }
         }
     }
 
-    private void QsDrawCell(CanvasDrawingSession ds, QsItem it, bool focus)
+    private readonly Dictionary<(float W, CanvasDevice D), CanvasRenderTarget> _qsGlow = new();
+
+    /// <summary>焦点柔光（box-shadow 0 0 16px 6px 12 % 白）：每种宽度画一次缓存。</summary>
+    private CanvasRenderTarget QsGlowFor(CanvasDrawingSession ds, float w)
     {
-        bool armed = it.Id == "quit" && _qsQuitArmedAt > 0;
-        if (armed) ds.FillRectangle(it.X, it.Y, it.W, it.H, QbDanger);
-        else if (focus && !it.Disabled) ds.FillRectangle(it.X, it.Y, it.W, it.H, QbFg);
-        bool inv = armed || (focus && !it.Disabled);
-        Color fg = inv ? QbBg : QbFg, fg2 = inv ? Gfx.WithAlpha(QbBg, 0.56) : Gfx.WithAlpha(QbFg, 0.52), track = inv ? Gfx.WithAlpha(QbBg, 0.16) : Gfx.WithAlpha(QbFg, 0.12);
-        float x = it.X + QbPad, y = it.Y + 16, bottom = it.Y + it.H - 14;
-        using var layer = ds.CreateLayer(it.Disabled ? 0.26f : 1f);
-        switch (it.Kind)
+        if (_qsGlow.TryGetValue((w, ds.Device), out var hit)) return hit;
+        float raster = QsK * Chrome.Dpi, pad = 30;
+        var rt = new CanvasRenderTarget(ds, w + 2 * pad, QsCell + 2 * pad, 96 * raster);
+        using (var cl = new CanvasCommandList(ds))
         {
-            case QsKind.Meter:
+            using (var c = cl.CreateDrawingSession()) c.FillRoundedRectangle(pad - 6, pad - 6, w + 12, QsCell + 12, 26, 26, Gfx.WithAlpha(QsInk, 0.12));
+            using var g = rt.CreateDrawingSession();
+            g.Clear(Colors.Transparent);
+            using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 8, BorderMode = EffectBorderMode.Soft };
+            g.DrawImage(blur);
+            // 只留元素外面（和 CSS 外阴影一样，盒子里面不叠）
+            g.Blend = CanvasBlend.Copy;
+            g.FillRoundedRectangle(pad, pad, w, QsCell, 20, 20, Colors.Transparent);
+        }
+        _qsGlow[(w, ds.Device)] = rt;
+        return rt;
+    }
+
+    private void QsPaintGrid(CanvasDrawingSession ds)
+    {
+        float pm = QsTv("g.pm", _qsPm ? 1 : 0);
+        var tips = new List<(QsItem It, float Ox, float Oy, float A)>();
+        foreach (var it in _qsItems)
+        {
+            if (it.Kind is not (QsKind.Cell or QsKind.Card)) continue;
+            float vis = 1, dy = 0;
+            if (QsPm.Contains(it.Id)) { vis = pm; dy = 10 * (1 - pm); }
+            else if (QsR2.Contains(it.Id)) { vis = 1 - pm; dy = -10 * pm; }
+            if (vis < 0.004f) continue;
+            float dis = QsTv("g.dis." + it.Id), on = QsTv("g.on." + it.Id), arm = QsTv("g.arm." + it.Id), f = QsTv("g.f." + it.Id);
+            float press = QsTv("g.pr." + it.Id);
+            float x = it.X, y = it.Y + dy, w = it.W, h = it.H;
+            var t0 = ds.Transform;
+            float sc = 1 - 0.08f * press;
+            if (sc != 1) ds.Transform = Matrix3x2.CreateScale(sc, new Vector2(x + w / 2, y + h / 2)) * t0;
+            using (var layer = ds.CreateLayer(vis * (1 - 0.75f * dis)))
             {
-                // 功耗：72 号数字 + W；底下一根轨道，常用档标在轨道下，当前档芥末黄
-                QbText(ds, it.Value, TextKit.Num(500), 72, x, y, fg);
-                float nw = QbWidth(ds, it.Value, TextKit.Num(500), 72);
-                QbText(ds, "W", TextKit.Num(500), 20, x + nw + 6, y + 64, fg2, bottom: true);
-                var (lo, hi) = QsTdpRange();
-                float rx0 = x, rx1 = it.X + it.W - QbPad, ry = it.Y + it.H - 16 - 34;
-                ds.FillRectangle(rx0, ry, rx1 - rx0, 2, track);
-                if (!it.Disabled) ds.FillRectangle(rx0, ry, (rx1 - rx0) * Math.Clamp(it.Level, 0, 1), 2, QbAcc);
-                double now = lo + it.Level * (hi - lo);
-                foreach (var p in new[] { 8.0, 15, 25, 35 })
+                if (f > 0.004f)
                 {
-                    if (p < lo || p > hi) continue;
-                    float px = rx0 + (rx1 - rx0) * (float)((p - lo) / (hi - lo));
-                    string s = $"{p:0}";
-                    float w = QbWidth(ds, s, TextKit.Num(500), 13);
-                    px = Math.Clamp(px - w / 2, rx0, rx1 - w);
-                    QbText(ds, s, TextKit.Num(500), 13, px, it.Y + it.H - 16, Math.Abs(now - p) < 0.5 ? QbAcc : fg2, bottom: true);
+                    var glow = QsGlowFor(ds, w);
+                    ds.DrawImage(glow, new Windows.Foundation.Rect(x - 30, y - 30, w + 60, h + 60), glow.Bounds, f);
+                    ds.DrawRoundedRectangle(x - 4.5f, y - 4.5f, w + 9, h + 9, 24.5f, 24.5f, Gfx.WithAlpha(QsInk, f), 3);
                 }
-                break;
+                var bg = QsLerp(QsLerp(QsOffBg, Gfx.WithAlpha(QsInk, 0.92), on), QsRed, arm);
+                ds.FillRoundedRectangle(x, y, w, h, 20, 20, bg);
+                var fg = QsLerp(QsInk, QsBg, Math.Max(on, arm));
+                if (it.Kind == QsKind.Cell)
+                {
+                    if (it.Id == "vrr") QsTextC(ds, "VRR", TextKit.Num(700), 13, x + w / 2 + QsTextW(ds, "VRR", TextKit.Num(700), 13, 0.5f) / 2, y + h / 2, fg, right: true, ls: 0.5f);
+                    else QsIcon(ds, it.Glyph, x + w / 2, y + h / 2, 24, fg);
+                    float tip = QsTv("g.tip." + it.Id);
+                    if (tip > 0.004f) tips.Add((it, 0, dy, tip * vis));
+                }
+                else
+                {
+                    // 宽卡：图标块 + 标题 15/600 + 状态小字 12；确认时图标块让开，红底上写「再按一次退出」和后果
+                    float gx = x + 12 - 50 * arm;
+                    using (ds.CreateLayer(1 - arm))
+                    {
+                        ds.FillRoundedRectangle(gx, y + (h - 38) / 2, 38, 38, 13, 13, Gfx.WithAlpha(QsInk, 0.10));
+                        QsIcon(ds, it.Glyph, gx + 19, y + h / 2, 20, fg);
+                    }
+                    float tx = x + 62 - 46 * arm;
+                    using var clip = ds.CreateLayer(1, new Windows.Foundation.Rect(x, y, w, h));
+                    bool armed = _qsArmed == it.Id;
+                    string title = armed ? (it.Id == "quit" ? "再按一次退出" : "再按一次") : it.Name;
+                    string sub = armed ? "未保存的进度会丢失" : it.Sub;
+                    QsTextC(ds, title, TextKit.Ui(600), 15, tx, sub.Length > 0 ? y + 21.85f : y + h / 2, fg);
+                    if (sub.Length > 0) QsTextC(ds, sub, TextKit.Num(400), 12, tx, y + 42.85f, armed ? Gfx.WithAlpha(QsBg, 0.7) : QsInk2);
+                }
             }
-            case QsKind.Slider:
-            {
-                // 亮度 / 音量：48 号数字，右边一根竖条从下往上填
-                QbText(ds, it.Value, QbNumFont(it.Value, 500), it.Value.Any(c => c > 127) ? 32 : 48, x, y, fg);
-                float bx = it.X + it.W - 20 - 6, bt = it.Y + 20, bh = it.H - 40;
-                ds.FillRoundedRectangle(bx, bt, 6, bh, 3, 3, track);
-                float fh = bh * Math.Clamp(it.Level, 0, 1);
-                if (fh > 0) ds.FillRoundedRectangle(bx, bt + bh - fh, 6, fh, 3, 3, fg);
-                QbText(ds, it.Name, TextKit.Ui(500), 13, x, bottom, fg2, bottom: true);
-                break;
-            }
-            case QsKind.Tile:
-            {
-                if (!string.IsNullOrEmpty(it.Glyph)) CcGlyph(ds, it.Glyph, it.X + 16 + 13, it.Y + 18 + 13, 24, fg);
-                else QbText(ds, it.Value, QbNumFont(it.Value, 500), it.Value.Any(c => c > 127) ? 20 : 26, x, y, fg, width: it.W - QbPad);
-                if (it.Size == 'L') ds.FillRectangle(it.X + it.W - 14 - 7, it.Y + 16, 7, 7, it.On ? QbAcc : track);
-                QbText(ds, it.Name, TextKit.Ui(500), 13, x, bottom, fg2, bottom: true, width: it.W - QbPad);
-                break;
-            }
-            case QsKind.Entry:
-            {
-                CcGlyph(ds, it.Glyph, it.X + 16 + 12, it.Y + 16 + 12, 24, fg);
-                QbText(ds, it.Name, TextKit.Ui(600), 17, x, bottom, fg, bottom: true);
-                break;
-            }
+            ds.Transform = t0;
+        }
+        // 小方块焦点时，上方浮出名字和状态（确认时是红底的后果）
+        foreach (var (it, _, dy, a) in tips)
+        {
+            bool armed = _qsArmed == it.Id;
+            string text = armed ? (it.Id == "restart" ? "再按一次重启 · 未保存的进度会丢失" : "再按一次关机 · 未保存的进度会丢失") : it.Tip;
+            if (string.IsNullOrEmpty(text)) continue;
+            using var l = QsLay_(ds, text, TextKit.Ui(600), 13);
+            var b = l.LayoutBounds;
+            float bw = (float)b.Width + 22, bh = (float)b.Height + 14;
+            float bx = it.Col == 0 ? it.X : it.Col >= 4 ? it.X + it.W - bw : it.X + it.W / 2 - bw / 2;
+            bx = Math.Clamp(bx, 8, QsW - 8 - bw);
+            float by = it.Y + dy - 11.6f - bh + 6 * (1 - a);
+            using var layer = ds.CreateLayer(a);
+            ds.FillRoundedRectangle(bx, by, bw, bh, 12, 12, armed ? QsRed : Gfx.WithAlpha(QsBg, 0.9));
+            ds.DrawTextLayout(l, bx + 11 - (float)b.X, by + 7 - (float)b.Y, armed ? QsBg : QsInk);
         }
     }
 
-    // ---------------- 逐帧：进出场 + 缩略图 ----------------
+    /// <summary>光标：3 px 白框 + 柔光，九宫格拉伸到当前行高。</summary>
+    private void QsPaintCursor()
+    {
+        float raster = QsK * Chrome.Dpi;
+        if (_qsCurS != null && _qsCurFor == raster) return;
+        _qsCurFor = raster;
+        const float S = 120, m = 20;
+        _qsCurS = G.Surface((int)Math.Ceiling(S * raster), (int)Math.Ceiling(S * raster));
+        using (var ds = CanvasComposition.CreateDrawingSession(_qsCurS))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(raster);
+            using (var cl = new CanvasCommandList(ds))
+            {
+                using (var c = cl.CreateDrawingSession()) c.FillRoundedRectangle(m - 3, m - 3, S - 2 * m + 6, S - 2 * m + 6, 19, 19, Gfx.WithAlpha(QsInk, 0.14));
+                using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 7, BorderMode = EffectBorderMode.Soft };
+                ds.DrawImage(blur);
+            }
+            ds.Blend = CanvasBlend.Copy;
+            ds.FillRoundedRectangle(m, m, S - 2 * m, S - 2 * m, 16, 16, Colors.Transparent);
+            ds.Blend = CanvasBlend.SourceOver;
+            ds.DrawRoundedRectangle(m - 1.5f, m - 1.5f, S - 2 * m + 3, S - 2 * m + 3, 17.5f, 17.5f, QsInk, 3);
+        }
+        var nine = G.C.CreateNineGridBrush();
+        var src = G.C.CreateSurfaceBrush(_qsCurS); src.Stretch = CompositionStretch.Fill; nine.Source = src;
+        nine.SetInsets(40 * raster);
+        nine.SetInsetScales(1 / raster * QsK);
+        _qsCurV.Brush = nine;
+    }
 
-    // 进出场帧间隔统计：每段动画走完写一行日志（帧数、最长一帧、超过 25 ms 的帧数），稳定性测试读它
+    // ---------------- 逐帧：弹簧 + 补间 ----------------
+
     private int _qsAnimFrames, _qsAnimJanks;
     private long _qsAnimMax;
 
     private void QsStartTicking()
     {
+        if (_qsTicking) return;
         _qsFrameAt = NowMs;
-        if (_qsTicking) { QsLayout(); return; }
         _qsTicking = true;
         _qsAnimFrames = _qsAnimJanks = 0; _qsAnimMax = 0;
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += QsFrame;
-        QsLayout();
     }
 
     private void QsFrame(object? sender, object e)
     {
-        long now = NowMs;
-        long gap = now - _qsFrameAt;
+        long now = NowMs, gap = now - _qsFrameAt;
         if (_qsAnimFrames++ > 0) { _qsAnimMax = Math.Max(_qsAnimMax, gap); if (gap > 25) _qsAnimJanks++; }
-        float dt = Math.Clamp(gap / 1000f, 0, 0.05f);
+        float dt = Math.Clamp(gap / 1000f, 0, 0.032f);
         _qsFrameAt = now;
-        // 逐帧趋近（可打断，中途反向从当前位置接着走）；进场略慢、退场略快，曲线对称
-        _qsShow += (_qsShowTo - _qsShow) * (1 - MathF.Exp(-dt * (_qsShowTo > _qsShow ? 13 : 16)));
-        bool settled = MathF.Abs(_qsShowTo - _qsShow) < 0.002f;
-        if (settled) _qsShow = _qsShowTo;
+        bool panelMoving = false;
+        if (!_qsWaitBackdrop)
+        {
+            // 面板：可打断弹簧 300 / 34（质量 1），两半步积分
+            for (int i = 0; i < 2; i++)
+            {
+                float h = dt / 2, a = -300 * (_qsPx - _qsPt) - 34 * _qsPv;
+                _qsPv += a * h; _qsPx += _qsPv * h;
+            }
+            if (MathF.Abs(_qsPx - _qsPt) < 0.3f && MathF.Abs(_qsPv) < 0.3f) { _qsPx = _qsPt; _qsPv = 0; }
+            else panelMoving = true;
+        }
+        else panelMoving = true;
+        _qsShow = (_qsPx - QsHideX) / -QsHideX;
+        // 光标：460 / 36 / 0.9
+        bool curMoving = false;
+        for (int i = 0; i < 2; i++)
+        {
+            float h = dt / 2;
+            float a = (-460 * (_qsCy - _qsCty) - 36 * _qsCvy) / 0.9f; _qsCvy += a * h; _qsCy += _qsCvy * h;
+            a = (-460 * (_qsCh - _qsCth) - 36 * _qsCvh) / 0.9f; _qsCvh += a * h; _qsCh += _qsCvh * h;
+        }
+        if (MathF.Abs(_qsCy - _qsCty) < 0.2f && MathF.Abs(_qsCvy) < 0.2f && MathF.Abs(_qsCh - _qsCth) < 0.2f) { _qsCy = _qsCty; _qsCh = _qsCth; _qsCvy = _qsCvh = 0; }
+        else curMoving = true;
+        bool any = false;
+        foreach (var (layer, idx) in new[] { ('t', 0), ('r', 1), ('g', 2) })
+        {
+            bool on = QsLayerAnimating(layer);
+            if (on || _qsLayerWas[idx]) QsPaintLayer(layer);
+            _qsLayerWas[idx] = on;
+            any |= on;
+        }
+        bool curFade = QsLayerAnimating('c');
         QsLayout();
-        if (!settled) return;
+        if (panelMoving || curMoving || any || curFade) return;
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= QsFrame;
         _qsTicking = false;
-        Log.Info($"quick panel anim {(_qsShowTo > 0 ? "in" : "out")} frames={_qsAnimFrames} max={_qsAnimMax}ms janks={_qsAnimJanks}");
-        if (!_qsOpen && _qsShow <= 0) QsFinishClose();
+        if (_qsAnimFrames > 3) Log.Info($"quick panel anim {(_qsPt > QsHideX ? "in" : "out")} frames={_qsAnimFrames} max={_qsAnimMax}ms janks={_qsAnimJanks}");
+        if (!_qsOpen && _qsPx <= QsHideX + 0.5f) QsFinishClose();
     }
 
-    /// <summary>面板 X（设计 px）= -448 → 0；游戏缩略图只画面板右边那一块，位置和游戏窗口原来一样。</summary>
-    /// <summary>游戏画面底下那块纯黑：和窗口一样大、一样位置（物理像素 → 合成层 DIP），画面变淡时露出它 = 压暗。</summary>
-    private void QsPlaceUnder()
-    {
-        if (_qsUnder == null) return;
-        _qsUnder.IsVisible = _qsThumb != null && _qsUnderLibrary;
-        if (!_qsUnder.IsVisible) return;
-        var (gl, gt, gw, gh) = _qsGameRect;
-        float dpi = Chrome.Dpi;
-        _qsUnder.Offset = new Vector3(gl / dpi, gt / dpi, 0);
-        _qsUnder.Size = new Vector2(gw / dpi, gh / dpi);
-    }
-
+    /// <summary>面板平移、冻结帧按面板右沿裁、光标、游戏缩略图只画面板右边那一块（位置和游戏窗口原来一样）。</summary>
     private void QsLayout()
     {
         if (_qs == null) return;
-        float k = _ccK > 0 ? _ccK : (float)(View.Width / 1280), dpi = Chrome.Dpi;
-        float ease = 1 - MathF.Pow(1 - _qsShow, 3);
-        float x = -QsW + QsW * ease;
-        _qsPanel.Offset = new Vector3(x * k, 0, 0);
-        _qsPanel.Opacity = _qsShow > 0.001f ? 1 : 0;   // 从屏幕外滑进来，不淡入（淡入那几帧露出的是黑底）
-        _qsScrim.Opacity = _qsThumb != null && !_qsUnderLibrary ? 1 : ease;
+        float k = QsK, dpi = Chrome.Dpi, H = QsViewH;
+        float x = _qsPx;
+        _qsSlide.Offset = new Vector3(x * k, 0, 0);
+        _qsSlide.Opacity = x > QsHideX + 1 ? 1 : 0;
+        _qsTopV.Offset = Vector3.Zero;
+        _qsRowsV.Offset = new Vector3(0, QsRowsY * k, 0);
+        _qsGridV.Offset = new Vector3(0, QsGridLY * k, 0);
+        _qsEdgeV.Offset = new Vector3((QsW - 1) * k, 0, 0);
+        _qsEdgeV.Size = new Vector2(Math.Max(1 / dpi, k), H * k);
+        _qsCurV.Offset = new Vector3(0, (_qsCy - 20) * k, 0);
+        _qsCurV.Size = new Vector2(QsW * k, (_qsCh + 40) * k);
+        _qsCurV.Opacity = QsTv("c.on");
+        float right = Math.Max(0, (QsW + x) * k), boxW = (QsW + 4) * k;
+        _qsGlassBox.Size = new Vector2(boxW, H * k);
+        _qsGlassBase.Size = new Vector2(boxW, H * k);
+        _qsGlassClip.RightInset = Math.Max(0, boxW - right);
         if (_qsThumb is not { } th) return;
         int edge = (int)MathF.Round((x + QsW) * k * dpi);
         var (gl, gt, gw, gh) = _qsGameRect;
-        int left = Math.Max(edge, gl), right = gl + gw;
-        if (right <= left) { th.PlaceCropped(0, 0, 0, 0, 0, 0, 0, 0); return; }
+        int left = Math.Max(edge, gl), r = gl + gw;
+        if (r <= left) { th.PlaceCropped(0, 0, 0, 0, 0, 0, 0, 0); return; }
         double sx = (double)th.SourceW / gw, sy = (double)th.SourceH / gh;
-        th.PlaceCropped(left, gt, right - left, gh, (int)Math.Round((left - gl) * sx), 0, (int)Math.Round((right - left) * sx), (int)Math.Round(gh * sy), _qsUnderLibrary ? 1 - QsDim * ease : 1);
+        th.PlaceCropped(left, gt, r - left, gh, (int)Math.Round((left - gl) * sx), 0, (int)Math.Round((r - left) * sx), (int)Math.Round(gh * sy), 1);
     }
 
     // ---------------- 输入 ----------------
 
-    private void QsSetFocus(int i)
+    private void QsSetFocus(string id)
     {
-        if (_qsFocusId == "quit" && _qsItems[i].Id != "quit") _qsQuitArmedAt = 0;   // 移开焦点 = 取消退出确认
-        _qsFocus = i;
-        _qsFocusId = _qsItems[i].Id;
-        if (!QsIsRail(_qsItems[i])) _qsLastFocus[_qsPage] = _qsFocusId;
+        if (_qsFocusId != id) _qsArmed = null;
+        _qsFocusId = id;
+        if (QsFind(id) is { Kind: QsKind.Cell or QsKind.Card } it) { _qsGc = it.Col; _qsGr = it.Row; }
+        QsSync();
+        QsPaintLayer('g');
+        QsLayout();
     }
 
     /// <summary>
-    /// 手柄导航（评审 2026-10-29）：上下跨行，在下一行里找中心水平距离最近的；左右同一行移动，最左再按左进左栏，
-    /// 从左栏按右回到这一页上次的位置；混排磁贴从大磁贴往右进它右侧最上面那块，从那块按左回到原来的大磁贴（记来路）；
-    /// 功耗行和滑条有焦点时左右只调值。
+    /// 上下：功耗 → 6 行选项 → 网格（进网格落在上次的那一列）；左右：功耗 ±1 W、选项直接改值。网格里按格子走，
+    /// 宽卡跨两列；第一行再往上回到最后一行选项；电源展开时离开第三行左三格就收回。
     /// </summary>
     private void QsMove(Direction dir)
     {
-        if (_qsPwrOpen) { QsPowerMove(dir); return; }
-        var cur = _qsItems[_qsFocus];
-        // 左栏：上下换页（内容区跟着显示那一页，压暗到 0.5），右 = 进这一页
-        if (QsIsRail(cur))
+        string f = _qsFocusId;
+        if (QsIsGrid(f)) { QsGridMove(dir); return; }
+        if (dir is Direction.Up or Direction.Down)
         {
-            if (dir == Direction.Right) { QsEnterSection(cur.Section == "power" ? _qsPage : cur.Section); return; }
-            if (dir == Direction.Left) { Cue(Sfx.Bump); return; }
-            var rail = _qsItems.Where(QsIsRail).ToList();
-            int ri = rail.IndexOf(cur) + (dir == Direction.Down ? 1 : -1);
-            if (ri < 0 || ri >= rail.Count) { Cue(Sfx.Bump); return; }
-            string id = rail[ri].Id;
-            if (rail[ri].Section != "power" && rail[ri].Section != _qsPage) { _qsPage = rail[ri].Section; _qsFocusId = id; QsBuild(); }
-            QsSetFocus(_qsItems.FindIndex(i => i.Id == id));
+            int i = Array.IndexOf(QsCol, f), st = dir == Direction.Up ? -1 : 1;
+            for (i += st; i >= 0 && i < QsCol.Length; i += st)
+            {
+                string g = QsCol[i];
+                if (g == "grid") { if (QsEnterGrid()) return; continue; }
+                if (QsSelectable(g)) { QsSetFocus(g); Cue(Sfx.Nav); return; }
+            }
+            Cue(Sfx.Bump);
+            return;
+        }
+        QsAdjust(dir == Direction.Left ? -1 : 1);
+    }
+
+    private bool QsEnterGrid()
+    {
+        for (int r = 0; r < 3; r++)
+            for (int i = 0; i < 5; i++)
+            {
+                int c = (_qsGc + i) % 5;
+                if (QsCellAt(r, c) is { } id && QsSelectable(id)) { QsSetFocus(id); Cue(Sfx.Nav); return true; }
+            }
+        return false;
+    }
+
+    private void QsGridMove(Direction dir)
+    {
+        string cur = _qsFocusId;
+        int r = _qsGr, c = _qsGc, dr = dir == Direction.Up ? -1 : dir == Direction.Down ? 1 : 0, dc = dir == Direction.Left ? -1 : dir == Direction.Right ? 1 : 0;
+        while (true)
+        {
+            r += dr; c += dc;
+            if (c < 0 || c > 4 || r > 2) { Cue(Sfx.Bump); return; }
+            if (r < 0)
+            {
+                if (_qsPm) QsClosePm(false);
+                for (int i = QsCol.Length - 2; i >= 0; i--)
+                    if (QsSelectable(QsCol[i])) { _qsGr = 0; QsSetFocus(QsCol[i]); Cue(Sfx.Nav); return; }
+                Cue(Sfx.Bump); return;
+            }
+            var id = QsCellAt(r, c);
+            if (id == null || id == cur || !QsSelectable(id)) continue;
+            if (_qsPm && (r != 2 || c > 2)) QsClosePm(false);
+            _qsGr = r; _qsGc = c;
+            QsSetFocus(id);
+            if (QsFind(id) is { } it) { _qsGc = c; _qsGr = r; _ = it; }
             Cue(Sfx.Nav);
-            QsPaint();
             return;
         }
-        if (dir is Direction.Left or Direction.Right)
-        {
-            int d = dir == Direction.Right ? 1 : -1;
-            if (cur.Kind is QsKind.Slider or QsKind.Meter) { QsNudge(cur, d); return; }
-            if (cur.Kind == QsKind.Choice && !cur.Disabled)
-            {
-                int to = cur.Sub + d;
-                if (to >= 0 && to < cur.Options.Length) { cur.Sub = to; Cue(Sfx.Nav); QsPaint(); return; }
-                if (to < 0) { QsToRail(); return; }
-                Cue(Sfx.Bump); return;
-            }
-            // 记过来路：从大磁贴往右进来的，按左回到那块大磁贴
-            if (dir == Direction.Left && _qsBackLeft != null && _qsItems.FindIndex(i => i.Id == _qsBackLeft) is int back and >= 0)
-            {
-                _qsBackLeft = null;
-                QsSetFocus(back); Cue(Sfx.Nav); QsPaint(); return;
-            }
-            // 同一行（竖向有重叠）里这个方向上最近的；往右从高的块出来时进右侧最上面那块
-            int best = -1; float bestScore = float.MaxValue;
-            for (int i = 0; i < _qsItems.Count; i++)
-            {
-                var it = _qsItems[i];
-                if (i == _qsFocus || QsIsRail(it) || it.Disabled || it.Y >= cur.Y + cur.H || it.Y + it.H <= cur.Y) continue;
-                float dx = d > 0 ? it.X - (cur.X + cur.W) : cur.X - (it.X + it.W);
-                if (dx < -1) continue;
-                float score = dx * 10 + it.Y;
-                if (score < bestScore) { bestScore = score; best = i; }
-            }
-            if (best < 0)
-            {
-                if (dir == Direction.Left) { QsToRail(); return; }
-                Cue(Sfx.Bump); return;
-            }
-            _qsBackLeft = d > 0 && cur.H > _qsItems[best].H + 1 ? cur.Id : null;
-            QsSetFocus(best); Cue(Sfx.Nav); QsPaint();
-            return;
-        }
-        // 上下：下一行（顶边离得最近的那一排）里中心水平距离最近的
-        _qsBackLeft = null;
-        float cx = cur.X + cur.W / 2;
-        var cands = _qsItems.Select((it, i) => (it, i)).Where(p => !QsIsRail(p.it) && !p.it.Disabled && p.i != _qsFocus &&
-            (dir == Direction.Down ? p.it.Y >= cur.Y + cur.H - 1 : p.it.Y + p.it.H <= cur.Y + 1)).ToList();
-        if (cands.Count == 0) { Cue(Sfx.Bump); return; }
-        float edge = dir == Direction.Down ? cands.Min(p => p.it.Y) : cands.Max(p => p.it.Y + p.it.H);
-        var row = cands.Where(p => dir == Direction.Down ? p.it.Y <= edge + 4 : p.it.Y + p.it.H >= edge - 4).ToList();
-        var pick = row.OrderBy(p => MathF.Abs(p.it.X + p.it.W / 2 - cx)).First();
-        if (pick.it.Kind == QsKind.Choice) pick.it.Sub = Math.Max(0, pick.it.Choice);
-        QsSetFocus(pick.i);
-        Cue(Sfx.Nav);
-        QsPaint();
     }
 
-    private void QsToRail()
+    private void QsClosePm(bool focusPower)
     {
-        int i = _qsItems.FindIndex(it => it.Id == "rail:" + _qsPage);
-        if (i < 0) { Cue(Sfx.Bump); return; }
-        _qsBackLeft = null;
-        QsSetFocus(i);
-        Cue(Sfx.Nav);
-        QsPaint();
+        _qsPm = false; _qsArmed = null;
+        if (focusPower) { _qsGr = 2; _qsGc = 0; _qsFocusId = "pwr"; }
+        QsSync(); QsPaintLayer('g');
     }
 
-    /// <summary>进某一页：焦点回到这一页上次的位置（首页默认在功耗行，子页默认第一行）。</summary>
-    private void QsEnterSection(string sec)
+    /// <summary>LB / RB：亮度 ±5（面板开着时任何焦点都生效）。</summary>
+    internal void QsTab(int delta) => QsHot("bri", delta);
+
+    /// <summary>LB/RB 调亮度、LT/RT 调音量：被调的那条点亮 0.9 s、数字弹一下。</summary>
+    internal void QsHot(string which, int d)
     {
-        _qsPage = sec;
-        // 目标先记在本地：QsBuild 找不到 _qsFocusId 时会退回旧下标（可能是左栏）
-        string? want = _qsLastFocus.GetValueOrDefault(sec) ?? (sec == "now" ? "tdp" : null);
-        _qsFocusId = want;
-        QsBuild();
-        int i = want != null ? _qsItems.FindIndex(it => it.Id == want) : -1;
-        if (i < 0) i = _qsItems.FindIndex(it => !QsIsRail(it));
-        if (i < 0) { Cue(Sfx.Bump); QsPaint(); return; }
-        var it2 = _qsItems[i];
-        if (it2.Kind == QsKind.Choice) it2.Sub = Math.Max(0, it2.Choice);
-        QsSetFocus(i);
-        Cue(Sfx.Nav);
-        QsPaint();
+        if (!_qsOpen) return;
+        var it = QsFind(which == "bri" ? "brightness" : "volume");
+        if (it == null || it.Disabled) { Cue(Sfx.Bump); return; }
+        string path = it.Id;
+        double v = Math.Clamp(Math.Round(QsNum("system." + path) / 5) * 5 + d * 5, 0, 100);
+        if (_qsState?["system"] is JsonObject sys) { sys[path] = v; if (path == "volume") sys["muted"] = false; }
+        QsQueueTouchValue(path == "brightness" ? "set_brightness" : "set_volume", JsonValue.Create(v));
+        Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown);
+        QsHotMark(which);
+        QsBuild(); QsPaintLayer('t');
     }
 
-    /// <summary>LB / RB：只有一页，没有可翻的。</summary>
-    internal void QsTab(int delta) => Cue(Sfx.Bump);
+    private long _qsHotAtBri, _qsHotAtVol;
+    private void QsHotMark(string which)
+    {
+        QsTo("t.hot." + which, 1, 200, Bezier.Ease_);
+        QsKick("t.pop." + which, 1, 0, 320);
+        long at = NowMs;
+        if (which == "bri") _qsHotAtBri = at; else _qsHotAtVol = at;
+        After(900, () => { if ((which == "bri" ? _qsHotAtBri : _qsHotAtVol) == at && _qsOpen) QsTo("t.hot." + which, 0, 200, Bezier.Ease_); });
+    }
 
-    /// <summary>B：先取消确认 / 收起电源 / 退出编辑，再收起面板。</summary>
+    /// <summary>B：先取消确认、收起电源，再收起面板。</summary>
     private void QsBack()
     {
-        if (_qsQuitArmedAt > 0) { _qsQuitArmedAt = 0; Cue(Sfx.Back); QsBuild(); QsPaint(); return; }
-        if (_qsPwrOpen) { _qsPwrOpen = false; _qsPwrArmed = null; Cue(Sfx.Back); QsPaint(); return; }
-        if (_qsEditing) { _qsEditing = false; QsSaveTiles(); _qsFocusId = "edit"; Cue(Sfx.Back); QsBuild(); QsPaint(); return; }
+        if (_qsArmed != null) { _qsArmed = null; Cue(Sfx.Back); QsSync(); QsPaintLayer('g'); return; }
+        if (_qsPm) { QsClosePm(true); Cue(Sfx.Back); QsSync(); QsPaintLayer('g'); return; }
         CloseQuickPanel();
     }
 
-
-    /// <summary>滑条 / 功耗 ← →：亮度、音量 5 一格，功耗 1 W 一格。马上发给后台，本地先动。</summary>
-    private void QsNudge(QsItem it, int d)
+    /// <summary>← →：功耗 ±1 W（长按连续，后台写入合并），选项循环改值。</summary>
+    private void QsAdjust(int s)
     {
-        if (it.Disabled) { Cue(Sfx.Bump); return; }
-        switch (it.Id)
+        string f = _qsFocusId;
+        if (f == "tdp")
         {
-            case "brightness" or "volume":
-            {
-                string path = it.Id;
-                double v = Math.Clamp(Math.Round(QsNum("system." + path) / 5) * 5 + d * 5, 0, 100);
-                if (_qsState?["system"] is JsonObject sys) { sys[path] = v; if (it.Id == "volume") sys["muted"] = false; }
-                Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown);
-                _ = QsCall(it.Id == "brightness" ? "亮度" : "音量", it.Id == "brightness" ? "set_brightness" : "set_volume", JsonValue.Create(v));
-                break;
-            }
-            case "tdp":
-            {
-                if (_qsDraft == null) return;
-                var (lo, hi) = QsTdpRange();
-                double v = Math.Clamp(Math.Round(QsTdpNow(_qsDraft, lo)) + d, lo, hi);
-                QsSetTdp(v);
-                Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown);
-                _ = QsSavePower("功耗");
-                break;
-            }
+            var it = QsFind("tdp");
+            if (it == null || it.Disabled || _qsDraft == null) { Cue(Sfx.Bump); return; }
+            var (lo, hi) = QsTdpRange();
+            double now = Math.Round(QsTdpNow(_qsDraft, lo)), v = Math.Clamp(now + s, lo, hi);
+            if (v == now) { Cue(Sfx.Bump); return; }
+            QsSetTdp(v);
+            QsQueueTouchValue("save_power", _qsDraft.DeepClone());
+            Cue(s > 0 ? Sfx.SliderUp : Sfx.SliderDown);
+            QsBuild(); QsPaintLayer('t');
+            return;
         }
-        QsBuild();
-        QsPaint();
+        if (!QsRowIds.Contains(f)) return;
+        var row = QsFind(f);
+        if (row == null || row.Disabled) { Cue(Sfx.Bump); return; }
+        QsCycle(f, s);
+        QsKick(s < 0 ? "r.kl." + f : "r.kr." + f, 1, 0, 140);
+        Cue(s > 0 ? Sfx.SliderUp : Sfx.SliderDown);
+        QsRebuild();
     }
 
-    /// <summary>功耗只有一个设置值：改它就是手动功耗。</summary>
     private void QsSetTdp(double v)
     {
         if (_qsDraft is not { } d) return;
@@ -969,45 +1277,19 @@ public sealed partial class WallStage
         m["tdp"] = v;
     }
 
-    private void QsActivate()
-    {
-        if (_qsPwrOpen) { QsPowerActivate(); return; }
-        var it = _qsItems[_qsFocus];
-        if (QsIsRail(it))
-        {
-            if (it.Section == "power") { _qsPwrOpen = true; _qsPwrFocus = 1; _qsPwrArmed = null; Cue(Sfx.MenuIn); QsPaint(); return; }
-            QsEnterSection(it.Section);
-            return;
-        }
-        if (_qsEditing && it.Kind == QsKind.Tile) { QsEditTile(it); return; }
-        if (it.Disabled) { Cue(Sfx.Bump); return; }
-        switch (it.Kind)
-        {
-            case QsKind.Choice: QsChoose(it, it.Sub); break;
-            case QsKind.Slider when it.Id == "volume": QsChoose(new QsItem { Id = "mute", Kind = QsKind.Choice }, Bool(QsGet("system.muted")) ? 0 : 1); return;
-            case QsKind.Slider or QsKind.Meter: QsNudge(it, 1); return;
-            default: QsRun(it.Id); return;
-        }
-        Cue(Sfx.Activate);
-        QsBuild();
-        QsPaint();
-    }
+    private static int QsStep(int cur, int n, int s) => cur < 0 ? (s > 0 ? 0 : n - 1) : ((cur + s) % n + n) % n;
 
-    /// <summary>几选一：选第 i 项。</summary>
-    private void QsChoose(QsItem it, int i)
+    /// <summary>选项行改一格（循环）；本地先变，再发给后台。</summary>
+    private void QsCycle(string id, int s)
     {
         var d = _qsDraft;
-        switch (it.Id)
+        switch (id)
         {
-            case "mode" when d != null:
-                if (i == 0) d["enabled"] = false;
-                else if (i == 1) { d["enabled"] = true; d["mode"] = "autotdp"; }
-                else { var (lo, _) = QsTdpRange(); QsSetTdp(Math.Round(QsTdpNow(d, lo))); }
-                _ = QsSavePower("性能模式");
-                break;
             case "fps":
             {
-                int next = QsFps[i];
+                int cur = Array.IndexOf(QsFps, (int)QsNum("system.fpsLimit"));
+                if (cur < 0) { double now = QsNum("system.fpsLimit"); cur = s > 0 ? Array.FindLastIndex(QsFps, x => x < now) : Array.FindIndex(QsFps, x => x > now) + 1; }
+                int next = QsFps[QsStep(cur, QsFps.Length, s)];
                 if (_qsState?["system"] is JsonObject sys) sys["fpsLimit"] = next;
                 _ = QsCall("帧率上限", "set_fps_limit", JsonValue.Create(next));
                 break;
@@ -1015,239 +1297,176 @@ public sealed partial class WallStage
             case "refresh":
             {
                 var rates = QsRefreshRates();
-                if (i >= rates.Count) return;
-                if (_qsState?["system"] is JsonObject sys) sys["refresh"] = rates[i];
-                _ = QsCall("刷新率", "set_refresh_rate", JsonValue.Create(rates[i]));
+                if (rates.Count < 2) return;
+                double hz = rates[QsStep(rates.IndexOf(QsNum("system.refresh")), rates.Count, s)];
+                if (_qsState?["system"] is JsonObject sys) sys["refresh"] = hz;
+                _ = QsCall("刷新率", "set_refresh_rate", JsonValue.Create(hz));
                 break;
             }
-            case "magpie":
-                if ((i == 1) != Bool(QsGet("magpie.enabled")))
-                {
-                    if (_qsState?["magpie"] is JsonObject mg) mg["enabled"] = i == 1;
-                    _ = QsCall("画面缩放", "toggle_magpie");
-                }
-                break;
-            case "lossless":
-                _qsLossless = i == 1;
-                _ = QsCall("小黄鸭", "set_lossless_running", JsonValue.Create(i == 1));
-                break;
-            case "osd" when d != null:
+            case "scale":
             {
-                if (d["osd"] is not JsonObject osd) { osd = new JsonObject(); d["osd"] = osd; }
-                osd["enabled"] = i > 0;
-                if (i > 0) osd["level"] = i;
-                _ = QsSavePower("性能读数");
+                var opts = QsScaleOptions();
+                bool mg = Bool(QsGet("magpie.enabled")), ls = _qsLossless == true;
+                string want = opts[QsStep(opts.IndexOf(mg ? "Magpie" : ls ? "小黄鸭" : "关"), opts.Count, s)];
+                _ = QsSetScale(want, mg, ls);
                 break;
             }
-            case "mute":
-                if (_qsState?["system"] is JsonObject s2) s2["muted"] = i == 1;
-                _ = QsCall("静音", "set_mute", JsonValue.Create(i == 1));
-                break;
-            case "fan" when d != null:
-            {
-                if (d["fan"] is not JsonObject fan) { fan = new JsonObject(); d["fan"] = fan; }
-                fan["mode"] = QsFan[i].Id;
-                _ = QsSavePower("风扇");
-                break;
-            }
-            case "rumble":
-                if (_qsState?["rumble"] is JsonObject ru) ru["strength"] = QsRumble[i].V;
-                _ = QsCall("震动", "set_rumble_strength", JsonValue.Create(QsRumble[i].V));
-                break;
-            case "wifi" or "bluetooth":
-                if ((it.Id == "wifi" ? _qsWifi : _qsBt) != (i == 1)) _ = QsRadio(it.Id == "wifi" ? RadioKind.WiFi : RadioKind.Bluetooth);
-                break;
-        }
-        Cue(Sfx.Activate);
-        QsBuild();
-        QsPaint();
-    }
-
-    /// <summary>磁贴、入口、系统行：按一下。</summary>
-    private void QsRun(string id)
-    {
-        var d = _qsDraft;
-        switch (id)
-        {
-            case "edit":
-                _qsEditing = true; Cue(Sfx.Activate); QsBuild(); QsPaint(); return;
-            case "magpie": QsChoose(new QsItem { Id = "magpie", Kind = QsKind.Choice }, Bool(QsGet("magpie.enabled")) ? 0 : 1); return;
-            case "lossless": QsChoose(new QsItem { Id = "lossless", Kind = QsKind.Choice }, _qsLossless == true ? 0 : 1); return;
             case "osd" when d != null:
             {
                 int cur = Bool(QsGet("osd.enabled", d)) ? (int)QsNum("osd.level", 1, d) : 0;
-                QsChoose(new QsItem { Id = "osd", Kind = QsKind.Choice }, (cur + 1) % 5); return;
+                int next = QsStep(Math.Min(cur, 3), 4, s);   // 关 / 简洁 / 标准 / 详细（完整只在设置里选）
+                if (d["osd"] is not JsonObject osd) { osd = new JsonObject(); d["osd"] = osd; }
+                osd["enabled"] = next > 0;
+                if (next > 0) osd["level"] = next;
+                _ = QsSavePower("性能显示");
+                break;
             }
             case "fan" when d != null:
             {
-                int cur = Array.FindIndex(QsFan, f => f.Id == (Str(QsGet("fan.mode", d)) ?? ""));
-                QsChoose(new QsItem { Id = "fan", Kind = QsKind.Choice }, (cur + 1) % QsFan.Length); return;
-            }
-            case "fps":
-            {
-                int cur = Array.IndexOf(QsFps, (int)QsNum("system.fpsLimit"));
-                QsChoose(new QsItem { Id = "fps", Kind = QsKind.Choice }, (cur + 1) % QsFps.Length); return;
-            }
-            case "refresh":
-            {
-                var rates = QsRefreshRates();
-                if (rates.Count < 2) { Cue(Sfx.Bump); return; }
-                QsChoose(new QsItem { Id = "refresh", Kind = QsKind.Choice }, (rates.IndexOf(QsNum("system.refresh")) + 1) % rates.Count); return;
+                string[] names = { "自动", "静音", "满速" };
+                int next = QsStep(Array.IndexOf(names, QsFanName()), names.Length, s);
+                if (d["fan"] is not JsonObject fan) { fan = new JsonObject(); d["fan"] = fan; }
+                if (next == 0) { fan["control"] = "auto"; fan["full"] = false; }
+                else if (next == 1) { fan["control"] = "custom"; fan["mode"] = "quiet"; fan["full"] = false; }
+                else { fan["control"] = "custom"; fan["full"] = true; }
+                _ = QsSavePower("风扇");
+                break;
             }
             case "rumble":
             {
                 double cur = QsGet("rumble.strength") != null ? QsNum("rumble.strength") : 100;
                 int i = Array.IndexOf(QsRumble, QsRumble.OrderBy(r => Math.Abs(r.V - cur)).First());
-                QsChoose(new QsItem { Id = "rumble", Kind = QsKind.Choice }, (i + 1) % QsRumble.Length); return;
+                int v = QsRumble[QsStep(i, QsRumble.Length, s)].V;
+                if (_qsState?["rumble"] is JsonObject ru) ru["strength"] = v;
+                _ = QsCall("震动", "set_rumble_strength", JsonValue.Create(v));
+                break;
             }
-            case "wifi": _ = QsRadio(RadioKind.WiFi); Cue(Sfx.Activate); return;
-            case "bluetooth": _ = QsRadio(RadioKind.Bluetooth); Cue(Sfx.Activate); return;
-            case "keyboard":
+        }
+    }
+
+    /// <summary>画面缩放三选一：Magpie 和小黄鸭互斥，先关掉另一个。</summary>
+    private async Task QsSetScale(string want, bool mg, bool ls)
+    {
+        if (_qsState?["magpie"] is JsonObject m) m["enabled"] = want == "Magpie";
+        _qsLossless = _qsLossless == null ? null : want == "小黄鸭";
+        QsRebuild();
+        if (ls && want != "小黄鸭") await QsCall("小黄鸭", "set_lossless_running", JsonValue.Create(false));
+        if (mg != (want == "Magpie")) await QsCall("画面缩放", "toggle_magpie");
+        if (!ls && want == "小黄鸭") await QsCall("小黄鸭", "set_lossless_running", JsonValue.Create(true));
+    }
+
+    private void QsActivate()
+    {
+        string f = _qsFocusId;
+        if (QsRowIds.Contains(f)) { QsAdjust(1); return; }
+        if (!QsIsGrid(f)) return;
+        var it = QsFind(f);
+        if (it == null || it.Disabled) { Cue(Sfx.Bump); return; }
+        QsKick("g.pr." + f, 1, 0, 160);
+        if (QsRisk.Contains(f) && _qsArmed != f)
+        {
+            _qsArmed = f;
+            Cue(Sfx.ModalShow);
+            QsSync(); QsPaintLayer('g');
+            return;
+        }
+        _qsArmed = null;
+        QsRun(f);
+    }
+
+    /// <summary>网格里按一下。</summary>
+    private void QsRun(string id)
+    {
+        Log.Info($"quick panel run {id}");
+        switch (id)
+        {
+            case "wifi": _ = QsRadio(RadioKind.WiFi); break;
+            case "bt": _ = QsRadio(RadioKind.Bluetooth); break;
+            case "air": _ = QsAirToggle(); break;
+            case "vrr":
+            {
+                bool next = _qsVrr != true;
+                _qsVrr = next;
+                Cue(next ? Sfx.ToggleOn : Sfx.ToggleOff);
+                QsRebuild();
+                _ = QsCall("可变刷新率", "set_vrr", JsonValue.Create(next)).ContinueWith(_ => _dq.TryEnqueue(() => _ = QsReadVrr()));
+                break;
+            }
+            case "pwr":
+                _qsPm = true; _qsGr = 2; _qsGc = 0; _qsFocusId = "off";
+                Cue(Sfx.MenuIn);
+                QsSync(); QsPaintLayer('g');
+                break;
+            case "shot":
+            {
                 CloseQuickPanel();
-                _ = QsCall("屏幕键盘", "toggle_keyboard");
-                return;
-            case "screenshot":
-                // 先收起面板再截，截到的是游戏
-                CloseQuickPanel();
+                nint game = _qsGame;
                 if (_qsUnderLibrary)
-                {
-                    // 游戏模式：Game Bar 的快捷键没人接，自己截（面板收完、游戏回到前台再截）
-                    nint game = _qsGame;
                     After(500, async () =>
                     {
                         string? path = await CaptureScreenshotAsync(game);
                         if (path == null) Toast("截图没能保存");
-                        else { Cue(Sfx.Activate); Toast("已截图"); }
+                        else { Cue(Sfx.Shutter); Toast("已截图"); }
                     });
-                }
                 else After(500, () => _ = QsCall("截图", "screenshot"));
-                return;
-            case "windows":
-                OpenSwitcherShortcut();   // 面板滑出去、游戏画面淡掉，控制中心同时进来
-                return;
-            case "mode":
-                CloseQuickPanel(hideWindow: false, instant: true);
-                _ = CcSwitchMode();
-                return;
-            case "mouse":
+                break;
+            }
+            case "kbd":
+                CloseQuickPanel();
+                _ = QsCall("屏幕键盘", "toggle_keyboard");
+                break;
+            case "pad":
             {
-                string next = Str(QsGet("gamepad.mode")) == "desktop" ? "xinput" : "desktop";
-                if (_qsState?["gamepad"] is JsonObject gp) gp["mode"] = next;
+                string next = _qsPadMode == "desktop" ? "xinput" : "desktop";
+                _qsPadMode = next;
                 Cue(Sfx.Activate);
                 if (next == "desktop")
                 {
-                    // 切成鼠标后手柄就不再驱动面板：先收起，回到游戏再切
+                    // 切成键鼠后手柄不再驱动面板：先收起，回到游戏再切
                     CloseQuickPanel();
-                    After(400, () => _ = QsCall("鼠标模式", "set_gamepad_mode", JsonValue.Create(next)));
+                    After(400, () => _ = QsCall("手柄模式", "set_gamepad_mode", JsonValue.Create(next)));
                     return;
                 }
-                _ = QsCall("鼠标模式", "set_gamepad_mode", JsonValue.Create(next));
-                QsBuild(); QsPaint();
-                return;
+                _ = QsCall("手柄模式", "set_gamepad_mode", JsonValue.Create(next));
+                QsRebuild();
+                break;
             }
+            case "desk":
+                CloseQuickPanel(hideWindow: false, instant: true);
+                _ = CcSwitchMode();
+                break;
             case "sleep":
             {
                 nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
-                Log.Info("quick panel: sleep");
                 CloseQuickPanel(hideWindow: false, instant: true);
                 if (!Program.Args.Contains("--power-dry")) After(300, () => SystemInfo.Sleep(hwnd));
-                return;
+                break;
             }
-            case "library":
+            case "restart" or "off":
+                CloseQuickPanel(hideWindow: false, instant: true);
+                if (!Program.Args.Contains("--power-dry")) _ = CcRequestAnimatedPower(id == "off" ? "shutdown" : "restart");
+                break;
+            case "win":
+                OpenSwitcherShortcut();   // 面板滑出去，控制中心「窗口」页同时进来
+                break;
+            case "lib":
                 // 留在游戏库：面板收起、窗口不退下（游戏留在后面）
                 _nowPlayingDismissed = true;
                 CloseQuickPanel(hideWindow: false);
-                return;
+                break;
             case "quit":
-                // 第一次按 A：原位变红、写「再按一次退出」；3 秒内再按才退出，B 或移开焦点取消
-                if (_qsQuitArmedAt == 0 || NowMs - _qsQuitArmedAt > 3000)
-                {
-                    _qsQuitArmedAt = NowMs;
-                    long at = _qsQuitArmedAt;
-                    After(3000, () => { if (_qsQuitArmedAt == at) { _qsQuitArmedAt = 0; if (_qsOpen) { QsBuild(); QsPaint(); } } });
-                    Cue(Sfx.ModalShow);
-                    QsBuild(); QsPaint();
-                    return;
-                }
-                _qsQuitArmedAt = 0;
                 if (_game is { } g) QuitGame(g);
                 else if (_qsGame != 0) PostMessageQs(_qsGame, 0x0010, 0, 0);   // WM_CLOSE：像点右上角 × 一样请游戏自己关
                 CloseQuickPanel(hideWindow: false);
-                return;
+                break;
         }
     }
 
-    /// <summary>编辑磁贴：A 换大小（小 → 中 → 大 → 拿下），虚线下面的按 A 加回来（小）；LB / RB 挪位置；B 完成。</summary>
-    private void QsEditTile(QsItem it)
+    private async Task QsReadVrr()
     {
-        if (it.Id == "edit") { _qsEditing = false; QsSaveTiles(); Cue(Sfx.Back); QsBuild(); QsPaint(); return; }
-        _qsTiles ??= QsTileDefault.ToList();
-        if (it.Id.StartsWith("spare:"))
-        {
-            string id = it.Id["spare:".Length..];
-            _qsTiles.Add((id, 'S'));
-            _qsFocusId = id;
-        }
-        else
-        {
-            int at = _qsTiles.FindIndex(t => t.Id == it.Id);
-            if (at < 0) return;
-            char next = _qsTiles[at].Size switch { 'S' => 'M', 'M' => 'L', _ => 'x' };
-            if (next == 'x') { _qsTiles.RemoveAt(at); _qsFocusId = "spare:" + it.Id; }
-            else _qsTiles[at] = (it.Id, next);
-        }
-        Cue(Sfx.Activate);
-        QsBuild();
-        QsPaint();
-    }
-
-    // ---------------- 电源（沿左栏往上滑出的圆） ----------------
-
-    private List<(string Id, string Glyph, string Name, bool Danger)> QsPowerItems()
-    {
-        var list = new List<(string, string, string, bool)>();
-        if (ShellMode.Available) list.Add(("mode", "qs.mode", !ShellMode.GameMode ? "游戏模式" : "桌面模式", false));
-        list.Add(("sleep", "\uE708", "睡眠", false));
-        list.Add(("restart", "\uE777", "重启", true));
-        list.Add(("shutdown", "\uE7E8", "关机", true));
-        return list;
-    }
-
-    private void QsPowerMove(Direction dir)
-    {
-        int n = QsPowerItems().Count;
-        int to = _qsPwrFocus + (dir == Direction.Up ? 1 : dir == Direction.Down ? -1 : 0);
-        if (dir is Direction.Left or Direction.Right || to < 1 || to > n) { Cue(Sfx.Bump); return; }
-        _qsPwrFocus = to;
-        _qsPwrArmed = null;
-        Cue(Sfx.Nav);
-        QsPaint();
-    }
-
-    /// <summary>A：睡眠 / 切模式直接做；重启、关机先在原位变红写明后果，再按一次才做。</summary>
-    private void QsPowerActivate()
-    {
-        var items = QsPowerItems();
-        var (id, _, _, danger) = items[_qsPwrFocus - 1];
-        if (danger && _qsPwrArmed != id) { _qsPwrArmed = id; Cue(Sfx.ModalShow); QsPaint(); return; }
-        _qsPwrOpen = false; _qsPwrArmed = null;
-        Log.Info($"quick panel power: {id}");
-        nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
-        switch (id)
-        {
-            case "mode":
-                CloseQuickPanel(hideWindow: false, instant: true);
-                _ = CcSwitchMode();
-                return;
-            case "sleep":
-                CloseQuickPanel(hideWindow: false, instant: true);
-                if (!Program.Args.Contains("--power-dry")) After(300, () => SystemInfo.Sleep(hwnd));
-                return;
-            default:
-                CloseQuickPanel(hideWindow: false, instant: true);
-                if (!Program.Args.Contains("--power-dry")) _ = CcRequestAnimatedPower(id);
-                return;
-        }
+        try { _agent ??= new AgentClient(); if (await _agent.Call("get_display_state") is JsonObject d && d["vrr"] is JsonValue) _qsVrr = Bool(d["vrr"]); }
+        catch (Exception ex) { Log.Warn($"quick panel vrr read: {ex.Message}"); }
+        if (_qsOpen) QsRebuild();
     }
 
     private async Task QsRadio(RadioKind kind)
@@ -1261,7 +1480,9 @@ public sealed partial class WallStage
                 if (r.Kind != kind) continue;
                 bool on = r.State != RadioState.On;
                 if (kind == RadioKind.WiFi) _qsWifi = on; else _qsBt = on;
-                QsBuild(); QsPaint();
+                if (on) _qsAir = false;
+                Cue(on ? Sfx.ToggleOn : Sfx.ToggleOff);
+                QsRebuild();
                 var result = await r.SetStateAsync(on ? RadioState.On : RadioState.Off);
                 if (result != RadioAccessStatus.Allowed) QsFlash($"{name}没有切换");
                 break;
@@ -1271,76 +1492,88 @@ public sealed partial class WallStage
         _ = QsRefresh(_qsVersion);
     }
 
+    /// <summary>飞行模式：系统的 RadioManager（和设置 / 操作中心同一个开关）；拿不到就退回把 Wi-Fi 和蓝牙都关掉 / 打开。</summary>
+    private async Task QsAirToggle()
+    {
+        bool next = _qsAir != true;
+        _qsAir = next;
+        if (next) { _qsWifi = false; _qsBt = false; }
+        Cue(next ? Sfx.ToggleOn : Sfx.ToggleOff);
+        QsRebuild();
+        bool ok = await Task.Run(() => QsAirplane.Set(next));
+        if (!ok)
+        {
+            Log.Warn("quick panel airplane: RadioManager unavailable, toggling radios");
+            try
+            {
+                if (await Radio.RequestAccessAsync() == RadioAccessStatus.Allowed)
+                    foreach (var r in await Radio.GetRadiosAsync())
+                        if (r.Kind is RadioKind.WiFi or RadioKind.Bluetooth) await r.SetStateAsync(next ? RadioState.Off : RadioState.On);
+            }
+            catch (Exception ex) { QsFlash($"飞行模式没有切换：{ex.Message}"); }
+        }
+        await Task.Delay(400);
+        _ = QsRefresh(_qsVersion);
+    }
+
     // ---------------- 触控 / 鼠标 ----------------
 
     private QsItem? QsItemAt(double x, double y)
     {
-        if (_qsPwrOpen)
+        foreach (var it in _qsItems)
         {
-            var power = _qsItems.First(i => i.Id == "rail:power");
-            int n = QsPowerItems().Count;
-            for (int i = 1; i <= n; i++)
-                if (x >= power.X && x < power.X + 56 && y >= power.Y - i * 64 && y < power.Y - i * 64 + 56) return new QsItem { Id = "pwr:" + i, Kind = QsKind.Rail };
+            switch (it.Kind)
+            {
+                case QsKind.Meter when x >= QsL && x < QsR && y >= QsPwY && y < QsPwY + QsPwH: return it;
+                case QsKind.Slider when y >= QsPairY && y < QsPairY + 44 && x >= it.X - 30 && x < it.X + it.W + 40: return it;
+                case QsKind.Row when x >= QsL && x < QsR && y >= it.Y && y < it.Y + it.H: return it;
+                case QsKind.Cell or QsKind.Card when QsCellShown(it.Id) && x >= it.X && x < it.X + it.W && y >= it.Y && y < it.Y + it.H: return it;
+            }
         }
-        return _qsItems.FirstOrDefault(it => x >= it.X && x < it.X + it.W && y >= QsDrawY(it) && y < QsDrawY(it) + it.H);
+        return null;
     }
 
     private void QsClick(double sx, double sy)
     {
-        float k = _ccK > 0 ? _ccK : (float)(View.Width / 1280);
+        float k = QsK;
         double x = sx / k, y = sy / k;
         if (x > QsW) { CloseQuickPanel(); return; }   // 点到游戏那边 = 收起
         var it = QsItemAt(x, y);
-        if (it == null) { if (_qsPwrOpen) { _qsPwrOpen = false; _qsPwrArmed = null; QsPaint(); } return; }
-        if (it.Id.StartsWith("pwr:"))
+        if (it == null || it.Disabled) return;
+        switch (it.Kind)
         {
-            int n = int.Parse(it.Id[4..]);
-            if (_qsPwrFocus != n) _qsPwrArmed = null;
-            _qsPwrFocus = n;
-            QsPowerActivate();
-            return;
+            case QsKind.Meter:
+                QsSetFocus("tdp");
+                if (y > QsPwY + QsPwH - 35) QsSetLevel(it, QsLevelAt(it, x));
+                return;
+            case QsKind.Slider:
+                if (it.Id == "volume" && x < it.X) { QsToggleMute(); return; }
+                QsSetLevel(it, QsLevelAt(it, x));
+                return;
+            case QsKind.Row:
+                QsSetFocus(it.Id);
+                QsAdjust(x > QsR - 150 && x < QsR - 90 ? -1 : 1);
+                return;
+            default:
+                if (_qsPm && (it.Row != 2 || it.Col > 2)) QsClosePm(false);
+                QsSetFocus(it.Id);
+                QsActivate();
+                return;
         }
-        if (_qsPwrOpen) { _qsPwrOpen = false; _qsPwrArmed = null; }
-        int idx = _qsItems.IndexOf(it);
-        _qsFocus = idx; _qsFocusId = it.Id;
-        if (it.Kind is QsKind.Slider or QsKind.Meter && !it.Disabled)
-        {
-            QsSetLevel(it, QsLevelAt(it, x));
-            return;
-        }
-        if (it.Kind == QsKind.Choice && !it.Disabled)
-        {
-            // 点到哪一项选哪一项（按画的位置反推）
-            int sub = QsChoiceAt(it, x);
-            if (sub >= 0) { it.Sub = sub; QsChoose(it, sub); }
-            return;
-        }
-        QsActivate();
     }
 
-    /// <summary>触控：功耗按轨道位置；亮度、音量在整格里横着拖。</summary>
-    private float QsLevelAt(QsItem it, double x) => it.Kind == QsKind.Meter
-        ? (float)((x - (it.X + QbPad)) / Math.Max(1, it.W - 2 * QbPad))
-        : (float)((x - (it.X + QbPad)) / Math.Max(1, it.W - 2 * QbPad));
-
-    private int QsChoiceAt(QsItem it, double x)
+    private void QsToggleMute()
     {
-        using var dev = new CanvasRenderTarget(G.Device, 1, 1, 96);
-        var widths = it.Options.Select(o => { using var l = TextKit.Layout(dev, o, TextKit.Ui(500), 18, 120, CanvasHorizontalAlignment.Left); return (float)l.LayoutBounds.Width; }).ToList();
-        float nw; using (var nm = TextKit.Layout(dev, it.Name, TextKit.Ui(500), 18, 160, CanvasHorizontalAlignment.Left)) nw = (float)nm.LayoutBounds.Width;
-        var (pad, gap) = QsChoiceFit(widths.Sum(), widths.Count, it.W - nw - 20);
-        float ox = it.X + it.W - widths.Sum(w => w + 2 * pad) - gap * (widths.Count - 1);
-        for (int i = 0; i < widths.Count; i++) { float bw = widths[i] + 2 * pad; if (x >= ox - gap / 2 && x < ox + bw + gap / 2) return i; ox += bw + gap; }
-        return -1;
+        bool m = !Bool(QsGet("system.muted"));
+        if (_qsState?["system"] is JsonObject s2) s2["muted"] = m;
+        Cue(m ? Sfx.ToggleOff : Sfx.ToggleOn);
+        _ = QsCall("静音", "set_mute", JsonValue.Create(m));
+        QsHotMark("vol");
+        QsBuild(); QsPaintLayer('t');
     }
 
-    /// <summary>选项放不下时收窄选项内边距和间距，不压到左边的名字。</summary>
-    private static (float pad, float gap) QsChoiceFit(float textW, int n, float avail)
-    {
-        float pad = 11, gap = 6;
-        while (pad > 6 && textW + 2 * pad * n + gap * (n - 1) > avail) { pad -= 1; gap = Math.Max(2, gap - 1); }
-        return (pad, gap);
-    }
+    /// <summary>触控：功耗按整条轨道，亮度 / 音量按各自的细轨道。</summary>
+    private float QsLevelAt(QsItem it, double x) => (float)((x - it.X) / Math.Max(1, it.W));
 
     private void QsSetLevel(QsItem it, float level)
     {
@@ -1348,20 +1581,19 @@ public sealed partial class WallStage
         if (it.Disabled) return;
         if (it.Id is "brightness" or "volume")
         {
-            double v = Math.Round(level * 100);
+            double v = Math.Round(level * 20) * 5;
             if (_qsState?["system"] is JsonObject sys) { sys[it.Id] = v; if (it.Id == "volume") sys["muted"] = false; }
             QsQueueTouchValue(it.Id == "volume" ? "set_volume" : "set_brightness", JsonValue.Create(v));
+            QsHotMark(it.Id == "volume" ? "vol" : "bri");
         }
         else if (it.Id == "tdp" && _qsDraft != null)
         {
             var (lo, hi) = QsTdpRange();
             double v = Math.Round(lo + (hi - lo) * level);
-            // 靠近常用档就吸过去
-            foreach (var snap in new[] { 8.0, 15, 25, 35 }) if (Math.Abs(v - snap) <= 1) v = snap;
             QsSetTdp(v);
             QsQueueTouchValue("save_power", _qsDraft.DeepClone());
         }
-        QsBuild(); QsPaint();
+        QsBuild(); QsPaintLayer('t');
     }
 
     private SettingsWriteQueue? _qsTouchWrites;
@@ -1382,7 +1614,7 @@ public sealed partial class WallStage
 
     private QsItem? QsTouchItemAt(double sx, double sy)
     {
-        float k = TouchScale;
+        float k = QsK;
         return QsItemAt(sx / k, sy / k);
     }
 
@@ -1390,53 +1622,141 @@ public sealed partial class WallStage
     {
         var it = _qsItems.FirstOrDefault(item => item.Id == id);
         if (it == null || it.Disabled || it.Kind is not (QsKind.Slider or QsKind.Meter)) return;
-        _qsFocus = _qsItems.IndexOf(it); _qsFocusId = id;
-        QsSetLevel(it, QsLevelAt(it, sx / TouchScale));
+        if (it.Kind == QsKind.Meter) _qsFocusId = id;
+        QsSetLevel(it, QsLevelAt(it, sx / QsK));
+    }
+
+    // ---------------- 状态读数：电池剩余、VRR 范围 ----------------
+
+    private static TimeSpan? QsBatteryLeft()
+    {
+        if (!GetSystemPowerStatus(out var s) || s.BatteryLifeTime == uint.MaxValue || s.BatteryLifeTime == 0) return null;
+        return TimeSpan.FromSeconds(s.BatteryLifeTime);
+    }
+
+    /// <summary>内屏 EDID 里的显示范围（Display Range Limits，标签 0xFD）：可变刷新率的上下限，如「48–120 Hz」。</summary>
+    private static string? QsVrrRange()
+    {
+        try
+        {
+            using var root = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\DISPLAY");
+            if (root == null) return null;
+            foreach (var model in root.GetSubKeyNames())
+            {
+                using var mk = root.OpenSubKey(model);
+                if (mk == null) continue;
+                foreach (var inst in mk.GetSubKeyNames())
+                {
+                    using var ik = mk.OpenSubKey(inst);
+                    if (ik?.OpenSubKey("Control") == null) continue;   // 只看现在接着的
+                    if (ik.OpenSubKey("Device Parameters")?.GetValue("EDID") is not byte[] e || e.Length < 128) continue;
+                    for (int o = 54; o <= 108; o += 18)
+                    {
+                        if (e[o] != 0 || e[o + 1] != 0 || e[o + 3] != 0xFD) continue;
+                        int min = e[o + 5] + ((e[o + 4] & 0x3) == 0x3 ? 255 : 0), max = e[o + 6] + ((e[o + 4] & 0x2) != 0 ? 255 : 0);
+                        if (min > 0 && max > min) return $"{min}–{max} Hz";
+                    }
+                }
+            }
+        }
+        catch (Exception ex) { Log.Warn($"vrr range: {ex.Message}"); }
+        return null;
     }
 
     // ---------------- 自测 ----------------
 
-    /// <summary>自测用（--state=qs / qsnav）：在游戏库里打开快捷设置，挨个走一遍焦点。</summary>
+    /// <summary>自测用（--state=qs / qsnav）：在游戏库里打开快捷面板，挨个走一遍焦点。</summary>
     internal void QuickPanelTest(int steps)
     {
         if (!_qsOpen) OpenQuickPanel(0);
-        var dirs = new[] { Direction.Down, Direction.Down, Direction.Right, Direction.Down, Direction.Down, Direction.Down, Direction.Down, Direction.Down, Direction.Left, Direction.Left, Direction.Down, Direction.Up };
+        var dirs = new[] { Direction.Down, Direction.Down, Direction.Right, Direction.Down, Direction.Down, Direction.Down, Direction.Down, Direction.Down, Direction.Right, Direction.Down, Direction.Up, Direction.Up };
         for (int i = 0; i < steps; i++) { int s = i; After(300 * (s + 1), () => { if (_qsOpen) QsMove(dirs[s % dirs.Length]); }); }
     }
 
-    internal string QsFocusTest => $"{_qsPage}/{_qsFocusId}";
+    internal string QsFocusTest => $"{_qsFocusId}{(_qsPm ? "+pm" : "")}{(_qsArmed != null ? "!" + _qsArmed : "")}";
 
     internal void QuickPanelTestClose() => CloseQuickPanel(hideWindow: false);
 
-    /// <summary>自测用（--state=qsapply）：焦点放到某个磁贴上按一次 A，日志里记下按之前 / 之后后台报的值。</summary>
+    /// <summary>自测用（--state=qsapply）：焦点放到某一项上按一次 A，日志里记下按之前 / 之后的值。</summary>
     internal void QuickPanelTestPress(string id)
     {
-        int i = _qsItems.FindIndex(it => it.Id == id);
-        if (i < 0) { Log.Info($"quick panel test: no {id}"); return; }
-        string before = _qsItems[i].Value;
-        _qsFocus = i; _qsFocusId = id;
+        if (QsFind(id) is not { } it) { Log.Info($"quick panel test: no {id}"); return; }
+        string before = it.Value;
+        QsSetFocus(id);
         QsActivate();
-        int j = _qsItems.FindIndex(it => it.Id == id);
-        Log.Info($"quick panel test press {id}: {before} -> {(j >= 0 ? _qsItems[j].Value : "?")}");
+        Log.Info($"quick panel test press {id}: {before} -> {QsFind(id)?.Value ?? "?"}");
     }
 
-    internal string QuickPanelTestValue(string id) => _qsItems.FirstOrDefault(it => it.Id == id)?.Value ?? "?";
+    internal string QuickPanelTestValue(string id) => QsFind(id)?.Value ?? "?";
 
-    /// <summary>自测用：按名字把焦点 / 状态摆好（qsfocus=<id>、qspower、qsarm、qsedit、qssec=<分区>）。</summary>
+    /// <summary>自测用：按名字把焦点 / 状态摆好（&lt;id&gt;、power、arm=&lt;id&gt;）。</summary>
     internal void QuickPanelTestState(string what)
     {
         if (!_qsOpen) OpenQuickPanel(0);
-        _qsPwrOpen = false; _qsPwrArmed = null;
-        if (what == "power" || what == "arm") { _qsPwrOpen = true; _qsPwrFocus = what == "arm" ? QsPowerItems().Count : 1; if (what == "arm") _qsPwrArmed = "shutdown"; }
-        else if (what == "edit") { _qsEditing = true; QsBuild(); int e = _qsItems.FindIndex(i => i.Id == "osd"); if (e >= 0) QsSetFocus(e); }
-        else if (what.StartsWith("sec=")) { _qsPage = what[4..]; _qsFocusId = "rail:" + _qsPage; QsBuild(); int r = _qsItems.FindIndex(i => i.Id == "rail:" + _qsPage); if (r >= 0) QsSetFocus(r); }
-        else if (what.StartsWith("page=")) { QsEnterSection(what[5..]); }
-        else if (what == "quit") { int q = _qsItems.FindIndex(i => i.Id == "quit"); if (q >= 0) { QsSetFocus(q); _qsQuitArmedAt = NowMs; QsBuild(); } }
-        else { int f = _qsItems.FindIndex(i => i.Id == what); if (f >= 0) { var it = _qsItems[f]; if (it.Kind == QsKind.Choice) it.Sub = Math.Max(0, it.Choice); QsSetFocus(f); } }
-        QsPaint();
+        if (what == "power") { QsSetFocus("pwr"); QsRun("pwr"); }
+        else if (what.StartsWith("arm="))
+        {
+            string id = what[4..];
+            if (QsPm.Contains(id)) { _qsPm = true; }
+            QsSetFocus(id); _qsArmed = id; QsSync(); QsPaintLayer('g');
+        }
+        else if (QsFind(what) != null) QsSetFocus(what);
+        QsPaintAll();
     }
 
     [StructLayout(LayoutKind.Sequential)] private struct QsRect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] private struct QsMonInfo { public int Size; public QsRect Monitor, Work; public uint Flags; }
+    [StructLayout(LayoutKind.Sequential)] private struct QsPowerStatus { public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag; public uint BatteryLifeTime, BatteryFullLifeTime; }
     [DllImport("user32.dll")] private static extern bool GetWindowRect(nint hwnd, out QsRect r);
     [DllImport("user32.dll", EntryPoint = "PostMessageW")] private static extern bool PostMessageQs(nint hwnd, uint msg, nint wp, nint lp);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(nint monitor, ref QsMonInfo info);
+    [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
+    [DllImport("kernel32.dll")] private static extern bool GetSystemPowerStatus(out QsPowerStatus s);
+}
+
+/// <summary>
+/// 系统飞行模式开关：IRadioManager（CLSID 581333F6-…，Windows 设置和操作中心用的同一个），没有公开文档，按虚表调（AOT 下不能用 ComImport）。
+/// 虚表：3 IsRMSupported、4 GetUIRadioInstances、5 GetSystemRadioState(out enabled, out policy, out reason)、6 SetSystemRadioState(enabled)。
+/// enabled = 1 表示无线电开着（飞行模式关）。
+/// </summary>
+internal static class QsAirplane
+{
+    private static readonly Guid Clsid = new("581333f6-28db-41be-bc7a-ff201f12f3f6");
+    private static readonly Guid Iid = new("db3afbfb-08e6-46c6-aa70-bf9a34c30ab7");
+
+    public static unsafe bool? Get()
+    {
+        try
+        {
+            if (CoCreateInstance(Clsid, 0, 0x17, Iid, out nint rm) != 0 || rm == 0) return null;
+            try
+            {
+                var vt = *(nint**)rm;
+                int enabled = 0, policy = 0, reason = 0;
+                int hr = ((delegate* unmanaged[Stdcall]<nint, int*, int*, int*, int>)vt[5])(rm, &enabled, &policy, &reason);
+                return hr == 0 ? enabled == 0 : null;
+            }
+            finally { ((delegate* unmanaged[Stdcall]<nint, uint>)(*(nint**)rm)[2])(rm); }
+        }
+        catch (Exception ex) { Log.Warn($"airplane get: {ex.Message}"); return null; }
+    }
+
+    public static unsafe bool Set(bool airplane)
+    {
+        try
+        {
+            if (CoCreateInstance(Clsid, 0, 0x17, Iid, out nint rm) != 0 || rm == 0) return false;
+            try
+            {
+                var vt = *(nint**)rm;
+                int hr = ((delegate* unmanaged[Stdcall]<nint, int, int>)vt[6])(rm, airplane ? 0 : 1);
+                if (hr != 0) Log.Warn($"airplane set: 0x{hr:x8}");
+                return hr == 0;
+            }
+            finally { ((delegate* unmanaged[Stdcall]<nint, uint>)(*(nint**)rm)[2])(rm); }
+        }
+        catch (Exception ex) { Log.Warn($"airplane set: {ex.Message}"); return false; }
+    }
+
+    [DllImport("ole32.dll")] private static extern int CoCreateInstance(in Guid clsid, nint outer, uint context, in Guid iid, out nint obj);
 }
