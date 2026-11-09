@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../LibraryShortcutInput/Program.cs" Link="Program.cs" />
+    <Compile Include="../../artifacts/overlay-focus-fix-191/src/frontend/library-native/ClawLibrary/Input/GamepadPoller.cs" Link="GamepadPoller.cs" />
+    <Compile Include="../../artifacts/overlay-focus-fix-191/src/frontend/library-native/ClawLibrary/Input/GamepadSourceChoice.cs" Link="GamepadSourceChoice.cs" />
+    <Compile Include="../../frontend/library-native/ClawLibrary/Log.cs" Link="Log.cs" />
+  </ItemGroup>
+</Project>

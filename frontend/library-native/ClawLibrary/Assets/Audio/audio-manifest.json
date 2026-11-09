@@ -1,0 +1,389 @@
+{
+  "original": true,
+  "externalSamples": false,
+  "pieces": [
+    {
+      "id": "daylight",
+      "name": "浮光",
+      "bpm": 72,
+      "chords": [
+        [
+          50,
+          57,
+          61,
+          64,
+          69
+        ],
+        [
+          47,
+          54,
+          57,
+          62,
+          66
+        ],
+        [
+          43,
+          50,
+          57,
+          59,
+          66
+        ],
+        [
+          45,
+          52,
+          57,
+          59,
+          64
+        ]
+      ],
+      "melody": [
+        81,
+        78,
+        76,
+        73,
+        76,
+        78,
+        85,
+        81
+      ],
+      "brightness": 0.28
+    },
+    {
+      "id": "starport",
+      "name": "星港",
+      "bpm": 66,
+      "chords": [
+        [
+          48,
+          55,
+          59,
+          62,
+          67
+        ],
+        [
+          45,
+          52,
+          55,
+          59,
+          64
+        ],
+        [
+          41,
+          48,
+          55,
+          57,
+          64
+        ],
+        [
+          43,
+          50,
+          57,
+          59,
+          62
+        ]
+      ],
+      "melody": [
+        79,
+        74,
+        76,
+        71,
+        74,
+        79,
+        83,
+        81
+      ],
+      "brightness": 0.17
+    },
+    {
+      "id": "night",
+      "name": "夜航",
+      "bpm": 60,
+      "chords": [
+        [
+          45,
+          52,
+          55,
+          59,
+          64
+        ],
+        [
+          41,
+          48,
+          52,
+          57,
+          60
+        ],
+        [
+          48,
+          55,
+          59,
+          62,
+          67
+        ],
+        [
+          43,
+          50,
+          55,
+          57,
+          62
+        ]
+      ],
+      "melody": [
+        76,
+        71,
+        67,
+        74,
+        72,
+        67,
+        71,
+        64
+      ],
+      "brightness": 0.1
+    }
+  ],
+  "files": [
+    {
+      "file": "Sfx/soft/move.wav",
+      "seconds": 0.08301587301587302,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.19,
+      "rms": 0.04383289582086466,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/soft/confirm.wav",
+      "seconds": 0.22,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.08700113145791594,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/soft/back.wav",
+      "seconds": 0.18501133786848073,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.08997500605832996,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/soft/switch.wav",
+      "seconds": 0.14700680272108843,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.08000757327172245,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/soft/open.wav",
+      "seconds": 0.32,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.08551861122669897,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/soft/toggle.wav",
+      "seconds": 0.143015873015873,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.07386376970670538,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/soft/launch.wav",
+      "seconds": 0.5350113378684808,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.42,
+      "rms": 0.11172640532907209,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/soft/error.wav",
+      "seconds": 0.25,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.0850223980076951,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/crystal/move.wav",
+      "seconds": 0.08301587301587302,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.19,
+      "rms": 0.04979188456483524,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/crystal/confirm.wav",
+      "seconds": 0.22,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.09193191760116388,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/crystal/back.wav",
+      "seconds": 0.18501133786848073,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.09760209702224143,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/crystal/switch.wav",
+      "seconds": 0.14700680272108843,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.08639914248200516,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/crystal/open.wav",
+      "seconds": 0.32,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.09005082244793933,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/crystal/toggle.wav",
+      "seconds": 0.143015873015873,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.08385979454754493,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/crystal/launch.wav",
+      "seconds": 0.5350113378684808,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.42,
+      "rms": 0.10694389634027184,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/crystal/error.wav",
+      "seconds": 0.25,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.09706328533630272,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/digital/move.wav",
+      "seconds": 0.08301587301587302,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.19,
+      "rms": 0.04457824331350379,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/digital/confirm.wav",
+      "seconds": 0.22,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.09260520963189633,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/digital/back.wav",
+      "seconds": 0.18501133786848073,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.0934794144992166,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/digital/switch.wav",
+      "seconds": 0.14700680272108843,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.08566837313677651,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/digital/open.wav",
+      "seconds": 0.32,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.08633445601005423,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/digital/toggle.wav",
+      "seconds": 0.143015873015873,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.08006028905318974,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/digital/launch.wav",
+      "seconds": 0.5350113378684808,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.42,
+      "rms": 0.11697657905790448,
+      "boundaryStep": 0
+    },
+    {
+      "file": "Sfx/digital/error.wav",
+      "seconds": 0.25,
+      "channels": 1,
+      "rate": 44100,
+      "peak": 0.32,
+      "rms": 0.08977230161783485,
+      "boundaryStep": 0
+    },
+    {
+      "file": "daylight.wav",
+      "seconds": 53.33334375,
+      "channels": 2,
+      "rate": 32000,
+      "peak": 0.54,
+      "rms": 0.12667673664138518,
+      "boundaryStep": 0.009477027568419127
+    },
+    {
+      "file": "starport.wav",
+      "seconds": 58.1818125,
+      "channels": 2,
+      "rate": 32000,
+      "peak": 0.54,
+      "rms": 0.13111292988738527,
+      "boundaryStep": 0.009346795625677006
+    },
+    {
+      "file": "night.wav",
+      "seconds": 64,
+      "channels": 2,
+      "rate": 32000,
+      "peak": 0.54,
+      "rms": 0.12995728755964076,
+      "boundaryStep": 0.011316231310493564
+    }
+  ]
+}

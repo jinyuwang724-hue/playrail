@@ -1,0 +1,65 @@
+# 构建产物与打包输出
+/artifacts/
+/plugin/bin/
+/plugin/dist/
+/native/Scaling/bin/
+/native/Scaling/obj/
+
+# Magpie 上游的编译中间文件与 NuGet 包（源码保留；子目录自带 .gitignore）
+/native/upstream/Magpie-0.12.1/obj/
+/native/upstream/Magpie-0.12.1/packages/
+/native/upstream/Magpie-0.12.1/build-claw.log
+*.pfx
+
+# 本机诊断记录、日志、崩溃转储、设置与电源/睡眠备份
+/diagnostics/
+
+# 第三方程序的修补副本（Playhub 前端/后端、ClawTweaks 二进制补丁），不随仓库分发
+/repairs/playhub-haptics/
+/plugin/resources/clawtweaks-home.patch.gz
+
+# 本机工具依赖
+/tools/.clash-runtime/
+node_modules/
+
+# Python / 编辑器 / 系统
+__pycache__/
+*.pyc
+*.log
+*.dmp
+*.lnk
+.vs/
+.vscode/
+Thumbs.db
+desktop.ini
+
+# 本机设置备份
+/tools/*-before.json
+
+# Agent Python runtime (build.ps1 rebuilds it from a local Python 3.12)
+/plugin/runtime/
+
+# Game Bar widget: C++/WinRT generated sources
+/native/GameBarWidget/Generated Files/
+/native/SleepAnimation/bin/
+/native/SleepAnimation/obj/
+/native/GameFreeze/bin/
+/native/GameFreeze/obj/
+
+# .NET test outputs are rebuilt from the test projects
+/tests/**/bin/
+/tests/**/obj/
+
+# Local-only material: third-party installers, font packs, design exports, patched Decky copies
+/local/
+/MotionAssistant_Setup_*.msi
+/Font-Collection/
+/MotivaVFCyrillic.ttf
+/.claude/worktrees/
+/.workbuddy/
+/UI design/
+/repairs/decky-20261018/
+
+# QAM prototype exports with local device names and in-game account IDs
+/frontend/QAM/*.png
+/frontend/QAM/qam-wifi-bt-demo.html

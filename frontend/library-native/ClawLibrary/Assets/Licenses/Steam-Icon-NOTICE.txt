@@ -1,0 +1,4 @@
+Steam and the Steam logo are trademarks of Valve Corporation.
+Steam.svg contains the Steam logo paths from the installed Steam client's
+SVGIcon_SteamLogo (steamui/sp.js), used to identify the Steam shortcut.
+The logo is not covered by this project's MIT license.

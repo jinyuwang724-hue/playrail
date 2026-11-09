@@ -1,0 +1,8 @@
+namespace ClawWidget
+{
+    [default_interface]
+    runtimeclass OsdPage : Windows.UI.Xaml.Controls.Page
+    {
+        OsdPage();
+    }
+}

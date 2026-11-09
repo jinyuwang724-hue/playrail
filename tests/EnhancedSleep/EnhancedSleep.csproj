@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0-windows</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../native/InputLayer/EnhancedSleepGate.cs" Link="EnhancedSleepGate.cs" />
+    <Compile Include="../../native/SleepAnimation/EnhancedSleepPolicy.cs" Link="EnhancedSleepPolicy.cs" />
+    <Compile Include="../../native/SleepAnimation/EnhancedSleepOptions.cs" Link="EnhancedSleepOptions.cs" />
+    <Compile Include="../../native/SleepAnimation/SleepJournal.cs" Link="SleepJournal.cs" />
+    <Compile Include="../../native/SleepAnimation/SleepResources.cs" Link="SleepResources.cs" />
+    <Compile Include="../../native/SleepAnimation/SleepPowerPlan.cs" Link="SleepPowerPlan.cs" />
+    <Compile Include="../../native/SleepAnimation/PowerPolicy.cs" Link="PowerPolicy.cs" />
+    <Compile Include="../../native/SleepAnimation/GameSleep.cs" Link="GameSleep.cs" />
+    <Compile Include="../../native/SleepAnimation/FingerprintSleep.cs" Link="FingerprintSleep.cs" />
+    <Compile Include="../../native/SleepAnimation/EnhancedSleepGuard.cs" Link="EnhancedSleepGuard.cs" />
+    <Compile Include="../../native/SleepAnimation/DisplayPower.cs" Link="DisplayPower.cs" />
+    <Compile Include="../../native/SleepAnimation/HeartbeatWatchdog.cs" Link="HeartbeatWatchdog.cs" />
+  </ItemGroup>
+</Project>

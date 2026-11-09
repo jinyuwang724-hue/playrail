@@ -1,0 +1,14 @@
+o/
+b/
+AppPackages/
+*.user
+# Payload = build outputs staged into the package (agent, sleep animation, session wrapper, widget); rebuilt by the tools scripts
+ClawLibrary/Payload/**/*.dll
+ClawLibrary/Payload/**/*.exe
+ClawLibrary/Payload/**/*.zip
+ClawLibrary/Payload/**/*.pdb
+ClawLibrary/Payload/**/*.msix
+ClawLibrary/Payload/**/*.msixbundle
+ClawLibrary/Payload/**/*.cer
+# Built by tools/Build-ClawAudio.ps1 before each ClawLibrary build
+Native/ClawAudio/bin/

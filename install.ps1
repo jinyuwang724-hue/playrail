@@ -1,0 +1,87 @@
+param(
+    [string]$PluginRoot = (Join-Path $env:USERPROFILE 'homebrew\plugins'),
+    [string]$AgentHome = (Join-Path $env:LOCALAPPDATA 'ClawToolbox'),
+    [string]$LibraryMsix,
+    [switch]$NativeOnly
+)
+$ErrorActionPreference = 'Stop'
+$taskSource = Join-Path $PSScriptRoot 'plugin'
+$taskVersion = (Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $taskSource 'plugin.json') | ConvertFrom-Json).version
+
+# Copies changed files only, so files a running process holds are skipped when unchanged.
+function Copy-Changed([string]$From, [string]$To, [string[]]$Files, [string]$BackupName) {
+    foreach ($file in $Files) { if (-not (Test-Path -LiteralPath (Join-Path $From $file))) { throw ('Build output missing: '+$file) } }
+    if ($BackupName -and (Test-Path -LiteralPath $To)) {
+        $backup = Join-Path $PSScriptRoot ('artifacts\'+$BackupName+'-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
+        foreach ($file in $Files) {
+            $old = Join-Path $To $file
+            if (Test-Path -LiteralPath $old) { $copy = Join-Path $backup $file; [IO.Directory]::CreateDirectory((Split-Path -Parent $copy)) | Out-Null; Copy-Item -LiteralPath $old -Destination $copy }
+        }
+    }
+    foreach ($file in $Files) {
+        $new = Join-Path $To $file
+        if ((Test-Path -LiteralPath $new) -and ((Get-FileHash -LiteralPath $new).Hash -eq (Get-FileHash -LiteralPath (Join-Path $From $file)).Hash)) { continue }
+        [IO.Directory]::CreateDirectory((Split-Path -Parent $new)) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $From $file) -Destination $new -Force
+    }
+}
+function Get-Relative([string]$Root, [string]$Folder) {
+    @(Get-ChildItem -LiteralPath (Join-Path $Root $Folder) -Recurse -File | ForEach-Object { $_.FullName.Substring($Root.TrimEnd('\').Length+1) })
+}
+
+# Native releases use their packaged installer for the entire backend, including when adding Decky.
+if ($LibraryMsix) {
+    Add-AppxPackage -Path (Resolve-Path -LiteralPath $LibraryMsix).Path -ForceApplicationShutdown
+}
+$library = Get-AppxPackage -Name ClawToolbox.Library
+$unified = $library -and [version]$library.Version -ge [version]'0.1.265.0'
+if (($LibraryMsix -or $NativeOnly) -and -not $unified) { throw 'A Claw Library 0.1.265.0 or newer MSIX is required.' }
+if ($unified) {
+    $installer = Join-Path $library.InstallLocation 'Payload\Install-Components.ps1'
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $run = [guid]::NewGuid().ToString('N')
+    $arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -AgentHome "{1}" -User "{2}" -UserSid {3} -Run {4}' -f $installer, $AgentHome, $identity.Name, $identity.User.Value, $run
+    $process = Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList $arguments -WindowStyle Hidden -PassThru -Wait
+    if ($process.ExitCode -ne 0) { throw "Backend setup failed ($($process.ExitCode)). See $AgentHome\setup\status-$run.json." }
+    $agentApp = Split-Path -Parent ((Get-Content -Raw -LiteralPath (Join-Path $AgentHome 'current.json') | ConvertFrom-Json).agent)
+    if ($NativeOnly) { Write-Output $agentApp; return }
+}
+if (-not $unified) {
+    # Compatibility path for standalone Decky installations without the native package.
+    $agentApp = Join-Path $AgentHome 'app'
+    $agentFiles = @(('bin\ClawRouter-'+$taskVersion+'.exe'),('bin\ClawTouchBridge-'+$taskVersion+'.exe'),'bin\SteamAdminLauncher.exe','bin\CompatibilityUtility.exe',('bin\ClawPower-'+$taskVersion+'.exe'),'bin\pawnio\IntelMSR.bin','resources\clawtweaks-home.patch.gz','claw_agent.py','claw_service.py','claw_compatibility.py','claw_navigation_haptics.py','claw_magpie.py','claw_overlay_frames.py','claw_power.py','claw_rumble.py','claw_gamepad_fw.py','claw_input_layer.py',('bin\ClawInput-'+$taskVersion+'.exe'),'plugin.json')
+    $agentFiles += Get-Relative $taskSource 'bin\magpie'
+    $agentFiles += 'claw_endurance.py','claw_autotdp.py','claw_fan_service.py','claw_button_mappings.py','claw_system.py','claw_updates.py','claw_settings.py','claw_captures.py','claw_local_games.py','claw_steam_cdp.py','claw_game_settings.py','claw_game_freeze.py','claw_qam_scaling.py','bin\ClawGameFreeze.exe'
+    Copy-Changed $taskSource $agentApp $agentFiles $null
+
+    $runtimeSource = Join-Path $taskSource 'runtime\python'
+    $runtimeVersion = (Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $runtimeSource 'runtime.json') | ConvertFrom-Json).version
+    $runtime = Join-Path $AgentHome ('runtime\python-'+$runtimeVersion)
+    Copy-Changed $runtimeSource $runtime (Get-Relative $runtimeSource '.') $null
+    $python = Join-Path $runtime 'pythonw.exe'
+    $agent = Join-Path $agentApp 'claw_agent.py'
+    $current = @{ version = $taskVersion; python = $python; agent = $agent } | ConvertTo-Json
+    [IO.File]::WriteAllText((Join-Path $AgentHome 'current.json'), $current, (New-Object Text.UTF8Encoding($false)))
+
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $register = Join-Path $PSScriptRoot 'tools\Register-AgentTask.ps1'
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($isAdmin) { & $register -Python $python -Agent $agent -User $user }
+    else {
+        $quoted = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"'+$register+'"'),'-Python',('"'+$python+'"'),'-Agent',('"'+$agent+'"'),'-User',('"'+$user+'"'))
+        $process = Start-Process -FilePath 'powershell.exe' -ArgumentList $quoted -Verb RunAs -WindowStyle Hidden -Wait -PassThru
+        if ($process.ExitCode -ne 0) { throw 'Agent sign-in task registration failed.' }
+    }
+    # The agent is not started here: on first install the old all-in-one plugin still owns the
+    # hardware until Decky reloads it. The reloaded plugin starts (or upgrades) the agent itself.
+}
+
+# 2. The Decky front end: Steam UI, the agent connection and Clash Verge.
+$taskTarget = [IO.Path]::GetFullPath((Join-Path $PluginRoot 'claw-button-router'))
+$taskAllowed = [IO.Path]::GetFullPath($PluginRoot).TrimEnd('\') + '\'
+if (-not $taskTarget.StartsWith($taskAllowed,[StringComparison]::OrdinalIgnoreCase)) { throw 'Target is outside plugin root.' }
+$deckyFiles = @('bin\ClashBridge.exe','dist\index.js','main.py','claw_agent_client.py','claw_clash.py','claw_subscriptions.py','package.json','plugin.json')
+Copy-Changed $taskSource $taskTarget $deckyFiles 'plugin-backup'
+Write-Output $taskTarget
+Write-Output $agentApp
+if (-not $unified) { & (Join-Path $PSScriptRoot 'tools\Install-FanService.ps1') -AgentHome $AgentHome }

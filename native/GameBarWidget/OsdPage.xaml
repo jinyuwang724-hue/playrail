@@ -1,0 +1,25 @@
+<Page
+    x:Class="ClawWidget.OsdPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Background="Transparent">
+    <Grid Padding="8">
+        <StackPanel Spacing="6">
+            <Border x:Name="ReadoutBackground" CornerRadius="6" Padding="10,6" Background="#C0181B25">
+                <TextBlock x:Name="Readout" Text="正在连接工具箱…" Foreground="#F0F3FA" FontFamily="Cascadia Mono,Microsoft YaHei UI" FontSize="17" TextWrapping="Wrap" />
+            </Border>
+            <StackPanel x:Name="Graph" Spacing="2" Visibility="Collapsed">
+                <TextBlock Text="呈现帧时间（ms）" FontSize="12" Foreground="#A6E3A1" />
+                <Canvas x:Name="GraphCanvas" Height="40" Background="#A0181B25">
+                    <Polyline x:Name="GraphLine" Stroke="#A6E3A1" StrokeThickness="1.5" />
+                </Canvas>
+            </StackPanel>
+            <StackPanel x:Name="Options" Spacing="6">
+                <TextBlock x:Name="Status" Foreground="#E5E7EB" FontSize="13" TextWrapping="Wrap" />
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="Buttons" Orientation="Horizontal" Spacing="6" />
+                </ScrollViewer>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Page>

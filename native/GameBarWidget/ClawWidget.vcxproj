@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Claw toolbox Game Bar widget: C++/WinRT UWP app. Packages come from local folders, no restore:
+     CPPWINRT_DIR = Microsoft.Windows.CppWinRT, GAMEBAR_DIR = Microsoft.Gaming.XboxGameBar,
+     MUX_DIR = Microsoft.UI.Xaml (2.8: Fluent styles, InfoBar) package folders.
+     tools\Build-GameBarWidget.ps1 passes them. -->
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(CPPWINRT_DIR)\build\native\Microsoft.Windows.CppWinRT.props" />
+  <Import Project="$(MUX_DIR)\build\native\Microsoft.UI.Xaml.props" />
+  <PropertyGroup Label="Globals">
+    <CppWinRTOptimized>true</CppWinRTOptimized>
+    <CppWinRTRootNamespaceAutoMerge>true</CppWinRTRootNamespaceAutoMerge>
+    <CppWinRTGenerateWindowsMetadata>true</CppWinRTGenerateWindowsMetadata>
+    <MinimalCoreWin>true</MinimalCoreWin>
+    <ProjectGuid>{6C1B6F0E-8C2C-4C9B-9E0B-5F2A6B9C1D11}</ProjectGuid>
+    <ProjectName>ClawWidget</ProjectName>
+    <RootNamespace>ClawWidget</RootNamespace>
+    <DefaultLanguage>zh-CN</DefaultLanguage>
+    <MinimumVisualStudioVersion>16.0</MinimumVisualStudioVersion>
+    <AppContainerApplication>true</AppContainerApplication>
+    <ApplicationType>Windows Store</ApplicationType>
+    <ApplicationTypeRevision>10.0</ApplicationTypeRevision>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformMinVersion>10.0.19041.0</WindowsTargetPlatformMinVersion>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PrecompiledHeader>Use</PrecompiledHeader>
+      <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
+      <PrecompiledHeaderOutputFile>$(IntDir)pch.pch</PrecompiledHeaderOutputFile>
+      <WarningLevel>Level4</WarningLevel>
+      <AdditionalOptions>%(AdditionalOptions) /bigobj /utf-8</AdditionalOptions>
+      <PreprocessorDefinitions>WINRT_LEAN_AND_MEAN;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <GenerateWindowsMetadata>false</GenerateWindowsMetadata>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="pch.h" />
+    <ClInclude Include="Agent.h" />
+    <ClInclude Include="GameTarget.h" />
+    <ClInclude Include="OsdPage.h"><DependentUpon>OsdPage.xaml</DependentUpon></ClInclude>
+    <ClInclude Include="Icons.h" />
+    <ClInclude Include="App.h"><DependentUpon>App.xaml</DependentUpon></ClInclude>
+    <ClInclude Include="WidgetPage.h"><DependentUpon>WidgetPage.xaml</DependentUpon></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ApplicationDefinition Include="App.xaml"><SubType>Designer</SubType></ApplicationDefinition>
+    <Page Include="WidgetPage.xaml"><SubType>Designer</SubType></Page>
+    <Page Include="OsdPage.xaml"><SubType>Designer</SubType></Page>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="pch.cpp"><PrecompiledHeader>Create</PrecompiledHeader></ClCompile>
+    <ClCompile Include="Agent.cpp" />
+    <ClCompile Include="App.cpp"><DependentUpon>App.xaml</DependentUpon></ClCompile>
+    <ClCompile Include="WidgetPage.cpp"><DependentUpon>WidgetPage.xaml</DependentUpon></ClCompile>
+    <ClCompile Include="OsdPage.cpp"><DependentUpon>OsdPage.xaml</DependentUpon></ClCompile>
+    <ClCompile Include="$(GeneratedFilesDir)module.g.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <Midl Include="WidgetPage.idl"><DependentUpon>WidgetPage.xaml</DependentUpon></Midl>
+    <Midl Include="OsdPage.idl"><DependentUpon>OsdPage.xaml</DependentUpon></Midl>
+  </ItemGroup>
+  <ItemGroup>
+    <AppxManifest Include="Package.appxmanifest"><SubType>Designer</SubType></AppxManifest>
+    <Image Include="Assets\*.png" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="$(GAMEBAR_DIR)\build\native\Microsoft.Gaming.XboxGameBar.targets" />
+  <Import Project="$(MUX_DIR)\build\native\Microsoft.UI.Xaml.targets" />
+  <!-- Not used, but Microsoft.UI.Xaml.winmd refers to WebView2 types, so C++/WinRT needs its metadata. -->
+  <Import Project="$(WEBVIEW2_DIR)\build\native\Microsoft.Web.WebView2.targets" />
+  <Import Project="$(CPPWINRT_DIR)\build\native\Microsoft.Windows.CppWinRT.targets" />
+</Project>
