@@ -845,7 +845,7 @@ class Service:
     async def restore_gamepad(self, what="all"):
         return await self._gamepad_write(self._gamepad.restore, what)
 
-    # ---- software input layer (docs/gamepad-input-layer.md) ----
+    # ---- software input layer (docs/input/gamepad-input-layer.md) ----
 
     async def _start_input(self):
         mode = await self._gamepad.watcher.poll()  # the mode before the layer decides anything

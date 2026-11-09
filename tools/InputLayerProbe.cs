@@ -8,7 +8,7 @@ using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
-// Stand-in for a game while checking the input layer on the device (docs/gamepad-input-layer.md):
+// Stand-in for a game while checking the input layer on the device (docs/input/gamepad-input-layer.md):
 // a foreground window that is NOT in the HidHide whitelist, so it sees exactly what a game sees.
 // Logs every XInput slot (vendor / product id and button changes, polled at 1 ms) and the keys its
 // window receives, with QueryPerformanceCounter milliseconds (same clock as the engine's timeline).

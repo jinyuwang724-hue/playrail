@@ -1,4 +1,4 @@
-# 构建产物与打包输出（约 7 GB，由 build.ps1 / package.ps1 重新生成）
+# 构建产物与打包输出
 /artifacts/
 /plugin/bin/
 /plugin/dist/
@@ -41,27 +41,21 @@ desktop.ini
 
 # Game Bar widget: C++/WinRT generated sources
 /native/GameBarWidget/Generated Files/
-/tests/LibraryAudio/bin/
-/tests/LibraryAudio/obj/
-/tests/LibraryServices/bin/
-/tests/LibraryServices/obj/
-/tests/LibraryShortcutInput/bin/
-/tests/LibraryShortcutInput/obj/
 /native/SleepAnimation/bin/
 /native/SleepAnimation/obj/
 /native/GameFreeze/bin/
 /native/GameFreeze/obj/
-/tests/SleepAnimation/bin/
-/tests/SleepAnimation/obj/
-/tests/EnhancedSleep/bin/
-/tests/EnhancedSleep/obj/
-/tests/ToolboxActivation/bin/
-/tests/ToolboxActivation/obj/
+
+# .NET test outputs are rebuilt from the test projects
+/tests/**/bin/
+/tests/**/obj/
 
 # Local-only material: third-party installers, font packs, design exports, patched Decky copies
+/local/
 /MotionAssistant_Setup_*.msi
 /Font-Collection/
 /MotivaVFCyrillic.ttf
+/.claude/worktrees/
 /.workbuddy/
 /UI design/
 /repairs/decky-20261018/

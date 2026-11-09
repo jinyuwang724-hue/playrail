@@ -7,7 +7,7 @@ using Microsoft.Win32;
 //   分辨率（当前刷新率下能选的档）、Windows「可变刷新率」开关、HDR（屏幕不支持就报 unsupported）、
 //   音频输出设备（列出 / 设为默认）、麦克风静音。亮度、音量、静音、刷新率仍在 SystemControls。
 // 编译器是 .NET Framework 4 自带的 csc（C# 5）：不用字符串内插、out var、表达式体成员。
-// 接口说明见 docs/display-sound-page.md。
+// 接口说明见 docs/system/display-sound-page.md。
 static class DisplayAudio {
     // ---------------- 读 ----------------
 

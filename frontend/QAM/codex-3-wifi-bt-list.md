@@ -1,10 +1,10 @@
 # 任务：快捷面板内的 Wi-Fi / 蓝牙列表页
 
 ## 参考
-- 仓库内的交互参考见 [Wi-Fi／蓝牙原型](../../docs/qam-network-demo-20261106.html)。
+- 仓库内的交互参考见 [Wi-Fi／蓝牙原型](../../docs/quick-access/qam-network-demo-20261106.html)。
 - 初稿和配套截图保存在本地 `frontend/QAM/`。
 - demo 只是视觉和交互规格。代码按仓库现有结构写：WinUI 3 C# + Composition，NativeAOT，快捷面板在 `frontend/library-native/ClawLibrary/Stage/WallStage.QuickPanel.cs` / QamWindow，主题在 `Stage/Chrome.cs`，弹簧在 `Gfx.cs` / `Engine/Motion.cs`，图标在 `Stage/LineIcons.cs`。不要照搬 demo 里的 HTML 或 JS。
-- 仓库 `C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff`，入口 `CLAUDE_HANDOFF.md`。基线是游戏库 0.1.243。
+- 基线是游戏库 0.1.243。 [早期交接记录](../../docs/archive/toolbox-2026-10/CLAUDE_HANDOFF.md)
 
 ## 入口与导航
 - 快捷面板左下 3×3 里的 Wi-Fi、蓝牙格：A 仍然直接开关。进入列表页：在格上按 →，或者长按 A / 长按触摸（与现有网格的约定保持一致；如果已有 Y 进入的约定，就沿用）。

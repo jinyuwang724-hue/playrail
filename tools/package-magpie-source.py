@@ -6,6 +6,7 @@ import re
 root = Path(__file__).resolve().parents[1]
 source = root/"native/upstream/Magpie-0.12.1"
 bundle = root/"plugin/bin/magpie"
+notes = root/"docs/archive/toolbox-2026-10"
 props = source/"obj/x64/Release/_ConanDeps/Magpie"
 for file in props.glob("*_vars_*.props"):
     for name, folder in re.findall(r"<(Conan[A-Za-z0-9_-]+RootFolder)>([^<]+)</", file.read_text(encoding="utf-8")):
@@ -25,6 +26,6 @@ with zipfile.ZipFile(bundle/"magpie-source.zip","w",zipfile.ZIP_DEFLATED) as arc
     archive.write(root/"build-magpie.ps1","Claw/build-magpie.ps1")
     archive.write(root/"native/MagpieLauncher.cs","Claw/native/MagpieLauncher.cs")
     archive.write(root/"tools/magpie-catalog.py","Claw/tools/magpie-catalog.py")
-    archive.write(root/"MAGPIE_IMPLEMENTATION_20261009.md","Claw/MAGPIE_IMPLEMENTATION_20261009.md")
-    archive.write(root/"MAGPIE_REAL_GAME_20261010.md","Claw/MAGPIE_REAL_GAME_20261010.md")
+    archive.write(notes/"MAGPIE_IMPLEMENTATION_20261009.md","Claw/MAGPIE_IMPLEMENTATION_20261009.md")
+    archive.write(notes/"MAGPIE_REAL_GAME_20261010.md","Claw/MAGPIE_REAL_GAME_20261010.md")
 print(bundle/"magpie-source.zip")

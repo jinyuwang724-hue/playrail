@@ -13,7 +13,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using Microsoft.Win32;
 
-// Software input layer of the Claw handheld toolbox (docs/gamepad-input-layer.md). Roles:
+// Software input layer of the Claw handheld toolbox (docs/input/gamepad-input-layer.md). Roles:
 //   <dataDir>                        stdio bridge, started by the agent at the agent's integrity level;
 //                                    owns a named pipe and starts the engine elevated (games run elevated
 //                                    here, and keyboard / mouse input to them needs the same level).

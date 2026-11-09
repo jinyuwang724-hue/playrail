@@ -2,7 +2,7 @@
 
 2026-10-21 用户选定的正式图标。黑色圆角底，两片冷白、冷灰封面；不使用黄色。
 
-`claw-pages-master.png` 是获选方案的原始 RGBA 图像，1254 × 1254。来源为本项目 `UI design/claw-icon-v2/03-pages.png`，由内置 ImageGen 生成；形状和配色按用户选定稿保留。
+`claw-pages-master.png` 是获选方案的原始 RGBA 图像，1254 × 1254。来源为本机的 `local/design/claw-icon-v2/03-pages.png`，由内置 ImageGen 生成，形状和配色按用户选定稿保留。
 
 运行 `tools/Export-BrandIcons.ps1` 可从母版重新导出高清 PNG、Windows 多尺寸 ICO，以及游戏库和 Game Bar 工具箱的图标、磁贴和启动画面资源。所有导出保留透明背景并按目标大小等比居中，不拉伸图形。
 

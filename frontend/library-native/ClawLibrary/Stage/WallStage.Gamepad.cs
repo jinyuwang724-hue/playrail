@@ -5,7 +5,7 @@
 // 实时输入只点亮这一页管的东西：映射页亮按键、摇杆页亮摇杆、扳机页亮扳机；扳机只在侧视图上亮（正面肩部那块只归肩键）。
 // 手柄 / 桌面模式：游戏库在前台时一律是手柄模式（桌面模式下这里没法操作），离开前台再切回桌面模式。
 // 切模式的入口是每页线稿上方居中的「模式」（A 切换，GpToggleMode）；不做手柄组合键。
-// 软件输入层不露面：映射用到它时后台自己开、布局清空时自己关（见 docs/gamepad-input-layer.md）。
+// 软件输入层不露面：映射用到它时后台自己开、布局清空时自己关（见 docs/input/gamepad-input-layer.md）。
 // 各分类的内容在 WallStage.GamepadPages.cs。读：工具箱后台 get_gamepad_state、get_state、get_rumble_state、get_input_layout。
 using System.Numerics;
 using System.Text.Json.Nodes;

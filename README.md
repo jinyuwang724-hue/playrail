@@ -30,7 +30,7 @@
 
 ![艾尔登法环的游戏设置页，可选功耗档案及独立的限帧和性能显示设置](docs/screenshots/0.1.267/game-profile.jpg)
 
-Playrail 还可通过 ClawShell 在游戏模式与 Windows 桌面之间切换。使用 Windows 桌面或 Steam 大屏幕时，也有 Xbox Game Bar 小组件和可选的 Decky 插件入口。 [游戏模式](docs/game-mode.md) · [Game Bar 功能](docs/gamebar-widget-features.md)
+Playrail 还可通过 ClawShell 在游戏模式与 Windows 桌面之间切换。使用 Windows 桌面或 Steam 大屏幕时，也有 Xbox Game Bar 小组件和可选的 Decky 插件入口。 [游戏模式](docs/system/game-mode.md) · [Game Bar 功能](docs/gamebar/gamebar-widget-features.md)
 
 ## 安装与升级
 
@@ -54,9 +54,9 @@ $msix = 'C:\path\to\ClawLibrary_0.1.267.0_x64.msix'
 ## 兼容性
 
 - **主要设备**为 MSI Claw 8 EX AI+。原生包面向 x64，项目的快捷面板和窗口切换验证记录使用 MSI Claw 与 Windows 11 25H2。功耗、风扇和特殊按键依赖设备与驱动。 [验证记录](frontend/QAM/verification-0.1.245.md)
-- **性能与风扇**需要相应的后台权限和硬件支持，部分调节依赖 PawnIO。VRR、刷新率和驱动限帧选项取决于显示器与驱动。 [性能功能说明](docs/performance-page-features.md)
+- **性能与风扇**需要相应的后台权限和硬件支持，部分调节依赖 PawnIO。VRR、刷新率和驱动限帧选项取决于显示器与驱动。 [性能功能说明](docs/performance/performance-page-features.md)
 - **无线设备**的连接能力取决于 Windows、适配器和设备类型。经典蓝牙音频和由驱动持有的 HID 连接由系统管理。Wi-Fi 实际连接和实体设备配对还有待扩大验证。 [无线验证范围](frontend/QAM/verification-0.1.245.md)
-- **游戏模式恢复**可用登录时按住 Shift 的方式回到桌面。遇到黑屏，可用 Ctrl+Alt+Del 打开任务管理器并运行 `explorer.exe`。 [游戏模式与恢复流程](docs/game-mode.md)
+- **游戏模式恢复**可用登录时按住 Shift 的方式回到桌面。遇到黑屏，可用 Ctrl+Alt+Del 打开任务管理器并运行 `explorer.exe`。 [游戏模式与恢复流程](docs/system/game-mode.md)
 
 ## 源码构建
 
@@ -84,6 +84,8 @@ $msix = 'C:\path\to\ClawLibrary_0.1.267.0_x64.msix'
 
 ## 开发资料
 
+从[项目文档索引](docs/README.md)可按功能找到实现记录、构建入口和早期交接归档。
+
 | 目录 | 职责 |
 | --- | --- |
 | [frontend/library-native/](frontend/library-native/) | WinUI 3、Composition、NativeAOT 游戏库，包含快捷面板、控制中心与单游戏设置。 |
@@ -94,8 +96,8 @@ $msix = 'C:\path\to\ClawLibrary_0.1.267.0_x64.msix'
 
 - [原生游戏库开发记录](docs/native-library/README.md)
 - [快捷面板验证与场景覆盖](frontend/QAM/verification-0.1.245.md)
-- [Game Bar 小组件功能](docs/gamebar-widget-features.md)
-- [增强睡眠与唤醒](docs/enhanced-sleep-20261029.md)
+- [Game Bar 小组件功能](docs/gamebar/gamebar-widget-features.md)
+- [增强睡眠与唤醒](docs/system/enhanced-sleep-20261029.md)
 
 ## 许可
 

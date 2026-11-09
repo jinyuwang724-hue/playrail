@@ -1,4 +1,4 @@
-"""Software input layer: the half of the mixed mapping the pad firmware cannot do (docs/gamepad-input-layer.md).
+"""Software input layer: the half of the mixed mapping the pad firmware cannot do (docs/input/gamepad-input-layer.md).
 
 There is no switch for the user: the layer runs whenever any stored layout (global or per game) binds a
 button, and only while the pad is in gamepad (XInput) mode.

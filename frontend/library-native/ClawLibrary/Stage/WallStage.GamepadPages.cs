@@ -1,6 +1,6 @@
 // 控制中心 → 手柄：每个分类挂在线稿两侧的设置（按键映射是紧凑的一键一行，按手柄上的位置从上到下），
 // 和这一页在线稿上额外画的东西（摇杆死区圈、震动握把、扳机行程刻度）。
-// 当前值从固件读（get_gamepad_state，见 docs/gamepad-firmware-protocol.md）；读不到写「—」。
+// 当前值从固件读（get_gamepad_state，见 docs/input/gamepad-firmware-protocol.md）；读不到写「—」。
 // 范围照 MSI Center M：摇杆死区 0–50 %、外圈 75–100 %，扳机行程 0–100 %。
 using System.Numerics;
 using System.Text.Json.Nodes;

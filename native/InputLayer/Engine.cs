@@ -5,7 +5,7 @@ using System.Collections.Generic;
 // plus keyboard / mouse / system events. Pure and clock-driven (times in ms), so the trigger
 // behaviour is unit-tested without devices (tests/InputLayerTests.cs).
 //
-// Trigger semantics follow Steam Input's activators (docs/gamepad-input-layer.md):
+// Trigger semantics follow Steam Input's activators (docs/input/gamepad-input-layer.md):
 //   regular  pressed while the button is held
 //   long     after the button is held longPressMs, until release
 //   double   on the second press within doublePressMs of the first release, until that release

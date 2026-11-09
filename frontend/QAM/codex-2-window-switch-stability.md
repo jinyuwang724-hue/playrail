@@ -1,7 +1,7 @@
 # 任务：验证并修复各种场景下的窗口切换稳定性
 
 ## 背景
-- 项目同上：ClawToolbox，仓库 `C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff`，入口 `CLAUDE_HANDOFF.md`。当前游戏库 0.1.243，ClawShell 1.0.9（保留 explorer，任务栏隐藏），后端 0.17.58 为就地热补丁（原始文件在 `.claude/worktrees/bold-jennings-a19012/artifacts/qp/agent-0.17.58-orig/`）。
+- 项目同上。此记录的基线是游戏库 0.1.243 和 ClawShell 1.0.9（保留 explorer，任务栏隐藏）。后端 0.17.58 为就地热补丁（原始文件在 `.claude/worktrees/bold-jennings-a19012/artifacts/qp/agent-0.17.58-orig/`）。 [早期交接记录](../../docs/archive/toolbox-2026-10/CLAUDE_HANDOFF.md)
 - 窗口切换入口：快捷面板（QAM）的「窗口切换」卡片，以及特殊键长按。游戏库在游戏模式里充当窗口管理器（不用 SetParent 嵌入）。
 - 已做的：切换前 dismiss 开始菜单 / 搜索，重试 3 次，失败退回游戏库。窗口化《鸣潮》（常规脱离）与 Claude Code 之间压测 120/120 成功，每次约 250 ms。
 - 已知问题：1.0.9 保留 explorer 时任务栏工作区没有释放，最大化窗口只到 y=1176，游戏库会把窗口重新铺满。

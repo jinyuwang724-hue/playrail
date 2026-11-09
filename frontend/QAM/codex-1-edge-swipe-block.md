@@ -1,7 +1,7 @@
 # 任务：游戏模式下在系统层面禁用底部上滑 / 开始菜单
 
 ## 背景
-- 项目：ClawToolbox（MSI Claw 8 EX，Windows，1920x1200，用户缩放 150–175%）。仓库 `C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff`，入口文档 `CLAUDE_HANDOFF.md`。
+- 项目：ClawToolbox（MSI Claw 8 EX，Windows，1920x1200，用户缩放 150–175%）。早期背景见[交接记录](../../docs/archive/toolbox-2026-10/CLAUDE_HANDOFF.md)。
 - 游戏模式 = ClawShell 1.0.9「保留 explorer」变体：explorer 保留（输入法、触摸键盘、Game Bar 需要它），任务栏隐藏，单独按 Win 键已屏蔽。设置开关：设置 > 通用 > 游戏模式窗口管理（试验）、游戏模式保留系统输入法（试验）。
 - 现状：游戏库 0.1.243 只做到「开始菜单 / 搜索一出现就关掉」（检测 StartMenuExperienceHost / SearchHost 前台后 dismiss）。窗口切换器会先 dismiss、重试 3 次，失败退回游戏库。
 - 问题：在非游戏库页面（系统设置、游戏、文件管理器等）从屏幕底边上滑，开始菜单仍然会弹出一下。触摸手势本身没被拦住，只是事后关掉。
