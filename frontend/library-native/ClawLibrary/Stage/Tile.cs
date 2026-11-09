@@ -175,6 +175,13 @@ public sealed class Tile : IDisposable
     /// <summary>标题样式切换 / 栅格倍率变了：按当前尺寸重画文字。</summary>
     public void Redraw() => _face?.Relayout(Rect, null);
 
+    internal bool HitsEndGame(double x, double y)
+    {
+        var current = CurrentRect(_s.NowMs);
+        return Expanded && _face?.EndGameRect is { } rect &&
+            rect.Contains((x - current.X) * Rect.Width / current.Width, (y - current.Y) * Rect.Height / current.Height);
+    }
+
     public void SetFocused(bool on)
     {
         if (Focused == on) return;
@@ -555,6 +562,7 @@ public sealed class Tile : IDisposable
         private DropShadow? _shadow;
         private SpriteVisual? _copy, _actions, _badge, _glyph;
         private TextArt? _copyArt, _actionsArt, _badgeArt, _glyphArt;
+        internal Engine.Rect? EndGameRect => _actionsArt?.EndGameRect;
         private TextArt? _screensaverCopyArt;
         private SpriteVisual? _screensaverShade;
         private readonly ContainerVisual? _inner;
@@ -769,7 +777,8 @@ public sealed class Tile : IDisposable
             else { ((CompositionSurfaceBrush)_copy.Brush).Surface = _copyArt.Surface; PositionText(_copy, _copyArt, r, true); }
             if (_expanded)
             {
-                _actionsArt = _s.Text.Actions(r.Width, r.Height, _s.Style, _item.Kind == ItemKind.Game && !_item.Installed, _s.ShotCount(_item.Id));
+                _actionsArt = _s.Text.Actions(r.Width, r.Height, _s.Style, _item.Kind == ItemKind.Game && !_item.Installed,
+                    _s.ShotCount(_item.Id), _s.IsRunningGame(_item.Id));
                 if (_actions == null)
                 {
                     _actions = TextSprite(_actionsArt, r, anchorBottom: true);

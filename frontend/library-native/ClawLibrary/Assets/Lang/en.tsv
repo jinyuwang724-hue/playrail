@@ -1032,6 +1032,11 @@ Steam 库	Steam library
 诊断	Diagnostics
 性能读数（帧时间）	Performance readout (frame time)
 重新运行首次设置	Run first-time setup again
+安装或更新后台	Install or update background components
+正在安装或更新后台组件	Installing or updating background components
+后台组件已就绪	Background components are ready
+已取消后台更新	Background update canceled
+后台更新失败，请查看安装日志	Background update failed. See the setup log.
 重启工具箱后台	Restart the toolbox service
 工具箱后台正在重启，几秒后自动连回	The toolbox service is restarting and reconnects in a few seconds
 备份设置	Back up settings

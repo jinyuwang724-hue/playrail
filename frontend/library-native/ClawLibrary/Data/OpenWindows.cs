@@ -102,7 +102,23 @@ internal static class OpenWindows
         finally { if (owned) DestroyIcon(icon); }
     }
 
-    private static string? ExePath(uint pid)
+    internal static string Elevated(uint pid)
+    {
+        nint process = OpenProcess(0x1000, false, pid);
+        if (process == 0) return "unknown";
+        try
+        {
+            if (!OpenProcessToken(process, 8, out nint token)) return "unknown";
+            try { return GetTokenInformation(token, 20, out int elevated, sizeof(int), out _) ? (elevated != 0 ? "true" : "false") : "unknown"; }
+            finally { CloseHandle(token); }
+        }
+        finally { CloseHandle(process); }
+    }
+
+    [DllImport("advapi32.dll")] private static extern bool OpenProcessToken(nint process, uint access, out nint token);
+    [DllImport("advapi32.dll")] private static extern bool GetTokenInformation(nint token, int type, out int value, int size, out int written);
+
+    internal static string? ExePath(uint pid)
     {
         nint h = OpenProcess(0x1000 /* QUERY_LIMITED_INFORMATION */, false, pid);
         if (h == 0) return null;

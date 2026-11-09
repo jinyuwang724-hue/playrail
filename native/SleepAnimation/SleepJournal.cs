@@ -6,7 +6,6 @@ using System.Text.Json;
 
 namespace ClawSleepAnimation;
 
-internal sealed record FrozenGame(int Pid, long Started, string Image);
 internal sealed record SleepRecovery(string Id, int OwnerPid, long OwnerStarted, int Session, Guid OriginalScheme, Guid SleepScheme,
     string? Fingerprint, FrozenGame[] Games);
 

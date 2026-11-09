@@ -13,30 +13,34 @@ namespace claw
 {
     void Agent::Connect()
     {
-        if (m_ready || m_connecting) return;
+        if (m_stopped || m_ready || m_connecting) return;
         ConnectAsync();
     }
 
     fire_and_forget Agent::ConnectAsync()
     {
+        auto lifetime = shared_from_this();
         m_connecting = true;
         try
         {
             auto file = co_await ApplicationData::Current().LocalFolder().GetFileAsync(L"agent.json");
             auto endpoint = JsonObject::Parse(co_await FileIO::ReadTextAsync(file));
+            if (m_stopped) co_return;
             m_token = endpoint.GetNamedString(L"token");
             auto port = static_cast<int>(endpoint.GetNamedNumber(L"wsPort"));
 
             m_socket = MessageWebSocket();
             m_socket.Control().MessageType(SocketMessageType::Utf8);
-            m_socket.MessageReceived([this](MessageWebSocket const&, MessageWebSocketMessageReceivedEventArgs const& args) {
+            auto weak = weak_from_this();
+            m_socket.MessageReceived([weak](MessageWebSocket const&, MessageWebSocketMessageReceivedEventArgs const& args) {
                 hstring text;
                 try { auto reader = args.GetDataReader(); reader.UnicodeEncoding(UnicodeEncoding::Utf8); text = reader.ReadString(reader.UnconsumedBufferLength()); }
                 catch (...) { return; }
-                m_dispatcher.RunAsync(CoreDispatcherPriority::Normal, [this, text]() { Received(text); });
+                try { if (auto self = weak.lock(); self && !self->m_stopped) self->m_dispatcher.RunAsync(CoreDispatcherPriority::Normal, [weak, text]() { if (auto current = weak.lock(); current && !current->m_stopped) current->Received(text); }); } catch (...) {}
             });
-            m_socket.Closed([this](auto&&, auto&&) { m_dispatcher.RunAsync(CoreDispatcherPriority::Normal, [this]() { Closed(); }); });
+            m_socket.Closed([weak](auto&&, auto&&) { try { if (auto self = weak.lock(); self && !self->m_stopped) self->m_dispatcher.RunAsync(CoreDispatcherPriority::Normal, [weak]() { if (auto current = weak.lock(); current && !current->m_stopped) current->Closed(); }); } catch (...) {} });
             co_await m_socket.ConnectAsync(Uri(L"ws://127.0.0.1:" + to_hstring(port)));
+            if (m_stopped) co_return;
             m_writer = DataWriter(m_socket.OutputStream());
             m_writer.UnicodeEncoding(UnicodeEncoding::Utf8);
             JsonObject hello;
@@ -49,12 +53,13 @@ namespace claw
         {
             m_connecting = false;
             m_socket = nullptr;
-            if (OnConnection) OnConnection(false);
+            if (!m_stopped && OnConnection) OnConnection(false);
         }
     }
 
     void Agent::Call(std::wstring const& method, JsonArray const& args, Reply reply)
     {
+        if (m_stopped) return;
         if (!m_ready) { m_waiting.push_back({ method, { args, reply } }); Connect(); return; }
         int id = ++m_sequence;
         if (reply) m_pending[id] = reply;
@@ -68,11 +73,12 @@ namespace claw
 
     fire_and_forget Agent::Pump()
     {
+        auto lifetime = shared_from_this();
         if (m_pumping || !m_writer) co_return;
         m_pumping = true;
         try
         {
-            while (!m_outbox.empty() && m_writer)
+            while (!m_stopped && !m_outbox.empty() && m_writer)
             {
                 m_writer.WriteString(m_outbox.front());
                 m_outbox.pop_front();
@@ -85,6 +91,7 @@ namespace claw
 
     void Agent::Received(hstring const& text)
     {
+        if (m_stopped) return;
         JsonObject message{ nullptr };
         if (!JsonObject::TryParse(text, message)) return;
         if (message.HasKey(L"hello"))
@@ -112,6 +119,7 @@ namespace claw
 
     void Agent::Closed()
     {
+        if (m_stopped) return;
         bool was = m_ready || m_connecting;
         m_ready = m_connecting = false;
         m_socket = nullptr;
@@ -120,5 +128,14 @@ namespace claw
         auto pending = std::move(m_pending);
         for (auto& [id, reply] : pending) reply(JsonValue::CreateNullValue(), L"工具箱后台连接中断");
         if (was && OnConnection) OnConnection(false);
+    }
+
+    void Agent::Shutdown()
+    {
+        m_stopped = true; m_ready = m_connecting = false;
+        OnEvent = nullptr; OnConnection = nullptr;
+        m_pending.clear(); m_waiting.clear(); m_outbox.clear();
+        try { if (m_socket) m_socket.Close(1000, L"Window closed"); } catch (...) {}
+        m_writer = nullptr; m_socket = nullptr;
     }
 }

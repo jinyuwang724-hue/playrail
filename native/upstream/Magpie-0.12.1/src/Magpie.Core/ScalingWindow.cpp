@@ -447,7 +447,47 @@ winrt::hstring ScalingWindow::GetLocalizedString(std::wstring_view resName) cons
 	return _resourceLoader.GetString(resName);
 }
 
+void ScalingWindow::_RestoreScreenshotAffinity(UINT_PTR timer) noexcept {
+	KillTimer(Handle(), timer);
+	if (!_screenshotAffinityLifted) return;
+	if (!SetWindowDisplayAffinity(Handle(), WDA_EXCLUDEFROMCAPTURE)) {
+		Logger::Get().Win32Error("Restore screenshot display affinity");
+		_DelayedStop(false);
+		return;
+	}
+	DwmFlush();
+	_screenshotAffinityLifted = false;
+	_renderer->SetScreenshotCapturePaused(false);
+}
+
 LRESULT ScalingWindow::_MessageHandler(UINT msg, WPARAM wParam, LPARAM lParam) noexcept {
+	static const UINT screenshotMessage = RegisterWindowMessage(L"ClawToolbox.Magpie.MonitorScreenshot.v1");
+	static constexpr UINT_PTR screenshotTimer = 0x43534D50;
+	if (screenshotMessage && msg == screenshotMessage) {
+		if (!_renderer || _options.captureMethod != CaptureMethod::DesktopDuplication || !IsWindowVisible(Handle())) {
+			return 0;
+		}
+		if (!wParam) {
+			_RestoreScreenshotAffinity(screenshotTimer);
+			return 1;
+		}
+		if (_screenshotAffinityLifted) return 0;
+		// Keep the existing scaled frame on screen while the system takes one monitor snapshot.
+		// Pausing source capture prevents Desktop Duplication from feeding Magpie its own output.
+		_renderer->SetScreenshotCapturePaused(true);
+		if (SetTimer(Handle(), screenshotTimer, 1900, nullptr) && SetWindowDisplayAffinity(Handle(), WDA_NONE)) {
+			_screenshotAffinityLifted = true;
+			DwmFlush();
+			return 1;
+		}
+		KillTimer(Handle(), screenshotTimer);
+		_renderer->SetScreenshotCapturePaused(false);
+		return 0;
+	}
+	if (msg == WM_TIMER && wParam == screenshotTimer) {
+		_RestoreScreenshotAffinity(screenshotTimer);
+		return 0;
+	}
 	if (_renderer) {
 		_renderer->MessageHandler(msg, wParam, lParam);
 	}
@@ -455,6 +495,7 @@ LRESULT ScalingWindow::_MessageHandler(UINT msg, WPARAM wParam, LPARAM lParam) n
 	switch (msg) {
 	case WM_CREATE:
 	{
+		if (screenshotMessage) ChangeWindowMessageFilterEx(Handle(), screenshotMessage, MSGFLT_ALLOW, nullptr);
 		// 源窗口的输入已被附加到了缩放窗口上，这是所有者窗口的默认行为，但我们不需要
 		// 见 https://devblogs.microsoft.com/oldnewthing/20130412-00/?p=4683
 		AttachThreadInput(
@@ -877,6 +918,7 @@ LRESULT ScalingWindow::_MessageHandler(UINT msg, WPARAM wParam, LPARAM lParam) n
 	}
 	case WM_DESTROY:
 	{
+		_screenshotAffinityLifted = false;
 		Logger::Get().Info("缩放结束");
 
 		// 更新 _runId 表明当前缩放结束

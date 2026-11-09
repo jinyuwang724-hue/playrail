@@ -13,6 +13,8 @@ namespace ClawShell
     /// <summary>保留 explorer 的游戏模式（试验）：见 WindowsShellSystem.Covered.cs。</summary>
     public interface ICoveredShell { bool CoverWanted(); bool CoveredActive(); void HideDesktopUi(); void ShowDesktopUi(); }
 
+    public interface IModeTransition { IModeTransitionScope BeginModeTransition(bool toGame); }
+    public interface IModeTransitionScope : IDisposable { void Complete(); }
     public interface IDesktopSurface { bool FocusDesktop(); }
 
     public interface IShellSystem
@@ -92,6 +94,7 @@ namespace ClawShell
         {
             _sys.Log("fallback to desktop: " + reason);
             try { _sys.DeleteShellValue(); } catch (Exception ex) { _sys.Log("delete shell value failed: " + ex.Message); }
+            try { _sys.WriteState("desktop", "fallback:" + reason); } catch { }
             bool started = false;
             try { started = _sys.ExplorerRunning() || _sys.StartExplorer(); } catch (Exception ex) { _sys.Log("start explorer failed: " + ex.Message); }
             try { if (started && Cover != null) Cover.ShowDesktopUi(); } catch (Exception ex) { _sys.Log("show taskbar failed: " + ex.Message); }
@@ -220,7 +223,23 @@ namespace ClawShell
         }
 
         /// <summary>桌面 → 游戏模式。游戏库和 Steam 都确认起来了才关 explorer；关不掉就恢复。</summary>
-        public SwitchResult ToGame()
+        public SwitchResult ToGame(bool showTransition = true)
+        {
+            return SwitchMode(true, showTransition);
+        }
+
+        private SwitchResult SwitchMode(bool toGame, bool showTransition)
+        {
+            var transition = showTransition ? _sys as IModeTransition : null;
+            using (var scope = transition == null ? null : transition.BeginModeTransition(toGame))
+            {
+                var result = toGame ? ToGameCore() : ToDesktopCore();
+                if (result == SwitchResult.Ok && scope != null) scope.Complete();
+                return result;
+            }
+        }
+
+        private SwitchResult ToGameCore()
         {
             if (_sys.ForceFlagExists()) { _sys.WriteState("desktop", "refused:force-desktop.flag"); return SwitchResult.Refused; }
             if (CoveredNow)
@@ -278,7 +297,12 @@ namespace ClawShell
         }
 
         /// <summary>游戏模式 → 桌面：只拉起 explorer，游戏库留着。</summary>
-        public SwitchResult ToDesktop()
+        public SwitchResult ToDesktop(bool showTransition = true)
+        {
+            return SwitchMode(false, showTransition);
+        }
+
+        private SwitchResult ToDesktopCore()
         {
             if (_sys.ExplorerRunning() || _sys.StartExplorer()) {
                 // 先把状态写成桌面，监视进程就不会在我们放出任务栏的同时又把它藏回去

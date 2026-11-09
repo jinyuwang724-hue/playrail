@@ -48,6 +48,23 @@ def _powershell(script, timeout=180):
     return out.stdout.decode("utf-8", "replace").strip()
 
 
+def show_desktop():
+    _powershell(r"""
+$ErrorActionPreference = 'Stop'
+$gameBar = [Windows.Gaming.UI.GameBar,Windows.Gaming.UI,ContentType=WindowsRuntime]
+if ($gameBar::IsInputRedirected) {
+    $keys = New-Object -ComObject WScript.Shell
+    for ($attempt = 0; $attempt -lt 3 -and $gameBar::IsInputRedirected; $attempt++) {
+        $keys.SendKeys('{ESC}')
+        Start-Sleep -Milliseconds 180
+    }
+    if ($gameBar::IsInputRedirected) { throw 'Xbox Game Bar 仍在前台' }
+}
+$shell = New-Object -ComObject Shell.Application
+$shell.MinimizeAll()
+""", timeout=5)
+
+
 def _config_files(data):
     for name in CONFIG:
         path = data / name

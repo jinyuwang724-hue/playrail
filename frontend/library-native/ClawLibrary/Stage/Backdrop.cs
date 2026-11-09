@@ -52,6 +52,8 @@ public sealed partial class Backdrop : IDisposable
     public float Dpi = 1;
     /// <summary>画完再整体高斯模糊（DIP，标准差；0 = 不模糊）。控制中心铺满全屏时用：folia 网格主页在背景上压 4 px 模糊。</summary>
     public float BlurDip;
+    public bool ShareModeTransitionFrame { get; init; }
+    private bool _transitionFramePending, _transitionFrameSaving;
     private static readonly Dictionary<string, Vector4[]> ColorCache = new();
     private GaussianBlurEffect? _blur;
     private readonly object _gate = new();
@@ -173,7 +175,7 @@ public sealed partial class Backdrop : IDisposable
     }
 
     /// <summary>还要不要逐帧画（在跑、或颜色还在渐变、或有待画的一帧）。</summary>
-    public bool NeedsFrames => !_stop && _surface != null && ((_running && Animated) || _dirty || _stripChanged || (_settings.Kind == BackgroundKind.Latent && _fadeMs < ColorFadeMs) || ImageFading);
+    public bool NeedsFrames => !_stop && _surface != null && ((_running && Animated) || _dirty || _stripChanged || (_settings.Kind == BackgroundKind.Latent && _fadeMs < ColorFadeMs) || ImageFading || (_transitionFramePending && !_transitionFrameSaving));
     private bool _stripChanged;
 
     /// <summary>换封面：后台缩到 50×50 取代表色，颜色在 800 ms 里渐变过去。post 把结果送回 UI 线程。</summary>
@@ -307,11 +309,14 @@ public sealed partial class Backdrop : IDisposable
         bool fading = (_settings.Kind == BackgroundKind.Latent && _fadeMs < ColorFadeMs) || ImageFading;
         if (fading && !hold) _fadeMs += dtMs;
         if (ImageFading && !hold) _imageFadeMs += dtMs;
-        int x0 = Math.Clamp((int)Math.Floor((left - 6) * _pixelRatio), 0, _cw);
-        int x1 = Math.Clamp((int)Math.Ceiling((left + width + 6) * _pixelRatio), 0, _cw);
+        if (ShareModeTransitionFrame && _dirty) _transitionFramePending = true;
+        // The transition uses the whole background layer, including the parts behind the cards.
+        bool saveTransition = _transitionFramePending && !_transitionFrameSaving && !fading;
+        int x0 = saveTransition ? 0 : Math.Clamp((int)Math.Floor((left - 6) * _pixelRatio), 0, _cw);
+        int x1 = saveTransition ? _cw : Math.Clamp((int)Math.Ceiling((left + width + 6) * _pixelRatio), 0, _cw);
         if (x1 - x0 < 1) return;
         bool moved = x0 != _lastX0 || x1 != _lastX1;
-        if (hold && !_dirty)
+        if (hold && !_dirty && !saveTransition)
         {
             // 停着：画面上已经是同一时刻的那段（_validX0.._validX1）不用重画，只补开口新露出来的两头
             if (x0 >= _validX0 && x1 <= _validX1) return;
@@ -322,15 +327,57 @@ public sealed partial class Backdrop : IDisposable
             _validX0 = Math.Min(_validX0, x0); _validX1 = Math.Max(_validX1, x1);
             return;
         }
-        if (!hold && !(_running && Animated) && !_dirty && !moved && !fading) return;
+        if (!hold && !(_running && Animated) && !_dirty && !moved && !fading && !saveTransition) return;
         _dirty = false;
         _lastX0 = x0; _lastX1 = x1;
         _validX0 = x0; _validX1 = x1;
         DrawRange(x0, x1);
+        if (saveTransition)
+        {
+            _transitionFramePending = false;
+            if (_surface != null && _strip != null) SaveModeTransitionFrame(_strip);
+        }
     }
 
     /// <summary>画布上已经画好、时间和颜色都是当前这一刻的那段（停帧时只补这段以外的）。</summary>
     private int _validX0, _validX1;
+
+    private void SaveModeTransitionFrame(CanvasRenderTarget source)
+    {
+        int width = Math.Min(960, _cw);
+        int height = Math.Max(1, _ch * width / _cw);
+        CanvasRenderTarget? snapshot = null;
+        try
+        {
+            snapshot = new CanvasRenderTarget(_g.Device, width, height, 96);
+            using (var ds = snapshot.CreateDrawingSession())
+            {
+                ds.Clear(Theme.Bg);
+                ds.DrawImage(source, new Windows.Foundation.Rect(0, 0, width, height));
+            }
+        }
+        catch (Exception ex)
+        {
+            snapshot?.Dispose();
+            Log.Warn($"mode transition background: {ex.Message}");
+            return;
+        }
+        _transitionFrameSaving = true;
+        _ = Task.Run(async () =>
+        {
+            string path = Path.Combine(App.CacheDir, "mode-transition-background.png");
+            try
+            {
+                using (snapshot) await snapshot.SaveAsync(path + ".tmp", CanvasBitmapFileFormat.Png);
+                File.Move(path + ".tmp", path, true);
+            }
+            catch (Exception ex) { Log.Warn($"mode transition background: {ex.Message}"); }
+            finally
+            {
+                lock (_gate) { _transitionFrameSaving = false; if (!_stop) _wake.Set(); }
+            }
+        });
+    }
 
     private void DrawRange(int x0, int x1)
     {

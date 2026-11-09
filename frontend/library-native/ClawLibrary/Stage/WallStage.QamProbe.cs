@@ -89,6 +89,121 @@ public sealed partial class WallStage
         CloseQuickPanel(hideWindow: false, instant: true);
         Log.Info("qamhalf done");
     }
+#if DEBUG
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern nint QamProbeSendMessage(nint hwnd, uint message, nint wParam, nint lParam);
+
+    /// <summary>截图和导航回归使用固定数据，不改无线配置，不启动游戏。</summary>
+    internal async Task QamWirelessProbeAsync()
+    {
+        await Task.Delay(1800);
+        _qsTestNoExclude = true;
+        OpenQuickPanel(0);
+        _qsPoll?.Stop();
+        await Task.Delay(2200);
+
+        async Task Still(string name)
+        {
+            await Task.Delay(700);
+            Log.Info($"qamwireless state={name} focus={_networkFocus} keyboard={_networkKeyboard}");
+            await Task.Delay(2300);
+        }
+
+        void Tap(double x, double y)
+        {
+            var point = new Windows.Foundation.Point(x * QsK, y * QsK);
+            QsOwnPress(point);
+            QsOwnRelease(point);
+        }
+
+        _qsWifi = false;
+        QsSetFocus("wifi");
+        QsMove(Direction.Right);
+        if (_networkPage != null || _qsFocusId != "bt") throw new InvalidOperationException("Right did not move between tiles");
+        var wifi = QsFind("wifi")!;
+        Tap(wifi.X + wifi.W / 2, wifi.Y + wifi.H / 2);
+        if (_networkPage != "wifi") throw new InvalidOperationException("Wi-Fi tap did not open the list");
+        _qsWifi = true;
+        _networkEntries.Add(new("home5", "Home-5G", "已连接 · 5 GHz", "qam.wifi", true, true, Signal: 4, Secured: true));
+        _networkEntries.Add(new("home24", "Home-2.4G", "已保存", "qam.wifi", true, false, Signal: 4, Secured: true));
+        var locked = new QamWireless.Entry("china", "ChinaNet-7F2A", "", "qam.wifi", false, false, Signal: 3, Secured: true);
+        _networkEntries.Add(locked);
+        _networkEntries.Add(new("coffee", "Starbucks", "开放网络", "qam.wifi", false, false, Signal: 2));
+        NetworkPaint();
+        QsMove(Direction.Down);
+        await Still("wifi-list");
+        var lockedBounds = _networkHits.Single(h => h.Id == locked.Id).Bounds;
+        Tap(lockedBounds.X + 40, lockedBounds.Y + 22);
+        nint keyboardWindow = _qsWin!.Hwnd;
+        if (QamProbeSendMessage(keyboardWindow, 0x024B, 0, keyboardWindow) != 3)
+            throw new InvalidOperationException("QAM window must answer WM_POINTERACTIVATE with PA_NOACTIVATE");
+        foreach (string key in new[] { "q", "a", "m" })
+        {
+            var bounds = _networkKeys.Single(h => h.Id == key).Bounds;
+            Tap(bounds.X + bounds.Width / 2, bounds.Y + bounds.Height / 2);
+        }
+        if (!_qsOpen || !_networkKeyboard || _networkPassword != "qam")
+            throw new InvalidOperationException("Touch typing did not keep the QAM and keyboard open");
+        await Still("wifi-password");
+        QsBack();
+        if (_networkKeyboard || _networkExpand != locked.Id) throw new InvalidOperationException("B did not close only the keyboard");
+        QsBack();
+        if (_networkExpand != null || _networkPage != "wifi") throw new InvalidOperationException("B did not collapse only the row");
+        QsBack();
+        if (_networkPage != null || _qsFocusId != "wifi") throw new InvalidOperationException("B did not restore the Wi-Fi tile");
+
+        _qsBt = false;
+        QsSetFocus("bt");
+        QsActivate();
+        if (_networkPage != "bt") throw new InvalidOperationException("Bluetooth activation did not open the list");
+        _qsBt = true;
+        _networkEntries.Add(new("xbox", "Xbox 无线控制器", "已连接", "controller", true, true));
+        _networkBatteries["xbox"] = 80;
+        _networkEntries.Add(new("pods", "AirPods Pro", "未连接", "headphones", true, false));
+        _networkEntries.Add(new("mouse", "MX Master 3S", "未连接", "mouse", true, false));
+        _networkEntries.Add(new("dualsense", "DualSense 无线控制器", "", "controller", false, false));
+        _networkEntries.Add(new("buds", "Redmi Buds 5", "", "headphones", false, false));
+        _networkExpand = "dualsense";
+        _networkPin = "482915";
+        _networkFocus = "connect";
+        NetworkStartExpansion();
+        NetworkPaint();
+        await Still("bt-pin");
+        QsBack(); QsBack();
+        if (_networkPage != null || _qsFocusId != "bt") throw new InvalidOperationException("B did not restore the Bluetooth tile");
+        var recorder = new FrameRecorder { Display = true };
+        if (recorder.Start(HostWindow))
+        {
+            await Task.Delay(250);
+            long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+            void OpenMockWifi()
+            {
+                _qsWifi = false;
+                QsSetFocus("wifi");
+                QsActivate();
+                _qsWifi = true;
+                _networkEntries.Add(new("home5", "Home-5G", "已连接 · 5 GHz", "qam.wifi", true, true, Signal: 4, Secured: true));
+                _networkEntries.Add(locked);
+                NetworkPaint();
+            }
+            OpenMockWifi();
+            await Task.Delay(600);
+            QsBack();
+            await Task.Delay(160);
+            OpenMockWifi();
+            await Task.Delay(160);
+            QsBack();
+            await Task.Delay(600);
+            string dir = Path.Combine(App.CacheDir, "rec", "qam-wireless");
+            int frames = await recorder.StopAndSaveAsync(dir, mark);
+            Log.Info($"qamwireless recording frames={frames}");
+            if (frames > 0) await Bench.EncodeMp4(dir, Path.Combine(App.CacheDir, "rec", "qam-wireless.mp4"));
+        }
+        CloseQuickPanel(hideWindow: false, instant: true);
+        Log.Info("qamwireless PASS");
+    }
+#endif
+
     internal async Task RecQamAsync()
     {
         await Task.Delay(2500);
@@ -121,9 +236,8 @@ public sealed partial class WallStage
             Do("A pwr", Activate);
             await Still("power");
             Do("B", Back);
-            Do("right x3", () => { Move(Direction.Right); Move(Direction.Right); Move(Direction.Right); });
-            Do("A quit", Activate);
-            await Still("quit-armed");
+            Do("focus quit", () => QsSetFocus("quit"));
+            await Still("quit-focus");
             Do("B", Back);
             CloseQuickPanel(hideWindow: false, instant: true);
             await Task.Delay(800);
@@ -152,7 +266,7 @@ public sealed partial class WallStage
                 await Step(700, "LT", () => QsHot("vol", -1));
                 await Step(250, "RT", () => QsHot("vol", 1));
                 for (int i = 0; i < 9; i++) await Step(160, "down", () => Move(Direction.Down));   // 走到网格，不在选项行上按 ←→（不改真实设置）
-                await Step(400, "right", () => Move(Direction.Right));
+                await Step(400, "focus bluetooth", () => QsSetFocus("bt"));
                 await Step(400, "down", () => Move(Direction.Down));
                 await Step(400, "down", () => Move(Direction.Down));
                 await Step(400, "left", () => Move(Direction.Left));

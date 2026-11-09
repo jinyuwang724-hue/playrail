@@ -109,22 +109,14 @@ class SystemPageTest(unittest.TestCase):
         self.assertTrue(updates.newer("4.20", "0419"))
         self.assertFalse(updates.newer("4.19", "0419"))
 
-    def test_intel_matching(self):
-        drivers = [{"name": "Intel(R) Arc(TM) B390 GPU", "hwid": "PCI\VEN_8086&DEV_B080&SUBSYS_15101462&REV_04", "version": "32.0.101.9034"},
-                   {"name": "Intel NPU", "hwid": "PCI\VEN_8086&DEV_B03E&SUBSYS_15101462&REV_04", "version": "32.0.100.5540"}]
-        def sw(i, version, values, url, beta=False):
-            return {"Id": i, "IsBeta": beta, "InstallOptions": "--nouninstall" if "gfx" in url else "",
-                    "Files": [{"Url": url, "Hash": "a" * 40, "Size": 5, "OperatingSystems": ["windows-11-25h2-64"]}],
-                    "Components": [{"Category": "Graphics", "Version": version, "DetectionType": "Default", "DetectionValues": values}]}
-        catalog = [sw(930514, "32.0.101.9150", ["VEN_8086&DEV_B080"], "https://downloadmirror.intel.com/930514/gfx_win_101.9150.exe"),
-                   sw(999, "32.0.101.9999", ["VEN_8086&DEV_B080"], "https://downloadmirror.intel.com/999/gfx_win_101.9999.exe", beta=True),
-                   sw(927127, "32.0.100.5540", ["VEN_8086&DEV_B03E"], "https://downloadmirror.intel.com/927127/npu_win_32.0.100.5540.exe")]
-        found = updates.intel_updates(catalog, drivers)
-        self.assertEqual([i["id"] for i in found], ["intel:930514"])
-        self.assertEqual(found[0]["args"], "-s --nouninstall")
+    def test_driver_packages_only_use_msi_china(self):
+        self.assertEqual(updates.domestic_package("https://download.msi.com/nb_drivers/a b.zip"),
+                         "https://download.msi.cn/nb_drivers/a%20b.zip")
+        self.assertIsNone(updates.domestic_package("https://downloadmirror.intel.com/930514/gfx_win_101.9150.exe"))
+        self.assertIsNone(updates.domestic_package("https://download.msi.cn.example/nb_drivers/a.zip"))
 
     def test_msi_matching(self):
-        drivers = [{"name": "Intel NPU", "hwid": "PCI\VEN_8086&DEV_B03E&SUBSYS_15101462&REV_04", "version": "32.0.100.4778"}]
+        drivers = [{"name": "Intel NPU", "hwid": r"PCI\VEN_8086&DEV_B03E&SUBSYS_15101462&REV_04", "version": "32.0.100.4778"}]
         rows = {"bios": [{"download_id": 1, "download_title": "BIOS", "download_version": "E1T91IMS.10E", "download_url": "https://download.msi.com/bos_exe/nb/E1T91IMS.10E.zip",
                           "download_sha256": "SHA-256:" + "b" * 64 + "<br>"}],
                 "driver": [{"download_id": 2, "download_title": "Intel NPU Driver", "download_version": "32.0.100.5000", "download_url": "https://download.msi.com/nb_drivers/cs/npu.zip"},
@@ -134,7 +126,25 @@ class SystemPageTest(unittest.TestCase):
         self.assertEqual(sorted(found), ["msi:1", "msi:2"])
         self.assertTrue(found["msi:1"]["confirm"])
         self.assertEqual(found["msi:1"]["sha256"], "b" * 64)
-        self.assertEqual((found["msi:2"]["run"], found["msi:2"]["args"]), ("install.bat", "/s"))
+        self.assertEqual(found["msi:2"]["kind"], "driver")
+        self.assertNotIn("run", found["msi:2"])
+
+    def test_driver_result_checks_the_bound_version(self):
+        async def run():
+            version = "32.0.100.4778"
+
+            async def call(command):
+                self.assertEqual(command, "pnp_drivers")
+                return [{"hwid": r"PCI\VEN_8086&DEV_B03E&REV_04", "version": version}]
+
+            updater = updates.Updates(call, ".", None, None)
+            item = {"hwid": r"PCI\VEN_8086&DEV_B03E", "latest": "32.0.100.5540"}
+            self.assertTrue((await updater._result(item, {"state": "done", "exitCode": 0})).startswith("failed"))
+            self.assertEqual(await updater._result(item, {"state": "done", "exitCode": 3010}), "restart")
+            version = item["latest"]
+            self.assertEqual(await updater._result(item, {"state": "done", "exitCode": 259}), "done")
+
+        asyncio.run(run())
 
     def test_setters_reject_odd_values(self):
         for call in (lambda: self.control.set_power_button("display"), lambda: self.control.set_hibernate_after(7),

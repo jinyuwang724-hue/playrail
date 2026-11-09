@@ -25,6 +25,12 @@ namespace ClawShell {
             },IntPtr.Zero);
             return found;
         }
+        private void RevealGameModeLibrary() {
+            IntPtr window = FindSurface();
+            uint message = RegisterWindowMessage(SurfaceMessage);
+            if (window != IntPtr.Zero && message != 0)
+                PostMessage(window, message, new IntPtr(10), IntPtr.Zero);
+        }
         public bool EnsureLibrarySurface(bool activate) {
             IntPtr window=FindSurface();
             if(window==IntPtr.Zero)return false;

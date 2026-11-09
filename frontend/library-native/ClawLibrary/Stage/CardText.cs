@@ -19,6 +19,7 @@ public sealed class TextArt
 {
     public required CompositionDrawingSurface Surface;
     public required Engine.Rect Rect;
+    internal Engine.Rect? EndGameRect;
     public int Refs;
     public long LastUse;
 }
@@ -360,14 +361,15 @@ public sealed class CardText
 
     public const float ActionsHeight = 44;
 
-    public TextArt Actions(double w, double h, TitleStyle style, bool install = false, int shots = 0) =>
-        Acquire($"actions|{Math.Round(w)}x{Math.Round(h)}|{style}|{install}|{shots}", () => BuildActions((float)w, (float)h, style, install, shots));
+    public TextArt Actions(double w, double h, TitleStyle style, bool install = false, int shots = 0, bool running = false) =>
+        Acquire($"actions|{Math.Round(w)}x{Math.Round(h)}|{style}|{install}|{shots}|{running}", () => BuildActions((float)w, (float)h, style, install, running));
 
-    private TextArt BuildActions(float w, float h, TitleStyle style, bool install, int shots)
+    private TextArt BuildActions(float w, float h, TitleStyle style, bool install, bool running)
     {
         var dev = _g.Device;
         float left = 32, copyW = w - 64;
-        var buttons = new List<(string, string, bool)> { ("A", install ? "安装游戏" : "开始游戏", true) };
+        var buttons = new List<(string, string, bool)> { ("A", running ? "继续游戏" : install ? "安装游戏" : "开始游戏", true) };
+        if (running) buttons.Add(("X", "", false));
         if (!install) buttons.Add(("Y", "游戏设置", false));
         buttons.Add(("B", install ? "返回" : "收起", false));
         var font = TextKit.Ui(700);
@@ -375,6 +377,7 @@ public sealed class CardText
         var labels = buttons.Select(bt => TextKit.Layout(dev, bt.Item2, font, 15, 100000, CanvasHorizontalAlignment.Left)).ToArray();
         var keys = buttons.Select(bt => TextKit.Layout(dev, bt.Item1, keyFont, 11, 22, CanvasHorizontalAlignment.Center)).ToArray();
         var widths = labels.Select(l => 16 + 22 + 8 + (float)l.LayoutBounds.Width + 16).ToArray();
+        if (running) widths[1] += 18;
         float total = widths.Sum() + 8 * (buttons.Count - 1);
         float x0 = TitleStyles.IsLeftAligned(style) ? left : left + (copyW - total) / 2;
         float y0 = h - (style == TitleStyle.Folia ? 28 : 30) - ActionsHeight;
@@ -397,9 +400,13 @@ public sealed class CardText
                     var kb = keys[i].DrawBounds;
                     cds.DrawTextLayout(keys[i], kx + 11 - (float)(kb.X + kb.Width / 2),
                         ky + 11 - (float)(kb.Y + kb.Height / 2), TextKit.Ink(op));
-                    var lb = labels[i].DrawBounds;
-                    cds.DrawTextLayout(labels[i], kx + 22 + 8 - (float)lb.X,
-                        y0 + ActionsHeight / 2 - (float)(lb.Y + lb.Height / 2), TextKit.Ink(op));
+                    if (running && i == 1) LineIcons.Draw(cds, "qam.quit", kx + 39, y0 + ActionsHeight / 2, 18, TextKit.Ink());
+                    else
+                    {
+                        var lb = labels[i].DrawBounds;
+                        cds.DrawTextLayout(labels[i], kx + 22 + 8 - (float)lb.X,
+                            y0 + ActionsHeight / 2 - (float)(lb.Y + lb.Height / 2), TextKit.Ink(op));
+                    }
                     x += widths[i] + 8;
                 }
             }
@@ -408,7 +415,8 @@ public sealed class CardText
             ds.DrawImage(shadow, 0, 1);
             ds.DrawImage(cl);
         });
-        return new TextArt { Surface = surface, Rect = rect };
+        return new TextArt { Surface = surface, Rect = rect,
+            EndGameRect = running ? new Engine.Rect(x0 + widths[0] + 8, y0, widths[1], ActionsHeight) : null };
     }
 
     // ---------------- 角标 ----------------

@@ -1,5 +1,5 @@
 // 游戏库屏保（第三轮原型「统一屏保」，三种首页样式共用）：静置后整屏换成一款游戏的横幅图，慢慢推近、平移；
-// 一边是大号时钟（日期、电量），另一边是这款游戏的卡盒、名字和上次游玩。每 12 s 换一款（最近玩过的在前），
+// 一边是大号时钟（日期、电量），另一边是这款游戏的卡盒、名字和上次游玩。电池供电时保留静态横幅、放慢轮换。
 // 两块文字每轮左右互换。顶栏在屏保期间让开，屏幕上只有一个时钟。任何输入只唤醒；A 唤醒时顺便选中屏幕上那款。
 // 触发时机、开关和空闲时长沿用 WallStage.Screensaver.cs（设置 › 外观 的屏保开关）。
 using System.Numerics;
@@ -25,12 +25,13 @@ public sealed partial class WallStage
         public int Round;
         public LibraryItem? Game;
         public string? ClockText;
-        public long NextSwitch;
     }
 
     private CsSaver? _csSs;
-    private const double SsHoldMs = 12_000, SsPanMs = 15_000;
+    private const long SsHoldMs = 12_000, SsBatteryHoldMs = 30_000;
+    private const double SsPanMs = 15_000;
 
+    private long CsSaverHoldMs => _screensaverPowerWanted ? SsBatteryHoldMs : SsHoldMs;
 
     /// <summary>屏保进场：只要卡盒版开着（三种首页样式都算）就用这一套，不再点亮墙上的海报。</summary>
     private bool CsSaverEnter()
@@ -77,7 +78,6 @@ public sealed partial class WallStage
         root.StartAnimation("Opacity", CsS(1, CsMs(900), Bezier.EaseOut));
         _cs.Header.StartAnimation("Opacity", CsS(0, CsMs(600), Bezier.EaseOut));
         if (!BannerOn) _cs.Pages.StartAnimation("Opacity", CsS(0, CsMs(600), Bezier.EaseOut));
-        CsSaverShow(first: true);
         Log.Info($"cases screensaver entered ({queue.Count} games)");
         return true;
     }
@@ -121,7 +121,7 @@ public sealed partial class WallStage
         if (!first) ss.Round++;
         var g = ss.Queue[ss.Round % ss.Queue.Count];
         ss.Game = g;
-        ss.NextSwitch = NowMs + (long)SsHoldMs;
+        _screensaverNextSwitch = NowMs + CsSaverHoldMs;
         int slot = ss.Round % 2;
         var sprite = ss.Img[slot];
         var other = ss.Img[1 - slot];
@@ -141,11 +141,13 @@ public sealed partial class WallStage
                 brush.HorizontalAlignmentRatio = fx;
                 ss.Root.Children.Remove(sprite);
                 ss.Root.Children.InsertAbove(sprite, other);
-                CsPan(sprite, round % 2 == 1 ? 1 : -1, loop: false);
+                bool battery = _screensaverPowerWanted;
+                if (!battery) CsPan(sprite, round % 2 == 1 ? 1 : -1, loop: false);
+                int fadeMs = battery ? 650 : 1800;
                 sprite.StopAnimation("Opacity");
                 sprite.Opacity = 0;
-                sprite.StartAnimation("Opacity", CsS(1, CsMs(1800), Bezier.EaseInOut));
-                After(CsMs(1850), () => { if (_csSs == ss && ss.Round == round) { other.StopAnimation("Opacity"); other.Opacity = 0; } });
+                sprite.StartAnimation("Opacity", CsS(1, CsMs(fadeMs), Bezier.EaseInOut));
+                After(CsMs(fadeMs + 50), () => { if (_csSs == ss && ss.Round == round) { other.StopAnimation("Opacity"); other.Opacity = 0; } });
             });
         }
         void Put()
@@ -163,6 +165,18 @@ public sealed partial class WallStage
             ss.ClockV.StartAnimation("Opacity", CsS(0, CsMs(600), Bezier.EaseOut));
             ss.GameBox.StartAnimation("Opacity", CsS(0, CsMs(600), Bezier.EaseOut));
             After(CsMs(620), Put);
+        }
+    }
+
+    private void CsSaverPowerChanged()
+    {
+        if (_csSs is not { } ss) return;
+        _screensaverNextSwitch = NowMs + CsSaverHoldMs;
+        if (!_screensaverPowerWanted) return;
+        foreach (var sprite in ss.Img)
+        {
+            sprite.StopAnimation("Scale");
+            sprite.StopAnimation("Offset");
         }
     }
 

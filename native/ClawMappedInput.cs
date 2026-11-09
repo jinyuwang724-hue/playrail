@@ -13,6 +13,7 @@ static class MappedInput {
     [StructLayout(LayoutKind.Explicit,Size=40)] struct Input { [FieldOffset(0)] public uint Type; [FieldOffset(8)] public Mouse Mouse; [FieldOffset(8)] public Key Key; }
     [DllImport("user32.dll",SetLastError=true)] static extern uint SendInput(uint count,Input[] inputs,int size);
     [DllImport("user32.dll")] static extern short GetAsyncKeyState(int key);
+    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] static extern uint MapVirtualKeyW(uint key,uint type);
     static Input Stroke(ushort vk,bool ext,bool up) {
         uint scan = vk >= 0xA6 && vk <= 0xB7 ? 0 : MapVirtualKeyW(vk,4)&255;
@@ -51,6 +52,9 @@ static class MappedInput {
                 up.Add(new Input {Mouse=new Mouse {Flags=u[value],Data=data,Extra=(UIntPtr)Tag}});
             }
         } else throw new ArgumentException("此专用键不支持这种输出");
+        object foreground;
+        if (command.TryGetValue("foreground", out foreground) && GetForegroundWindow().ToInt64() != Convert.ToInt64(foreground))
+            throw new InvalidOperationException("游戏窗口已离开前台");
         try { Send(down); Thread.Sleep(40); } finally { Send(up); }
         return new Dictionary<string,object>{{"sent",true}};
     }

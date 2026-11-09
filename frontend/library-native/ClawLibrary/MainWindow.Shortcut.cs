@@ -199,7 +199,7 @@ public sealed partial class MainWindow
         Log.Info(tray ? "library hidden to tray" : "library tray unavailable; minimized");
     }
 
-    private void AnimateShortcut(bool show, bool entrance, int version, Action completed)
+    private void AnimateShortcut(bool show, bool entrance, int version, Action completed, bool gameReveal = false)
     {
         if (!_shortcutMotion.IsCurrent(version)) return;
         var visual = ElementCompositionPreview.GetElementVisual(_root);
@@ -212,12 +212,14 @@ public sealed partial class MainWindow
         visual.CenterPoint = new Vector3((float)_root.ActualWidth / 2, (float)_root.ActualHeight / 2, 0);
         // Folia softFocus.ts: a full-size layer resolves from soft focus; on
         // departure it drifts slightly forward. No exposed/shrinking edges.
-        var easing = show
+        var easing = gameReveal
+            ? compositor.CreateCubicBezierEasingFunction(new Vector2(.22f, .55f), new Vector2(.35f, 1))
+            : show
             ? compositor.CreateCubicBezierEasingFunction(new Vector2(.16f, 1), new Vector2(.3f, 1))
             : compositor.CreateCubicBezierEasingFunction(new Vector2(.4f, 0), new Vector2(1, 1));
         double slow = 1;
         if (Program.Args.FirstOrDefault(a => a.StartsWith("--shortcut-slow=")) is { } arg && double.TryParse(arg[16..], out double factor)) slow = Math.Clamp(factor, 1, 4);
-        double duration = (show ? 520 : 360) * slow;
+        double duration = (gameReveal ? 850 : show ? 520 : 360) * slow;
         var batch = compositor.CreateScopedBatch(CompositionBatchTypes.Animation);
         var fade = compositor.CreateScalarKeyFrameAnimation();
         fade.Duration = TimeSpan.FromMilliseconds(duration);

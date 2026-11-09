@@ -65,7 +65,7 @@ public sealed partial class WallStage
         ("win", 3, 0, 2), ("lib", 3, 1, 2), ("quit", 3, 2, 2),
     };
     private static readonly string[] QsPm = { "off", "restart", "sleep" }, QsR2 = { "pwr", "desk", "vrr" };
-    private static readonly HashSet<string> QsRisk = new() { "quit", "restart", "off" };
+    private static readonly HashSet<string> QsRisk = new() { "restart", "off" };
 
     // ---------------- 状态 ----------------
     private ContainerVisual? _qs;
@@ -222,8 +222,13 @@ public sealed partial class WallStage
         float k = QsK, dpi = Chrome.Dpi;
         int w = (int)Math.Ceiling(QsW * k * dpi), h = mi.Monitor.Bottom - mi.Monitor.Top;
         _qsMon = (mi.Monitor.Left, mi.Monitor.Top, mi.Monitor.Right - mi.Monitor.Left, h);
-        _qsWin!.Place(mi.Monitor.Left, mi.Monitor.Top, w, h);
-        _qs!.Size = new Vector2(w / dpi, h / dpi);
+        float unit = k * dpi;
+        int total = _networkKeyboard ? _qsMon.W : w;
+        _qsWin!.SetKeyboardRegion(w, h, _networkKeyboard ? (int)(448 * unit) : 0,
+            (int)(NetworkKeyboardTop * unit), (int)((448 + NetworkKeyboardWidth) * unit),
+            (int)((NetworkKeyboardTop + NetworkKeyboardHeight) * unit));
+        _qsWin.Place(mi.Monitor.Left, mi.Monitor.Top, total, h);
+        _qs!.Size = new Vector2(total / dpi, h / dpi);
     }
 
     private (int L, int T, int W, int H) _qsMon;
@@ -260,6 +265,8 @@ public sealed partial class WallStage
     internal void CloseQuickPanel(bool hideWindow = true, bool instant = false)
     {
         if (!_qsOpen || _qs == null) return;
+        NetworkLeave(instant: true);
+        _qsToastV.IsVisible = false;
         _qsOpen = false;
         _qsPoll?.Stop();
         _qsHideWindowAfter = hideWindow;
@@ -341,10 +348,12 @@ public sealed partial class WallStage
         _qsCurV.Opacity = 0;
         _qsEdgeV = G.Sprite(G.Solid(Gfx.WithAlpha(QsInk, 0.10)), relative: false);
         _qsPanel = _qsTopV;
-        _qsSlide.Children.InsertAtTop(_qsTopV);
-        _qsSlide.Children.InsertAtTop(_qsRowsV);
-        _qsSlide.Children.InsertAtTop(_qsCurV);
-        _qsSlide.Children.InsertAtTop(_qsGridV);
+        NetworkVisuals();
+        _qsNetworkV.Offset = new Vector3(56 * QsK, 0, 0);
+        _qsHome.Children.InsertAtTop(_qsTopV);
+        _qsHome.Children.InsertAtTop(_qsRowsV);
+        _qsHome.Children.InsertAtTop(_qsCurV);
+        _qsHome.Children.InsertAtTop(_qsGridV);
         _qsSlide.Children.InsertAtTop(_qsEdgeV);
         _qsSlide.Offset = new Vector3(QsHideX * QsK, 0, 0);
         _qs.Children.InsertAtTop(_qsSlide);
@@ -352,6 +361,10 @@ public sealed partial class WallStage
         {
             _qs.Size = new Vector2(QsW * QsK + 2, (float)View.Height);
             _qsWin.SetContent(_qs);
+            _qsWin.Pressed = QsOwnPress;
+            _qsWin.Moved = QsOwnMove;
+            _qsWin.Released = QsOwnRelease;
+            _qsWin.Scrolled = delta => NetworkScrollBy(-delta / 2f);
             _qsWin.Prime((int)Math.Ceiling(QsW * QsK * Chrome.Dpi), (int)Math.Ceiling(View.Height * Chrome.Dpi));
         }
         else _top.Children.InsertAtTop(_qs);
@@ -458,10 +471,10 @@ public sealed partial class WallStage
     }
 
     /// <summary>截 hwnd 所在显示器的一帧，exclude（面板窗口）在截的时候排除在外。返回帧和显示器矩形（物理像素）。</summary>
-    internal async Task<(CanvasBitmap? Frame, (int L, int T, int W, int H) Rect)> CaptureMonitorFrameAsync(nint exclude, int timeoutMs, nint on = 0)
+    internal async Task<(CanvasBitmap? Frame, (int L, int T, int W, int H) Rect)> CaptureMonitorFrameAsync(nint exclude, int timeoutMs, nint on = 0, nint monitor = 0)
     {
         nint self = WinRT.Interop.WindowNative.GetWindowHandle(_window);
-        nint mon = MonitorFromWindow(on != 0 ? on : _qsGame != 0 ? _qsGame : self, 2);
+        nint mon = monitor != 0 ? monitor : MonitorFromWindow(on != 0 ? on : _qsGame != 0 ? _qsGame : self, 2);
         var mi = new QsMonInfo { Size = Marshal.SizeOf<QsMonInfo>() };
         GetMonitorInfo(mon, ref mi);
         var rect = (mi.Monitor.Left, mi.Monitor.Top, mi.Monitor.Right - mi.Monitor.Left, mi.Monitor.Bottom - mi.Monitor.Top);
@@ -515,13 +528,13 @@ public sealed partial class WallStage
 
     private async Task QsRefresh(int v, bool first = false, bool warm = false)
     {
-        if (_pagePointer.Active || _qsTouchWrites?.IsBusy == true) return;
+        if (_pagePointer.Active || _qsOwnSlider != null || _qsTouchWrites?.IsBusy == true || _networkWrites?.IsBusy == true) return;
         _agent ??= new AgentClient();
         // 读的途中有新的写入排进来：这次读到的是旧值，丢掉（写完会再读一次）
         long rev = _qsTouchWrites?.Revision ?? 0;
         try
         {
-            if (await _agent.Call("widget_state") is JsonObject s && (warm || (v == _qsVersion && _qsOpen)) && !_pagePointer.Active && _qsTouchWrites?.IsBusy != true && (_qsTouchWrites?.Revision ?? 0) == rev)
+            if (await _agent.Call("widget_state") is JsonObject s && (warm || (v == _qsVersion && _qsOpen)) && !_pagePointer.Active && _qsOwnSlider == null && _qsTouchWrites?.IsBusy != true && (_qsTouchWrites?.Revision ?? 0) == rev)
             {
                 _qsState = s;
                 if (_qsDraft == null || !_qsSaving) _qsDraft = s["power"]?["settings"]?.DeepClone() as JsonObject;
@@ -530,22 +543,33 @@ public sealed partial class WallStage
             }
         }
         catch (Exception ex) { Log.Warn($"quick panel state: {ex.Message}"); }
+        bool pageWasOn = _networkPage != null && NetworkOn;
+        long radioRevision = _networkWrites?.Revision ?? 0;
         try
         {
-            foreach (var r in await Radio.GetRadiosAsync())
+            var radios = await Radio.GetRadiosAsync();
+            if (_networkWrites?.IsBusy != true && (_networkWrites?.Revision ?? 0) == radioRevision)
+            foreach (var r in radios)
             {
                 if (r.Kind == RadioKind.WiFi) _qsWifi = r.State == RadioState.On;
                 if (r.Kind == RadioKind.Bluetooth) _qsBt = r.State == RadioState.On;
             }
         }
         catch (Exception ex) { Log.Warn($"quick panel radios: {ex.Message}"); }
+        string? previousSsid = _qsSsid;
         _qsAir = await Task.Run(QsAirplane.Get);
         try
         {
-            var p = Windows.Networking.Connectivity.NetworkInformation.GetInternetConnectionProfile();
-            _qsSsid = p != null && p.IsWlanConnectionProfile ? p.ProfileName : null;
+            _qsSsid = QamWireless.ConnectedWifiName();
+            if (_qsSsid != null && (_networkWrites?.Revision ?? 0) == radioRevision && _networkWrites?.IsBusy != true)
+                _qsWifi = true;
         }
         catch { _qsSsid = null; }
+        if (_networkPage != null && (pageWasOn != NetworkOn || (NetworkWifi && previousSsid != _qsSsid)))
+        {
+            if (!NetworkOn) { NetworkCollapse(); _networkEntries.Clear(); }
+            _ = NetworkScan();
+        }
         if (first || _qsPolls++ % 3 == 0) _qsBtCount = _qsBt == true ? await QsBluetoothConnected() : -1;
         if (first)
         {
@@ -619,7 +643,11 @@ public sealed partial class WallStage
     }
 
     /// <summary>只在出错时提示（成功了看控件本身就知道）。</summary>
-    private void QsFlash(string text) => Toast(text);
+    private void QsFlash(string text)
+    {
+        if (_qsOpen && _qsWin != null) QsLocalToast(text);
+        else Toast(text);
+    }
 
     // ---------------- 模型 ----------------
 
@@ -724,7 +752,7 @@ public sealed partial class WallStage
             case "air":
                 it.Name = "飞行模式"; it.Glyph = "qam.air"; it.On = _qsAir == true; it.Disabled = _qsAir == null;
                 it.Tip = "飞行模式 · " + (_qsAir == true ? "开" : "关"); break;
-            case "shot": it.Name = "截图"; it.Glyph = "qam.shot"; it.Disabled = !game; it.Tip = "截图"; break;
+            case "shot": it.Name = "截图"; it.Glyph = "qam.shot"; it.Tip = "截图"; break;
             case "kbd": it.Name = "键盘"; it.Glyph = "qam.kbd"; it.Tip = "键盘"; break;
             case "pad":
             {
@@ -746,7 +774,7 @@ public sealed partial class WallStage
                 it.Name = "窗口切换"; it.Glyph = "qam.win"; it.Sub = $"{n} 个窗口"; break;
             }
             case "lib": it.Name = "游戏库"; it.Glyph = "qam.lib"; it.Sub = $"{_lib.Games.Count} 款"; break;
-            case "quit": it.Name = "退出游戏"; it.Glyph = "qam.quit"; it.Sub = QsPlayTime(); it.Disabled = !game; break;
+            case "quit": it.Name = "结束游戏"; it.Glyph = "qam.quit"; it.Sub = QsPlayTime(); it.Disabled = !game; break;
         }
         return it;
     }
@@ -798,12 +826,8 @@ public sealed partial class WallStage
         return target > 0 ? target : QsNum("manual.tdp", lo, d);
     }
 
-    private (double Lo, double Hi) QsTdpRange()
-    {
-        var quick = (QsGet("quick", _qsDraft) as JsonArray)?.Select(n => n is JsonValue v && v.TryGetValue(out double x) ? x : 0).Where(x => x > 0).ToList() ?? new();
-        double lo = quick.Count > 0 ? Math.Min(5, quick.Min()) : 5, hi = quick.Count > 0 ? Math.Max(35, quick.Max()) : 35;
-        return (lo, hi);
-    }
+    private (double Lo, double Hi) QsTdpRange() =>
+        (QsNum("power.limits.tdpMin", 8), QsNum("power.limits.tdpMax", 35));
 
     private List<double> QsRefreshRates() =>
         (QsGet("system.refreshRates") as JsonArray)?.Select(n => n is JsonValue v && v.TryGetValue(out double x) ? x : 0).Where(x => x >= 60).Distinct().OrderByDescending(x => x).ToList() ?? new();
@@ -894,6 +918,7 @@ public sealed partial class WallStage
         QsPaintLayer('t'); QsPaintLayer('r'); QsPaintLayer('g');
         QsPaintCursor();
         QsLayout();
+        NetworkPaint();
     }
 
     private void QsPaintLayer(char layer)
@@ -902,7 +927,7 @@ public sealed partial class WallStage
         {
             switch (layer)
             {
-                case 't': QsDrawInto(ref _qsTopS, _qsTopV, QsW, QsTopH, QsPaintTop); QsKnobsUpdate(false); break;
+                case 't': QsDrawInto(ref _qsStatusSurface, _qsStatusV, QsW, 76, QsPaintStatus); QsDrawInto(ref _qsTopS, _qsTopV, QsW, QsTopH, QsPaintTop); QsKnobsUpdate(false); break;
                 case 'r': QsDrawInto(ref _qsRowsS, _qsRowsV, QsW, QsRowsH, ds => { ds.Transform = Matrix3x2.CreateTranslation(0, -QsRowsY) * ds.Transform; QsPaintRows(ds); }); break;
                 case 'g': QsDrawInto(ref _qsGridS, _qsGridV, QsW, QsGridLH, ds => { ds.Transform = Matrix3x2.CreateTranslation(0, -QsGridLY) * ds.Transform; QsPaintGrid(ds); }); break;
             }
@@ -949,7 +974,7 @@ public sealed partial class WallStage
         return Color.FromArgb((byte)(a.A + (b.A - a.A) * t), (byte)(a.R + (b.R - a.R) * t), (byte)(a.G + (b.G - a.G) * t), (byte)(a.B + (b.B - a.B) * t));
     }
 
-    private void QsPaintTop(CanvasDrawingSession ds)
+    private void QsPaintStatus(CanvasDrawingSession ds)
     {
         // 状态栏：时间；剩余时间、电量、电池图标（17 号）
         float cy = QsStatusY + 18;
@@ -972,6 +997,10 @@ public sealed partial class WallStage
             }
         }
 
+    }
+
+    private void QsPaintTop(CanvasDrawingSession ds)
+    {
         // 功耗块
         var tdp = QsFind("tdp");
         if (tdp != null)
@@ -1110,23 +1139,16 @@ public sealed partial class WallStage
                 }
                 else
                 {
-                    // 宽卡：图标块 + 标题 15/600 + 状态小字 12；确认时图标块让开，红底上写「再按一次退出」和后果
-                    float gx = x + 12 - 50 * arm;
-                    using (ds.CreateLayer(1 - arm))
-                    {
-                        ds.FillRoundedRectangle(gx, y + (h - 38) / 2, 38, 38, 13, 13, Gfx.WithAlpha(QsInk, 0.10));
-                        QsIcon(ds, it.Glyph, gx + 19, y + h / 2, 20, fg);
-                    }
-                    float tx = x + 62 - 46 * arm;
+                    float gx = x + 12, tx = x + 62;
+                    ds.FillRoundedRectangle(gx, y + (h - 38) / 2, 38, 38, 13, 13, Gfx.WithAlpha(QsInk, 0.10));
+                    QsIcon(ds, it.Glyph, gx + 19, y + h / 2, 20, fg);
                     using var clip = ds.CreateLayer(1, new Windows.Foundation.Rect(x, y, w, h));
-                    bool armed = _qsArmed == it.Id;
-                    string title = armed ? (it.Id == "quit" ? "再按一次退出" : "再按一次") : it.Name;
-                    string sub = armed ? "未保存的进度会丢失" : it.Sub;
-                    QsTextC(ds, title, TextKit.Ui(600), 15, tx, sub.Length > 0 ? y + 21.85f : y + h / 2, fg);
+                    string sub = it.Sub;
+                    QsTextC(ds, it.Name, TextKit.Ui(600), 15, tx, sub.Length > 0 ? y + 21.85f : y + h / 2, fg);
                     // 小字一行放得下才写（放不下换短写法：「1 小时 5 分」→「1:05」），绝不截断
-                    if (sub.Length > 0 && !armed && QsTextW(ds, sub, TextKit.Num(400), 12) > x + w - 10 - tx && sub.Contains("小时"))
+                    if (sub.Length > 0 && QsTextW(ds, sub, TextKit.Num(400), 12) > x + w - 10 - tx && sub.Contains("小时"))
                     { var p = sub.Split(' '); sub = $"{p[0]}:{int.Parse(p[2]):00}"; }
-                    if (sub.Length > 0) QsTextC(ds, sub, TextKit.Num(400), 12, tx, y + 42.85f, armed ? Gfx.WithAlpha(QsBg, 0.7) : QsInk2);
+                    if (sub.Length > 0) QsTextC(ds, sub, TextKit.Num(400), 12, tx, y + 42.85f, QsInk2);
                 }
             }
             ds.Transform = t0;
@@ -1254,14 +1276,14 @@ public sealed partial class WallStage
             cont.Scale = new Vector3(2f / 3, 2f / 3, 1);
             solid.Opacity = 0;
             // 填充宽度跟着把手走（同一个弹簧，表达式在合成线程上算）
-            _qsSlide.Children.InsertAbove(fill, _qsRowsV);
-            _qsSlide.Children.InsertAbove(cont, fill);
+            _qsHome.Children.InsertAbove(fill, _qsRowsV);
+            _qsHome.Children.InsertAbove(cont, fill);
             _qsKnobs.Add(new QsKnob { Id = id, C = cont, Solid = solid, Hollow = hollow, Fill = fill });
         }
     }
 
     /// <summary>把手摆到当前值的位置（弹簧跟随，snap = 直接放过去）、焦点放大成实心带光晕（弹簧）。</summary>
-    private void QsKnobsUpdate(bool snap)
+    private void QsKnobsUpdate(bool snap, string? direct = null)
     {
         if (_qs == null) return;
         QsEnsureKnobs();
@@ -1279,7 +1301,7 @@ public sealed partial class WallStage
             kn.C.Opacity = it.Disabled ? 0.25f : 1;
             kn.Fill.Opacity = it.Disabled || muted ? 0 : 1;
             ((CompositionColorBrush)kn.Fill.Brush).Color = kn.Id == "tdp" || _qsFocusId == kn.Id ? QsInk : Gfx.WithAlpha(QsInk, 0.7);
-            if (snap || float.IsNaN(kn.Target.X) || Reduced)
+            if (snap || kn.Id == direct || float.IsNaN(kn.Target.X) || Reduced)
             {
                 kn.C.StopAnimation("Offset");
                 kn.C.Offset = target;
@@ -1306,6 +1328,7 @@ public sealed partial class WallStage
             }
         }
     }
+    private bool _networkWasAnimating;
     private int _qsAnimFrames, _qsAnimJanks;
     private long _qsAnimMax;
 
@@ -1332,6 +1355,12 @@ public sealed partial class WallStage
             _qsLayerWas[idx] = on;
             any |= on;
         }
+        if (_networkPage != null && (NetworkAnimating() || _networkWasAnimating))
+        {
+            _networkWasAnimating = NetworkAnimating();
+            NetworkPaint();
+            any |= _networkWasAnimating;
+        }
         if (any) return;
         Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= QsFrame;
         _qsTicking = false;
@@ -1343,6 +1372,7 @@ public sealed partial class WallStage
     {
         if (_qs == null) return;
         float k = QsK, dpi = Chrome.Dpi, H = QsViewH;
+        _qsNetworkClip.Size = new Vector2(QsW * k, H * k);
         _qsTopV.Offset = Vector3.Zero;
         _qsRowsV.Offset = new Vector3(0, QsRowsY * k, 0);
         _qsGridV.Offset = new Vector3(0, QsGridLY * k, 0);
@@ -1417,6 +1447,7 @@ public sealed partial class WallStage
     /// </summary>
     private void QsMove(Direction dir)
     {
+        if (_networkPage != null) { NetworkMove(dir); return; }
         string f = _qsFocusId;
         if (QsIsGrid(f)) { QsGridMove(dir); return; }
         if (dir is Direction.Up or Direction.Down)
@@ -1478,7 +1509,6 @@ public sealed partial class WallStage
         QsSync(); QsPaintLayer('g');
     }
 
-    /// <summary>LB / RB：亮度 ±5（面板开着时任何焦点都生效）。</summary>
     /// <summary>LB / RB：快设面板里没有别的键调节的功能（只有一页，没得翻）。</summary>
     internal void QsTab(int delta) => Cue(Sfx.Bump);
 
@@ -1488,12 +1518,8 @@ public sealed partial class WallStage
         if (!_qsOpen) return;
         var it = QsFind(which == "bri" ? "brightness" : "volume");
         if (it == null || it.Disabled) { Cue(Sfx.Bump); return; }
-        string path = it.Id;
-        double v = Math.Clamp(Math.Round(QsNum("system." + path) / 5) * 5 + d * 5, 0, 100);
-        if (_qsState?["system"] is JsonObject sys) { sys[path] = v; if (path == "volume") sys["muted"] = false; }
-        QsQueueTouchValue(path == "brightness" ? "set_brightness" : "set_volume", JsonValue.Create(v));
-        Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown);
-        QsBuild(); QsPaintLayer('r');
+        int value = (int)Math.Round(QsNum("system." + it.Id)) + d;
+        if (QsSetSlider(it.Id, Math.Clamp(value, 0, 100))) Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown);
     }
 
     private void QsHotMark(string which) { }   // 滑条行有焦点后不再单独点亮
@@ -1501,6 +1527,7 @@ public sealed partial class WallStage
     /// <summary>B：先取消确认、收起电源，再收起面板。</summary>
     private void QsBack()
     {
+        if (_networkPage != null) { NetworkBack(); return; }
         if (_qsArmed != null) { _qsArmed = null; Cue(Sfx.Back); QsSync(); QsPaintLayer('g'); return; }
         if (_qsPm) { QsClosePm(true); Cue(Sfx.Back); QsSync(); QsPaintLayer('g'); return; }
         CloseQuickPanel();
@@ -1638,6 +1665,7 @@ public sealed partial class WallStage
     }
     private void QsActivate()
     {
+        if (_networkPage != null) { NetworkActivate(); return; }
         string f = _qsFocusId;
         if (QsRowIds.Contains(f)) { QsAdjust(1); return; }
         if (f == "volume") { if (QsFind(f) is { Disabled: false }) QsToggleMute(); else Cue(Sfx.Bump); return; }
@@ -1662,8 +1690,8 @@ public sealed partial class WallStage
         Log.Info($"quick panel run {id}");
         switch (id)
         {
-            case "wifi": _ = QsRadio(RadioKind.WiFi); break;
-            case "bt": _ = QsRadio(RadioKind.Bluetooth); break;
+            case "wifi":
+            case "bt": NetworkEnter(id); break;
             case "air": _ = QsAirToggle(); break;
             case "vrr":
             {
@@ -1681,16 +1709,7 @@ public sealed partial class WallStage
                 break;
             case "shot":
             {
-                CloseQuickPanel();
-                nint game = _qsGame;
-                if (_qsUnderLibrary || _qsWin != null)
-                    After(_qsWin != null ? 350 : 500, async () =>
-                    {
-                        string? path = await CaptureScreenshotAsync(game);
-                        if (path == null) Toast(_shotNeedsPermission ? "截图没能保存：在游戏库里允许「屏幕截图」权限" : "截图没能保存");
-                        else { Cue(Sfx.Shutter); Toast("已截图"); }
-                    });
-                else After(500, () => _ = QsCall("截图", "screenshot"));
+                _ = QsTakeScreenshot();
                 break;
             }
             case "kbd":
@@ -1739,9 +1758,10 @@ public sealed partial class WallStage
                 if (_qsWin != null) (_window as MainWindow)?.KeepLibraryAfterSurface();
                 break;
             case "quit":
-                if (_game is { } g) QuitGame(g);
-                else if (_qsGame != 0) PostMessageQs(_qsGame, 0x0010, 0, 0);   // WM_CLOSE：像点右上角 × 一样请游戏自己关
-                CloseQuickPanel(hideWindow: false);
+                var target = _qsGame;
+                CloseQuickPanel(hideWindow: false, instant: true);
+                if (_game is { } g && (target == 0 || IsGameWindow(g, target))) _ = ForceQuitAsync(g);
+                else if (target != 0) _ = EndForegroundGameAsync(target);
                 break;
         }
     }
@@ -1753,26 +1773,34 @@ public sealed partial class WallStage
         if (_qsOpen) QsRebuild();
     }
 
-    private async Task QsRadio(RadioKind kind)
+    private async Task QsRadio(RadioKind kind, bool? desired = null)
     {
         string name = kind == RadioKind.WiFi ? "Wi-Fi" : "蓝牙";
+        bool? before = desired.HasValue ? !desired.Value : kind == RadioKind.WiFi ? _qsWifi : _qsBt;
+        bool success = false;
         try
         {
             if (await Radio.RequestAccessAsync() != RadioAccessStatus.Allowed) { QsFlash($"{name}没有切换：没有权限"); return; }
             foreach (var r in await Radio.GetRadiosAsync())
             {
                 if (r.Kind != kind) continue;
-                bool on = r.State != RadioState.On;
+                bool on = desired ?? (r.State != RadioState.On);
                 if (kind == RadioKind.WiFi) _qsWifi = on; else _qsBt = on;
                 if (on) _qsAir = false;
                 Cue(on ? Sfx.ToggleOn : Sfx.ToggleOff);
                 QsRebuild();
                 var result = await r.SetStateAsync(on ? RadioState.On : RadioState.Off);
-                if (result != RadioAccessStatus.Allowed) QsFlash($"{name}没有切换");
+                success = result == RadioAccessStatus.Allowed;
+                if (!success) QsFlash($"{name}没有切换");
                 break;
             }
         }
         catch (Exception ex) { QsFlash($"{name}没有切换：{ex.Message}"); }
+        finally
+        {
+            if (!success) { if (kind == RadioKind.WiFi) _qsWifi = before; else _qsBt = before; }
+            if (_qsOpen) QsRebuild();
+        }
         _ = QsRefresh(_qsVersion);
     }
 
@@ -1821,6 +1849,7 @@ public sealed partial class WallStage
     {
         float k = QsK;
         double x = sx / k, y = sy / k;
+        if (_networkPage != null) { NetworkClick((float)x, (float)y); return; }
         if (x > QsW) { CloseQuickPanel(); return; }   // 点到游戏那边 = 收起
         var it = QsItemAt(x, y);
         if (it == null || it.Disabled) return;
@@ -1853,7 +1882,7 @@ public sealed partial class WallStage
         if (_qsState?["system"] is JsonObject s2) s2["muted"] = m;
         Cue(m ? Sfx.ToggleOff : Sfx.ToggleOn);
         QsQueueTouchValue("set_mute", JsonValue.Create(m));
-        QsBuild(); QsPaintLayer('r');
+        QsBuild(); QsKnobsUpdate(false, "volume"); QsPaintLayer('r');
     }
 
     /// <summary>触控：功耗按整条轨道，亮度 / 音量按各自的细轨道。</summary>
@@ -1865,9 +1894,8 @@ public sealed partial class WallStage
         if (it.Disabled) return;
         if (it.Id is "brightness" or "volume")
         {
-            double v = Math.Round(level * 20) * 5;
-            if (_qsState?["system"] is JsonObject sys) { sys[it.Id] = v; if (it.Id == "volume") sys["muted"] = false; }
-            QsQueueTouchValue(it.Id == "volume" ? "set_volume" : "set_brightness", JsonValue.Create(v));
+            QsSetSlider(it.Id, (int)Math.Round(level * 100));
+            return;
         }
         else if (it.Id == "tdp" && _qsDraft != null)
         {
@@ -1876,7 +1904,21 @@ public sealed partial class WallStage
             QsSetTdp(v);
             QsQueueTouchValue("save_power", _qsDraft.DeepClone());
         }
-        QsBuild(); QsPaintLayer('t'); QsPaintLayer('r');
+        QsBuild(); QsPaintLayer('t');
+    }
+
+    private bool QsSetSlider(string id, int value)
+    {
+        if (_qsState?["system"] is not JsonObject sys) return false;
+        bool unmute = id == "volume" && Bool(sys["muted"]);
+        if (QsNum("system." + id) == value && !unmute) return false;
+        sys[id] = value;
+        if (unmute) sys["muted"] = false;
+        QsQueueTouchValue(id == "volume" ? "set_volume" : "set_brightness", JsonValue.Create(value));
+        QsBuild();
+        QsKnobsUpdate(false, id);
+        QsPaintLayer('r');
+        return true;
     }
 
     private SettingsWriteQueue? _qsTouchWrites;
@@ -1907,6 +1949,10 @@ public sealed partial class WallStage
         float k = QsK;
         return QsItemAt(sx / k, sy / k);
     }
+
+    private string? QsDirectSliderAt(double x, double y) =>
+        _networkPage == null && QsItemAt(x, y) is { Kind: QsKind.Slider, Disabled: false } item &&
+        (item.Id != "volume" || x >= item.X) ? item.Id : null;
 
     private void QsTouchDrag(string id, double sx)
     {
@@ -1998,12 +2044,11 @@ public sealed partial class WallStage
     [StructLayout(LayoutKind.Sequential)] private struct QsMonInfo { public int Size; public QsRect Monitor, Work; public uint Flags; }
     [StructLayout(LayoutKind.Sequential)] private struct QsPowerStatus { public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag; public uint BatteryLifeTime, BatteryFullLifeTime; }
     [DllImport("user32.dll")] private static extern bool GetWindowRect(nint hwnd, out QsRect r);
-    [DllImport("user32.dll", EntryPoint = "PostMessageW")] private static extern bool PostMessageQs(nint hwnd, uint msg, nint wp, nint lp);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(nint monitor, ref QsMonInfo info);
     [DllImport("user32.dll")] private static extern bool SetWindowDisplayAffinity(nint hwnd, uint affinity);
     [DllImport("kernel32.dll")] private static extern bool GetSystemPowerStatus(out QsPowerStatus s);
     [DllImport("user32.dll", EntryPoint = "GetWindowThreadProcessId")] private static extern uint GetWindowThreadProcessIdQs(nint hwnd, out uint pid);
-    [DllImport("kernel32.dll", EntryPoint = "OpenProcess")] private static extern nint OpenProcessQs(uint access, bool inherit, uint pid);
+    [DllImport("kernel32.dll", EntryPoint = "OpenProcess", SetLastError = true)] private static extern nint OpenProcessQs(uint access, bool inherit, uint pid);
     [DllImport("kernel32.dll", EntryPoint = "CloseHandle")] private static extern bool CloseHandleQs(nint h);
     [DllImport("kernel32.dll")] private static extern bool GetProcessTimes(nint p, out long creation, out long exit, out long kernel, out long user);
 }

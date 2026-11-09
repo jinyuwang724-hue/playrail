@@ -28,8 +28,17 @@ _sleep_spec = importlib.util.spec_from_file_location("claw_power_sleep", Path(__
 _sleep_module = importlib.util.module_from_spec(_sleep_spec)
 _sleep_spec.loader.exec_module(_sleep_module)
 
-# Intel rates the Arc G3 Extreme for 8-35 W.
+def _supports_screensaver_tdp():
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
+            name = winreg.QueryValueEx(key, "ProcessorNameString")[0]
+    except OSError:
+        return False
+    return isinstance(name, str) and "arc(tm) g3 extreme" in name.casefold()
+
+
 TDP_MIN, TDP_MAX = 8, 35
+SCREENSAVER_TDP, SCREENSAVER_LEASE = 6, 12
 BOOST_MAX = 15
 TICK = 1.0
 # Every cap a saved setting may hold (older versions offered up to 5 GHz).
@@ -87,16 +96,22 @@ def _int(value, low, high, name):
     return value
 
 
-def _profile(value, name):
+def _tdp(value, name, saved=False):
+    if saved and type(value) is int and 3 <= value < TDP_MIN:
+        return TDP_MIN
+    return _int(value, TDP_MIN, TDP_MAX, name)
+
+
+def _profile(value, name, saved=False):
     if not isinstance(value, dict):
         raise ValueError(f"{name}格式错误")
     freq = value.get("freq")
     if freq not in FREQ_CHOICES:
         raise ValueError(f"{name}频率无效")
-    return {"tdp": _int(value.get("tdp"), TDP_MIN, TDP_MAX, f"{name}功耗"), "freq": freq}
+    return {"tdp": _tdp(value.get("tdp"), f"{name}功耗", saved), "freq": freq}
 
 
-def validate(value):
+def validate(value, *, saved=False):
     if not isinstance(value, dict) or type(value.get("enabled")) is not bool or value.get("mode") not in ("auto", "manual", "smart", "autotdp"):
         raise ValueError("功耗设置格式错误")
     # Old clients/saved Intel selections migrate to AutoTDP; they can no longer enable Intel policy.
@@ -106,7 +121,7 @@ def validate(value):
         raise ValueError("Auto 功耗设置格式错误")
     auto = {**DEFAULTS["autotdp"], **auto}
     auto = {"target": _int(auto["target"], 20, 240, "目标帧率"),
-            **{k: _int(auto[k], TDP_MIN, TDP_MAX, "Auto 功耗") for k in ("floor", "acMax", "dcMax")}}
+            **{k: _tdp(auto[k], "Auto 功耗", saved) for k in ("floor", "acMax", "dcMax")}}
     if auto["floor"] > min(auto["acMax"], auto["dcMax"]):
         raise ValueError("Auto 功耗下限不能高于插电或电池上限")
     osd = {**DEFAULTS["osd"], **(value.get("osd") or {})}  # 0.14.0 had per-item switches instead
@@ -118,9 +133,9 @@ def validate(value):
     if not isinstance(quick, list) or len(quick) != 3:
         raise ValueError("快捷档位格式错误")
     return {"enabled": value["enabled"], "mode": mode, "boost": _int(value.get("boost"), 0, BOOST_MAX, "短时加成"),
-            "quick": [_int(q, TDP_MIN, TDP_MAX, "快捷档位") for q in quick],
-            "ac": _profile(value.get("ac"), "插电"), "dc": _profile(value.get("dc"), "电池"),
-            "manual": _profile(value.get("manual"), "手动"), "autotdp": auto,
+            "quick": [_tdp(q, "快捷档位", saved) for q in quick],
+            "ac": _profile(value.get("ac"), "插电", saved), "dc": _profile(value.get("dc"), "电池", saved),
+            "manual": _profile(value.get("manual"), "手动", saved), "autotdp": auto,
             "osd": osd, "fan": _fan(value.get("fan"))}
 
 
@@ -549,7 +564,7 @@ class PowerControl:
         self.settings = json.loads(json.dumps(DEFAULTS))
         self.error = ""
         try:
-            self.settings = validate({**DEFAULTS, **json.loads(self.path.read_text(encoding="utf-8"))})
+            self.settings = validate({**DEFAULTS, **json.loads(self.path.read_text(encoding="utf-8"))}, saved=True)
         except FileNotFoundError:
             pass
         except (OSError, ValueError) as e:
@@ -602,6 +617,9 @@ class PowerControl:
         self.osd = {}
         self.osd_text = ""
         self.policy_lock = asyncio.Lock()
+        self.screensaver_supported = _supports_screensaver_tdp()
+        self.screensaver_until = 0.0
+        self.screensaver_backup = self.data / "screensaver-power.txt"
         self.endurance = _endurance_module.IntelEndurance(self._call, self.data, None)  # recovery only
         self.last_game = None
         self.auto_governor = _auto_module.AutoTDPGovernor()
@@ -651,6 +669,8 @@ class PowerControl:
                 return reply.get("fan") or {}
             if command == "fan_probe":
                 return reply.get("fanProbe") or {}
+            if command == "lossless_control":
+                return reply.get("lossless") or {}
             if command in ("thermal", "osd", "stats", "osd_zoom", "osd_height", "osd_font", "rtss_app", "gpu"):
                 return reply.get(command) or {}
             if command in ("sys_read", "brightness_set", "volume_set", "mute_set", "refresh_set", "fps_limit_set",
@@ -707,6 +727,49 @@ class PowerControl:
                 process.kill()
 
     # ---- policy -------------------------------------------------------------
+    def _screensaver_wanted(self):
+        return not self.charger and time.monotonic() < self.screensaver_until
+
+    async def set_screensaver_power(self, active):
+        if type(active) is not bool:
+            raise ValueError("屏保功耗状态无效")
+        async with self.policy_lock:
+            if self.closing:
+                return False
+            self.charger = on_charger()
+            self.screensaver_until = time.monotonic() + SCREENSAVER_LEASE if (
+                active and self.screensaver_supported and not self.charger) else 0.0
+            return await self._sync_screensaver_power()
+
+    async def _sync_screensaver_power(self, *, resume=True):
+        wanted = self._screensaver_wanted()
+        has_backup = self.screensaver_backup.exists()
+        if not wanted and not has_backup:
+            return False
+        power = await self._call("read")
+        at_limit = power.get("pl1") == power.get("pl2") == SCREENSAVER_TDP
+        if wanted:
+            if not has_backup:
+                raw = power.get("raw")
+                if not raw:
+                    raise RuntimeError("无法读取进入屏保前的功耗")
+                temp = self.screensaver_backup.with_suffix(".tmp")
+                temp.write_text(raw, encoding="ascii")
+                os.replace(temp, self.screensaver_backup)
+            if not at_limit or power.get("pl1Enabled") is False or power.get("pl2Enabled") is False:
+                power = await self._call("set_tdp", pl1=SCREENSAVER_TDP, pl2=SCREENSAVER_TDP)
+                if power.get("pl1") != SCREENSAVER_TDP or power.get("pl2") != SCREENSAVER_TDP:
+                    raise RuntimeError("屏保功耗回读不是 6 W")
+        else:
+            # After a reboot or an external write, leave the current register alone.
+            if at_limit:
+                raw = self.screensaver_backup.read_text(encoding="ascii")
+                await self._call("restore_tdp", raw=raw)
+            self.screensaver_backup.unlink()
+            if resume and self.settings["enabled"]:
+                await self._apply(force=True)
+        return wanted
+
     def target(self):
         s = self.settings
         if s["mode"] == "autotdp":
@@ -738,6 +801,8 @@ class PowerControl:
         os.replace(temp, self.backup_path)
 
     async def _apply(self, force=False):
+        if self._screensaver_wanted():
+            return
         if self.settings["mode"] != "autotdp":
             await self._release_auto()
         await self.endurance.release()
@@ -854,13 +919,14 @@ class PowerControl:
                 if osd_on:
                     await self._osd_tick(tick, self.auto_state if self.settings["enabled"] and self.settings["mode"] == "autotdp" else None)
                 async with self.policy_lock:
-                    if self.settings["enabled"]:
+                    screensaver = await self._sync_screensaver_power()
+                    if not screensaver and self.settings["enabled"]:
                         await self._call("read")
                         if self.settings["mode"] == "autotdp":
                             await self._auto_tick()
                         elif tick % 3 == 0:
                             await self._apply()
-                    else:
+                    elif not screensaver:
                         await self._release_auto(restore_driver=True)
                         await self.endurance.release(restore_driver=True)
                     if self.error:
@@ -883,19 +949,23 @@ class PowerControl:
         """
         candidate = await asyncio.to_thread(foreground_game)
         previous = getattr(self, "sleep_game", None)
+        previous_identity = getattr(self, "sleep_game_identity", None)
         if previous:
-            names = await asyncio.to_thread(process_names)
-            if names.get(previous[0]) != previous[1]:
-                previous = None
+            process = await asyncio.to_thread(self.close_target.probe.process, previous[0])
+            if not process or f"{process['pid']}:{process['created']}" != previous_identity:
+                previous = previous_identity = None
         if candidate and candidate != previous:
+            process = await asyncio.to_thread(self.close_target.probe.process, candidate[0])
             rtss = await self._call("rtss_app", pid=candidate[0])
             rendering = (rtss.get("fps") or 0) > 0
             if not rendering:
                 frames = await self._call("frames", pid=candidate[0])
                 rendering = frames.get("pid") == candidate[0] and any((c.get("presentedFps") or 0) > 0 for c in frames.get("swapChains") or [])
-            if rendering:
+            if rendering and process and process["exe"] == candidate[1]:
                 previous = candidate
+                previous_identity = f"{process['pid']}:{process['created']}"
         self.sleep_game = previous
+        self.sleep_game_identity = previous_identity
         try:
             await _sleep_module.set_game(previous[0] if previous else 0)
         except (OSError, RuntimeError):
@@ -1503,6 +1573,8 @@ class PowerControl:
             return await self._restore_locked()
 
     async def _restore_locked(self):
+        self.screensaver_until = 0.0
+        await self._sync_screensaver_power(resume=False)
         await self._release_auto(restore_driver=True)
         await self.endurance.release(restore_driver=True)
         if not self.backup_path.exists():
@@ -1533,6 +1605,8 @@ class PowerControl:
             except asyncio.CancelledError:
                 pass
         try:
+            self.screensaver_until = 0.0
+            await self._sync_screensaver_power(resume=False)
             await self._release_auto(restore_driver=True)
             await self.endurance.release(restore_driver=True)
         except Exception:

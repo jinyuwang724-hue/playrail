@@ -5,13 +5,14 @@
 #include <deque>
 #include <functional>
 #include <map>
+#include <memory>
 
 namespace claw
 {
     using winrt::Windows::Data::Json::IJsonValue;
     using winrt::Windows::Data::Json::JsonArray;
 
-    class Agent
+    class Agent : public std::enable_shared_from_this<Agent>
     {
     public:
         using Reply = std::function<void(IJsonValue const& result, winrt::hstring const& error)>;
@@ -23,6 +24,7 @@ namespace claw
 
         bool Ready() const { return m_ready; }
         void Connect();
+        void Shutdown();
         // Queued while not connected; sent once the connection is up.
         void Call(std::wstring const& method, JsonArray const& args = JsonArray(), Reply reply = nullptr);
 
@@ -36,7 +38,7 @@ namespace claw
         winrt::Windows::Networking::Sockets::MessageWebSocket m_socket{ nullptr };
         winrt::Windows::Storage::Streams::DataWriter m_writer{ nullptr };
         winrt::hstring m_token;
-        bool m_ready = false, m_connecting = false, m_pumping = false;
+        bool m_ready = false, m_connecting = false, m_pumping = false, m_stopped = false;
         int m_sequence = 0;
         std::map<int, Reply> m_pending;
         std::deque<winrt::hstring> m_outbox;  // serialized: DataWriter allows one StoreAsync at a time

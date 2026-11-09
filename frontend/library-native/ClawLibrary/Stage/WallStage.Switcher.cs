@@ -38,6 +38,7 @@ public sealed partial class WallStage
     private readonly List<WsCard> _wsCards = new();
     private bool _wsOpen, _wsTicking, _wsStandalone, _wsFromShortcut, _wsPending;
     private int _wsFocus, _wsVersion;
+    private long _wsLibraryConfirmUntil;
     /// <summary>横向滚动（设计 px）与进出场进度（0 = 没出来，1 = 到位）：当前值 → 目标值逐帧趋近。</summary>
     private float _wsScroll, _wsScrollTo, _wsShow, _wsShowTo;
     private long _wsFrameAt;
@@ -400,14 +401,14 @@ public sealed partial class WallStage
     {
         if (_wsFocus >= _wsCards.Count) return;
         var w = _wsCards[_wsFocus].Win;
-        if (WsIsSelf(w)) { WsToLibrary(); return; }
+        if (WsIsSelf(w)) { _ = WsToLibrary(); return; }
         if (!OpenWindows.Matches(w)) { WsPollTick(_wsPoll!, EventArgs.Empty); return; }
         _wsFromShortcut = false;
         // 卡片沉下去的同时，选中的窗口按原位淡进来，淡满了再真的切过去；控制中心在游戏库里悄悄收起
         CloseSwitcher();
-        RevealWindowThen(w.Hwnd, () =>
+        RevealWindowThen(w.Hwnd, async () =>
         {
-            bool ok = (_window as MainWindow)?.SwitchToWindow(w) == true;
+            bool ok = _window is MainWindow main && await main.SwitchToWindow(w);
             Log.Info($"switch to {w.Process} hwnd={w.Hwnd} foreground={ok}");
             if (!ok) { Cue(Sfx.Error); Toast("没能切过去，请再次长按快设重试"); return; }
             if (_ccOpen) CloseControlCenter();
@@ -447,13 +448,17 @@ public sealed partial class WallStage
     }
 
     /// <summary>选了游戏库：卡片沉下去，控制中心形变回墙，游戏库留在前台（盖在程序上唤出的也不再回那个程序）。</summary>
-    private void WsToLibrary()
+    private async Task WsToLibrary()
     {
+        // Focus activation can dispatch a second confirm before the switcher has settled.
+        _wsLibraryConfirmUntil = NowMs + 180;
+        if (_game != null) BrowseFromNowPlaying();
         _wsFromShortcut = _wsStandalone = false;
         CloseSwitcher();
-        (_window as MainWindow)?.KeepLibraryAfterSurface();
         if (_ccOpen) CloseControlCenter();
-        Log.Info("switch to library");
+        bool ok = _window is MainWindow main && await main.KeepLibraryAfterSurface();
+        Log.Info($"switch to library foreground={ok}");
+        if (!ok) { Cue(Sfx.Error); Toast("没能切回游戏库，请再试一次"); }
     }
 
     internal bool SwitcherBusy => _wsOpen || _wsPending;

@@ -26,7 +26,9 @@ if ($common) {
         "payload: filled missing files from $mainPayload"
     }
 }
-$required = 'shell\ClawShell.exe', 'session\ClawGameSession.exe', 'pawnio\PawnIO_setup.exe', 'agent\agent.zip', 'fan\ClawFanService.exe'
+$required = 'shell\ClawShell.exe', 'session\ClawGameSession.exe', 'Install-Components.ps1', 'pawnio\PawnIO_setup.exe',
+    'agent\agent.zip', 'agent\version.txt', 'fan\ClawFanService.exe', 'fan\IntelMSR.bin',
+    'sleep\Install-SleepAnimation.ps1', 'sleep\app\ClawSleepAnimation.exe', 'sleep\app\enhanced-bundle.json'
 $missing = @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $payload $_)) })
 if (-not (Get-ChildItem -LiteralPath (Join-Path $payload 'widget') -Filter *.msix -ErrorAction SilentlyContinue)) { $missing += 'widget\*.msix' }
 if ($missing.Count) { throw "Payload incomplete, not packaging (run tools\Stage-OobePayload.ps1): $($missing -join ', ')" }
@@ -49,7 +51,15 @@ if ($Install) {
     # Upgrade in place so LocalState, art kits and user preferences survive. Increment the
     # manifest version for a new build; never uninstall the package to bypass version checks.
     Add-AppxPackage -Path $msix.FullName -ForceApplicationShutdown
-    Get-AppxPackage ClawToolbox.Library | Select-Object Name, Version, PackageFamilyName
+    $installed = Get-AppxPackage ClawToolbox.Library
+    $installed | Select-Object Name, Version, PackageFamilyName
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $homePath = Join-Path $env:LOCALAPPDATA 'ClawToolbox'
+    $installer = Join-Path $installed.InstallLocation 'Payload\Install-Components.ps1'
+    $run = [guid]::NewGuid().ToString('N')
+    $arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}" -AgentHome "{1}" -User "{2}" -UserSid {3} -Run {4}' -f $installer, $homePath, $identity.Name, $identity.User.Value, $run
+    $process = Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList $arguments -WindowStyle Hidden -PassThru -Wait
+    if ($process.ExitCode -ne 0) { throw "Backend setup failed ($($process.ExitCode)). See $homePath\setup\status-$run.json." }
 }
 
 

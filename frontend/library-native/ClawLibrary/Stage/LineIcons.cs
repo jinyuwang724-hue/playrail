@@ -71,6 +71,10 @@ public static class LineIcons
         Paths["qam.restart"] = "M4 12a8 8 0 1 0 2.4-5.7 M4 4v4.5h4.5";
         Paths["qam.off"] = "M12 3v8 M6.3 6.8a8 8 0 1 0 11.4 0";
         Paths["qam.wifi"] = "M2.5 9a14 14 0 0 1 19 0 M5.5 12.5a9.5 9.5 0 0 1 13 0 M8.7 16a5 5 0 0 1 6.6 0 M12 19.5h.01";
+        Paths["qam.lock"] = "M6 11h12v10H6z M8 11V7a4 4 0 0 1 8 0v4";
+        Paths["qam.eye"] = "M2 12c5-9 15-9 20 0-5 9-15 9-20 0z M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z";
+        Paths["qam.headphones"] = "M4 14V11a8 8 0 0 1 16 0v3 M4 13h4v7H4z M16 13h4v7h-4z";
+        Paths["qam.speaker"] = "M6 3h12v18H6z M12 8h.01 M15 15a3 3 0 1 1-6 0 3 3 0 0 1 6 0z";
         Paths["qam.bt"] = "M7 7l10 10-5 4V3l5 4L7 17";
         Paths["qam.pad"] = "M7 9h3 M8.5 7.5v3 M15 8.5h.01 M17 10.5h.01 M6.5 5h11a4 4 0 0 1 4 4.2l-.6 6.3a2.8 2.8 0 0 1-5 1.4L14.3 15H9.7l-1.6 1.9a2.8 2.8 0 0 1-5-1.4l-.6-6.3A4 4 0 0 1 6.5 5z";
         Paths["qam.mouse"] = "M12 3a6 6 0 0 1 6 6v6a6 6 0 0 1-12 0V9a6 6 0 0 1 6-6z M12 7v3";

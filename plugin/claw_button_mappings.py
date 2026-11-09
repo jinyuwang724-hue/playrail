@@ -36,6 +36,18 @@ def selected(settings, source, steam):
     return {"type": "system", "action": LEGACY_ACTIONS[action]} if action in LEGACY_ACTIONS else {"type": "none"}
 
 
+def desktop_quick_settings_hold(event):
+    if not event or event.get("type") != "mapped_action" or event.get("source") != "QS" \
+            or event.get("scope") != "general" or event.get("gameMode") is True:
+        return False
+    command = event.get("command")
+    if not isinstance(command, dict) or command.get("type") != "system" or command.get("action") != "gamebar":
+        return False
+    # Older routers labeled the keyboard copy "short" and left the WMI copy
+    # unlabeled. A physical desktop tap uses desktop_gamebar_input instead.
+    return event.get("gesture") in (None, "short", "long")
+
+
 def toolbox_route(action, event, steam_mode, context):
     target = "control-center" if action == "controlCenter" else "library"
     eligible = event.get("source") == "Claw" and event.get("scope") in ("general", "steam")
@@ -105,15 +117,18 @@ def activate_toolbox(route, context):
     os.startfile("claw-library://" + route + "?returnWindow=" + str(context.get("foregroundWindow", 0)))
 
 
-def toolbox_context():
-    """Capture foreground BEFORE protocol activation can move focus to the library."""
-    result = {"xboxFse": None, "foregroundLibrary": False, "foregroundWindow": 0}
+def xbox_fse_active():
     try:
         query = ctypes.WinDLL("api-ms-win-gaming-experience-l1-1-0.dll").IsGamingFullScreenExperienceActive
         query.argtypes, query.restype = [], wintypes.BOOL
-        result["xboxFse"] = bool(query())
+        return bool(query())
     except (OSError, AttributeError):
-        pass  # Unknown platform state keeps the existing open-only behavior.
+        return None
+
+
+def toolbox_context():
+    """Capture foreground BEFORE protocol activation can move focus to the library."""
+    result = {"xboxFse": xbox_fse_active(), "foregroundLibrary": False, "foregroundWindow": 0}
     try:
         user, kernel = ctypes.WinDLL("user32", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
         user.GetForegroundWindow.argtypes, user.GetForegroundWindow.restype = [], wintypes.HWND

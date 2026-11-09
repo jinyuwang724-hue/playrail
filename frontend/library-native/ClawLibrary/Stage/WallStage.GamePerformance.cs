@@ -17,6 +17,7 @@ public sealed partial class WallStage
         if (Str(pw?["exe"]) == null) { _stRows.Add(StInfo("功耗配置档", noExe)); return; }
         var profile = pw?["profile"] as JsonObject ?? new JsonObject { ["mode"] = "global" };
         var defaults = pw?["defaults"] as JsonObject;
+        int tdpMin = Int(pw?["tdpMin"], 8), tdpMax = Int(pw?["tdpMax"], 35);
         string[] modes = { "global", "manual", "auto", "autotdp" };
         int mi = Math.Max(0, Array.IndexOf(modes, Str(profile["mode"])));
         JsonObject Copy() => (JsonObject)profile.DeepClone();
@@ -44,7 +45,7 @@ public sealed partial class WallStage
         }
         if (mi == 1)
         {
-            _stRows.Add(StNumber("功耗", Int(profile["tdp"], 20), 8, 35, 1, n => $"{n} W", n => Change("tdp", JsonValue.Create(n)), 20));
+            _stRows.Add(StNumber("功耗", Int(profile["tdp"], 20), tdpMin, tdpMax, 1, n => $"{n} W", n => Change("tdp", JsonValue.Create(n)), 20));
             Frequency("CPU 频率上限", profile, GsPower);
         }
         if (mi == 2)
@@ -52,7 +53,7 @@ public sealed partial class WallStage
             {
                 string label = key == "ac" ? "插电" : "电池";
                 var part = profile[key] as JsonObject ?? PowerDefault(key, key == "ac" ? 35 : 25);
-                _stRows.Add(StNumber(label + "功耗", Int(part["tdp"], 20), 8, 35, 1, n => $"{n} W", n =>
+                _stRows.Add(StNumber(label + "功耗", Int(part["tdp"], 20), tdpMin, tdpMax, 1, n => $"{n} W", n =>
                 { var p = (JsonObject)part.DeepClone(); p["tdp"] = n; Change(key, p); }, key == "ac" ? 35 : 25));
                 Frequency(label + " CPU 频率上限", part, p => Change(key, p));
             }
@@ -62,9 +63,9 @@ public sealed partial class WallStage
             int floor = Int(profile["floor"], Int(d["floor"], 12));
             int ac = Int(profile["acMax"], Int(d["acMax"], 35)), dc = Int(profile["dcMax"], Int(d["dcMax"], 25));
             _stRows.Add(StNumber("目标帧率", Int(profile["target"], Int(d["target"], 60)), 20, 240, 1, n => $"{n} FPS", n => Change("target", JsonValue.Create(n)), 60));
-            _stRows.Add(StNumber("功耗下限", floor, 8, Math.Min(ac, dc), 1, n => $"{n} W", n => Change("floor", JsonValue.Create(n)), Math.Clamp(12, 8, Math.Min(ac, dc))));
-            _stRows.Add(StNumber("插电功耗上限", ac, floor, 35, 1, n => $"{n} W", n => Change("acMax", JsonValue.Create(n)), 35));
-            _stRows.Add(StNumber("电池功耗上限", dc, floor, 35, 1, n => $"{n} W", n => Change("dcMax", JsonValue.Create(n)), Math.Max(floor, 25)));
+            _stRows.Add(StNumber("功耗下限", floor, tdpMin, Math.Min(ac, dc), 1, n => $"{n} W", n => Change("floor", JsonValue.Create(n)), Math.Clamp(12, tdpMin, Math.Min(ac, dc))));
+            _stRows.Add(StNumber("插电功耗上限", ac, floor, tdpMax, 1, n => $"{n} W", n => Change("acMax", JsonValue.Create(n)), tdpMax));
+            _stRows.Add(StNumber("电池功耗上限", dc, floor, tdpMax, 1, n => $"{n} W", n => Change("dcMax", JsonValue.Create(n)), Math.Max(floor, 25)));
         }
         if (mi > 0)
         {

@@ -1,9 +1,10 @@
 # Builds and signs the Game Bar widget package (artifacts\gamebar-signing\ClawWidget.msix).
 # Signing uses the CN=ClawToolbox certificate in CurrentUser\My; the device must trust it (TrustedPeople).
+param([string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $packages = Join-Path $env:USERPROFILE '.nuget\packages'
-$out = Join-Path $root 'artifacts\gamebar-widget'
+$out = if ($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $root 'artifacts\gamebar-widget' }
 $properties = @('/p:Configuration=Release','/p:Platform=x64','/p:AppxBundle=Never',
     "/p:CPPWINRT_DIR=$packages\microsoft.windows.cppwinrt\2.0.250303.1",
     "/p:GAMEBAR_DIR=$(Join-Path $root 'artifacts\nuget-gamebar\pkg')",
@@ -15,7 +16,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Widget build failed.' }
 $version = ([xml](Get-Content -LiteralPath (Join-Path $root 'native\GameBarWidget\Package.appxmanifest') -Raw)).Package.Identity.Version
 $msix = Get-ChildItem (Join-Path $out 'bin\ClawWidget') -Recurse -Filter ("ClawWidget_{0}_x64.msix" -f $version) | Sort-Object LastWriteTime | Select-Object -Last 1
 if (-not $msix) { throw "Widget package $version not found." }
-$signed = Join-Path $root 'artifacts\gamebar-signing\ClawWidget.msix'
+$signed = if ($OutputDirectory) { Join-Path $out "ClawWidget-$version.msix" } else { Join-Path $root 'artifacts\gamebar-signing\ClawWidget.msix' }
 New-Item -ItemType Directory -Force (Split-Path -Parent $signed) | Out-Null
 Copy-Item $msix.FullName $signed -Force
 $cert = Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq 'CN=ClawToolbox' } | Select-Object -First 1

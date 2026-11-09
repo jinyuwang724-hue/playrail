@@ -1,4 +1,4 @@
-﻿// ClawShell.exe：游戏模式的外壳启动器。极小、只用 .NET Framework、不依赖工具箱后台。
+// ClawShell.exe：游戏模式的外壳启动器。极小、只用 .NET Framework、不依赖工具箱后台。
 //
 //   shell                    Winlogon 外壳（HKCU Winlogon Shell）。开机检查强制桌面，拉起游戏库并一直看着它。
 //   watch                    登录项里的监视进程：桌面登录时也在，负责手柄 视图+菜单 切换和游戏模式下的崩溃保护。
@@ -22,7 +22,7 @@ namespace ClawShell
 {
     public static class Program
     {
-        public const string Version = "1.0.9";
+        public const string Version = "1.0.18";
         private static WindowsShellSystem _sys;
         private static string _verb = "";
 
@@ -31,6 +31,12 @@ namespace ClawShell
         {
             _verb = args.Length > 0 ? args[0].ToLowerInvariant() : "";
             args = args.Where(a => a.Length > 0).ToArray();
+            if (_verb == "edge-apply") return WindowsShellSystem.ApplyEdgeSwipe(args);
+            if (_verb == "preview-mode" && args.Length == 2 && (args[1] == "game" || args[1] == "desktop"))
+            {
+                using (ModeTransition.Show(args[1] == "game")) Thread.Sleep(900);
+                return 0;
+            }
             _sys = new WindowsShellSystem();
             AppDomain.CurrentDomain.UnhandledException += (s, e) =>
             {
@@ -61,7 +67,19 @@ namespace ClawShell
         private static int Run(string[] args)
         {
             // 游戏库总是带 --task 调用：经计划任务跑一份完全在包外的（应用包身份检测不可靠，见 Hop）
-            if ((args.Contains("--task") || WindowsShellSystem.InPackage()) && !args.Contains("--hop")) return Hop(args.Where(a => a != "--task").ToArray());
+            if ((args.Contains("--task") || WindowsShellSystem.InPackage()) && !args.Contains("--hop"))
+            {
+                var forwarded = args.Where(a => a != "--task");
+                // Paint while the scheduled task starts. The task does the shell work and never opens a second overlay.
+                bool modeSwitch = _verb == "to-game" || _verb == "to-desktop";
+                using (var transition = modeSwitch ? _sys.BeginModeTransition(_verb == "to-game", false) : null)
+                {
+                    if (transition != null) forwarded = forwarded.Concat(new[] { "--external-transition" });
+                    int result = Hop(forwarded.ToArray());
+                    if (result == 0 && transition != null) transition.Complete();
+                    return result;
+                }
+            }
             if (_verb != "shell" && _verb != "watch")
             {
                 try { _sys.InstallSelf(); } catch (Exception ex) { _sys.Log("install self: " + ex.Message); }
@@ -86,14 +104,19 @@ namespace ClawShell
                     var mutex = new Mutex(true, WindowsShellSystem.SupervisorMutex, out owner);
                     if (!owner) return 0;
                     _sys.Log("watch start " + Version);
+                    if (_sys.ExplorerRunning() && !WindowsShellSystem.HasEdgeSwipeSession())
+                    {
+                        _sys.WriteState("desktop", "watch-start");
+                        _sys.ShowDesktopUi();
+                    }
                     guard.Supervise(() => true);
                     GC.KeepAlive(mutex);
                     return 0;
                 }
                 case "set-covered": _sys.SetCoverWanted(args.Length > 1 && args[1].ToLowerInvariant() == "on"); _sys.WriteState(_sys.CoveredActive() || !_sys.ExplorerRunning() ? "game" : "desktop", "covered-setting"); return 0;
                 case "ensure-surface": return _sys.EnsureLibrarySurface(args.Contains("--activate")) ? 0 : 1;
-                case "to-game": return (int)guard.ToGame();
-                case "to-desktop": return (int)guard.ToDesktop();
+                case "to-game": return (int)guard.ToGame(!args.Contains("--external-transition"));
+                case "to-desktop": return (int)guard.ToDesktop(!args.Contains("--external-transition"));
                 case "set-default":
                 {
                     string mode = args.Length > 1 ? args[1].ToLowerInvariant() : "";
@@ -106,11 +129,11 @@ namespace ClawShell
                         key.SetValue("probe", DateTime.Now.ToString("s") + (WindowsShellSystem.InPackage() ? " packaged" : ""));
                     return 0;
                 case "status":
-                    _sys.WriteState(_sys.ExplorerRunning() ? "desktop" : "game", "status");
+                    _sys.WriteState(_sys.ExplorerRunning() && !_sys.CoveredActive() ? "desktop" : "game", "status");
                     return 0;
                 case "install":
                     _sys.EnsureRunEntry();
-                    _sys.WriteState(_sys.ExplorerRunning() ? "desktop" : "game", "installed");
+                    _sys.WriteState(_sys.ExplorerRunning() && !_sys.CoveredActive() ? "desktop" : "game", "installed");
                     return 0;
                 case "uninstall":
                     if (_sys.IsOurShellValue()) _sys.DeleteShellValue();

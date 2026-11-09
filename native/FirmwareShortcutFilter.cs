@@ -49,9 +49,11 @@ namespace ClawRouter {
         int windows;
         bool blockedG, blockedTab, observedG;
         public ShortcutDecision Key(KeyboardStroke key, bool enabled) { return Key(key,enabled,false); }
-        public ShortcutDecision Key(KeyboardStroke key, bool enabled, bool taskView) {
+        public ShortcutDecision Key(KeyboardStroke key, bool enabled, bool taskView, bool gameMode = false) {
             var result = new ShortcutDecision();
-            if(key.Extra==0x434C4157)return result; // our intentional mapped shortcut, not the firmware copy
+            bool mapped=key.Extra==0x434C4157;
+            // Tagged mapped shortcuts may use Game Bar in desktop mode only.
+            if(mapped && (!gameMode || (key.Key!=0x5b && key.Key!=0x5c && key.Key!=0x47)))return result;
             if(key.Key==0x5b || key.Key==0x5c) {
                 int bit=key.Key==0x5b ? 1 : 2;
                 if(key.Up) windows &= ~bit; else windows |= bit;
@@ -68,10 +70,10 @@ namespace ClawRouter {
                 result.Swallow=blockedG;blockedG=false;observedG=false;
                 return result;
             }
-            result.ObservedGameBar=windows!=0&&!observedG;
+            result.ObservedGameBar=!mapped&&windows!=0&&!observedG;
             if(windows!=0)observedG=true;
             if(enabled && windows!=0) {
-                result.GameBar=!blockedG;
+                result.GameBar=!mapped&&!blockedG;
                 result.Swallow=true;blockedG=true;
             } else {
                 // A lost release must not swallow later ordinary typing.
@@ -124,7 +126,7 @@ namespace ClawRouter {
             bool game=gameMode!=null&&gameMode();
             if(keyboardSource!=null&&(key.key==91||key.key==92)&&!stroke.Up)keyboardSource.Begin(key.time);
             bool firmwareTab=keyboardSource!=null&&!game&&key.key==9&&!stroke.Up&&keyboardSource.Firmware(key.time);
-            var decision=state.Key(stroke,gameMode==null?enabled:game,game||firmwareTab);
+            var decision=state.Key(stroke,gameMode==null?enabled:game,game||firmwareTab,game);
             string action=null;
             if(decision.GameBar){Suppressed++;if(gameMode==null){var old=GameBarSuppressed;if(old!=null)old();}else action="controlCenter";}
             if(decision.Switcher) {

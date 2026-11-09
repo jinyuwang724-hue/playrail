@@ -563,6 +563,9 @@ public static class Bench
                 case "recqam": await s.RecQamAsync(); break;
                 case "qampress": await s.QamPressAsync(); break;
                 case "qamhalf": await s.QamHalfAsync(); break;
+#if DEBUG
+                case "qamwireless": await s.QamWirelessProbeAsync(); break;
+#endif
                 case "gstest": s.DemoGameSessionProbe(); break;
                 case "npattach": s.DemoAttachRunningGame(); break;
                 case "recplaying": await RecPlayingAsync(s); break;

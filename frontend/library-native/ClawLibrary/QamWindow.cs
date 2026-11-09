@@ -17,13 +17,40 @@ internal sealed class QamWindow
     public readonly nint Hwnd;
     private readonly Grid _root;
     private readonly SubclassProc _proc;
+    private uint? _pointerId;
+    public Action<Windows.Foundation.Point>? Pressed, Moved;
+    public Action<Windows.Foundation.Point?>? Released;
+    public Action<int>? Scrolled;
     public bool Shown { get; private set; }
 
     public QamWindow()
     {
         TransparentBackdrop.EnsureSystemQueue();
         Win = new Window { Title = "Claw 快捷面板" };
-        _root = new Grid { Background = null, IsHitTestVisible = true };
+        _root = new Grid { Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent) };
+        _root.PointerPressed += (_, e) =>
+        {
+            var point = e.GetCurrentPoint(_root);
+            if (!point.Properties.IsLeftButtonPressed && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Mouse) return;
+            if (_pointerId.HasValue) return;
+            _pointerId = e.Pointer.PointerId;
+            // A non-activating window can still receive touch through implicit pointer capture.
+            _root.CapturePointer(e.Pointer);
+            Pressed?.Invoke(point.Position);
+            e.Handled = true;
+        };
+        _root.PointerMoved += (_, e) => { if (_pointerId == e.Pointer.PointerId) Moved?.Invoke(e.GetCurrentPoint(_root).Position); };
+        _root.PointerReleased += (_, e) =>
+        {
+            if (_pointerId != e.Pointer.PointerId) return;
+            _pointerId = null;
+            _root.ReleasePointerCapture(e.Pointer);
+            Released?.Invoke(e.GetCurrentPoint(_root).Position);
+            e.Handled = true;
+        };
+        _root.PointerCanceled += (_, e) => CancelPointer(e.Pointer.PointerId);
+        _root.PointerCaptureLost += (_, e) => CancelPointer(e.Pointer.PointerId);
+        _root.PointerWheelChanged += (_, e) => { Scrolled?.Invoke(e.GetCurrentPoint(_root).Properties.MouseWheelDelta); e.Handled = true; };
         Win.Content = _root;
         Win.SystemBackdrop = new TransparentBackdrop();
         var presenter = OverlappedPresenter.Create();
@@ -50,11 +77,18 @@ internal sealed class QamWindow
         SetWindowSubclass(Hwnd, _proc, 83, 0);
     }
 
+    private void CancelPointer(uint id)
+    {
+        if (_pointerId != id) return;
+        _pointerId = null;
+        Released?.Invoke(null);
+    }
+
     private nint Handle(nint hwnd, uint msg, nuint wp, nint lp, nuint id, nuint data)
     {
         if (msg == 0x0083) return 0;   // WM_NCCALCSIZE：整个窗口都是客户区，没有边框
         if (msg == 0x21) return 3;      // WM_MOUSEACTIVATE → MA_NOACTIVATE：点面板不抢游戏的前台
-        if (msg == 0x0245) return 3;    // WM_POINTERACTIVATE → PA_NOACTIVATE
+        if (msg == 0x024B) return 3;    // WM_POINTERACTIVATE → PA_NOACTIVATE
         return DefSubclassProc(hwnd, msg, wp, lp);
     }
 
@@ -85,6 +119,7 @@ internal sealed class QamWindow
     public void Hide()
     {
         if (!_everShown) return;
+        if (_pointerId is uint id) CancelPointer(id);
         SetWindowPos(Hwnd, -1, Parked, Parked, Math.Max(1, _rect.W), Math.Max(1, _rect.H), 0x0010 | 0x0200);
         Shown = false;
     }
@@ -99,6 +134,21 @@ internal sealed class QamWindow
     }
     /// <summary>截屏时把面板排除在外（截的是底下的游戏）。</summary>
     public void ExcludeFromCapture(bool on) => SetWindowDisplayAffinity(Hwnd, on ? 0x11u : 0u);
+
+    public void SetKeyboardRegion(int panelWidth, int height, int left, int top, int right, int bottom)
+    {
+        if (left == 0) { SetWindowRgn(Hwnd, 0, true); return; }
+        nint region = CreateRectRgn(0, 0, panelWidth, height);
+        nint keyboard = CreateRectRgn(left, top, right, bottom);
+        CombineRgn(region, region, keyboard, 2);
+        DeleteObject(keyboard);
+        if (SetWindowRgn(Hwnd, region, true) == 0) DeleteObject(region);
+    }
+
+    [DllImport("user32.dll")] private static extern int SetWindowRgn(nint hwnd, nint region, bool redraw);
+    [DllImport("gdi32.dll")] private static extern nint CreateRectRgn(int left, int top, int right, int bottom);
+    [DllImport("gdi32.dll")] private static extern int CombineRgn(nint result, nint first, nint second, int mode);
+    [DllImport("gdi32.dll")] private static extern bool DeleteObject(nint handle);
 
     [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate nint SubclassProc(nint hwnd, uint msg, nuint wp, nint lp, nuint id, nuint data);

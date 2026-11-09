@@ -6,7 +6,7 @@
   xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   IgnorableNamespaces="uap uap3 mp">
 
-  <Identity Name="ClawToolbox.GameBarWidget" Publisher="CN=ClawToolbox" Version="0.4.20.0" />
+  <Identity Name="ClawToolbox.GameBarWidget" Publisher="CN=ClawToolbox" Version="0.4.70.0" />
   <mp:PhoneIdentity PhoneProductId="6c1b6f0e-8c2c-4c9b-9e0b-5f2a6b9c1d11" PhonePublisherId="00000000-0000-0000-0000-000000000000" />
 
   <Properties>
@@ -25,7 +25,7 @@
 
   <Applications>
     <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="ClawWidget.App">
-      <uap:VisualElements DisplayName="Claw 掌机工具箱" Description="Claw 掌机工具箱 Game Bar 小组件"
+      <uap:VisualElements AppListEntry="none" DisplayName="Claw 掌机工具箱" Description="Claw 掌机工具箱 Game Bar 小组件"
         BackgroundColor="transparent" Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png">
         <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
@@ -63,6 +63,7 @@
             </uap3:Properties>
           </uap3:AppExtension>
         </uap3:Extension>
+
       </Extensions>
     </Application>
   </Applications>

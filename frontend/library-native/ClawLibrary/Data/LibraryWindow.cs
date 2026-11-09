@@ -14,7 +14,7 @@ internal sealed class LibraryWindow : IDisposable
     private uint _overlayPid;
     private Windows.Graphics.RectInt32 _overlayBounds;
     private uint _returnPid;
-    private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center", "window-switcher", "game-shell", "keep-game-shell"];
+    private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center", "window-switcher", "game-shell", "keep-game-shell", "game-shell-reveal"];
 
     public LibraryWindow(nint window, Action<string, nint> activate)
     {
@@ -33,7 +33,7 @@ internal sealed class LibraryWindow : IDisposable
         if (message == 0x0083 && !Program.Args.Contains("--windowed")) return 0; // WM_NCCALCSIZE: the entire monitor is client area.
         if (message == 0x007e || message == 0x02e0) Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()?.TryEnqueue(EnsureFullscreenBounds);
         if (_overlayTarget != 0 && message == 0x21) return 3; // WM_MOUSEACTIVATE / MA_NOACTIVATE
-        if (_overlayTarget != 0 && message == 0x0245) return 3; // WM_POINTERACTIVATE / PA_NOACTIVATE
+        if (_overlayTarget != 0 && message == 0x024B) return 3; // WM_POINTERACTIVATE / PA_NOACTIVATE
         if (message == 0x112 && (wp & 0xfff0) == 0xf020 && IsWindowVisible(hwnd) && !ToolboxWindow.IsIconic(hwnd)) // WM_SYSCOMMAND / SC_MINIMIZE
         {
             try { _activate("minimize-library", 0); }
@@ -147,10 +147,18 @@ internal sealed class LibraryWindow : IDisposable
     {
         bool current = (GetWindowLongPtr(_window, -20).ToInt64() & 0x8) != 0;
         if (current == on) return false;
-        SetWindowPos(_window, on ? -1 : -2, 0, 0, 0, 0, 0x213);
+        nint after = on ? -1 : -2;
+        if (on)
+        {
+            nint transition = FindWindow(null, "ClawToolbox.GameModeTransition");
+            if (transition != 0 && IsWindowVisible(transition)) after = transition;
+        }
+        SetWindowPos(_window, after, 0, 0, 0, 0, 0x213);
         if (!on) StayBehindForeground();
         return true;
     }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint FindWindow(string? className, string title);
 
     /// <summary>
     /// HWND_NOTOPMOST lifts the window above every normal window, including the one that just took
@@ -171,16 +179,25 @@ internal sealed class LibraryWindow : IDisposable
         AllowSetForegroundWindow(unchecked((uint)-1)); // ASFW_ANY
     }
 
-    public static bool BringForward(nint window, bool unlock = false)
+    public static bool BringForward(nint window, bool unlock = false) => BringForward(window, unlock, out _);
+
+    internal static bool OwnsForeground(nint window)
     {
+        nint foreground = Foreground;
+        return foreground == window || (foreground != 0 && GetAncestor(foreground, 3) == window);
+    }
+
+    internal static bool BringForward(nint window, bool unlock, out int error)
+    {
+        error = 0;
         if (window == 0 || !IsWindow(window)) return false;
         // 前台锁：按一下 Alt（系统认为有用户输入，放行 SetForegroundWindow）
         if (unlock) { keybd_event(0x12, 0, 0, 0); keybd_event(0x12, 0, 2, 0); }
         if (ToolboxWindow.IsIconic(window)) ShowWindow(window, 9);
         nint popup = GetLastActivePopup(window);
         if (popup != 0 && IsWindowVisible(popup)) window = popup;
-        SetForegroundWindow(window);
-        if (Foreground == window) return true;
+        if (!SetForegroundWindow(window)) error = Marshal.GetLastPInvokeError();
+        if (OwnsForeground(window)) return true;
         uint current = GetCurrentThreadId();
         uint foreground = GetWindowThreadProcessId(Foreground, out _);
         // A bounded input-queue handoff, immediately detached, also supports an
@@ -189,11 +206,11 @@ internal sealed class LibraryWindow : IDisposable
         try
         {
             BringWindowToTop(window);
-            SetForegroundWindow(window);
+            if (!SetForegroundWindow(window)) error = Marshal.GetLastPInvokeError();
             SetFocus(window);
         }
         finally { if (attached) AttachThreadInput(current, foreground, false); }
-        return Foreground == window;
+        return OwnsForeground(window);
     }
 
     public nint ReturnWindow => _returnWindow;
@@ -225,7 +242,8 @@ internal sealed class LibraryWindow : IDisposable
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(nint hwnd, out uint pid);
     [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint from, uint to, bool attach);
-    [DllImport("user32.dll")] private static extern bool SetForegroundWindow(nint hwnd);
+    [DllImport("user32.dll", SetLastError = true)] private static extern bool SetForegroundWindow(nint hwnd);
+    [DllImport("user32.dll")] private static extern nint GetAncestor(nint hwnd, uint flags);
     [DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(uint processId);
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(nint hwnd, int attr, ref int value, int size);
     [DllImport("user32.dll")] private static extern nint SetFocus(nint hwnd);

@@ -4,10 +4,16 @@
 # widget msix from its build folder, and PawnIO's official setup.
 param(
     [string]$AgentHome = (Join-Path $env:LOCALAPPDATA 'ClawToolbox'),
-    [string]$Widget = 'C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff\artifacts\gamebar-power-in-place\bin\ClawWidget\AppPackages\ClawWidget_0.4.44.0_x64_Test\ClawWidget_0.4.44.0_x64.msix',
+    [string]$Widget = '',
     [string]$PawnIOSetup = ''
 )
 $ErrorActionPreference = 'Stop'
+$repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
+if (-not $Widget) {
+    $version = ([xml](Get-Content -LiteralPath (Join-Path $repo 'native\GameBarWidget\Package.appxmanifest') -Raw)).Package.Identity.Version
+    $Widget = Join-Path $repo "artifacts\gamebar-qam\ClawWidget-$version.msix"
+}
+if (-not (Test-Path -LiteralPath $Widget -PathType Leaf)) { throw "Game Bar package is missing: $Widget" }
 $payload = Join-Path $PSScriptRoot '..\ClawLibrary\Payload'
 foreach ($folder in 'agent', 'fan', 'widget', 'pawnio') {
     $path = Join-Path $payload $folder
@@ -16,19 +22,20 @@ foreach ($folder in 'agent', 'fan', 'widget', 'pawnio') {
 }
 $current = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $AgentHome 'current.json') | ConvertFrom-Json
 $version = $current.version
+$app = Split-Path -Parent $current.agent
+$helperVersion = (Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $app 'plugin.json') | ConvertFrom-Json).version
 # The agent goes in as one zip (app\ + runtime\python-x.y.z\): thousands of runtime files and deep
 # Magpie paths would otherwise blow MAX_PATH in this worktree and slow the MSIX down.
 # The agent folder keeps every older helper build next to the current one; take only this version's.
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::Open((Join-Path $payload 'agent\agent.zip'), 'Create')
 try {
-    $app = Join-Path $AgentHome 'app'
     $runtime = Split-Path -Parent $current.python
     foreach ($root in @(@($app, 'app'), @($runtime, ('runtime/' + (Split-Path -Leaf $runtime))))) {
         foreach ($file in Get-ChildItem -LiteralPath $root[0] -Recurse -File) {
             $relative = $file.FullName.Substring($root[0].Length + 1)
             if ($relative -match '(^|\\)__pycache__\\') { continue }
-            if ($file.Name -match '-(\d+\.\d+\.\d+)(-r\d+)?\.exe$' -and $Matches[1] -ne $version) { continue }
+            if ($file.Name -match '-(\d+\.\d+\.\d+)(-r\d+)?\.exe$' -and $Matches[1] -ne $helperVersion) { continue }
             [void][IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, ($root[1] + '/' + $relative.Replace('\', '/')), 'Optimal')
         }
     }

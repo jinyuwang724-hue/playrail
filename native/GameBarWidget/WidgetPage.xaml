@@ -4,6 +4,51 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
     Background="{ThemeResource SolidBackgroundFillColorBaseBrush}">
+    <Page.Resources>
+        <ControlTemplate x:Key="QamThumb" TargetType="Thumb">
+            <Grid>
+                <Ellipse Fill="{TemplateBinding Foreground}" Opacity="0.18"/>
+                <Ellipse Width="16" Height="16" Fill="{TemplateBinding Background}" Stroke="#F4F4F5" StrokeThickness="2.5"/>
+                <Ellipse Width="19" Height="19" Fill="{TemplateBinding Foreground}"/>
+            </Grid>
+        </ControlTemplate>
+        <Style x:Key="QamSlider" TargetType="Slider">
+            <Setter Property="Background" Value="#25282C"/>
+            <Setter Property="Foreground" Value="Transparent"/>
+            <Setter Property="UseSystemFocusVisuals" Value="False"/>
+            <Setter Property="IsFocusEngagementEnabled" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid x:Name="SliderContainer" Background="Transparent" Control.IsTemplateFocusTarget="True">
+                            <Grid x:Name="HorizontalTemplate">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Rectangle x:Name="HorizontalTrackRect" Grid.ColumnSpan="3" Height="3" RadiusX="1.5" RadiusY="1.5" Fill="#38F4F4F5"/>
+                                <Rectangle x:Name="HorizontalDecreaseRect" Height="3" Fill="#CFF4F4F5"/>
+                                <Thumb x:Name="HorizontalThumb" Grid.Column="1" Width="24" Height="24" Template="{StaticResource QamThumb}" Background="{TemplateBinding Background}" Foreground="{TemplateBinding Foreground}" AutomationProperties.AccessibilityView="Raw"/>
+                            </Grid>
+                            <Grid x:Name="VerticalTemplate" Width="32">
+                                <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                                <Rectangle x:Name="VerticalTrackRect" Grid.RowSpan="3" Width="3" RadiusX="1.5" RadiusY="1.5" Fill="#38F4F4F5"/>
+                                <Rectangle x:Name="VerticalDecreaseRect" Grid.Row="2" Width="3" Fill="#CFF4F4F5"/>
+                                <Thumb x:Name="VerticalThumb" Grid.Row="1" Width="24" Height="24" Template="{StaticResource QamThumb}" Background="{TemplateBinding Background}" Foreground="{TemplateBinding Foreground}" AutomationProperties.AccessibilityView="Raw"/>
+                            </Grid>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ScalingTile" TargetType="Button">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="MinHeight" Value="50" />
+            <Setter Property="Padding" Value="12,5" />
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+    </Page.Resources>
     <!-- Native layout of the approved design ("UI design", WinUI Fluent dark): side rail, header with
          readings, 3 columns x 4 rows of quick tiles; tiles and their contents are built in WidgetPage.cpp. -->
     <!-- Game Bar's title bar already sits right above; only a small gap under it. -->
@@ -33,8 +78,8 @@
                 <Grid Grid.Row="2" RowSpacing="4">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <TextBlock x:Name="BrightnessValue" HorizontalAlignment="Center" FontWeight="SemiBold" Text="--" />
-                    <Slider x:Name="BrightnessSlider" Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" Minimum="0" Maximum="100"
-                            SmallChange="5" LargeChange="10" StepFrequency="1" IsThumbToolTipEnabled="False" IsFocusEngagementEnabled="True" />
+                    <Slider x:Name="BrightnessSlider" Style="{StaticResource QamSlider}" Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" Minimum="0" Maximum="100"
+                            SmallChange="1" LargeChange="1" StepFrequency="1" IsThumbToolTipEnabled="False" AutomationProperties.Name="亮度" ToolTipService.ToolTip="按 A 调节亮度" />
                     <Button x:Name="AutoBrightness" Grid.Row="2" Width="40" Height="36" Padding="0" HorizontalAlignment="Center"
                             Background="Transparent" BorderThickness="0" IsEnabled="False" />
                 </Grid>
@@ -42,8 +87,8 @@
                 <Grid Grid.Row="4" RowSpacing="4">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <TextBlock x:Name="VolumeValue" HorizontalAlignment="Center" FontWeight="SemiBold" Text="--" />
-                    <Slider x:Name="VolumeSlider" Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" Minimum="0" Maximum="100"
-                            SmallChange="5" LargeChange="10" StepFrequency="1" IsThumbToolTipEnabled="False" IsFocusEngagementEnabled="True" />
+                    <Slider x:Name="VolumeSlider" Style="{StaticResource QamSlider}" Grid.Row="1" Orientation="Vertical" HorizontalAlignment="Center" Minimum="0" Maximum="100"
+                            SmallChange="1" LargeChange="1" StepFrequency="1" IsThumbToolTipEnabled="False" AutomationProperties.Name="音量" ToolTipService.ToolTip="按 A 调节音量" />
                     <Button x:Name="MuteButton" Grid.Row="2" Width="40" Height="36" Padding="0" HorizontalAlignment="Center"
                             Background="Transparent" BorderThickness="0" />
                 </Grid>
@@ -68,6 +113,7 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
             <!-- Collapsed while no banner shows, so the header lines up with the top of the rail. -->
@@ -81,20 +127,111 @@
             <Border x:Name="Header" Grid.Row="1" CornerRadius="4" Padding="14,10" Margin="0,0,0,12"
                     Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                <Grid x:Name="HeaderGrid" ColumnSpacing="12" RowSpacing="6">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                    <StackPanel x:Name="TitleBlock" VerticalAlignment="Center">
-                        <TextBlock x:Name="GameName" FontSize="20" LineHeight="28" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Text="Claw 掌机工具箱" />
-                        <StackPanel x:Name="FpsLine" Orientation="Horizontal" Spacing="4">
-                            <TextBlock x:Name="FpsValue" FontSize="32" LineHeight="36" FontWeight="SemiBold" />
-                            <TextBlock x:Name="FpsLabel" VerticalAlignment="Bottom" Margin="0,0,0,4" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <Grid Height="72">
+                        <StackPanel x:Name="PowerLabel" Orientation="Horizontal" Spacing="8" VerticalAlignment="Top" Margin="0,6,0,0">
+                            <TextBlock Text="功耗" FontSize="15" FontWeight="SemiBold" Foreground="#99F4F4F5"/>
                         </StackPanel>
-                    </StackPanel>
-                    <StackPanel x:Name="Stats" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" />
-                </Grid>
+                        <StackPanel Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right" VerticalAlignment="Top">
+                            <TextBlock x:Name="PowerSetpoint" Text="--" FontSize="40" FontWeight="Bold"/>
+                            <TextBlock Text="W" FontSize="17" FontWeight="SemiBold" Margin="0,0,0,6" VerticalAlignment="Bottom" Foreground="#99F4F4F5"/>
+                        </StackPanel>
+                        <TextBlock x:Name="PowerActual" Text="实际 -- W  ·  -- °C" Margin="26,29,0,0" FontSize="13" Foreground="#B3F4F4F5"/>
+                        <Slider x:Name="PowerSlider" Style="{StaticResource QamSlider}" Height="24" VerticalAlignment="Bottom" Minimum="8" Maximum="35" SmallChange="1" LargeChange="1" StepFrequency="1" IsThumbToolTipEnabled="False" AutomationProperties.Name="功耗上限" ToolTipService.ToolTip="左右键，每次 1 W"/>
+                        <Canvas x:Name="PowerTicks" Height="9" VerticalAlignment="Bottom" Margin="0,0,0,7.5" IsHitTestVisible="False"/>
+                    </Grid>
             </Border>
-            <Grid x:Name="Tiles" Grid.Row="2" RowSpacing="8" ColumnSpacing="8" XYFocusKeyboardNavigation="Enabled" />
+            <Grid x:Name="QuickShortcuts" Grid.Row="2" RowSpacing="8" ColumnSpacing="8" Margin="0,0,0,12" XYFocusKeyboardNavigation="Enabled" />
+            <Grid x:Name="Tiles" Grid.Row="3" RowSpacing="8" ColumnSpacing="8" XYFocusKeyboardNavigation="Enabled" />
+        </Grid>
+
+        <Grid x:Name="ScalingPanel" Grid.ColumnSpan="2" Visibility="Collapsed" RowSpacing="10"
+              VerticalAlignment="Top" XYFocusKeyboardNavigation="Enabled" Padding="2,2,2,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid ColumnSpacing="10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button x:Name="ScalingBack" Width="40" Height="40" Padding="0" AutomationProperties.Name="返回快捷面板" ToolTipService.ToolTip="返回">
+                    <SymbolIcon Symbol="Back" />
+                </Button>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock x:Name="ScalingTitle" FontSize="22" FontWeight="SemiBold" />
+                    <TextBlock x:Name="ScalingSubtitle" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
+                <Border x:Name="ScalingEmblem" Grid.Column="2" Width="38" Height="38" VerticalAlignment="Center" CornerRadius="7" />
+            </Grid>
+            <ScrollViewer Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled"
+                          HorizontalContentAlignment="Stretch" VerticalScrollBarVisibility="Auto" ZoomMode="Disabled" IsTabStop="False">
+                <StackPanel Spacing="10" Padding="0,0,0,2">
+                    <Border Padding="12,8" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                        <StackPanel Spacing="6">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Spacing="2">
+                                    <TextBlock Text="缩放窗口" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    <TextBlock x:Name="ScalingTarget" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <Border x:Name="ScalingStatusBadge" Grid.Column="1" CornerRadius="5" Padding="8,4" VerticalAlignment="Center">
+                                    <TextBlock x:Name="ScalingStatus" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="120" />
+                                </Border>
+                            </Grid>
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <TextBlock x:Name="ScalingHint" FontSize="12" TextWrapping="Wrap"
+                                           VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <Button x:Name="ScalingAction" Grid.Column="1" MinHeight="38" MinWidth="132"
+                                        VerticalAlignment="Center" Style="{ThemeResource AccentButtonStyle}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                    <Grid>
+                        <StackPanel x:Name="MagpieOptions" Spacing="8">
+                            <TextBlock Text="画面设置" Margin="2,0,0,0" FontWeight="SemiBold" />
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Button x:Name="ScalingFill" Style="{StaticResource ScalingTile}" />
+                                <Button x:Name="ScalingSharpen" Grid.Column="1" Style="{StaticResource ScalingTile}" />
+                            </Grid>
+                            <TextBlock x:Name="ScalingSettings" Margin="2,0,0,0" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                        <StackPanel x:Name="LosslessOptions" Spacing="8">
+                            <TextBlock Text="档案与画面" Margin="2,0,0,0" FontWeight="SemiBold" />
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Button x:Name="ScalingProfile" Style="{StaticResource ScalingTile}" />
+                                <Button x:Name="ScalingAlgorithm" Grid.Column="1" Style="{StaticResource ScalingTile}" />
+                            </Grid>
+                            <TextBlock Text="帧生成" Margin="2,4,0,0" FontWeight="SemiBold" />
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Button x:Name="ScalingFrameGen" Style="{StaticResource ScalingTile}" />
+                                <Button x:Name="ScalingFrameMode" Grid.Column="1" Style="{StaticResource ScalingTile}" />
+                            </Grid>
+                            <Grid x:Name="ScalingFrameDetails" ColumnSpacing="8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Button x:Name="ScalingFrameRate" Style="{StaticResource ScalingTile}" />
+                                <Button x:Name="ScalingPerformance" Grid.Column="1" Style="{StaticResource ScalingTile}" />
+                            </Grid>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </ScrollViewer>
+            <Grid x:Name="ScalingFooter" Grid.Row="2" ColumnSpacing="8">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Button x:Name="ScalingNative" Content="打开原版" MinHeight="38" AutomationProperties.Name="打开小黄鸭原版" />
+                <StackPanel x:Name="ScalingSaveActions" Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                            HorizontalAlignment="Right" Visibility="Collapsed">
+                    <Button x:Name="ScalingDiscard" Content="放弃修改" MinHeight="38" />
+                    <Button x:Name="ScalingApply" Content="应用到档案" MinHeight="38" Style="{ThemeResource AccentButtonStyle}" />
+                </StackPanel>
+            </Grid>
         </Grid>
 
         <!-- Tile editing -->
@@ -110,7 +247,7 @@
                 </Grid>
                 <Grid><TextBlock FontWeight="SemiBold" Text="已固定" /><TextBlock x:Name="PinnedCount" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}" /></Grid>
                 <Grid x:Name="PinnedTiles" RowSpacing="8" ColumnSpacing="8" Padding="0,8,8,0" />
-                <Grid x:Name="AvailableHeader"><TextBlock FontWeight="SemiBold" Text="可添加" /><TextBlock HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="按 A 固定" /></Grid>
+                <Grid x:Name="AvailableHeader"><TextBlock FontWeight="SemiBold" Text="可添加" /><TextBlock x:Name="AvailableHint" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="按 A 固定" /></Grid>
                 <Grid x:Name="AvailableTiles" RowSpacing="8" ColumnSpacing="8" Padding="0,8,8,0" />
             </StackPanel>
         </ScrollViewer>

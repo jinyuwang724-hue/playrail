@@ -22,12 +22,13 @@ public sealed partial class WallStage
         public SessionSource Source;
         public int Pid;
         public DateTime ProcessStart;
+        public uint WindowPid;
+        public long WindowStart;
         public nint Hwnd;
         public DateTime Started;
         /// <summary>已启动、还没看到「在跑」：Steam 下载更新、启动器转圈都算在这里，2 分钟还没跑起来就放弃。</summary>
         public bool Pending = true;
-        public bool ForceArmed;
-        public long CloseAskedMs;
+        public bool Ending;
     }
 
     private GameSession? _game;
@@ -35,6 +36,20 @@ public sealed partial class WallStage
     /// <summary>用户在正在游戏面板上选了「游戏库」：这次回来不再弹面板，直到游戏库再次失去焦点。</summary>
     private bool _nowPlayingDismissed;
     private const string GamesKey = @"Software\ClawToolbox\Games";
+
+    private GameSession? RunningGame(string? id) => _game is { Pending: false } g && g.Item.Id == id ? g : null;
+    internal bool IsRunningGame(string id) => RunningGame(id) != null;
+
+    private void RefreshRunningGameActions(string id)
+    {
+        if (_cs?.Page is { Tab: 0 } page && page.Sel < page.Items.Count && page.Items[page.Sel] is { } selected && selected.Id == id)
+        {
+            page.Act = 0;
+            CsPaintActs(page, selected, CsActsWidth(selected));
+        }
+        if (_expandedKey is { } key && _tiles.TryGetValue(key, out var tile) && tile.Shown == id) tile.Redraw();
+        if (_qsOpen) QsRebuild();
+    }
 
     private static string PlayedText(GameSession? g)
     {
@@ -63,17 +78,21 @@ public sealed partial class WallStage
         if (_game is { } g && g.Item.Id == item.Id)
         {
             g.Hwnd = hwnd;
+            g.WindowPid = pid;
+            g.WindowStart = ReadGameProcessStart(pid);
             if (g.Source != SessionSource.Window) return;
         }
         else if (item.XboxAumid == null) return;   // 只有 Xbox 游戏靠窗口
         else _game = new GameSession { Item = item, Source = SessionSource.Window, Hwnd = hwnd, Started = DateTime.Now };
         var s = _game!;
         s.Pid = (int)pid; s.Pending = false;
+        s.WindowPid = pid; s.WindowStart = ReadGameProcessStart(pid);
         try { using var p = Process.GetProcessById((int)pid); s.ProcessStart = p.StartTime; Log.Info($"game session {item.Id} window {p.ProcessName} pid={pid}"); }
         catch (Exception ex) { Log.Warn($"game session start: {ex.Message}"); }
         EnhancedSleepClient.Publish(s.Pid);
         _gameTimer ??= NewGameTimer();
         _gameTimer.Start();
+        RefreshRunningGameActions(item.Id);
     }
 
     private Microsoft.UI.Dispatching.DispatcherQueueTimer NewGameTimer()
@@ -141,10 +160,14 @@ public sealed partial class WallStage
         if (SessionRunning(g))
         {
             if (g.Pid > 0) EnhancedSleepClient.Publish(g.Pid);
-            if (g.Pending) { g.Pending = false; Log.Info($"game session {g.Item.Id} running"); }
+            if (g.Pending)
+            {
+                g.Pending = false;
+                RefreshRunningGameActions(g.Item.Id);
+                Log.Info($"game session {g.Item.Id} running");
+            }
             if (_lm is { Mode: LmMode.Playing } lm && !lm.Leaving) PaintLaunchCopy(lm);   // 时长每 2 秒刷新
             if (_npBar != null) PaintNowPlayingBar();
-            if (g.CloseAskedMs > 0 && !g.ForceArmed && NowMs - g.CloseAskedMs > 8000) ArmForceQuit("游戏没有响应，可以强制结束（没保存的进度会丢）");
             return;
         }
         if (g.Pending)
@@ -210,6 +233,13 @@ public sealed partial class WallStage
         g.Item.LastPlayed = now;
         if (_lib.ById.TryGetValue(g.Item.Id, out var same)) same.LastPlayed = now;
         try { ApplyLibrarySnapshot(_lib.Refilter()); } catch (Exception ex) { Log.Error("reorder after game", ex); }
+        RefreshRunningGameActions(g.Item.Id);
+        if (g.Ending && !NowPlayingShown)
+        {
+            DropParkedMotion();
+            Toast("已结束游戏");
+            return;
+        }
         // 桌面模式下游戏库不会自己出来：带回前台（全屏体验里系统本来就会切回主页）
         if (LibraryWindow.Foreground != _windowHandle && _window is MainWindow main) main.ActivateRoute("restore-library");
         string note = played.TotalMinutes < 1 ? "已退出" : $"已退出 · 本次玩了 {(played.TotalHours >= 1 ? $"{(int)played.TotalHours} 小时 " : "")}{played.Minutes} 分钟";
@@ -265,10 +295,7 @@ public sealed partial class WallStage
         switch (button)
         {
             case 0: ResumeGame(g); break;
-            case 1:
-                if (g.ForceArmed) { _ = ForceQuitAsync(g); break; }
-                QuitGame(g);
-                break;
+            case 1: _ = ForceQuitAsync(g); break;
             case 3: OpenSwitcherFromAnywhere(); break;
             default: BrowseFromNowPlaying(); break;
         }
@@ -283,53 +310,147 @@ public sealed partial class WallStage
 
     private void ResumeGame(GameSession g)
     {
-        nint hwnd = IsWindow(g.Hwnd) && IsWindowVisible(g.Hwnd) ? g.Hwnd : MainWindowOf(g.Pid);
-        bool ok = hwnd != 0 && LibraryWindow.BringForward(hwnd);
+        if (g.Ending) return;
+        nint hwnd = GameWindow(g);
+        if (hwnd != 0) (_window as MainWindow)?.HandOffForeground();
+        bool ok = hwnd != 0 && (LibraryWindow.BringForward(hwnd) || LibraryWindow.BringForward(hwnd, unlock: true));
         Log.Info($"resume game {g.Item.Id} hwnd={hwnd} foreground={ok}");
         if (ok) { g.Hwnd = hwnd; EndLaunchMotion("handoff"); HideNowPlayingBar(); }
-        else { if (_lm != null) { _lm.Note = "没能切回游戏，请用 Xbox 键或任务切换"; PaintLaunchCopy(_lm); } Cue(Sfx.Error); }
+        else
+        {
+            if (_lm != null) { _lm.Note = "没能切回游戏，请用窗口切换器"; PaintLaunchCopy(_lm); }
+            else Toast("没能切回游戏，请用窗口切换器");
+            Cue(Sfx.Error);
+        }
     }
 
-    /// <summary>先像点右上角 × 一样请游戏自己关（能存档）；8 秒没关再给「强制结束」。</summary>
-    private void QuitGame(GameSession g)
+    private string? SteamGameFolder(GameSession g) => _steamRoot != null && g.Source == SessionSource.Steam
+        ? Steam.InstallDirs(_steamRoot).GetValueOrDefault(g.Item.Id) : null;
+
+    private static bool InGameFolder(uint pid, string? folder) =>
+        folder != null && OpenWindows.ExePath(pid) is { } exe &&
+        exe.StartsWith(Path.TrimEndingDirectorySeparator(folder) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
+    private nint GameWindow(GameSession g)
     {
-        nint hwnd = IsWindow(g.Hwnd) ? g.Hwnd : MainWindowOf(g.Pid);
-        bool posted = hwnd != 0 && PostMessage(hwnd, 0x0010, 0, 0);   // WM_CLOSE
-        Log.Info($"quit game {g.Item.Id} hwnd={hwnd} posted={posted} err={(posted ? 0 : Marshal.GetLastWin32Error())}");
-        if (!posted) { ArmForceQuit("游戏以管理员身份运行，只能强制结束（没保存的进度会丢）"); return; }
-        g.CloseAskedMs = NowMs;
-        if (_lm != null) { _lm.Note = "正在退出…"; PaintLaunchCopy(_lm); }
+        if (g.WindowStart != 0 && IsWindowVisible(g.Hwnd) && GetWindowThreadProcessId(g.Hwnd, out uint pid) != 0 &&
+            pid == g.WindowPid && ReadGameProcessStart(pid) == g.WindowStart) return g.Hwnd;
+        if (g.Pid > 0 && SessionRunning(g))
+        {
+            nint tracked = MainWindowOf(g.Pid);
+            if (tracked != 0) return tracked;
+        }
+        string? folder = SteamGameFolder(g);
+        return folder == null ? 0 : OpenWindows.List().FirstOrDefault(w => InGameFolder(w.Pid, folder))?.Hwnd ?? 0;
     }
 
-    private void ArmForceQuit(string note)
+    private bool IsGameWindow(GameSession g, nint window)
     {
-        if (_game is not { } g) return;
-        g.ForceArmed = true;
-        if (_lm is { Mode: LmMode.Playing } lm) { lm.Note = note; lm.Btn = 1; PaintLaunchCopy(lm); }
+        GetWindowThreadProcessId(window, out uint pid);
+        if (pid == 0) return false;
+        if (g.WindowStart != 0 && g.WindowPid == pid && ReadGameProcessStart(pid) == g.WindowStart) return true;
+        return g.Source == SessionSource.Wrapper ? WrapperRunning(g.Item.Id)?.Pid == pid :
+            InGameFolder(pid, SteamGameFolder(g));
+    }
+
+    private async Task EndForegroundGameAsync(nint window)
+    {
+        GetWindowThreadProcessId(window, out uint pid);
+        long start = ReadGameProcessStart(pid);
+        if (start == 0 || !LibraryWindow.OwnsForeground(window)) { Toast("没能确认要结束的游戏"); return; }
+        try
+        {
+            _agent ??= new AgentClient();
+            await _agent.Call("close_game", System.Text.Json.Nodes.JsonValue.Create((int)pid));
+            if (ReadGameProcessStart(pid) == start && Alive((int)pid, DateTime.FromFileTime(start)))
+                throw new InvalidOperationException("游戏进程没有退出");
+            Toast("已结束游戏");
+        }
+        catch (Exception ex) { Log.Warn($"end foreground game: {ex.Message}"); Toast("没能结束游戏"); }
+    }
+
+    private static long ReadGameProcessStart(uint pid)
+    {
+        nint process = OpenProcessQs(0x1000, false, pid);
+        if (process == 0) return 0;
+        try { return GetProcessTimes(process, out long start, out _, out _, out _) ? start : 0; }
+        finally { CloseHandleQs(process); }
     }
 
     private async Task ForceQuitAsync(GameSession g)
     {
+        if (_game != g || g.Ending) return;
+        if (!SessionRunning(g)) { PollGameSession(); return; }
+        g.Ending = true;
         Log.Info($"force quit {g.Item.Id} pid={g.Pid}");
-        if (_lm != null) { _lm.Note = "正在结束…"; PaintLaunchCopy(_lm); }
-        if (g.Source == SessionSource.Wrapper)
-        {
-            // 启动器结束整组进程（作业对象），比按 pid 杀更干净
-            try { using var quit = System.Threading.EventWaitHandle.OpenExisting(@"Local\ClawGameSession.Quit." + g.Item.Id); quit.Set(); await Task.Delay(1500); PollGameSession(); return; }
-            catch (Exception ex) { Log.Warn($"quit event: {ex.Message}"); }
-        }
+        if (NowPlayingShown) { _lm!.Note = "正在结束…"; PaintLaunchCopy(_lm); }
         try
         {
-            _agent ??= new AgentClient();
-            await _agent.Call("close_game", System.Text.Json.Nodes.JsonValue.Create(g.Pid));
+            if (g.Source == SessionSource.Wrapper && TryEndWrappedGame(g.Item.Id))
+            {
+                for (int i = 0; i < 45 && _game == g && SessionRunning(g); i++) await Task.Delay(100);
+                if (_game != g) return;
+                if (SessionRunning(g)) throw new InvalidOperationException("游戏进程没有退出");
+            }
+            else
+            {
+                nint window = GameWindow(g);
+                GetWindowThreadProcessId(window, out uint pid);
+                long start = ReadGameProcessStart(pid);
+                bool tracked = pid == g.WindowPid && start == g.WindowStart;
+                bool verified = g.Source == SessionSource.Steam ? InGameFolder(pid, SteamGameFolder(g)) : tracked;
+                if (!verified || start == 0 || pid == Environment.ProcessId)
+                    throw new InvalidOperationException("无法确认游戏进程");
+                try { await Task.Run(() => TerminateGameProcess(pid, start)); }
+                catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 5)
+                {
+                    // The existing elevated command only accepts the confirmed foreground target.
+                    if (ReadGameProcessStart(pid) != start || !LibraryWindow.BringForward(window, unlock: true)) throw;
+                    _agent ??= new AgentClient();
+                    await _agent.Call("close_game", System.Text.Json.Nodes.JsonValue.Create((int)pid));
+                    if (ReadGameProcessStart(pid) == start && Alive((int)pid, DateTime.FromFileTime(start)))
+                        throw new InvalidOperationException("游戏进程没有退出");
+                }
+            }
+            if (_game == g) EndGameSession(g);
         }
         catch (Exception ex)
         {
-            Log.Warn($"close_game: {ex.Message}");
-            try { using var p = Process.GetProcessById(g.Pid); p.Kill(); } catch (Exception k) { Log.Warn($"kill: {k.Message}"); }
+            Log.Warn($"force quit {g.Item.Id}: {ex.Message}");
+            if (_game == g && NowPlayingShown) { _lm!.Note = "没能结束游戏"; PaintLaunchCopy(_lm); }
+            Cue(Sfx.Error);
+            Toast("没能结束游戏");
         }
-        PollGameSession();
+        finally { g.Ending = false; }
     }
+
+    private static bool TryEndWrappedGame(string id)
+    {
+        if (!EventWaitHandle.TryOpenExisting(@"Local\ClawGameSession.Quit." + id, out var quit)) return false;
+        using (quit) return quit.Set();
+    }
+
+    private static void TerminateGameProcess(uint pid, long expectedStart)
+    {
+        nint process = OpenProcessQs(0x00101001, false, pid); // SYNCHRONIZE | QUERY_LIMITED_INFORMATION | TERMINATE
+        if (process == 0) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        try
+        {
+            if (!GetProcessTimes(process, out long start, out _, out _, out _) || start != expectedStart)
+                throw new InvalidOperationException("游戏进程已改变");
+            if (!TerminateProcess(process, 1))
+            {
+                int error = Marshal.GetLastWin32Error();
+                if (WaitForGameExit(process, 0) != 0) throw new System.ComponentModel.Win32Exception(error);
+            }
+            if (WaitForGameExit(process, 4500) != 0)
+                throw new InvalidOperationException("游戏进程没有退出");
+        }
+        finally { CloseHandleQs(process); }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)] private static extern bool TerminateProcess(nint process, uint code);
+    [DllImport("kernel32.dll", EntryPoint = "WaitForSingleObject")] private static extern uint WaitForGameExit(nint process, uint milliseconds);
 
     private static nint MainWindowOf(int pid)
     {
@@ -347,7 +468,6 @@ public sealed partial class WallStage
     private delegate bool EnumProc(nint hwnd, nint data);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc proc, nint data);
     [DllImport("user32.dll")] private static extern bool IsWindow(nint hwnd);
-    [DllImport("user32.dll", SetLastError = true)] private static extern bool PostMessage(nint hwnd, uint msg, nint wp, nint lp);
 }
 
 public sealed partial class WallStage

@@ -6,6 +6,14 @@
 inline const std::map<std::wstring, std::wstring>& Icons()
 {
     static const std::map<std::wstring, std::wstring> icons{
+        { L"qamFreeze", L"M9 5v14 M15 5v14" },
+        { L"qamResume", L"M8 5l11 7-11 7z" },
+        { L"qamTasks", L"M3 5h18v14H3z M6 13h3l2-4 2 6 2-2h3" },
+        { L"qamFse", L"M9 5H4v5 M15 5h5v5 M4 14v5h5 M20 14v5h-5 M9 12h6 M12 9v6" },
+        { L"qamDuck", L"M3 13c2 0 4 1 6 1v-3a4 4 0 0 1 8 0l4 1-4 2c0 4-3 6-7 6s-7-3-7-7z M14 10h.01" },
+        { L"qamDesktop", L"M3 5h18v11H3z M9 20h6 M12 16v4" },
+        { L"qamWindows", L"M4 9h11v11H4z M9 4h11v11" },
+        { L"qamLibrary", L"M5 4h4v16H5z M11 4h4v16h-4z M17 5l3 .6-2.6 14.4-3-.6" },
         { L"power", L"M13 2.5 4.5 14H11l-1 7.5L18.5 10H12z" },
         { L"fan", L"M10,12 A2,2 0 1 0 14,12 A2,2 0 1 0 10,12 Z M12 10c-1-4 0-7 3-7s3 4-1 7M14 12c4-1 7 0 7 3s-4 3-7-1M12 14c1 4 0 7-3 7s-3-4 1-7M10 12c-4 1-7 0-7-3s4-3 7 1" },
         { L"fps", L"M5,5 H19 A2,2 0 0 1 21,7 V17 A2,2 0 0 1 19,19 H5 A2,2 0 0 1 3,17 V7 A2,2 0 0 1 5,5 Z M7 15l3-4 3 3 4-5" },
@@ -14,6 +22,8 @@ inline const std::map<std::wstring, std::wstring>& Icons()
         { L"magpie", L"M4 10V4h6M20 14v6h-6M4 4l6 6M20 20l-6-6" },
         { L"rumble", L"M10,3 H14 A2,2 0 0 1 16,5 V19 A2,2 0 0 1 14,21 H10 A2,2 0 0 1 8,19 V5 A2,2 0 0 1 10,3 Z M4 8v8M20 8v8" },
         { L"keyboard", L"M4.5,6 H19.5 A2,2 0 0 1 21.5,8 V16 A2,2 0 0 1 19.5,18 H4.5 A2,2 0 0 1 2.5,16 V8 A2,2 0 0 1 4.5,6 Z M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M8 14h8" },
+        { L"gamepad", L"M7 7h10c3 0 4 3 4 7s-2 5-4 2l-2-2H9l-2 2c-2 3-4 2-4-2s1-7 4-7z M6 10v4M4 12h4M16 10h.01M18 13h.01" },
+        { L"mouse", L"M12 3c-4 0-6 2-6 6v6a6 6 0 0 0 12 0V9c0-4-2-6-6-6z M12 3v7M6 10h12" },
         { L"close", L"M5,4 H19 A2,2 0 0 1 21,6 V18 A2,2 0 0 1 19,20 H5 A2,2 0 0 1 3,18 V6 A2,2 0 0 1 5,4 Z M9.5 9.5l5 5M14.5 9.5l-5 5" },
         { L"target", L"M4,12 A8,8 0 1 0 20,12 A8,8 0 1 0 4,12 Z M9,12 A3,3 0 1 0 15,12 A3,3 0 1 0 9,12 Z" },
         { L"cpu", L"M8,6 H16 A2,2 0 0 1 18,8 V16 A2,2 0 0 1 16,18 H8 A2,2 0 0 1 6,16 V8 A2,2 0 0 1 8,6 Z M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" },

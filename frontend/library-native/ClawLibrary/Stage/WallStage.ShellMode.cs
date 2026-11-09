@@ -140,24 +140,10 @@ public sealed partial class WallStage
         try
         {
             bool toGame = !ShellMode.GameMode;
-            // 切换画面先盖上（游戏库这时还在前面），等它进场走完再真的切；切完再收场，看得出从哪到了哪
-            try { ModeShiftShow(toGame); } catch (Exception ex) { Log.Warn($"mode shift: {ex.Message}"); }   // 动画出错也照样切
-            var hold = Task.Delay(Reduced ? 0 : (int)ModeHoldMs);
             int code = await ShellMode.Run(toGame ? "to-game" : "to-desktop");
-            await hold;
-            if (code != 0) { ModeShiftHide(); Toast(ShellMode.Why()); }
-            else if (toGame)
-            {
-                if (_ccOpen) { _ccInstantClose = true; CloseControlCenter(); }   // 落在墙上，控制中心在这层下面直接收掉
-                ModeShiftHide();
-            }
-            else
-            {
-                if (_ccOpen) { _ccInstantClose = true; CloseControlCenter(); }
-                var done = new TaskCompletionSource();
-                ModeShiftRevealDesktop(() => { (_window as MainWindow)?.BeginDesktopHandoff(); done.TrySetResult(); });
-                await done.Task;
-            }
+            if (code != 0) { Toast(ShellMode.Why()); return; }
+            if (_ccOpen) { _ccInstantClose = true; CloseControlCenter(); }
+            if (!toGame) (_window as MainWindow)?.BeginDesktopHandoff();
             CcUpdateModeButton();
         }
         finally { (_window as MainWindow)?.FinishDesktopHandoff(); _shellBusy = false; }

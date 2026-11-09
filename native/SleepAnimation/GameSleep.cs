@@ -7,6 +7,8 @@ using Microsoft.Win32.SafeHandles;
 
 namespace ClawSleepAnimation;
 
+internal sealed record FrozenGame(int Pid, long Started, string Image);
+
 internal static class GameSleep
 {
     private static readonly HashSet<string> Protected = new(StringComparer.OrdinalIgnoreCase)
@@ -30,6 +32,7 @@ internal static class GameSleep
     [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, int pid);
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] private static extern bool QueryFullProcessImageNameW(SafeProcessHandle process, uint flags, StringBuilder image, ref uint size);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetProcessTimes(SafeProcessHandle process, out long created, out long exited, out long kernel, out long user);
+    [DllImport("kernel32.dll")] private static extern uint WaitForSingleObject(SafeProcessHandle process, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool IsProcessCritical(SafeProcessHandle process, out bool critical);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool CheckRemoteDebuggerPresent(SafeProcessHandle process, out bool present);
     [DllImport("advapi32.dll", SetLastError = true)] private static extern bool OpenProcessToken(SafeProcessHandle process, uint access, out SafeAccessTokenHandle token);
@@ -62,7 +65,7 @@ internal static class GameSleep
         return record;
     }
     internal static bool Matches(FrozenGame expected, FrozenGame actual) => expected.Pid == actual.Pid && expected.Started == actual.Started && expected.Image.Equals(actual.Image, StringComparison.OrdinalIgnoreCase);
-    public static void Suspend(FrozenGame root, SleepJournal journal, Func<bool> cancelled)
+    public static void Suspend(FrozenGame root, Func<FrozenGame[]> read, Action<FrozenGame[]> write, Func<bool> cancelled)
     {
         var started = Stopwatch.StartNew();
         using var snapshot = CreateToolhelp32Snapshot(2, 0);
@@ -89,38 +92,37 @@ internal static class GameSleep
                 if (cancelled() || started.Elapsed > TimeSpan.FromSeconds(2)) throw new OperationCanceledException("游戏暂停已过期");
                 using var handle = OpenProcess(0x1800, false, game.Pid);
                 if (handle.IsInvalid || !Matches(game, Identity(handle, game.Pid))) throw new InvalidOperationException("游戏进程已退出");
-                var r = journal.Read() ?? throw new InvalidOperationException("恢复记录丢失");
-                journal.Write(r with { Games = [..r.Games, game] }); // Intent precedes native mutation.
-                if (cancelled()) { journal.Write(r); throw new OperationCanceledException("游戏暂停已过期"); }
+                var pending = read();
+                write([..pending, game]); // Intent precedes native mutation.
+                if (cancelled()) { write(pending); throw new OperationCanceledException("游戏暂停已过期"); }
                 int result = NtSuspendProcess(handle);
                 if (result != 0)
                 {
-                    journal.Write(r); // Native call failed; this process was never ours to resume.
+                    write(pending); // Native call failed; this process was never ours to resume.
                     throw new InvalidOperationException($"游戏暂停失败（{result:X}）");
                 }
             }
         }
         catch
         {
-            var r = journal.Read();
-            if (r != null)
-                foreach (var game in r.Games.Reverse())
-                    try { Resume(game); r = r with { Games = r.Games.Where(p => p != game).ToArray() }; journal.Write(r); }
-                    catch (Exception ex) { Program.Log("enhanced-game-rollback-pending", ex.Message); }
+            var pending = read();
+            foreach (var game in pending.Reverse())
+                try { Resume(game); pending = pending.Where(p => p != game).ToArray(); write(pending); }
+                catch (Exception ex) { Program.Log("enhanced-game-rollback-pending", ex.Message); }
             throw;
         }
     }
     public static void Resume(FrozenGame game)
     {
-        using var handle = OpenProcess(0x1800, false, game.Pid);
+        using var handle = OpenProcess(0x101800, false, game.Pid);
         if (handle.IsInvalid)
         {
             int error = Marshal.GetLastWin32Error();
             if (error == 87) return; // Process exited.
             throw new Win32Exception(error);
         }
-        if (!Matches(game, Identity(handle, game.Pid))) return; // PID reused.
+        if (WaitForSingleObject(handle, 0) == 0 || !Matches(game, Identity(handle, game.Pid))) return;
         int result = NtResumeProcess(handle);
-        if (result != 0) throw new InvalidOperationException($"游戏恢复失败（{result:X}）");
+        if (result != 0 && WaitForSingleObject(handle, 0) != 0) throw new InvalidOperationException($"游戏恢复失败（{result:X}）");
     }
 }

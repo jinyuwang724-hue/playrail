@@ -53,6 +53,7 @@ public sealed partial class WallStage
     private void ScreensaverTick()
     {
         if (_screensaverStopped) return;
+        UpdateScreensaverPower();
         bool foreground = ScreensaverForeground;
         if (_screensaverCollapseInput is { } inputAt)
         {
@@ -111,8 +112,9 @@ public sealed partial class WallStage
         {
             if (_csInsert != null || _lm != null || !CsSaverEnter()) return false;
             _screensaverActive = true;
-            _screensaverNextSwitch = NowMs + (long)SsHoldMs;
             PanVelocity = Vector2.Zero;
+            UpdateScreensaverPower();
+            CsSaverShow(first: true);
             Log.Info("screensaver entered (cases)");
             return true;
         }
@@ -130,6 +132,7 @@ public sealed partial class WallStage
         PickScreensaverGame();
         ApplyLibraryRailVisibility(animate: true);
         RefreshScreensaverClock(force: true);
+        UpdateScreensaverPower();
         Log.Info("screensaver entered");
         return true;
     }
@@ -139,6 +142,7 @@ public sealed partial class WallStage
         if (!_screensaverActive) return;
         _screensaverActive = false;
         _screensaverProbe = false;
+        UpdateScreensaverPower();
         if (_csSs != null)
         {
             CsSaverExit();
@@ -219,7 +223,7 @@ public sealed partial class WallStage
     private void PickScreensaverGame()
     {
         if (!_screensaverActive) return;
-        if (_csSs != null) { CsSaverShow(); _screensaverNextSwitch = _csSs?.NextSwitch ?? NowMs + 12_000; return; }
+        if (_csSs != null) { CsSaverShow(); return; }
         var candidates = ScreensaverCandidates();
         int index = ScreensaverPolicy.PickGame(candidates.Select(t => t.Shown!).ToArray(), _screensaverPreviousGame, Random.Shared);
         if (index < 0) { ExitScreensaver(); return; }

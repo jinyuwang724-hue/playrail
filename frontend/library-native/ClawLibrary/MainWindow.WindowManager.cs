@@ -58,12 +58,17 @@ public sealed partial class MainWindow
                     break;
                 case 0x0016:   // EVENT_SYSTEM_MINIMIZESTART
                     if (OpenWindows.AppWindow(hwnd) is not { } m) return;
-                    Log.Info($"wm: {m.Process} minimized; library to front");
-                    Later(60, () => { if (WmActive) RestoreGameShell(true); });
+                    Log.Info($"wm: {m.Process} minimized");
+                    Later(60, () =>
+                    {
+                        if (WmActive && !_switchInFlight &&
+                            !LibraryWindow.HasForegroundApp(WinRT.Interop.WindowNative.GetWindowHandle(this)))
+                            RestoreGameShell(true);
+                    });
                     break;
                 case 0x8001:   // EVENT_OBJECT_DESTROY
                     if (!_wmPlaced.Remove(hwnd)) return;
-                    Later(120, () => { if (WmActive && !LibraryWindow.HasForegroundApp(WinRT.Interop.WindowNative.GetWindowHandle(this))) RestoreGameShell(true); });
+                    Later(120, () => { if (WmActive && !_switchInFlight && !LibraryWindow.HasForegroundApp(WinRT.Interop.WindowNative.GetWindowHandle(this))) RestoreGameShell(true); });
                     break;
             }
         }
@@ -96,7 +101,7 @@ public sealed partial class MainWindow
         if (IsZoomed(hwnd)) ShowWindow(hwnd, 9);   // SW_RESTORE
         if (!GetWindowRect(hwnd, out var r)) return false;
         var f = r;
-        DwmGetWindowAttribute(hwnd, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, out f, Marshal.SizeOf<WmRect>());
+        if (DwmGetWindowAttribute(hwnd, 9 /* DWMWA_EXTENDED_FRAME_BOUNDS */, out f, Marshal.SizeOf<WmRect>()) != 0) f = r;
         int l = f.Left - r.Left, t = f.Top - r.Top, rr = r.Right - f.Right, b = r.Bottom - f.Bottom;
         return SetWindowPos(hwnd, 0, m.Left - l, m.Top - t, (m.Right - m.Left) + l + rr, (m.Bottom - m.Top) + t + b, 0x0014 /* NOZORDER | NOACTIVATE */);
     }

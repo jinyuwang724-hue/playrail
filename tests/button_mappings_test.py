@@ -131,6 +131,26 @@ class DispatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.calls[1][0], "mapped_input")
         self.assertEqual(self.calls[1][1]["mapping"]["keys"], [0x5B, 0x47])
 
+    async def test_physical_quick_settings_hold_opens_windows_task_view_in_fse(self):
+        command = {"type": "system", "action": "gamebar"}
+        physical = {"type": "mapped_action", "source": "QS", "scope": "general", "command": command}
+        with patch.object(service._buttons_module, "toolbox_context", return_value={"xboxFse": True}):
+            for metadata in ({}, {"gesture": "short", "gameMode": False}, {"gesture": "long", "gameMode": False}):
+                self.calls.clear()
+                result = await self.s._execute_mapping({**physical, **metadata})
+                self.assertEqual(result["windowRoute"], "fse-task-view")
+                self.assertEqual(self.calls, [("mapped_input", {"mapping": {
+                    "kind": "keys", "keys": [0x5B, 0x09], "extended": [True, False]}})])
+            self.calls.clear()
+            self.assertTrue((await self.s.test_button_mapping("QS", False))["ok"])
+            self.assertEqual(self.calls[0]["command"], "allow_gamebar")
+        self.calls.clear()
+        result = await self.s._execute_mapping(physical)
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.calls[0]["command"], "allow_gamebar")
+        self.assertEqual(self.calls[1][0], "mapped_input")
+        self.assertEqual(self.calls[1][1]["mapping"]["keys"], [0x5B, 0x47])
+
     async def test_library_launch_uses_fixed_registered_protocol(self):
         with patch.object(service.os, "startfile") as launch:
             result = await self.s.test_button_mapping("Claw", False)

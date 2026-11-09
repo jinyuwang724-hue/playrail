@@ -52,6 +52,8 @@ public sealed partial class WallStage
     internal void CloseSpecialSurfaces()
     {
         ++_qsVersion;
+        NetworkLeave(instant: true);
+        if (_qs != null) _qsToastV.IsVisible = false;
         _qsOpen = _qsHideWindowAfter = false;
         _qsPoll?.Stop();
         if (_qsTicking) Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= QsFrame;

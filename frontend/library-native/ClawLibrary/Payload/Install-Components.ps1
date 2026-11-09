@@ -6,32 +6,100 @@ param(
     [Parameter(Mandatory)][string]$AgentHome,
     [Parameter(Mandatory)][string]$User,
     [Parameter(Mandatory)][string]$UserSid,
-    [string]$Steps = 'fonts,agent,sleep,pawnio,fan,widget',
-    [string]$Run = '',
-    [switch]$SkipTask
+    [string]$Steps,
+    [ValidatePattern('^[a-zA-Z0-9-]*$')][string]$Run = '',
+    [switch]$ValidateOnly
 )
 $ErrorActionPreference = 'Stop'
 $payload = $PSScriptRoot
 $utf8 = New-Object Text.UTF8Encoding($false)
+$taskPath = '\ClawToolbox\'
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$bios = Get-ItemProperty 'HKLM:\HARDWARE\DESCRIPTION\System\BIOS'
+$isClaw = $bios.SystemManufacturer -match 'Micro-Star|^MSI' -and $bios.SystemProductName -match 'Claw'
+$fullInstall = -not $Steps
+$order = @('fonts', 'pawnio', 'agent', 'sleep', 'fan', 'widget', 'edge-swipe', 'shell')
+if ($fullInstall) {
+    $requested = @($order | Where-Object { $isClaw -or $_ -notin 'pawnio', 'fan' })
+} else {
+    $requested = @($Steps.Split(',') | ForEach-Object { $_.Trim() })
+    foreach ($step in $requested) {
+        if ($step -notin $order) { throw "Unknown component: $step" }
+    }
+}
+$selected = @($order | Where-Object { $_ -in $requested })
+$manifest = Join-Path (Split-Path -Parent $payload) 'AppxManifest.xml'
+$release = if (Test-Path -LiteralPath $manifest) {
+    ([xml][IO.File]::ReadAllText($manifest)).Package.Identity.Version
+}
+
+function Assert-Payload {
+    $files = @{
+        agent = @('agent\agent.zip', 'agent\version.txt')
+        sleep = @('sleep\Install-SleepAnimation.ps1', 'sleep\app\ClawSleepAnimation.exe', 'sleep\app\enhanced-bundle.json')
+        fan = @('fan\ClawFanService.exe', 'fan\IntelMSR.bin')
+        pawnio = @('pawnio\PawnIO_setup.exe')
+        'edge-swipe' = @('shell\ClawShell.exe')
+        shell = @('shell\ClawShell.exe')
+    }
+    foreach ($step in $selected) {
+        foreach ($file in $files[$step]) {
+            if (-not (Test-Path -LiteralPath (Join-Path $payload $file) -PathType Leaf)) { throw "Missing package file: $file" }
+        }
+    }
+    if ('widget' -in $selected -and @(Get-ChildItem -LiteralPath (Join-Path $payload 'widget') -Filter '*.msix' -File).Count -ne 1) {
+        throw 'The package must contain exactly one Game Bar widget MSIX.'
+    }
+    if ('agent' -in $selected) {
+        $null = [version]([IO.File]::ReadAllText((Join-Path $payload 'agent\version.txt'))).Trim()
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::OpenRead((Join-Path $payload 'agent\agent.zip'))
+        try {
+            if (-not $zip.GetEntry('app/claw_agent.py') -or -not $zip.GetEntry('app/plugin.json') -or
+                @($zip.Entries | Where-Object FullName -match '^runtime/[^/]+/pythonw\.exe$').Count -ne 1) {
+                throw 'Agent archive has an invalid app or Python runtime layout.'
+            }
+        } finally { $zip.Dispose() }
+    }
+    if ('sleep' -in $selected) {
+        $source = Join-Path $payload 'sleep\app'
+        $bundle = Get-Content -Raw -LiteralPath (Join-Path $source 'enhanced-bundle.json') | ConvertFrom-Json
+        foreach ($file in $bundle.files.PSObject.Properties) {
+            $path = Join-Path $source $file.Name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-FileHash -LiteralPath $path).Hash -ne $file.Value) {
+                throw "Power animation bundle failed verification: $($file.Name)"
+            }
+        }
+    }
+}
+if ($ValidateOnly) { Assert-Payload; return }
+if ($identity.User.Value -ne $UserSid -or $identity.Name -ne $User -or
+    -not ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw 'Run setup elevated as the interactive account that owns Claw Toolbox.'
+}
+
 $statusFolder = Join-Path $AgentHome 'setup'
 [IO.Directory]::CreateDirectory($statusFolder) | Out-Null
 $statusPath = Join-Path $statusFolder $(if ($Run) { 'status-' + $Run + '.json' } else { 'status.json' })
-$status = [ordered]@{}
-foreach ($name in $Steps.Split(',')) { $status[$name] = @{ state = 'pending'; detail = '' } }
-$status['finished'] = $false
+$status = [ordered]@{ schema = 1; release = $release; finished = $false; success = $false }
+foreach ($name in $selected) { $status[$name] = @{ state = 'pending'; detail = '' } }
 
-function Save-Status {
-    $tmp = $statusPath + '.tmp'
-    [IO.File]::WriteAllText($tmp, ($status | ConvertTo-Json -Depth 4), $utf8)
-    Move-Item -LiteralPath $tmp -Destination $statusPath -Force
+function Write-Json([string]$Path, $Value) {
+    $tmp = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    [IO.File]::WriteAllText($tmp, ($Value | ConvertTo-Json -Depth 10), $utf8)
+    try {
+        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($tmp, $Path, [NullString]::Value) }
+        else { [IO.File]::Move($tmp, $Path) }
+    } finally {
+        if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) }
+    }
 }
+function Save-Status { Write-Json $statusPath $status }
 function Set-Step([string]$Name, [string]$State, [string]$Detail = '') {
     $status[$Name] = @{ state = $State; detail = $Detail }
     Save-Status
 }
 function Read-Json([string]$Path) { [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) | ConvertFrom-Json }
-Start-Transcript -LiteralPath (Join-Path $statusFolder 'install.log') -Force | Out-Null
-Save-Status
 
 # ---- 和后台说话：agent.json 里的端口和令牌，JSON 一行一条 ----
 function Invoke-Agent([string]$Method, [object[]]$Arguments = @(), [int]$TimeoutMs = 15000) {
@@ -42,19 +110,26 @@ function Invoke-Agent([string]$Method, [object[]]$Arguments = @(), [int]$Timeout
         $reader = New-Object IO.StreamReader($stream, $utf8)
         $writer = New-Object IO.StreamWriter($stream, $utf8); $writer.AutoFlush = $true
         $writer.WriteLine((@{ hello = $endpoint.token; client = 'oobe-installer' } | ConvertTo-Json -Compress))
-        if (($reader.ReadLine() | ConvertFrom-Json).hello -ne 'ok') { throw 'Agent authentication failed.' }
+        $hello = $reader.ReadLine() | ConvertFrom-Json
+        if ($hello.hello -ne 'ok' -or $hello.pid -ne $endpoint.pid) { throw 'Agent authentication failed.' }
         $writer.WriteLine((@{ id = 1; method = $Method; args = $Arguments } | ConvertTo-Json -Compress -Depth 20))
         do { $reply = $reader.ReadLine() | ConvertFrom-Json } while ($reply -and $reply.id -ne 1)
+        if (-not $reply) { throw 'Agent disconnected without replying.' }
         if ($reply.error) { throw $reply.error }
         return $reply.result
     } finally { $tcp.Dispose() }
 }
-function Test-Agent {
-    try { $null = Invoke-Agent 'get_settings_state' -TimeoutMs 4000; return $true } catch { return $false }
+function Test-Agent([string]$ExpectedScript) {
+    try {
+        $running = Invoke-Agent 'agent_info' -TimeoutMs 4000
+        if (-not $ExpectedScript) { return $true }
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId = $($running.pid)"
+        return $process.CommandLine -and $process.CommandLine.Contains('"' + $ExpectedScript + '"')
+    } catch { return $false }
 }
-function Wait-Agent([int]$Seconds) {
+function Wait-Agent([int]$Seconds, [string]$ExpectedScript) {
     $until = (Get-Date).AddSeconds($Seconds)
-    while ((Get-Date) -lt $until) { if (Test-Agent) { return $true }; Start-Sleep -Milliseconds 700 }
+    while ((Get-Date) -lt $until) { if (Test-Agent $ExpectedScript) { return $true }; Start-Sleep -Milliseconds 700 }
     return $false
 }
 function Stop-Agent {
@@ -66,19 +141,14 @@ function Stop-Agent {
     if ($old -and -not $old.WaitForExit(20000)) { throw 'Old toolbox agent did not exit.' }
 }
 function Start-Agent {
-    if ($SkipTask) { return }
-    Start-ScheduledTask -TaskPath '\ClawToolbox\' -TaskName Agent
+    Start-ScheduledTask -TaskPath $taskPath -TaskName Agent
 }
 
-# 只拷内容变了的文件：正在用的文件内容没变就不碰
-function Copy-Tree([string]$From, [string]$To) {
-    foreach ($file in Get-ChildItem -LiteralPath $From -Recurse -File) {
-        $relative = $file.FullName.Substring($From.TrimEnd('\').Length + 1)
-        $target = Join-Path $To $relative
-        if ((Test-Path -LiteralPath $target) -and (Get-Item -LiteralPath $target).Length -eq $file.Length -and
-            (Get-FileHash -LiteralPath $target).Hash -eq (Get-FileHash -LiteralPath $file.FullName).Hash) { continue }
-        [IO.Directory]::CreateDirectory((Split-Path -Parent $target)) | Out-Null
-        Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+function Restore-Task([string]$Name, [string]$Xml) {
+    if ($Xml) {
+        Register-ScheduledTask -TaskPath $taskPath -TaskName $Name -Xml $Xml -Force | Out-Null
+    } elseif (Get-ScheduledTask -TaskPath $taskPath -TaskName $Name -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskPath $taskPath -TaskName $Name -Confirm:$false
     }
 }
 
@@ -121,41 +191,75 @@ function Install-FontsStep {
 
 # ---------------- 1 后台 ----------------
 function Install-AgentStep {
-    $version = ([IO.File]::ReadAllText((Join-Path $payload 'agent\version.txt'))).Trim()
+    $version = [version]([IO.File]::ReadAllText((Join-Path $payload 'agent\version.txt'))).Trim()
     $currentPath = Join-Path $AgentHome 'current.json'
-    $installed = if (Test-Path -LiteralPath $currentPath) { (Read-Json $currentPath).version } else { $null }
-    $task = Get-ScheduledTask -TaskPath '\ClawToolbox\' -TaskName Agent -ErrorAction SilentlyContinue
-    if ($installed -and $task -and ([version]$installed -ge [version]$version)) {
-        if (-not (Test-Agent)) { Start-Agent; if (-not (Wait-Agent 30)) { throw 'Agent did not start.' } }
-        return "kept $installed"
+    $previous = if (Test-Path -LiteralPath $currentPath) { Read-Json $currentPath }
+    $task = Get-ScheduledTask -TaskPath $taskPath -TaskName Agent -ErrorAction SilentlyContinue
+    $archive = Join-Path $payload 'agent\agent.zip'
+    $hash = (Get-FileHash -LiteralPath $archive).Hash
+    $keep = $previous -and ([version]$previous.version -gt $version -or $previous.archiveHash -eq $hash)
+    if ($keep -and $task -and $task.Actions.Execute -eq $previous.python -and
+        $task.Actions.Arguments -eq ('"' + $previous.agent + '"')) {
+        if (-not (Test-Agent $previous.agent)) {
+            Start-Agent
+            if (-not (Wait-Agent 30 $previous.agent)) { throw 'Installed agent did not start.' }
+        }
+        return "kept $($previous.version)"
     }
-    # 安装包里是一个 zip（app\ + runtime\python-x.y.z\），先解到临时目录再只拷变了的文件
-    $source = Join-Path $env:TEMP ('claw-agent-' + [guid]::NewGuid().ToString('N'))
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $payload 'agent\agent.zip'), $source)
-    if ($installed) { Stop-Agent }
-    $runtimeSource = Get-ChildItem -LiteralPath (Join-Path $source 'runtime') -Directory | Select-Object -First 1
-    $runtime = Join-Path $AgentHome ('runtime\' + $runtimeSource.Name)
-    Copy-Tree $runtimeSource.FullName $runtime
-    $app = Join-Path $AgentHome 'app'
-    Copy-Tree (Join-Path $source 'app') $app
-    Remove-Item -LiteralPath $source -Recurse -Force -ErrorAction SilentlyContinue
-    $python = Join-Path $runtime 'pythonw.exe'
-    $agent = Join-Path $app 'claw_agent.py'
-    [IO.File]::WriteAllText($currentPath, (@{ version = $version; python = $python; agent = $agent } | ConvertTo-Json), $utf8)
-    if (-not $SkipTask) {
-        $action = New-ScheduledTaskAction -Execute $python -Argument ('"' + $agent + '"') -WorkingDirectory $app
+    $next = $previous
+    if (-not $keep) {
+        # Stage a complete release alongside the old one so a failed start can reuse the old files.
+        $releases = Join-Path $env:ProgramFiles 'ClawToolbox\Agent\releases'
+        Protect-Folder $releases
+        $directory = Join-Path $releases "$version-$($hash.Substring(0, 16))"
+        if (-not (Test-Path -LiteralPath $directory)) {
+            $staging = Join-Path $releases ('stage-' + [guid]::NewGuid().ToString('N').Substring(0, 12))
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            try {
+                [IO.Compression.ZipFile]::ExtractToDirectory($archive, $staging)
+                [IO.Directory]::Move($staging, $directory)
+            } finally {
+                if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+            }
+        }
+        $runtime = @(Get-ChildItem -LiteralPath (Join-Path $directory 'runtime') -Directory)
+        if ($runtime.Count -ne 1) { throw 'Agent package must contain one Python runtime.' }
+        $next = @{
+            version = "$version"; archiveHash = $hash
+            python = Join-Path $runtime[0].FullName 'pythonw.exe'
+            agent = Join-Path $directory 'app\claw_agent.py'
+        }
+    }
+    foreach ($file in @($next.python, $next.agent)) {
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Agent release file is missing: $file" }
+    }
+    $oldTask = if ($task) { Export-ScheduledTask -TaskPath $taskPath -TaskName Agent }
+    Stop-Agent
+    try {
+        $action = New-ScheduledTaskAction -Execute $next.python -Argument ('"' + $next.agent + '"') -WorkingDirectory (Split-Path -Parent $next.agent)
         $trigger = New-ScheduledTaskTrigger -AtLogOn -User $User
         $principal = New-ScheduledTaskPrincipal -UserId $User -LogonType Interactive -RunLevel Limited
         # 掌机常在电池上：默认设置会拒绝启动，或拔电时杀掉后台
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable `
-            -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances Parallel -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-        Register-ScheduledTask -TaskPath '\ClawToolbox\' -TaskName 'Agent' -Action $action -Trigger $trigger -Principal $principal `
+            -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+        Register-ScheduledTask -TaskPath $taskPath -TaskName Agent -Action $action -Trigger $trigger -Principal $principal `
             -Settings $settings -Description 'Claw handheld toolbox agent: power, fan, OSD, rumble and buttons without Steam.' -Force | Out-Null
         Start-Agent
-        if (-not (Wait-Agent 40)) { throw 'Agent did not start.' }
+        if (-not (Wait-Agent 40 $next.agent)) { throw 'New agent did not start.' }
+        Write-Json $currentPath $next
+    } catch {
+        $failure = $_
+        try {
+            Stop-ScheduledTask -TaskPath $taskPath -TaskName Agent -ErrorAction SilentlyContinue
+            Restore-Task Agent $oldTask
+            if ($oldTask) {
+                Start-Agent
+                if (-not (Wait-Agent 30)) { throw 'Previous agent did not start.' }
+            }
+        } catch { throw "Agent update failed: $failure. Agent rollback failed: $_" }
+        throw $failure
     }
-    return "installed $version"
+    return "active $($next.version)"
 }
 
 # ---------------- 2 PawnIO（功耗和风扇读写 MSR / EC 用的签名驱动） ----------------
@@ -169,14 +273,17 @@ function Install-PawnIOStep {
 }
 
 # ---------------- 3 风扇服务 ----------------
-function Protect-Folder([string]$Path) {
-    # 装 SYSTEM 服务前拒绝被重定向的目录
+function Assert-LocalPath([string]$Path) {
     $check = [IO.Path]::GetFullPath($Path)
     while ($check) {
         if ((Test-Path -LiteralPath $check) -and ((Get-Item -LiteralPath $check -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw ('Refusing redirected service path: ' + $check) }
         $parent = Split-Path -Parent $check
         if ($parent -eq $check) { break }; $check = $parent
     }
+}
+
+function Protect-Folder([string]$Path) {
+    Assert-LocalPath $Path
     [IO.Directory]::CreateDirectory($Path) | Out-Null
     $acl = New-Object Security.AccessControl.DirectorySecurity
     $acl.SetAccessRuleProtection($true, $false)
@@ -191,9 +298,14 @@ function Install-FanStep {
     $binary = Join-Path $payload 'fan\ClawFanService.exe'
     $serviceFolder = Join-Path $env:ProgramFiles 'ClawToolbox\FanService'
     $installedExe = Join-Path $serviceFolder 'ClawFanService.exe'
+    $module = Join-Path $payload 'fan\IntelMSR.bin'
+    $installedModule = Join-Path $serviceFolder 'pawnio\IntelMSR.bin'
     $old = Get-Service ClawFanService -ErrorAction SilentlyContinue
-    if ($old -and (Test-Path -LiteralPath $installedExe) -and (Get-FileHash -LiteralPath $installedExe).Hash -eq (Get-FileHash -LiteralPath $binary).Hash) {
+    if ($old -and (Test-Path -LiteralPath $installedExe) -and (Test-Path -LiteralPath $installedModule) -and
+        (Get-FileHash -LiteralPath $installedExe).Hash -eq (Get-FileHash -LiteralPath $binary).Hash -and
+        (Get-FileHash -LiteralPath $installedModule).Hash -eq (Get-FileHash -LiteralPath $module).Hash) {
         if ($old.Status -ne 'Running') { Start-Service ClawFanService }
+        $old.WaitForStatus('Running', [TimeSpan]::FromSeconds(15))
         return 'kept'
     }
     if (-not (Get-Service PawnIO -ErrorAction SilentlyContinue)) { throw 'PawnIO is not installed.' }
@@ -216,33 +328,75 @@ function Install-FanStep {
     }
     $configFolder = Join-Path $env:ProgramData 'ClawToolbox\FanService'
     $configPath = Join-Path $configFolder 'service.json'
+    Protect-Folder $serviceFolder
+    Protect-Folder $configFolder
+    Protect-Folder (Split-Path -Parent $installedModule)
+    $saved = @{}
+    foreach ($file in @($installedExe, $installedModule)) {
+        $saved[$file] = $null
+        if (Test-Path -LiteralPath $file) {
+            $backup = $file + '.' + [guid]::NewGuid().ToString('N') + '.backup'
+            Copy-Item -LiteralPath $file -Destination $backup
+            $saved[$file] = $backup
+        }
+    }
+    $hadConfig = Test-Path -LiteralPath $configPath
     Stop-Agent
-    if ($old) { Stop-Service ClawFanService; $old.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20)) }
+    $changed = $false
+    $restored = $false
     try {
-        Protect-Folder $serviceFolder
-        Protect-Folder $configFolder
-        Protect-Folder (Join-Path $serviceFolder 'pawnio')
+        if ($old) { Stop-Service ClawFanService; $old.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20)) }
+        $changed = $true
         Copy-Item -LiteralPath $binary -Destination $installedExe -Force
-        Copy-Item -LiteralPath (Join-Path $payload 'fan\IntelMSR.bin') -Destination (Join-Path $serviceFolder 'pawnio\IntelMSR.bin') -Force
-        if (-not (Test-Path -LiteralPath $configPath)) {
+        Copy-Item -LiteralPath $module -Destination $installedModule -Force
+        if (-not $hadConfig) {
             $fan = (Read-Json (Join-Path $data 'power.json')).fan
             if (-not $fan.control) { $fan | Add-Member -NotePropertyName control -NotePropertyValue 'custom' -Force }
             $config = @{ schema = 1; revision = 0; ownerSid = $UserSid; fan = $fan; factoryCpu = $original.cpu; factoryGpu = $original.gpu }
             [IO.File]::WriteAllText($configPath, ($config | ConvertTo-Json -Depth 10), $utf8)
         }
-        if ($old) { Set-Service ClawFanService -StartupType Automatic }
-        else {
+        if (-not $old) {
             New-Service -Name ClawFanService -BinaryPathName ('"' + $installedExe + '"') -DisplayName 'Claw 独立风扇服务' `
                 -Description '开机读取自定义三档曲线；退出工具箱界面后继续调速。' -StartupType Automatic -DependsOn @('Winmgmt', 'PawnIO') | Out-Null
         }
         & sc.exe failure ClawFanService reset= 86400 actions= restart/2000/restart/5000/restart/15000 | Out-Null
+        if ($LASTEXITCODE) { throw 'Could not set fan service recovery actions.' }
         & sc.exe failureflag ClawFanService 1 | Out-Null
+        if ($LASTEXITCODE) { throw 'Could not enable fan service recovery actions.' }
         Start-Service ClawFanService
         (Get-Service ClawFanService).WaitForStatus('Running', [TimeSpan]::FromSeconds(15))
+        $restored = $true
+    } catch {
+        $failure = $_
+        try {
+            if ($changed) {
+                $service = Get-Service ClawFanService -ErrorAction SilentlyContinue
+                if ($service) {
+                    Stop-Service ClawFanService
+                    $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20))
+                    if (-not $old) {
+                        & sc.exe delete ClawFanService | Out-Null
+                        if ($LASTEXITCODE) { throw 'Could not remove incomplete fan service registration.' }
+                    }
+                }
+                foreach ($file in $saved.Keys) {
+                    if ($saved[$file]) { Copy-Item -LiteralPath $saved[$file] -Destination $file -Force }
+                    elseif (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file -Force }
+                }
+                if (-not $hadConfig -and (Test-Path -LiteralPath $configPath)) { Remove-Item -LiteralPath $configPath -Force }
+            }
+            if ($old) { Start-Service ClawFanService; $old.WaitForStatus('Running', [TimeSpan]::FromSeconds(15)) }
+            $restored = $true
+        } catch { throw "Fan update failed: $failure. Fan rollback failed: $_" }
+        throw $failure
     } finally {
-        # 服务装没装成，都把后台拉回来；后台会自己报告风扇服务的错误
+        if ($restored) {
+            foreach ($backup in $saved.Values) {
+                if ($backup) { Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue }
+            }
+        }
         Start-Agent
-        $null = Wait-Agent 30
+        if (-not (Wait-Agent 30)) { throw 'Agent did not reconnect after fan service setup.' }
     }
     return 'installed'
 }
@@ -284,36 +438,152 @@ function Install-SleepStep {
     if (Test-Path -LiteralPath $record) {
         $installed = Read-Json $record
         $oldMarker = Join-Path (Split-Path -Parent $installed.executable) 'enhanced-bundle.json'
-        if ((Test-Path -LiteralPath $oldMarker) -and (Read-Json $oldMarker).bundle -eq $marker.bundle) { return 'kept' }
-    }
-    if ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value -ne $UserSid) {
-        throw 'Sleep installation must run as the same interactive account.'
+        $monitor = Get-ScheduledTask -TaskPath $taskPath -TaskName SleepAnimation -ErrorAction SilentlyContinue
+        $recovery = Get-ScheduledTask -TaskPath $taskPath -TaskName SleepAnimationRecovery -ErrorAction SilentlyContinue
+        if ($monitor -and $recovery -and $monitor.Actions.Execute -eq $installed.executable -and
+            $recovery.Actions.Execute -eq $installed.executable -and (Test-Path -LiteralPath $installed.executable) -and
+            (Test-Path -LiteralPath $oldMarker) -and (Read-Json $oldMarker).bundle -eq $marker.bundle) {
+            if ($monitor.State -ne 'Running') { Start-ScheduledTask -TaskPath $taskPath -TaskName SleepAnimation }
+            $until = (Get-Date).AddSeconds(15)
+            do {
+                try {
+                    $ready = Read-Json (Join-Path $state 'monitor.json')
+                    if ((Get-Process -Id $ready.pid -ErrorAction Stop).Path -eq $installed.executable) { return 'ready' }
+                } catch { }
+                Start-Sleep -Milliseconds 250
+            } while ((Get-Date) -lt $until)
+            throw 'Installed power animation monitor did not start.'
+        }
     }
     & (Join-Path $payload 'sleep\Install-SleepAnimation.ps1') -Source $source -Report (Join-Path $statusFolder 'sleep-installation.json')
     return 'installed'
 }
 
-$code = 0
-foreach ($name in $Steps.Split(',')) {
-    Set-Step $name 'running'
+function Install-EdgeSwipeStep {
+    $taskName = 'GameModeEdgeSwipe'
+    $folder = Join-Path $env:ProgramFiles 'ClawToolbox\GameModeEdgeSwipe'
+    $source = Join-Path $payload 'shell\ClawShell.exe'
+    $version = (Get-Item -LiteralPath $source).VersionInfo.FileVersion
+    $hash = (Get-FileHash -LiteralPath $source).Hash
+    $binary = Join-Path $folder "ClawShell-$version-$($hash.Substring(0, 12)).exe"
+    $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($task -and $task.Actions.Execute -eq $binary -and (Test-Path -LiteralPath $binary) -and
+        (Get-FileHash -LiteralPath $binary).Hash -eq $hash -and
+        (Get-ScheduledTaskInfo -TaskPath $taskPath -TaskName $taskName).LastTaskResult -eq 0) { return 'kept' }
+    Protect-Folder $folder
+    Copy-Item -LiteralPath $source -Destination $binary -Force
+    $action = New-ScheduledTaskAction -Execute $binary -Argument 'edge-apply $(Arg0)'
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserSid
+    $principal = New-ScheduledTaskPrincipal -UserId $UserSid -LogonType Interactive -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -MultipleInstances Queue -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 1)
+    $oldTask = if ($task) { Export-ScheduledTask -TaskPath $taskPath -TaskName $taskName }
     try {
-        $detail = switch ($name) {
-            'fonts' { Install-FontsStep }
-            'agent' { Install-AgentStep }
-            'sleep' { Install-SleepStep }
-            'pawnio' { Install-PawnIOStep }
-            'fan' { Install-FanStep }
-            'widget' { Install-WidgetStep }
-        }
-        Set-Step $name 'done' ([string]$detail)
-        Write-Output ($name + ': ' + $detail)
+        Register-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+        $started = (Get-Date).AddSeconds(-1)
+        Start-ScheduledTask -TaskPath $taskPath -TaskName $taskName
+        $until = (Get-Date).AddSeconds(30)
+        do {
+            Start-Sleep -Milliseconds 250
+            $info = Get-ScheduledTaskInfo -TaskPath $taskPath -TaskName $taskName
+            if ($info.LastRunTime -ge $started -and (Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName).State -eq 'Ready') {
+                if ($info.LastTaskResult -ne 0) { throw "Edge swipe task exited with $($info.LastTaskResult)." }
+                return 'installed'
+            }
+        } while ((Get-Date) -lt $until)
+        throw 'Edge swipe task did not complete.'
     } catch {
-        Set-Step $name 'failed' $_.Exception.Message
-        Write-Output ($name + ' failed: ' + $_.Exception.Message)
-        $code = 1
+        $failure = $_
+        try {
+            Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue
+            Restore-Task $taskName $oldTask
+        } catch { throw "Edge swipe update failed: $failure. Task rollback failed: $_" }
+        throw $failure
     }
 }
-$status['finished'] = $true
-Save-Status
-Stop-Transcript | Out-Null
-exit $code
+
+function Install-ShellStep {
+    $stable = Join-Path $AgentHome 'shell\ClawShell.exe'
+    # Game mode installs its shell on first use. For existing users, stage the new
+    # shell at the path Winlogon already uses and let the current session exit normally.
+    if (-not (Test-Path -LiteralPath $stable -PathType Leaf)) { return 'available on first use' }
+    Assert-LocalPath $stable
+    $source = Join-Path $payload 'shell\ClawShell.exe'
+    if ((Get-FileHash -LiteralPath $stable).Hash -eq (Get-FileHash -LiteralPath $source).Hash) { return 'kept' }
+    $staged = $stable + '.' + [guid]::NewGuid().ToString('N') + '.new'
+    $backup = Join-Path (Split-Path -Parent $stable) "ClawShell.old-$([DateTime]::UtcNow.Ticks)"
+    try {
+        Copy-Item -LiteralPath $source -Destination $staged
+        [IO.File]::Replace($staged, $stable, $backup)
+    } finally {
+        if ([IO.File]::Exists($staged)) { [IO.File]::Delete($staged) }
+    }
+    return 'updated for the next shell start'
+}
+
+$lock = [Threading.Mutex]::new($false, 'Global\ClawToolbox.BackendSetup')
+$locked = $false
+$transcript = $false
+try {
+    try {
+        $locked = $lock.WaitOne(0)
+    } catch [Threading.AbandonedMutexException] { $locked = $true }
+    if (-not $locked) { throw 'Another Claw backend installation is running.' }
+    Start-Transcript -LiteralPath (Join-Path $statusFolder 'install.log') -Force | Out-Null
+    $transcript = $true
+    Save-Status
+    Assert-Payload
+
+    $scheduler = New-Object -ComObject 'Schedule.Service'
+    $scheduler.Connect()
+    $root = $scheduler.GetFolder('\')
+    if (-not @($root.GetFolders(0) | Where-Object Name -eq 'ClawToolbox').Count) {
+        $null = $root.CreateFolder('ClawToolbox')
+    }
+
+    foreach ($name in $selected) {
+        Set-Step $name 'running'
+        try {
+            $detail = switch ($name) {
+                'fonts' { Install-FontsStep }
+                'agent' { Install-AgentStep }
+                'sleep' { Install-SleepStep }
+                'edge-swipe' { Install-EdgeSwipeStep }
+                'shell' { Install-ShellStep }
+                'pawnio' { Install-PawnIOStep }
+                'fan' {
+                    if ($status.agent.state -eq 'failed' -or $status.pawnio.state -eq 'failed') {
+                        throw 'Fan setup requires working Agent and PawnIO installations.'
+                    }
+                    Install-FanStep
+                }
+                'widget' { Install-WidgetStep }
+            }
+            Set-Step $name 'done' ([string]$detail)
+            Write-Output ($name + ': ' + $detail)
+        } catch {
+            Set-Step $name 'failed' $_.Exception.Message
+            Write-Output ($name + ' failed: ' + $_.Exception.Message)
+        }
+    }
+    $status.finished = $true
+    $status.success = @($selected | Where-Object { $status[$_].state -ne 'done' }).Count -eq 0
+    if ($fullInstall -and $status.success) {
+        $status.completedAt = [DateTime]::UtcNow.ToString('o')
+        Write-Json (Join-Path $statusFolder 'backend.json') $status
+    }
+} catch {
+    $status.finished = $true
+    $status.success = $false
+    $status.error = $_.Exception.Message
+    Write-Output ("Claw backend setup failed: " + $status.error)
+} finally {
+    try {
+        if ($locked -or $Run) { Save-Status }
+    } finally {
+        if ($transcript) { Stop-Transcript | Out-Null }
+        if ($locked) { $lock.ReleaseMutex() }
+        $lock.Dispose()
+    }
+}
+if (-not $status.success) { exit 1 }
+exit 0

@@ -18,6 +18,7 @@
             <SolidColorBrush x:Key="CardStrokeColorDefaultBrush" Color="#FF373B41" />
             <SolidColorBrush x:Key="DividerStrokeColorDefaultBrush" Color="#FF45484B" />
             <SolidColorBrush x:Key="ControlStrongStrokeColorDefaultBrush" Color="#FF6B7584" />
+            <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="{ThemeResource SystemAccentColor}" />
             <SolidColorBrush x:Key="ButtonBackground" Color="#FF3E434B" />
             <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#FF474D56" />
             <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#FF363A41" />

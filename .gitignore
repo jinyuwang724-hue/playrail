@@ -49,6 +49,8 @@ desktop.ini
 /tests/LibraryShortcutInput/obj/
 /native/SleepAnimation/bin/
 /native/SleepAnimation/obj/
+/native/GameFreeze/bin/
+/native/GameFreeze/obj/
 /tests/SleepAnimation/bin/
 /tests/SleepAnimation/obj/
 /tests/EnhancedSleep/bin/
@@ -63,3 +65,7 @@ desktop.ini
 /.workbuddy/
 /UI design/
 /repairs/decky-20261018/
+
+# QAM prototype exports with local device names and in-game account IDs
+/frontend/QAM/*.png
+/frontend/QAM/qam-wifi-bt-demo.html

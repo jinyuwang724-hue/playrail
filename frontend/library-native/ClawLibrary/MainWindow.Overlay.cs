@@ -21,6 +21,8 @@ public sealed partial class MainWindow
     /// <summary>快设面板 / 切换器这次是盖在哪个程序上唤出的（游戏模式）；在游戏库自己上面唤出的是 0。</summary>
     internal nint SurfaceTarget => _overlayActive ? _overlayTarget : _surfaceSession && _surfaceHideWindow ? _shortcutWindow?.ReturnWindow ?? 0 : 0;
 
+    private bool _switchInFlight;
+    internal bool WindowSwitchInFlight => _switchInFlight;
     private long _lastSpecialRouteAt = -10_000;
 
     private async Task ActivateOverlayRoute(string route, nint returnWindow)
@@ -29,8 +31,9 @@ public sealed partial class MainWindow
         await _overlayRoutes.WaitAsync();
         try
         {
-            if (_shortcutClosed || _desktopHandoff) return;
+            if (_shortcutClosed || _desktopHandoff || _switchInFlight) return;
             if (route == "game-shell") { RestoreGameShell(true); return; }
+            if (route == "game-shell-reveal") { RevealGameShell(); return; }
             if (route == "keep-game-shell") { if (Stage.ShellMode.GameMode) RestoreGameShell(false); return; }
             string targetRoute = ToolboxActivation.Target(route.Replace(App.ViaShell, ""));
             bool quick = targetRoute == "control-center", switcher = targetRoute == "window-switcher";
@@ -41,7 +44,7 @@ public sealed partial class MainWindow
             // 游戏模式下快设之后 600 ms 内的游戏库开关一律不理
             long routeAt = Environment.TickCount64;
             if (special) _lastSpecialRouteAt = routeAt;
-            else if (game && routeAt - _lastSpecialRouteAt < 600 && ToolboxActivation.Target(route.Replace(App.ViaShell, "")) is "library" or "activate")
+            else if (game && (routeAt - _lastSpecialRouteAt < 600 || _stage?.SpecialSurfaceOpen == true) && targetRoute is "library" or "activate")
             { Log.Info($"route {route} ignored: right after a quick-settings route"); return; }
             if (!game && route.StartsWith("minimize-", StringComparison.Ordinal))
             { _stage?.CloseSpecialSurfaces(); CompleteShortcutHide(returnToPrevious: false); return; }
@@ -174,40 +177,81 @@ public sealed partial class MainWindow
     }
 
     /// <summary>切换器里选了游戏库自己：收起这次唤出，但游戏库留在前台（不回唤出前的程序）。</summary>
-    internal void KeepLibraryAfterSurface()
+    internal async Task<bool> KeepLibraryAfterSurface()
     {
-        _stage?.SetSpecialInput(false);
-        _surfaceSession = _surfaceHideWindow = false;
-        ReleaseOverlay();
-        if (Stage.ShellMode.GameMode) RestoreGameShell(true);
+        if (_switchInFlight) return false;
+        _switchInFlight = true;
+        try
+        {
+            _stage?.SetSpecialInput(false);
+            _surfaceSession = _surfaceHideWindow = false;
+            ReleaseOverlay();
+            if (_shortcutClosed || _desktopHandoff) return false;
+            if (Stage.ShellMode.GameMode)
+            {
+                _wasGameMode = true;
+                RestoreGameShell(true);
+            }
+            nint self = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            if (!LibraryWindow.OwnsForeground(self))
+            {
+                await Task.Delay(45);
+                if (_shortcutClosed || _desktopHandoff) return false;
+                if (!LibraryWindow.OwnsForeground(self)) LibraryWindow.BringForward(self, unlock: true);
+                await Task.Delay(55);
+            }
+            if (_shortcutClosed || _desktopHandoff || !LibraryWindow.OwnsForeground(self)) return false;
+            _shortcutWindow?.SetTopmost(true);
+            return true;
+        }
+        finally { _switchInFlight = false; }
     }
 
     /// <summary>
     /// 切到 target：先收起开始菜单 / 搜索（它们攥着前台时谁都拿不到前台），再切；拿不到前台就重试（最多 3 次，每次带
     /// AttachThreadInput 和一次 Alt 键解锁前台），还是不行就把游戏库拿到前台（绝不留空屏）。返回是否切到了目标。
     /// </summary>
-    internal bool SwitchToWindow(OpenWindow target)
+    internal async Task<bool> SwitchToWindow(OpenWindow target)
     {
-        if (!OpenWindows.Matches(target)) return false;
-        long t0 = Environment.TickCount64;
-        CancelShortcutTransition();
-        _stage?.CloseSpecialSurfaces();
-        ShellSurfaces.DismissForeground(250, "(before switch)");
-        CompleteShortcutHide(returnToPrevious: false);
-        for (int attempt = 1; attempt <= 3; attempt++)
+        if (_switchInFlight) return false;
+        _switchInFlight = true;
+        long started = Environment.TickCount64;
+        nint source = LibraryWindow.Foreground;
+        string context = $"target=0x{target.Hwnd:x} pid={target.Pid} process={target.Process} elevated={OpenWindows.Elevated(target.Pid)} coversMonitor={CoversMonitor(target.Hwnd)} exclusive=unknown source=0x{source:x}";
+        void Step(string phase, long at, string result) =>
+            Log.Info($"window_switch phase={phase} elapsedMs={Environment.TickCount64 - at} totalMs={Environment.TickCount64 - started} foreground=0x{LibraryWindow.Foreground:x} {context} {result}");
+
+        try
         {
-            if (!OpenWindows.Matches(target)) break;
-            if (LibraryWindow.BringForward(target.Hwnd, unlock: attempt > 1))
+            CancelShortcutTransition();
+            _stage?.CloseSpecialSurfaces();
+            long at = Environment.TickCount64;
+            bool dismissed = await Task.Run(() => ShellSurfaces.DismissForeground(250, "(before switch)"));
+            Step("dismiss", at, $"ok={dismissed}");
+            CompleteShortcutHide(returnToPrevious: false);
+
+            for (int attempt = 1; attempt <= 3 && OpenWindows.Matches(target); attempt++)
             {
-                if (attempt > 1) Log.Info($"switch ok on attempt {attempt}");
-                Log.Info($"switch done in {Environment.TickCount64 - t0} ms");
-                return true;
+                if (_desktopHandoff || _shortcutClosed) return false;
+                at = Environment.TickCount64;
+                bool immediate = LibraryWindow.BringForward(target.Hwnd, attempt > 1, out int error);
+                // Restore/activation of a different GUI thread can complete after SetForegroundWindow returns.
+                await Task.Delay(immediate ? 55 : 100);
+                bool ok = OpenWindows.Matches(target) && LibraryWindow.OwnsForeground(target.Hwnd);
+                Step("activate", at, $"attempt={attempt} immediate={immediate} ok={ok} win32={error}");
+                if (ok) return true;
+
+                at = Environment.TickCount64;
+                dismissed = await Task.Run(() => ShellSurfaces.DismissForeground(150, "(retry)"));
+                Step("retry_dismiss", at, $"attempt={attempt} ok={dismissed}");
             }
-            ShellSurfaces.DismissForeground(150, "(retry)");
-            Thread.Sleep(40);
         }
-        Log.Warn($"switch to {target.Process} failed after retries; library to front");
+        catch (Exception ex) { Step("exception", started, $"hresult=0x{ex.HResult:x}"); }
+        finally { _switchInFlight = false; }
+
+        long fallback = Environment.TickCount64;
         if (Stage.ShellMode.GameMode) RestoreGameShell(true);
+        Step("fallback", fallback, $"ok={_shortcutWindow?.IsForeground == true}");
         return false;
     }
 

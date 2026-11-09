@@ -34,6 +34,17 @@ class FirmwareShortcutTests {
         s=new FirmwareShortcutState();s.Key(K(91),true);
         var mapped=K(71);mapped.Extra=0x434C4157;
         Check(!s.Key(mapped,true).Swallow,"an explicitly mapped Win+G bypasses the firmware filter");
+        s=new FirmwareShortcutState();
+        var mappedWin=K(91);mappedWin.Extra=mapped.Extra;
+        s.Key(mappedWin,true,true,true);
+        var blocked=s.Key(mapped,true,true,true);
+        Check(blocked.Swallow&&!blocked.GameBar,"mapped Win+G is blocked without opening QAM in game mode");
+        mapped.Flags=128;
+        Check(s.Key(mapped,true,true,true).Swallow,"mapped Win+G release is balanced");
+        s=new FirmwareShortcutState();
+        s.Key(mappedWin,false,false,false);
+        mapped.Flags=0;
+        Check(!s.Key(mapped,false,false,false).Swallow,"mapped Win+G still works on desktop");
         var pair=new GameBarShortcutCorrelation();
         int epoch=pair.Generation;
         Check(!pair.ShouldReplay(1000,1160,epoch),"keyboard fallback waits for the delayed firmware event");

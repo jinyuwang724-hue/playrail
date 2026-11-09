@@ -42,7 +42,7 @@ MAX_LINE = 8 * 1024 * 1024
 METHODS = {
     "get_state", "refresh", "save_settings", "frontend_ready", "set_steam_context", "action_result", "test_button_mapping",
     "manage_compatibility",
-    "get_power_state", "save_power", "restore_power", "set_ecore", "restore_ecore", "fan_test",
+    "get_power_state", "set_screensaver_power", "save_power", "restore_power", "set_ecore", "restore_ecore", "fan_test",
     "get_rumble_state", "set_rumble_strength", "restore_rumble", "test_rumble",
     "get_gamepad_state", "set_gamepad_mode", "set_stick_deadzone", "set_stick_swap", "set_trigger_range",
     "set_quick_trigger", "set_back_key", "set_key_map", "set_desktop_key_map", "set_light", "restore_gamepad",
@@ -54,7 +54,8 @@ METHODS = {
     "play_navigation_haptic", "set_navigation_context", "steam_cloud_screenshots",
     # Game Bar widget
     "widget_state", "set_brightness", "set_volume", "set_mute", "set_refresh_rate", "set_fps_limit",
-    "close_game", "power_action", "preview_power_animation", "toggle_keyboard", "screenshot",
+    "close_game", "power_action", "preview_power_animation", "toggle_keyboard", "screenshot", "show_desktop", "freeze_game", "resume_frozen_game",
+    "open_task_manager", "open_gaming_home", "leave_xbox_fse", "qam_scaling_state", "qam_scaling_action",
     # ClawLibrary 显示与声音
     "get_display_state", "set_resolution", "set_vrr", "set_hdr", "set_audio_output", "set_mic_mute",
     "set_display_scale", "set_auto_brightness", "set_gpu_option",

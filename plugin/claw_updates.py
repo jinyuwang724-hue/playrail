@@ -1,19 +1,10 @@
-"""Driver, BIOS and pad-firmware updates straight from MSI and Intel, without MSI Center M or Intel's
-Driver & Support Assistant.
+"""Model-matched driver, BIOS and controller updates from MSI China.
 
-Finding updates:
-- Intel: the catalogue Intel's own assistant downloads (dsadata.intel.com/data/zh-CN, a zip holding
-  software-configurations.json). Each package lists the hardware IDs it is for; a package applies when
-  one of this machine's devices matches and its driver is older than the package.
-- MSI: the msi.com support API for this model (BIOS, drivers, pad firmware). msi.com refuses anything
-  that is not a real browser, so it is read through a headless Edge. MSI's API has no hardware IDs, so
-  each driver title is tied to the device it updates here (taken from MSI Live Update's own data).
-Installing: the elevated helper downloads from the vendor's server, checks size and hash, unpacks and
-runs the vendor's installer silently (UpdateJob in native/ClawUpdate.cs). Several updates run one after
-another; the agent keeps the queue going even when no page is open."""
+The elevated helper installs signed INF packages through Windows PnPUtil.
+BIOS and controller firmware use their own installers.
+"""
 import asyncio
 import html
-import io
 import json
 import logging
 import os
@@ -21,42 +12,40 @@ from pathlib import Path
 import re
 import subprocess
 import time
-import urllib.request
-import zipfile
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
-INTEL_CATALOG = "https://dsadata.intel.com/data/zh-CN"
 MSI_PRODUCT = "Claw-8-EX-AI-Plus-CG3EMX"
-MSI_API = "https://www.msi.com/api/v1/product/support/panel?product={}&type={}"
+MSI_API = "https://www.msi.cn/api/v1/product/support/panel?product={}&type={}"
+MSI_DOWNLOAD = "download.msi.cn"
+MSI_CATALOG = Path(__file__).with_name("claw_msi_cn_catalog.json")
+MSI_KINDS = ("bios", "driver", "firmware")
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
 
-# MSI driver title → the hardware ID of the device it updates on this Claw 8 EX (SKU 1T91), and whether
-# its install.bat takes /s. From MSI Live Update's StoredUpdates.json on this machine (2026-10-20).
-# Titles not listed (Realtek audio extensions, sensor kit, Studio Effects, card reader) have no device
-# to read a version from and are not offered.
+# Representative hardware IDs on MSI Claw 8 EX (MS-1T91).
 MSI_DRIVERS = {
-    "Intel Graphics Driver": ("PCI\\VEN_8086&DEV_B080", "/s"),
-    "Intel Bluetooth Driver": ("PCI\\VEN_8086&DEV_E476", ""),
-    "Intel Wireless LAN Driver": ("PCI\\VEN_8086&DEV_E440", "/s"),
-    "Intel NPU Driver": ("PCI\\VEN_8086&DEV_B03E", "/s"),
-    "Intel Chipset Driver": ("PCI\\VEN_8086&DEV_E422", "/s"),
-    "Intel Management Engine Driver": ("PCI\\VEN_8086&DEV_E470", "/s"),
-    "Intel Serial IO Driver": ("PCI\\VEN_8086&DEV_E450", ""),
-    "Intel Platform Monitoring Technology Driver": ("PCI\\VEN_8086&DEV_B07D", "/s"),
-    "Intel Smart Sound Technology driver": ("PCI\\VEN_8086&DEV_E428", "/s"),
-    "Intel Dynamic Tuning Driver": ("SWC\\VID8086_DTT_0001", "/s"),
-    "Intel Game Assist Driver": ("SWC\\VID8086_DTT_GA_1.0", "/s"),
-    "Intel PPM Provision Driver": ("SWC\\VID8086_PPM_1008_1.0", "/s"),
-    "Intel IPF Driver": ("ACPI\\VEN_INTC&DEV_10D9", ""),
-    "Intel Trusted Execution Technology Driver": ("ACPI\\VEN_INTC&DEV_1025", ""),
-    "Intel HID Event Filter": ("ACPI\\VEN_INTC&DEV_10CC", ""),
-    "DTS Driver": ("SWC\\VEN_DTSI&AID_DTSI2", "/s"),
-    "IntelliGo APO Driver": ("SWC\\VEN_IGO&CID_APO", ""),
-    "Goodix FingerPrinter Driver": ("USB\\VID_27C6&PID_6090", ""),
+    "Intel Graphics Driver": r"PCI\VEN_8086&DEV_B080",
+    "Intel Bluetooth Driver": r"PCI\VEN_8086&DEV_E476",
+    "Intel Wireless LAN Driver": r"PCI\VEN_8086&DEV_E440",
+    "Intel NPU Driver": r"PCI\VEN_8086&DEV_B03E",
+    "Intel Chipset Driver": r"PCI\VEN_8086&DEV_E422",
+    "Intel Management Engine Driver": r"PCI\VEN_8086&DEV_E470",
+    "Intel Serial IO Driver": r"PCI\VEN_8086&DEV_E450",
+    "Intel Platform Monitoring Technology Driver": r"PCI\VEN_8086&DEV_B07D",
+    "Intel Smart Sound Technology driver": r"PCI\VEN_8086&DEV_E428",
+    "Intel Dynamic Tuning Driver": r"SWC\VID8086_DTT_0001",
+    "Intel Game Assist Driver": r"SWC\VID8086_DTT_GA_1.0",
+    "Intel PPM Provision Driver": r"SWC\VID8086_PPM_1008_1.0",
+    "Intel IPF Driver": r"ACPI\VEN_INTC&DEV_10D9",
+    "Intel Trusted Execution Technology Driver": r"ACPI\VEN_INTC&DEV_1025",
+    "Intel HID Event Filter": r"ACPI\VEN_INTC&DEV_10CC",
+    "DTS Driver": r"SWC\VEN_DTSI&AID_DTSI2",
+    "IntelliGo APO Driver": r"SWC\VEN_IGO&CID_APO",
+    "Goodix FingerPrinter Driver": r"USB\VID_27C6&PID_6090",
+    "Realtek Card Reader Driver": r"PCI\VEN_10EC&DEV_5264",
+    "Realtek Audio Driver": r"SOUNDWIRE\SDCA_FUNCTION_10&MAN_025D&FUNC_0721&TYPE_01",
+    "Integrated Sensor Solution": r"PCI\VEN_8086&DEV_E445",
 }
-# Silent switches of Intel's installers, by file name.
-INTEL_SWITCHES = (("gfx_win_", "-s"), ("WiFi-", "-q"), ("BT-", "-q"), ("npu_win_", "-s"))
-CHINESE = {"Graphics": "显卡驱动", "Network": "网络驱动", "Wireless": "无线网卡驱动", "Bluetooth": "蓝牙驱动", "Chipset": "芯片组驱动"}
 
 
 def version_key(text):
@@ -86,58 +75,14 @@ def _device(drivers, hwid):
     return None
 
 
-# ---------------- Intel ----------------
+def domestic_package(url):
+    uri = urlsplit(url)
+    if uri.scheme != "https" or uri.netloc not in ("download.msi.com", MSI_DOWNLOAD):
+        return None
+    if not uri.path.lower().endswith(".zip"):
+        return None
+    return urlunsplit(("https", MSI_DOWNLOAD, quote(uri.path, safe="/%()"), "", ""))
 
-def intel_catalog(url=INTEL_CATALOG):
-    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=60) as r:
-        data = r.read()
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
-        return json.loads(z.read("software-configurations.json").decode("utf-8-sig"))
-
-
-def intel_updates(catalog, drivers):
-    best = {}
-    for sw in catalog:
-        if sw.get("IsBeta"):
-            continue
-        files = [f for f in sw.get("Files") or [] if f.get("Url", "").lower().endswith(".exe")
-                 and any(o.startswith("windows-11") and o.endswith("-64") for o in f.get("OperatingSystems") or [])]
-        if not files:
-            continue
-        for comp in sw.get("Components") or []:
-            if comp.get("DetectionType") != "Default":
-                continue
-            # Some components carry no version of their own (the NPU driver): the package's version counts.
-            version = comp.get("Version") or (sw.get("Version") or "").split(" ")[0]
-            for value in comp.get("DetectionValues") or []:
-                # "VEN_8086&DEV_E440&SUBSYS_*8086": * stands for any characters
-                pattern = re.compile(".*".join(re.escape(part) for part in value.upper().split("*")))
-                for d in drivers:
-                    hw = d["hwid"].upper()
-                    if not pattern.search(hw) or not newer(version, d["version"]):
-                        continue
-                    key = hw.split("&REV_")[0]
-                    if key in best and not newer(version, best[key]["latest"]):
-                        continue
-                    f = files[0]
-                    name = f["Url"].rsplit("/", 1)[-1]
-                    switch = next((s for p, s in INTEL_SWITCHES if name.startswith(p)), "")
-                    options = (sw.get("InstallOptions") or "").strip()
-                    best[key] = {
-                        "id": f"intel:{sw['Id']}", "vendor": "intel", "hwid": key,
-                        "title": f"{_clean(d['name'])} {CHINESE.get(comp.get('Category'), '驱动')}",
-                        "current": d["version"], "latest": version, "date": (sw.get("DisplayReleaseDate") or "")[:10],
-                        "url": f["Url"], "size": f.get("Size"), "sha1": (f.get("Hash") or "") if len(f.get("Hash") or "") == 40 else "",
-                        "kind": "exe", "args": " ".join(x for x in (switch, options) if x), "silent": bool(switch),
-                    }
-    return list(best.values())
-
-
-def _clean(name):
-    return re.sub(r"\s+", " ", (name or "").replace("®", "").replace("™", "").replace("(R)", "").replace("(TM)", "")).strip()
-
-
-# ---------------- MSI ----------------
 
 def edge_path():
     for base in (os.environ.get("ProgramFiles(x86)"), os.environ.get("ProgramFiles")):
@@ -147,10 +92,11 @@ def edge_path():
 
 
 def msi_fetch(kind, profile):
-    """msi.com answers only real browsers, so the JSON is read as a page by a headless Edge."""
+    """The MSI China support API is read through a headless Edge."""
     out = subprocess.run([str(edge_path()), "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
+                          "--no-proxy-server", "--disable-background-networking",
                           f"--user-data-dir={profile}", f"--user-agent={UA}", "--dump-dom", MSI_API.format(MSI_PRODUCT, kind)],
-                         capture_output=True, timeout=60, creationflags=NO_WINDOW)
+                         capture_output=True, timeout=20, creationflags=NO_WINDOW)
     page = out.stdout.decode("utf-8", "replace")
     m = re.search(r"<pre[^>]*>(.*)</pre>", page, re.S)
     if not m:
@@ -169,7 +115,10 @@ def msi_updates(rows_by_kind, drivers, bios, pad_firmware):
     found = []
     for kind, rows in rows_by_kind.items():
         for r in rows:
-            title, latest, url = r.get("download_title") or "", r.get("download_version") or "", r["download_url"]
+            title, latest = r.get("download_title") or "", r.get("download_version") or ""
+            url = domestic_package(r["download_url"])
+            if not url:
+                continue
             sha = re.search(r"[0-9a-fA-F]{64}", r.get("download_sha256") or "")
             item = {"id": f"msi:{r.get('download_id')}", "vendor": "msi", "latest": latest, "date": r.get("download_release") or "",
                     "url": url, "size": r.get("download_size"), "sha256": sha.group(0) if sha else "", "kind": "zip", "silent": True}
@@ -179,15 +128,15 @@ def msi_updates(rows_by_kind, drivers, bios, pad_firmware):
                                   "confirm": True, "needsPower": True, "note": "更新完会自动重启"})
             elif kind == "firmware":
                 if pad_firmware and newer(latest, pad_firmware):
-                    exe = url.rsplit("/", 1)[-1].replace(".zip", ".exe")
+                    exe = unquote(urlsplit(url).path.rsplit("/", 1)[-1])[:-4] + ".exe"
                     found.append({**item, "title": "手柄固件", "current": f"{int(pad_firmware[:2])}.{pad_firmware[2:]}",
                                   "run": exe, "args": "-s", "confirm": True, "needsPower": True, "note": "手柄设置会恢复默认"})
             elif title in MSI_DRIVERS:
-                hwid, switch = MSI_DRIVERS[title]
+                hwid = MSI_DRIVERS[title]
                 d = _device(drivers, hwid)
                 if d and newer(latest, d["version"]):
                     found.append({**item, "hwid": hwid.upper(), "title": title.replace("Driver", "驱动").replace("driver", "驱动"),
-                                  "current": d["version"], "run": "install.bat", "args": switch})
+                                  "current": d["version"], "kind": "driver"})
     return found
 
 
@@ -197,7 +146,9 @@ class Updates:
     def __init__(self, call, home, battery, firmware):
         """call: the helper. battery(): (percent, on charger). firmware(): the pad's firmware as the pad reports it ('0419')."""
         self.call, self.battery, self.firmware = call, battery, firmware
-        self.profile = Path(home) / "edge-msi"
+        self.profile = Path(home) / "edge-msi-cn"
+        self.catalog_path = Path(home) / "msi-cn-catalog.json"
+        self.install_lock = asyncio.Lock()
         self.state = {"state": "idle"}
         self.items = []
         self.results = {}  # id → done / failed: …
@@ -213,47 +164,66 @@ class Updates:
                 "active": self.active, "job": self.job, "queued": list(self.queue)}
 
     def check(self):
-        if self.check_task is None or self.check_task.done():
+        if not self.active and not self.install_lock.locked() and (self.check_task is None or self.check_task.done()):
             self.check_task = asyncio.create_task(self._check())
         return self.view()
 
+    def _msi_catalog(self):
+        bundled = json.loads(MSI_CATALOG.read_text(encoding="utf-8"))
+        try:
+            cached = json.loads(self.catalog_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cached = {}
+        if not isinstance(cached, dict):
+            cached = {}
+        rows, fallback = {}, False
+        for kind in MSI_KINDS:
+            try:
+                rows[kind] = msi_fetch(kind, self.profile)
+                if not rows[kind]:
+                    raise RuntimeError("目录没有更新数据")
+            except (OSError, ValueError, subprocess.SubprocessError, RuntimeError) as error:
+                logging.warning("MSI China %s catalogue: %s", kind, error)
+                rows[kind] = cached.get(kind) or bundled[kind]
+                fallback = True
+        temp = self.catalog_path.with_suffix(".tmp")
+        try:
+            temp.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
+            os.replace(temp, self.catalog_path)
+        except OSError:
+            logging.warning("Could not save MSI China catalogue", exc_info=True)
+        return rows, fallback
+
     async def _check(self):
         self.state = {**self.state, "state": "checking"}
-        errors = []
         try:
             drivers = await self.call("pnp_drivers")
-        except RuntimeError as e:
-            self.state = {"state": "error", "error": f"读不到本机驱动：{e}"}
+            device = (await self.call("system_read")).get("device") or {}
+            if not str(device.get("model", "")).casefold().startswith("claw 8 ex ai+ cg3em"):
+                raise RuntimeError("微星中国区目录暂未适配这台设备")
+            rows, fallback = await asyncio.to_thread(self._msi_catalog)
+            found = msi_updates(rows, drivers, device.get("bios") or "", await self.firmware())
+        except (RuntimeError, OSError, ValueError) as error:
+            self.state = {"state": "error", "error": str(error)}
             return
-        found = []
-        try:
-            found += intel_updates(await asyncio.to_thread(intel_catalog), drivers)
-        except Exception as e:  # network, catalogue format
-            errors.append(f"Intel：{e}")
-            logging.warning("Intel catalogue: %s", e)
-        try:
-            rows = {}
-            for kind in ("bios", "driver", "firmware"):
-                rows[kind] = await asyncio.to_thread(msi_fetch, kind, self.profile)
-            system = await self.call("system_read")
-            bios = ((system.get("device") or {}).get("bios") or "")
-            found += msi_updates(rows, drivers, bios, await self.firmware())
-        except Exception as e:
-            errors.append(f"微星：{e}")
-            logging.warning("MSI catalogue: %s", e)
-        # MSI and Intel can both offer a driver for the same device: keep the newer one (MSI's on a tie).
-        by_device, rest = {}, []
+        by_target = {}
         for item in found:
-            key = item.get("hwid")
-            if not key:
-                rest.append(item)
-            elif key not in by_device or newer(item["latest"], by_device[key]["latest"]) or (
-                    item["vendor"] == "msi" and not newer(by_device[key]["latest"], item["latest"])):
-                by_device[key] = item
-        self.items = rest + sorted(by_device.values(), key=lambda i: i["title"])
-        self.state = {"state": "done" if not errors else "partial", "checked": time.strftime("%H:%M"), "errors": errors}
+            key = item.get("hwid", item["title"])
+            if key not in by_target or newer(item["latest"], by_target[key]["latest"]):
+                by_target[key] = item
+        self.items = sorted(by_target.values(), key=lambda item: item["title"])
+        self.state = {"state": "partial" if fallback else "done", "catalogCached": fallback,
+                      "checked": time.strftime("%H:%M")}
 
     async def install(self, ids, dry_run=False):
+        async with self.install_lock:
+            if self.check_task and not self.check_task.done():
+                raise RuntimeError("请等驱动检查完成")
+            if self.active and self.dry_run != (dry_run is True):
+                raise RuntimeError("已有另一种驱动安装任务在进行")
+            return await self._enqueue(ids, dry_run)
+
+    async def _enqueue(self, ids, dry_run):
         # dry_run: download, check and unpack only (for testing the path without installing)
         if type(ids) is not list or not ids or not all(type(i) is str for i in ids):
             raise ValueError("要更新的项目格式错误")
@@ -267,11 +237,12 @@ class Updates:
                 if not charger or (percent or 0) < 30:
                     raise RuntimeError(f"{item['title']}要插着电、电量 30 % 以上才能更新")
         self.dry_run = dry_run is True
-        self.queue += [i for i in ids if i not in self.queue and i != self.active]
-        self.results.update({i: None for i in ids})
+        queued = [i for i in dict.fromkeys(ids) if i not in self.queue and i != self.active]
+        self.queue.extend(queued)
+        self.results.update({i: None for i in queued})
         if self.active is None:
             await self._next()
-        if self.watch_task is None or self.watch_task.done():
+        if self.active and (self.watch_task is None or self.watch_task.done()):
             self.watch_task = asyncio.create_task(self._watch())
         return self.view()
 
@@ -286,6 +257,9 @@ class Updates:
             if self.dry_run:
                 request["dryRun"] = True
             try:
+                if item.get("hwid") and not self.dry_run and await self._driver_installed(item):
+                    self.results[i] = "done"
+                    continue
                 self.job = await self.call("update_start", job=i, **request)
                 self.active = i
                 logging.info("Update %s started: %s", i, item["url"])
@@ -294,23 +268,42 @@ class Updates:
                 self.results[i] = f"failed: {e}"
         self.active = None
 
+    async def _driver_installed(self, item):
+        device = _device(await self.call("pnp_drivers"), item["hwid"])
+        return bool(device and (device["version"] == item["latest"] or newer(device["version"], item["latest"])))
+
+    async def _result(self, item, job):
+        code = job.get("exitCode")
+        finished = job["state"] == "done"
+        if finished and job.get("dryRun"):
+            return "tested"
+        if finished and code in (3010, 1641):
+            return "restart"
+        if item.get("hwid") and finished:
+            # PnPUtil can stage an INF without binding it, or apply the target before a
+            # second INF returns an error. Check the version Windows is actually using.
+            try:
+                if await self._driver_installed(item):
+                    return "done"
+            except RuntimeError as error:
+                return f"failed: 无法确认驱动版本（{error}）"
+            if code == 0:
+                return "failed: Windows 尚未加载目标版本"
+        elif finished and code == 0:
+            return "done"
+        return f"failed: {job.get('error') or f'安装程序返回 {code}'}"
+
     async def _watch(self):
-        """Polls the helper's job; starts the next queued update when one ends; re-checks at the end."""
         while self.active:
             await asyncio.sleep(1.5)
-            try:
-                self.job = await self.call("update_status")
-            except RuntimeError:
-                continue
-            if self.job.get("state") in ("done", "failed"):
-                code = self.job.get("exitCode")
-                # Installers report 0 for done, 3010 / 1641 for done with a restart pending.
-                ok = self.job["state"] == "done" and code in (0, 3010, 1641)
-                self.results[self.active] = "done" if ok else f"failed: {self.job.get('error') or f'安装程序返回 {code}'}"
-                if ok and code in (3010, 1641):
-                    self.results[self.active] = "restart"
-                if ok and self.job.get("dryRun"):
-                    self.results[self.active] = "tested"
-                logging.info("Update %s ended: %s", self.active, self.results[self.active])
-                await self._next()
-        await self._check()
+            async with self.install_lock:
+                try:
+                    self.job = await self.call("update_status")
+                except RuntimeError:
+                    continue
+                if self.job.get("state") in ("done", "failed"):
+                    item = next(item for item in self.items if item["id"] == self.active)
+                    self.results[self.active] = await self._result(item, self.job)
+                    logging.info("Update %s ended: %s", self.active, self.results[self.active])
+                    await self._next()
+        self.check()

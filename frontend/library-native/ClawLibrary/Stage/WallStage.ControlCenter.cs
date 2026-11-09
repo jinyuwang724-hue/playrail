@@ -408,7 +408,8 @@ public sealed partial class WallStage
         if (_ccOpen && _agOpen) { AgY(); return; }
         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
         if (_ccOpen && _stOpen) { StResetFocused(); return; }
-        if (_qsOpen || (_ccOpen && _wsOpen)) return;
+        if (_qsOpen) return;
+        if (_ccOpen && _wsOpen) return;
         if (_ccOpen && _shOpen) { ShY(); return; }
         if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
         if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
@@ -439,7 +440,9 @@ public sealed partial class WallStage
         if (_ccOpen && _gpOpen) { MarkInput(); GpPadButton(isY: false); return; }
         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShX(); return; }
         if (_ccOpen && _wsOpen) { MarkInput(); WsCloseFocused(); return; }
-        if (_qsOpen) return;
+        if (_qsOpen) { if (_networkKeyboard) NetworkKey("⌫"); return; }
+        if (!_ccOpen && _expandedKey is { } key && _tiles.TryGetValue(key, out var tile) && RunningGame(tile.Shown) is { } running)
+        { _ = ForceQuitAsync(running); return; }
         if (!_ccOpen) ToggleLibraryRail();
     }
 

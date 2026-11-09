@@ -33,7 +33,7 @@ public sealed partial class WallStage
         public readonly List<(float X, float W)> Buttons = new();
         public int Version;
         public LmMode Mode;
-        /// <summary>正在游戏面板：聚焦的按钮（0 继续游戏 / 1 退出游戏 / 2 游戏库 / 3 窗口）。</summary>
+        /// <summary>正在游戏面板：聚焦的按钮（0 继续游戏 / 1 结束游戏 / 2 游戏库 / 3 窗口）。</summary>
         public int Btn;
         public string? Note;
     }
@@ -288,15 +288,17 @@ public sealed partial class WallStage
             float y = buttons ? ch - 110 : ch - 64;   // 状态行基线之上是标题区
             if (buttons)
             {
-                string[] labels = { "继续游戏", _game?.ForceArmed == true ? "强制结束" : "退出游戏", "游戏库", "窗口" };
+                string[] labels = { "继续游戏", "", "游戏库", "窗口" };
                 float bx = 0; lm.Buttons.Clear();
                 for (int i = 0; i < labels.Length; i++)
                 {
-                    using var t = TextKit.Layout(ds, labels[i], TextKit.Ui(600), 20, 400, CanvasHorizontalAlignment.Left);
-                    float bw = (float)t.LayoutBounds.Width + 56, by = ch - 58;
+                    using var t = i == 1 ? null : TextKit.Layout(ds, labels[i], TextKit.Ui(600), 20, 400, CanvasHorizontalAlignment.Left);
+                    float bw = t == null ? 50 : (float)t.LayoutBounds.Width + 56, by = ch - 58;
                     bool f = lm.Btn == i;
                     ds.FillRoundedRectangle(bx, by, bw, 50, 25, 25, f ? Gfx.Rgba(255, 255, 255) : Gfx.Rgba(255, 255, 255, 0.14));
-                    ds.DrawTextLayout(t, bx + 28, by + 25 - (float)t.LayoutBounds.Height / 2, f ? Gfx.Rgba(12, 12, 14) : TextKit.Ink(0.92));
+                    var ink = f ? Gfx.Rgba(12, 12, 14) : TextKit.Ink(0.92);
+                    if (t == null) LineIcons.Draw(ds, "qam.quit", bx + 25, by + 25, 24, ink);
+                    else ds.DrawTextLayout(t, bx + 28, by + 25 - (float)t.LayoutBounds.Height / 2, ink);
                     lm.Buttons.Add((bx, bw));
                     bx += bw + 14;
                 }
@@ -406,7 +408,8 @@ public sealed partial class WallStage
         _window.Activated += (_, e) =>
         {
             if (e.WindowActivationState != Microsoft.UI.Xaml.WindowActivationState.Deactivated) { MaybeShowNowPlaying(); return; }
-            _nowPlayingDismissed = false;
+            // Restoring the library can briefly dispatch deactivation before it takes foreground.
+            if ((_window as MainWindow)?.WindowSwitchInFlight != true) _nowPlayingDismissed = false;
             HideNowPlayingBar();
             // 前台可能还在切换途中：稍等再看是谁
             After(120, LaunchForegroundChanged);
@@ -419,7 +422,7 @@ public sealed partial class WallStage
         "steam", "steamwebhelper", "steamerrorreporter", "steamservice", "gameoverlayui", "gameoverlayui64",
         "EADesktop", "EALauncher", "Origin", "upc", "UbisoftConnect", "EpicGamesLauncher", "Battle.net",
         "explorer", "ShellExperienceHost", "StartMenuExperienceHost", "SearchHost", "TextInputHost",
-        "GameBar", "XboxGameBarWidgets", "ClawWidget", "ClawLibrary", "ApplicationFrameHost", "XboxPcApp", "XboxApp",
+        "GameBar", "XboxGameBarWidgets", "ClawWidget", "ClawLibrary", "ApplicationFrameHost", "XboxPcApp", "XboxApp", "Magpie",
     };
 
     private void LaunchForegroundChanged()

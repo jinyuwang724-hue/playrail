@@ -382,6 +382,7 @@ namespace ClawShell
                 File.WriteAllText(tmp, json, new UTF8Encoding(false));
                 if (File.Exists(StatePath)) File.Replace(tmp, StatePath, null); else File.Move(tmp, StatePath);
                 Log("state " + mode + " " + message);
+                ReconcileEdgeSwipe(mode == "game");
             }
             catch (Exception ex) { Log("write state: " + ex.Message); }
         }

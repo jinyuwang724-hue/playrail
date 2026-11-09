@@ -24,7 +24,11 @@ internal sealed class NativeSleepResources : ISleepResources
     public string? FingerprintCandidate() => FingerprintSleep.Candidate();
     public void DisableFingerprint(string id) => FingerprintSleep.Disable(id);
     public void RestoreFingerprint(string id) => FingerprintSleep.Restore(id);
-    public void SuspendGame(FrozenGame game, SleepJournal journal, Func<bool> cancelled) => GameSleep.Suspend(game, journal, cancelled);
+    public void SuspendGame(FrozenGame game, SleepJournal journal, Func<bool> cancelled)
+    {
+        SleepRecovery Record() => journal.Read() ?? throw new InvalidOperationException("恢复记录丢失");
+        GameSleep.Suspend(game, () => Record().Games, games => journal.Write(Record() with { Games = games }), cancelled);
+    }
     public void ResumeGame(FrozenGame game) => GameSleep.Resume(game);
 }
 

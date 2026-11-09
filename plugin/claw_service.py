@@ -41,6 +41,12 @@ _settings_page_spec.loader.exec_module(_settings_page_module)
 _system_spec = importlib.util.spec_from_file_location("claw_toolbox_system", PLUGIN_ROOT / "claw_system.py")
 _system_module = importlib.util.module_from_spec(_system_spec)
 _system_spec.loader.exec_module(_system_module)
+_freeze_spec = importlib.util.spec_from_file_location("claw_toolbox_game_freeze", PLUGIN_ROOT / "claw_game_freeze.py")
+_freeze_module = importlib.util.module_from_spec(_freeze_spec)
+_freeze_spec.loader.exec_module(_freeze_module)
+_qam_scaling_spec = importlib.util.spec_from_file_location("claw_toolbox_qam_scaling", PLUGIN_ROOT / "claw_qam_scaling.py")
+_qam_scaling_module = importlib.util.module_from_spec(_qam_scaling_spec)
+_qam_scaling_spec.loader.exec_module(_qam_scaling_module)
 _rumble_spec = importlib.util.spec_from_file_location("claw_toolbox_rumble", PLUGIN_ROOT / "claw_rumble.py")
 _rumble_module = importlib.util.module_from_spec(_rumble_spec)
 _rumble_spec.loader.exec_module(_rumble_module)
@@ -163,6 +169,9 @@ class Service:
         self._lossless_lock = asyncio.Lock()
         self._overlay_frames = _frames_module.OverlayFrames()
         self._power = _power_module.PowerControl(PLUGIN_ROOT, self._data, self._emit_power)
+        self._freeze = _freeze_module.GameFreeze(PLUGIN_ROOT, self._data)
+        self._qam_scaling = _qam_scaling_module.Scaling(self._magpie, self._lossless, self._lossless_editor,
+            self._power._call, _game_settings_module.lossless_start, _lossless_module.parse_hotkey, _input_module.compile_command)
         self._system = _system_module.SystemControl(
             self._power._call, self._data, PLUGIN_ROOT,
             lambda: (_power_module.battery_percent(), _power_module.on_charger()))
@@ -203,6 +212,7 @@ class Service:
         self._compatibility_mode = None
 
     async def start(self):
+        await self._freeze.start()
         try:
             self._settings = validate_settings(json.loads(self._settings_path.read_text(encoding="utf-8")))
         except FileNotFoundError:
@@ -283,11 +293,18 @@ class Service:
         self._permission_waiters[ident] = future
         try:
             await self._send({"command": "allow_gamebar", "id": ident})
-            await asyncio.wait_for(future, 2)
+            if not await asyncio.wait_for(future, 2):
+                raise ValueError("游戏模式使用快捷栏")
         finally:
             self._permission_waiters.pop(ident, None)
 
     async def _execute_system_mapping(self, action, event=None):
+        if action == "gamebar" and _buttons_module.desktop_quick_settings_hold(event):
+            context = await asyncio.to_thread(_buttons_module.toolbox_context)
+            if context.get("xboxFse") is True:
+                command = {"type": "keyboard", "keys": ["LWin", "Tab"]}
+                await self._power._call("mapped_input", mapping=_input_module.compile_command(command))
+                return "fse-task-view"
         if action in ("library", "controlCenter"):
             mode = "BigPicture" if self._status.get("bigPictureOpen") else self._status.get("mode")
             context = await asyncio.to_thread(_buttons_module.toolbox_context)
@@ -375,7 +392,7 @@ class Service:
                 if kind == "mapping_permission":
                     waiter = self._permission_waiters.get(event.get("id"))
                     if waiter is not None and not waiter.done():
-                        waiter.set_result(True)
+                        waiter.set_result(event.get("ok", True))
                     continue
                 if kind == "maintenance":
                     waiter = getattr(self, "_maintenance_waiters", {}).get(event.get("id"))
@@ -444,6 +461,9 @@ class Service:
     async def get_power_state(self, sample=False):
         return await self._power.get(sample)
 
+    async def set_screensaver_power(self, active):
+        return await self._power.set_screensaver_power(active)
+
     async def save_power(self, settings):
         if self._stopping:
             raise RuntimeError("工具箱后台正在退出，请稍候")
@@ -468,7 +488,9 @@ class Service:
     async def widget_state(self):
         """Everything the widget's single page shows, in one call. Answered from what the agent
         already keeps up to date, so a press in the widget never waits on hardware reads."""
-        return {"power": self._power.view(), "system": await self._power.system_cached(),
+        system = await self._power.system_cached()
+        return {"power": self._power.view(), "system": system, "gameFreeze": self._freeze_view(system.get("game")),
+                "xboxFse": _buttons_module.xbox_fse_active(),
                 "rumble": self._rumble.view(), "magpie": self._magpie.view()}
 
     async def set_brightness(self, value):
@@ -675,6 +697,60 @@ class Service:
 
     async def close_game(self, pid):
         return await self._power.close_game(pid)
+
+    def _freeze_view(self, target):
+        session = getattr(self._power, "sessions", None)
+        if session is not None:
+            game = session.current
+            recognized = bool(target and game and target["identity"] == f"{game['pid']}:{game['created']}")
+        else:
+            recognized = bool(target and target["identity"] == getattr(self._power, "sleep_game_identity", None))
+        return {**self._freeze.view(), "canFreeze": recognized}
+
+    async def freeze_game(self, identity):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        target = self._power.close_target.sample()
+        if not isinstance(identity, str) or not target or target.get("identity") != identity or not self._freeze_view(target)["canFreeze"]:
+            raise RuntimeError("当前窗口不是已识别的游戏，或游戏已经切换")
+        with self._power.close_target.hold(target["pid"]):
+            return await self._freeze.freeze(target)
+
+    async def resume_frozen_game(self):
+        return await self._freeze.resume()
+
+    async def show_desktop(self):
+        await asyncio.to_thread(_system_module.show_desktop)
+        return {"ok": True}
+
+    async def open_task_manager(self):
+        await asyncio.to_thread(os.startfile, str(Path(os.environ["WINDIR"]) / "System32" / "Taskmgr.exe"))
+        return {"ok": True}
+
+    async def open_gaming_home(self):
+        await asyncio.to_thread(_settings_page_module.open_gaming_home)
+        return {"ok": True}
+
+    async def leave_xbox_fse(self):
+        if _buttons_module.xbox_fse_active() is not True:
+            return {"ok": True}
+        command = {"type": "keyboard", "keys": ["LWin", "F11"]}
+        await self._power._call("mapped_input", mapping=_input_module.compile_command(command))
+        for _ in range(12):
+            await asyncio.sleep(.2)
+            if _buttons_module.xbox_fse_active() is False:
+                return {"ok": True}
+        raise RuntimeError("Windows 尚未退出全屏体验")
+
+    async def qam_scaling_state(self, engine):
+        session = getattr(self._power, "sessions", None)
+        game = (getattr(session, "current", None) or (self._power.sys_cache or {}).get("game") or {})
+        return await self._qam_scaling.view(engine, game.get("path", ""))
+
+    async def qam_scaling_action(self, engine, action):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        return await self._qam_scaling.action(engine, action)
 
     async def power_action(self, action):
         if action not in ("sleep", "shutdown", "restart", "lock"):
@@ -1387,6 +1463,11 @@ class Service:
 
     async def close(self):
         self._stopping = True
+        await self._qam_scaling.close()
+        try:
+            await self._freeze.resume()
+        except (OSError, ValueError, RuntimeError):
+            logging.exception("Game freeze shutdown recovery failed")
         tasks = list(self._mapping_tasks)
         for task in tasks:
             task.cancel()

@@ -961,7 +961,8 @@ public sealed partial class WallStage
 
     // ---------------- 信息区 ----------------
 
-    private static readonly string[] CsActNames = { "开始游戏", "游戏设置", "收藏" };
+    private enum CsAction { Play, End, Settings, Favorite }
+    private static CsAction CsActionAt(int index, bool running) => (CsAction)(index == 0 || running ? index : index + 1);
     // 按钮和控制中心底坞一样高（48 → 72），字号跟设置页正文（17 → 26）；meta 同字号。触控目标都 ≥ 72（= 48 epx）
     private const float ActH = 72, ActGap = 16, ActFont = 26, MetaFont = 26, TitleFont = 64, TitleLh = 76, InfoRowGap = 28;
     // 展架（08:30 修订）：信息区在放大卡盒右侧——左边 = 选中卡盒右边 + 40，底边 = 普通卡盒顶 + 30（屏幕底上方 430）
@@ -1039,11 +1040,11 @@ public sealed partial class WallStage
 
     private float CsPillWidth()
     {
-        using var l = TextKit.Layout(G.Device, CsActNames[0], TextKit.Ui(600), ActFont, 400, CanvasHorizontalAlignment.Left);
+        using var l = TextKit.Layout(G.Device, "继续游戏", TextKit.Ui(600), ActFont, 400, CanvasHorizontalAlignment.Left);
         return MathF.Ceiling((float)l.LayoutBounds.Width) + 40 + 26 + 14 + 40;
     }
 
-    private int CsActCount(LibraryItem g) => CsCanFavorite(g) ? 3 : 2;
+    private int CsActCount(LibraryItem g) => (CsCanFavorite(g) ? 3 : 2) + (RunningGame(g.Id) != null ? 1 : 0);
 
     private static bool CsCanFavorite(LibraryItem g) => g.Platform is "steam" or "local" or "other" && uint.TryParse(g.Id, out _);
 
@@ -1054,6 +1055,8 @@ public sealed partial class WallStage
         if (g == null) { p.ActsV.IsVisible = false; return; }
         p.ActsV.IsVisible = true;
         float pill = CsPillWidth();
+        bool running = RunningGame(g.Id) != null;
+        int count = CsActCount(g);
         bool fav = _csFav.Contains(g.Id);
         int focus = p.Acts ? p.Act : -1;
         const float pad = 8, r = ActH / 2;
@@ -1065,18 +1068,21 @@ public sealed partial class WallStage
             float px = x + 40;
             using (var play = CanvasGeometry.CreatePolygon(ds, new[] { new Vector2(px, y + r - 13), new Vector2(px, y + r + 13), new Vector2(px + 22, y + r) }))
                 ds.FillGeometry(play, Gfx.Rgba(17, 17, 17));
-            using (var l = TextKit.Layout(ds, CsActNames[0], TextKit.Ui(600), ActFont, pill, CanvasHorizontalAlignment.Left))
+            using (var l = TextKit.Layout(ds, running ? "继续游戏" : "开始游戏", TextKit.Ui(600), ActFont, pill, CanvasHorizontalAlignment.Left))
                 ds.DrawTextLayout(l, px + 26 + 14, y + r - (float)l.LayoutBounds.Height / 2 - (float)l.LayoutBounds.Y, Gfx.Rgba(17, 17, 17));
             if (focus == 0) ds.DrawRoundedRectangle(x - 5, y - 5, pill + 10, ActH + 10, r + 5, r + 5, Colors.White, 3.5f);
             float bx = x + pill + ActGap;
-            for (int a = 1; a < CsActCount(g); a++)
+            for (int a = 1; a < count; a++)
             {
-                bool on = a == 2 && fav;
+                var action = CsActionAt(a, running);
+                bool on = action == CsAction.Favorite && fav;
                 ds.FillCircle(bx + r, y + r, r, on ? Gfx.Rgba(242, 242, 242) : Gfx.Rgba(255, 255, 255, 0.14));
                 var ink = on ? Gfx.Rgba(17, 17, 17) : Gfx.Rgba(242, 242, 242);
                 var t0 = ds.Transform;
                 ds.Transform = Matrix3x2.CreateScale(1.5f, 1.5f, new Vector2(12, 12)) * Matrix3x2.CreateTranslation(bx + r - 12, y + r - 12) * t0;
-                if (a == 1) CsIconSliders(ds, 0, 0, ink); else CsIconStar(ds, 0, 0, ink, on);
+                if (action == CsAction.End) LineIcons.Draw(ds, "qam.quit", 12, 12, 24, ink);
+                else if (action == CsAction.Settings) CsIconSliders(ds, 0, 0, ink);
+                else CsIconStar(ds, 0, 0, ink, on);
                 ds.Transform = t0;
                 if (focus == a) ds.DrawCircle(bx + r, y + r, r + 5, Colors.White, 3.5f);
                 bx += ActH + ActGap;
@@ -1087,7 +1093,7 @@ public sealed partial class WallStage
         p.ActsV.Offset = new Vector3(o.X - pad, o.Y - pad, 0);
         p.ActRects.Add((o.X, o.Y, pill, ActH, 0));
         float hx = o.X + pill + ActGap;
-        for (int a = 1; a < CsActCount(g); a++) { p.ActRects.Add((hx, o.Y, ActH, ActH, a)); hx += ActH + ActGap; }
+        for (int a = 1; a < count; a++) { p.ActRects.Add((hx, o.Y, ActH, ActH, a)); hx += ActH + ActGap; }
     }
 
     private static void CsIconSliders(CanvasDrawingSession ds, float x, float y, Color c)
@@ -1451,8 +1457,14 @@ public sealed partial class WallStage
         {
             if (p.Sel >= p.Items.Count) { CsGoTab(1); return; }
             var g = p.Items[p.Sel];
-            if (p.Acts && p.Act == 1) { CsOpenGameSettings(g); return; }
-            if (p.Acts && p.Act == 2) { CsToggleFavorite(p, g); return; }
+            var running = RunningGame(g.Id);
+            switch (p.Acts ? CsActionAt(p.Act, running != null) : CsAction.Play)
+            {
+                case CsAction.End: if (running != null) _ = ForceQuitAsync(running); return;
+                case CsAction.Settings: CsOpenGameSettings(g); return;
+                case CsAction.Favorite: CsToggleFavorite(p, g); return;
+            }
+            if (running != null) { ResumeGame(running); return; }
             if (p.Style == HomeStyle.Stand && p.StandCase is { } sc) CsLaunch(g, sc.Root, (StdX, StdY, StdW, StdH));
             else if (p.Cases.TryGetValue(p.Sel, out var c)) CsLaunch(g, c.Root, CsCaseRect(p, c));
             return;

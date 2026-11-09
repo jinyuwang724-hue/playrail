@@ -1,5 +1,6 @@
 #pragma once
 #include <array>
+#include <mutex>
 #include "BackendDescriptorStore.h"
 #include "CursorDrawer.h"
 #include "DeviceResources.h"
@@ -24,6 +25,10 @@ public:
 	ScalingError Initialize(HWND hwndAttach, OverlayOptions& overlayOptions) noexcept;
 
 	bool Render(bool force = false, bool waitForRenderComplete = false) noexcept;
+	void SetScreenshotCapturePaused(bool paused) noexcept {
+		std::lock_guard lock(_screenshotCaptureMutex);
+		_screenshotCapturePaused = paused;
+	}
 
 	// Claw: resizePresenter=false re-fits effect outputs only (same renderer size).
 	bool OnResize(bool resizePresenter = true) noexcept;
@@ -72,6 +77,8 @@ public:
 	) noexcept;
 
 private:
+	std::mutex _screenshotCaptureMutex;
+	bool _screenshotCapturePaused = false;
 	void _FrontendRender(bool waitForRenderComplete = false) noexcept;
 
 	void _BackendThreadProc() noexcept;

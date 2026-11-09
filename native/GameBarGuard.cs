@@ -14,7 +14,7 @@ namespace ClawRouter {
         readonly Action<string,string> log;
         readonly uint session;
         readonly WinEvent callback;
-        IntPtr hook;
+        IntPtr hook, foregroundHook;
         bool enabled, disposed;
         int generation;
         long closed, failures;
@@ -30,6 +30,7 @@ namespace ClawRouter {
             // callbacks return on that thread even when acquisition is async.
             hook=SetWinEventHook(0x8000,0x8002,IntPtr.Zero,callback,0,0,2);
             if(hook==IntPtr.Zero)throw new InvalidOperationException("Game Bar 窗口通知不可用");
+            foregroundHook=SetWinEventHook(3,3,IntPtr.Zero,callback,0,0,2);
         }
         public static bool IsTarget(string image, string package, uint targetSession, uint currentSession) {
             string name=Path.GetFileName(image ?? "");
@@ -49,15 +50,15 @@ namespace ClawRouter {
             foreach(string name in new[]{"GameBar","GameBarFTServer"})
                 foreach(var process in Process.GetProcessesByName(name))
                     using(process)Close((uint)process.Id,lease);
-            log("gamebar-guard","Steam 接管期间关闭 Game Bar；已启用窗口创建和显示保护");
+            log("gamebar-guard","游戏模式拦截 Game Bar 窗口");
         }
         void OnWindow(IntPtr eventHook,uint kind,IntPtr window,int objectId,int childId,uint thread,uint time) {
-            if(window==IntPtr.Zero || objectId!=0 || childId!=0 || (kind!=0x8000 && kind!=0x8002))return;
+            if(window==IntPtr.Zero || objectId!=0 || childId!=0 || (kind!=3 && kind!=0x8000 && kind!=0x8002))return;
             int lease;
             lock(gate){if(!enabled || disposed)return;lease=generation;}
             uint pid;GetWindowThreadProcessId(window,out pid);
             if(pid==0 || !IsCandidate(pid))return;
-            try {Close(pid,lease);}catch(Exception ex){try{Failure(pid,ex.Message);}catch{}}
+            try {Close(pid,lease,window);}catch(Exception ex){try{Failure(pid,ex.Message);}catch{}}
         }
         static bool IsCandidate(uint pid) {
             IntPtr handle=OpenProcess(0x1000,false,pid);
@@ -70,7 +71,7 @@ namespace ClawRouter {
                     String.Equals(name,"GameBarFTServer.exe",StringComparison.OrdinalIgnoreCase);
             } finally {CloseHandle(handle);}
         }
-        void Close(uint pid,int lease) {
+        void Close(uint pid,int lease,IntPtr window=default(IntPtr)) {
             lock(gate) {
                 if(!enabled || disposed || lease!=generation)return;
                 // Keep this same handle from identity verification through close:
@@ -95,6 +96,9 @@ namespace ClawRouter {
                     var family=new StringBuilder((int)length);
                     if(GetPackageFamilyName(handle,ref length,family)!=0 ||
                         !IsTarget(image.ToString(),family.ToString(),targetSession,session))return;
+                    uint owner;
+                    if(window!=IntPtr.Zero && GetWindowThreadProcessId(window,out owner)!=0 && owner==pid)
+                        ShowWindowAsync(window,0); // Hide before terminating so a direct activation cannot sit above QAM.
                     if(!TerminateProcess(handle,0)) {Failure(pid,"关闭失败，错误="+Marshal.GetLastWin32Error());return;}
                     Interlocked.Increment(ref closed);
                     log("gamebar-closed",Path.GetFileName(image.ToString())+"，PID="+pid+"，已核对包身份和会话");
@@ -104,12 +108,13 @@ namespace ClawRouter {
         void Failure(uint pid,string reason) {Interlocked.Increment(ref failures);log("gamebar-close-failed","PID="+pid+"，"+reason);}
         public void Dispose() {
             SetEnabled(false);
-            lock(gate) {disposed=true;if(hook!=IntPtr.Zero){UnhookWinEvent(hook);hook=IntPtr.Zero;}}
+            lock(gate) {disposed=true;if(hook!=IntPtr.Zero){UnhookWinEvent(hook);hook=IntPtr.Zero;}if(foregroundHook!=IntPtr.Zero){UnhookWinEvent(foregroundHook);foregroundHook=IntPtr.Zero;}}
         }
         delegate void WinEvent(IntPtr hook,uint kind,IntPtr window,int objectId,int childId,uint thread,uint time);
         [DllImport("user32.dll")]static extern IntPtr SetWinEventHook(uint first,uint last,IntPtr module,WinEvent callback,uint process,uint thread,uint flags);
         [DllImport("user32.dll")]static extern bool UnhookWinEvent(IntPtr hook);
         [DllImport("user32.dll")]static extern uint GetWindowThreadProcessId(IntPtr window,out uint pid);
+        [DllImport("user32.dll")]static extern bool ShowWindowAsync(IntPtr window,int command);
         [DllImport("kernel32.dll",SetLastError=true)]static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
         [DllImport("kernel32.dll")]static extern bool CloseHandle(IntPtr handle);
         [DllImport("kernel32.dll")]static extern bool GetExitCodeProcess(IntPtr handle,out uint code);

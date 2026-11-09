@@ -200,6 +200,7 @@ class Executor : IDisposable {
             else if (command == "power_action") reply["sys"] = SystemControls.Power(Convert.ToString(request["action"]));
             else if (command == "keyboard") reply["sys"] = SystemControls.ToggleKeyboard();
             else if (command == "mapped_input") reply["sys"] = MappedInput.Run(request["mapping"] as Dictionary<string,object>);
+            else if (command == "lossless_control") reply["lossless"] = ClawLosslessStatus.Read(Convert.ToString(request["exe"]), Convert.ToString(request["action"]));
             else if (command == "screenshot") reply["sys"] = SystemControls.Screenshot();
             else if (command == "system_read") reply["system"] = SystemPage.Read();
             else if (command == "power_button_set") reply["system"] = SystemPage.SetButton(Convert.ToString(request["action"]));
@@ -908,15 +909,15 @@ class GpuSysman {
 }
 
 // CPU, GPU, memory and battery figures for the detailed OSD, from Windows performance
-// counters and the battery WMI classes. Instances are cached; GPU engine instances
-// come and go with processes, so they are re-listed every few seconds.
+// counters and the battery WMI classes. GPU engine samples are read in one batch.
 class SystemStats {
     [StructLayout(LayoutKind.Sequential)]
     struct MemoryStatus { public uint length, load; public ulong totalPhys, availPhys, totalPage, availPage, totalVirtual, availVirtual, availExtended; }
     [DllImport("kernel32.dll")] static extern bool GlobalMemoryStatusEx(ref MemoryStatus status);
 
     PerformanceCounter cpuUtility, cpuPerformance;
-    List<PerformanceCounter> gpu3d = new List<PerformanceCounter>(), gpuMemory = new List<PerformanceCounter>();
+    readonly ClawGpuEngineSampler gpuEngines = new ClawGpuEngineSampler();
+    List<PerformanceCounter> gpuMemory = new List<PerformanceCounter>();
     DateTime listed = DateTime.MinValue;
     double baseMhz;
 
@@ -938,13 +939,8 @@ class SystemStats {
 
     void List() {
         listed = DateTime.Now;
-        foreach (var c in gpu3d) c.Dispose();
         foreach (var c in gpuMemory) c.Dispose();
-        gpu3d.Clear(); gpuMemory.Clear();
-        try {
-            foreach (string instance in new PerformanceCounterCategory("GPU Engine").GetInstanceNames())
-                if (instance.EndsWith("engtype_3D")) { var c = Counter("GPU Engine", "Utilization Percentage", instance); if (c != null) gpu3d.Add(c); }
-        } catch { }
+        gpuMemory.Clear();
         try {
             foreach (string instance in new PerformanceCounterCategory("GPU Adapter Memory").GetInstanceNames()) {
                 var shared = Counter("GPU Adapter Memory", "Shared Usage", instance);
@@ -962,7 +958,11 @@ class SystemStats {
         if (!double.IsNaN(utility)) r["cpuUsage"] = Math.Round(Math.Min(100, utility), 1);
         if (!double.IsNaN(performance) && baseMhz > 0) r["cpuMhz"] = Math.Round(baseMhz * performance / 100);
         double gpu = 0; bool any = false;
-        foreach (var c in gpu3d) { double v = Next(c); if (!double.IsNaN(v)) { gpu += v; any = true; } }
+        foreach (var sample in gpuEngines.Read()) {
+            if (!sample.Key.EndsWith("engtype_3D", StringComparison.OrdinalIgnoreCase)) continue;
+            gpu += sample.Value;
+            any = true;
+        }
         if (any) r["gpuUsage"] = Math.Round(Math.Min(100, gpu), 1);
         double memory = 0; any = false;
         foreach (var c in gpuMemory) { double v = Next(c); if (!double.IsNaN(v)) { memory += v; any = true; } }

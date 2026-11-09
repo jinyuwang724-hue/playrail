@@ -126,6 +126,7 @@ private:
 	ScalingError _InitialMoveSrcWindowInFullscreen() noexcept;
 
 	void _Show() noexcept;
+	void _RestoreScreenshotAffinity(UINT_PTR timer) noexcept;
 
 	bool _UpdateSrcState(
 		bool& isSrcRepositioning,
@@ -204,6 +205,7 @@ private:
 
 	// 第一帧渲染完成后再显示
 	bool _isFirstFrame = false;
+	bool _screenshotAffinityLifted = false;
 	bool _isResizingOrMoving = false;
 	// 用于区分调整大小和移动
 	bool _isPreparingForResizing = false;

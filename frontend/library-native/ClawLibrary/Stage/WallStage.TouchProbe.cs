@@ -151,16 +151,21 @@ public sealed partial class WallStage
             QsTouchDrag("volume", (volume.X + volume.W + 300) * _ccK);
             Check("quick settings: volume drag updates value and unmutes", Int(_qsState["system"]?["volume"]) == 100 && !Bool(_qsState["system"]?["muted"]));
             var brightness = _qsItems.First(i => i.Id == "brightness");
-            QsSetLevel(brightness, .2f); QsSetLevel(brightness, .3f);
-            Check("quick settings: brightness tap updates optimistic value", Int(_qsState["system"]?["brightness"]) == 30);
+            QsSetLevel(brightness, .2f); QsSetLevel(brightness, .32f);
+            QsHot("bri", 1);
+            Check("quick settings: brightness adjusts by one", Int(_qsState["system"]?["brightness"]) == 33);
+            var brightnessKnob = _qsKnobs.First(k => k.Id == "brightness");
+            Check("quick settings: knob follows the new value immediately",
+                Math.Abs(brightnessKnob.C.Offset.X - (brightness.X + brightness.W * .33f) * QsK) < .01f);
+            Check("quick settings: screenshots enabled without a game", QsFind("shot")?.Disabled == false);
             QsSetLevel(new() { Id = "brightness", Kind = QsKind.Slider, Disabled = true }, .9f);
-            Check("quick settings: disabled slider ignores touch", Int(_qsState["system"]?["brightness"]) == 30);
+            Check("quick settings: disabled slider ignores touch", Int(_qsState["system"]?["brightness"]) == 33);
             QsSetLevel(new() { Id = "tdp", Kind = QsKind.Slider }, .5f);
             CloseQuickPanel(hideWindow: false, instant: true);
             await _qsTouchPending;
             _pagePointer.Reset();
             Check("quick settings: volume uses correct backend request", sent.Any(s => s.Method == "set_volume" && Int(s.Value) == 100));
-            Check("quick settings: repeated brightness changes coalesce", sent.Count(s => s.Method == "set_brightness") == 1 && Int(sent.First(s => s.Method == "set_brightness").Value) == 30);
+            Check("quick settings: repeated brightness changes coalesce", sent.Count(s => s.Method == "set_brightness") == 1 && Int(sent.First(s => s.Method == "set_brightness").Value) == 33);
             Check("quick settings: TDP retains the save_power contract", sent.Any(s => s.Method == "save_power" && s.Value["manual"]?["tdp"] != null));
             _qsTouchTransport = null;
 

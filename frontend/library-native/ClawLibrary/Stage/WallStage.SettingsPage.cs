@@ -953,12 +953,49 @@ public sealed partial class WallStage
         }
     }
 
+    private bool _backendSetupRunning;
+
+    private async Task UpdateBackendAsync()
+    {
+        if (_backendSetupRunning) return;
+        _backendSetupRunning = true;
+        try
+        {
+            string run = Guid.NewGuid().ToString("N");
+            using var process = BackendSetup.Start(run);
+            Toast("正在安装或更新后台组件");
+            await process.WaitForExitAsync();
+            if (process.ExitCode == 0)
+            {
+                Toast("后台组件已就绪");
+                return;
+            }
+            string? detail = null;
+            if (File.Exists(BackendSetup.StatusPath(run))
+                && JsonNode.Parse(File.ReadAllText(BackendSetup.StatusPath(run))) is JsonObject report)
+                detail = Str(report["error"]) ?? report.Select(item => item.Value).OfType<JsonObject>()
+                    .Where(step => Str(step["state"]) == "failed").Select(step => Str(step["detail"])).FirstOrDefault();
+            Toast(detail == null ? "后台更新失败，请查看安装日志" : $"后台更新失败：{detail}");
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            Toast("已取消后台更新");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"backend setup: {ex.Message}");
+            Toast("后台更新失败，请查看安装日志");
+        }
+        finally { _backendSetupRunning = false; }
+    }
+
     private void BuildStMaintenance(JsonObject? v, string later)
     {
         _stRows.Add(new PerfRow { Section = true, Title = "诊断" });
         _stRows.Add(StToggle("帧时间读数", _hudOn, on => { if (on != _hudOn) ToggleHud(); Repaint(); }, false));
         _stRows.Add(StAction("导出日志", "logs", "", () => _ = StRun("export_logs", r => $"日志已存到桌面：{Str(r?["name"])}")));
         _stRows.Add(StAction("重新运行首次设置", "oobe", "", OpenOobe));
+        _stRows.Add(StAction("安装或更新后台", "backend-setup", BackendSetup.InstalledRelease() ?? "", () => _ = UpdateBackendAsync()));
         string version = Str(v?["version"]) ?? "—";
         _stRows.Add(StAction("重启工具箱后台", "restart", _stAgentDown ? "未连接" : "", () =>
         {

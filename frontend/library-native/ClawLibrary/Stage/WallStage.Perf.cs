@@ -338,14 +338,15 @@ public sealed partial class WallStage
         _perfRows.Add(Choice("功耗接管", new[] { "关", "开" }, on ? 1 : 0, i => { s["enabled"] = i == 1; PerfChanged(); }));
         _perfRows.Add(Choice("模式", PowerModeNames, Math.Max(0, Array.IndexOf(PowerModes, mode)), i => { s["mode"] = PowerModes[i]; PerfChanged(); }, !on));
         PerfRow Info(string title, string value) => new() { Title = title, Value = value, Skip = true };
+        int tdpMin = Int(_perfView?["limits"]?["tdpMin"], 8), tdpMax = Int(_perfView?["limits"]?["tdpMax"], 35);
         bool autoMode = mode == "autotdp";
         if (autoMode)
         {
             if (s["autotdp"] is not JsonObject auto) s["autotdp"] = auto = new JsonObject { ["target"] = 60, ["floor"] = 12, ["acMax"] = 35, ["dcMax"] = 25 };
             _perfRows.Add(Number("目标帧率", Int(auto["target"], 60), 20, 240, n => $"{n} 帧", n => { auto["target"] = n; PerfChanged(); }, disabled: !on));
-            _perfRows.Add(Number("功耗下限", Int(auto["floor"], 12), 8, Math.Min(Int(auto["acMax"], 35), Int(auto["dcMax"], 25)), n => $"{n} W", n => { auto["floor"] = n; PerfChanged(); }, disabled: !on));
-            _perfRows.Add(Number("插电上限", Int(auto["acMax"], 35), Int(auto["floor"], 12), 35, n => $"{n} W", n => { auto["acMax"] = n; PerfChanged(); }, disabled: !on));
-            _perfRows.Add(Number("电池上限", Int(auto["dcMax"], 25), Int(auto["floor"], 12), 35, n => $"{n} W", n => { auto["dcMax"] = n; PerfChanged(); }, disabled: !on));
+            _perfRows.Add(Number("功耗下限", Int(auto["floor"], 12), tdpMin, Math.Min(Int(auto["acMax"], 35), Int(auto["dcMax"], 25)), n => $"{n} W", n => { auto["floor"] = n; PerfChanged(); }, disabled: !on));
+            _perfRows.Add(Number("插电上限", Int(auto["acMax"], 35), Int(auto["floor"], 12), tdpMax, n => $"{n} W", n => { auto["acMax"] = n; PerfChanged(); }, disabled: !on));
+            _perfRows.Add(Number("电池上限", Int(auto["dcMax"], 25), Int(auto["floor"], 12), tdpMax, n => $"{n} W", n => { auto["dcMax"] = n; PerfChanged(); }, disabled: !on));
             string status = Str(_perfView?["error"]) is { Length: > 0 } error ? error : !on ? "尚未开启" : Str(_perfView?["autotdp"]?["reason"]) ?? "等待游戏帧率";
             _perfRows.Add(Info("调节状态", status));
             _perfRows.Add(Info("真实帧率", Num(_perfView?["autotdp"]?["fps"]) is double fps ? $"{fps:0.0} 帧" : "等待有效样本"));
@@ -354,9 +355,9 @@ public sealed partial class WallStage
         else
         {
             _perfRows.Add(mode == "auto"
-                ? Number("插电功耗", Int(s["ac"]!["tdp"], 35), 8, 35, w => $"{w} W", w => { s["ac"]!["tdp"] = w; PerfChanged(); }, disabled: !on)
-                : Number("固定功耗", Int(s["manual"]!["tdp"], 20), 8, 35, w => $"{w} W", w => { s["manual"]!["tdp"] = w; PerfChanged(); }, disabled: !on));
-            if (mode == "auto") _perfRows.Add(Number("电池功耗", Int(s["dc"]!["tdp"], 25), 8, 35, w => $"{w} W", w => { s["dc"]!["tdp"] = w; PerfChanged(); }, disabled: !on));
+                ? Number("插电功耗", Int(s["ac"]!["tdp"], 35), tdpMin, tdpMax, w => $"{w} W", w => { s["ac"]!["tdp"] = w; PerfChanged(); }, disabled: !on)
+                : Number("固定功耗", Int(s["manual"]!["tdp"], 20), tdpMin, tdpMax, w => $"{w} W", w => { s["manual"]!["tdp"] = w; PerfChanged(); }, disabled: !on));
+            if (mode == "auto") _perfRows.Add(Number("电池功耗", Int(s["dc"]!["tdp"], 25), tdpMin, tdpMax, w => $"{w} W", w => { s["dc"]!["tdp"] = w; PerfChanged(); }, disabled: !on));
             _perfRows.Add(Number("短时加成", Int(s["boost"], 1), 0, 15, w => w == 0 ? "关" : $"+{w} W", w => { s["boost"] = w; PerfChanged(); }, disabled: !on));
         }
 

@@ -9,6 +9,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import threading
 import time
@@ -113,6 +114,23 @@ def home_app():
         error = "已配置的主页未注册为系统全屏主页，请更新对应应用后重新选择"
     return {"current": current, "configured": configured, "startup": startup != 0,
             "choices": choices, "error": error}
+
+
+def open_gaming_home():
+    """Open the configured home from a manual shortcut, independent of startup."""
+    home = _read_gaming("GamingHomeApp") or XBOX_HOME
+    if home == OWN_HOME:
+        prefs = Path(os.environ["LOCALAPPDATA"]) / "Packages" / OWN_HOME.split("!")[0] / "LocalCache" / "ui.ini"
+        try:
+            steam = any(line.strip().casefold() == "fsesteam=true" for line in prefs.read_text(encoding="utf-8-sig").splitlines())
+        except OSError:
+            steam = False
+        os.startfile("steam://open/bigpicture" if steam else "claw-library://library")
+    else:
+        if not isinstance(home, str) or not re.fullmatch(r"[\w.-]+![\w.-]+", home, re.ASCII):
+            raise RuntimeError("系统全屏体验主页配置无效")
+        explorer = Path(os.environ["WINDIR"]) / "explorer.exe"
+        subprocess.Popen([str(explorer), "shell:AppsFolder\\" + home])
 
 
 def set_home_app(aumid):

@@ -871,8 +871,16 @@ void Renderer::_BackendThreadProc() noexcept {
 			// 新帧消息可能已被处理，之后的 WaitForNextFrame 不要等待消息，直到状态变化
 			continue;
 		}
+		std::unique_lock captureLock(_screenshotCaptureMutex);
+		if (_screenshotCapturePaused) {
+			captureLock.unlock();
+			Sleep(8);
+			continue;
+		}
+		auto frameState = _frameSource->Update();
+		captureLock.unlock();
 
-		switch (_frameSource->Update()) {
+		switch (frameState) {
 		case FrameSourceState::Waiting:
 			if (stepTimerStatus != StepTimerStatus::ForceNewFrame) {
 				if (fpsUpdated) {

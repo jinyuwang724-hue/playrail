@@ -1,23 +1,29 @@
-﻿// 游戏模式的截图：Game Bar 的 Win+Alt+PrintScreen 要 explorer 接，游戏模式下没有反应。
-// 这里改用系统的画面捕获（Windows.Graphics.Capture，和 Game Bar 一样取 DWM 合成好的那一帧）截游戏窗口，
-// 存进 Game Bar 的捕获文件夹、按它的命名（「窗口标题 年_月_日 时_分_秒.png」）——后台照旧把新图记到当时的游戏下面，截图页直接能看到。
+// Quick settings saves the composed monitor, including the scaled output of windowed games.
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using ClawLibrary.Data;
 using Microsoft.Graphics.Canvas;
-using Windows.Graphics.Capture;
-using Windows.Graphics.DirectX;
 
 namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
+    private const string MagpieScalingClass = "Window_Magpie_967EB565-6F73-4E94-AE53-00CC42592A22";
     private bool _shotBusy;
-    /// <summary>上一次截图失败是因为还没有屏幕截图许可（提示里说清楚要去哪儿开）。</summary>
     internal bool _shotNeedsPermission;
 
-    /// <summary>
-    /// 截 target 窗口。先按窗口截；管理员权限的游戏（Steam 以管理员运行时游戏也是）不让普通权限程序按窗口截，
-    /// 会直接「拒绝访问」—— 这时改截整块显示器（快捷面板窗口排除在外），再裁到游戏窗口那一块。成功返回保存的路径。
-    /// </summary>
+    private async Task QsTakeScreenshot()
+    {
+        if (_shotBusy) return;
+        nint target = _qsGame;
+        CloseQuickPanel(hideWindow: target != 0, instant: true);
+        // The fallback panel is drawn inside the library window. Hide its composition tree as well.
+        if (_qs != null) _qs.IsVisible = false;
+        string? path = await CaptureScreenshotAsync(target);
+        if (path == null) Toast(_shotNeedsPermission ? "截图没能保存：在游戏库里允许「屏幕截图」权限" : "截图没能保存");
+        else { Cue(Sfx.Shutter); Toast("已截图"); }
+    }
+
     internal async Task<string?> CaptureScreenshotAsync(nint target)
     {
         if (_shotBusy) return null;
@@ -25,77 +31,93 @@ public sealed partial class WallStage
         _shotNeedsPermission = false;
         try
         {
-            string title = target != 0 ? OpenWindows.List().FirstOrDefault(w => w.Hwnd == target)?.Title ?? "" : "";
-            CanvasBitmap? frame = null;
-            string how = "window";
+            if (!await QsCaptureAccess(mayPrompt: false))
+            {
+                _shotNeedsPermission = true;
+                return null;
+            }
+
             bool alive = target != 0 && OpenWindows.Alive(target) && !ToolboxWindow.IsIconic(target);
-            if (alive)
+            if (!alive) target = WinRT.Interop.WindowNative.GetWindowHandle(_window);
+            nint magpie = FindShotWindow(MagpieScalingClass, null);
+            if (!IsWindowVisible(magpie) || (magpie != target && GetShotWindowProp(magpie, "Magpie.SrcHWND") != target)) magpie = 0;
+            nint monitor = MonitorFromWindow(magpie != 0 ? magpie : target, 2);
+            string title = alive ? OpenWindows.List().FirstOrDefault(w => w.Hwnd == target)?.Title ?? "" : "";
+            nint osd = FindShotWindow(null, "Claw 性能显示");
+            if (!IsWindowVisible(osd) || !IsPerformanceOverlay(osd)) osd = 0;
+
+            CanvasBitmap? frame;
+            bool restoreMagpie = magpie != 0 && GetWindowDisplayAffinity(magpie, out uint affinity) && affinity != 0;
+            try
             {
-                try
+                if (osd != 0)
                 {
-                    var id = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(target);
-                    frame = await QsGrab(GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId { Value = id.Value }), 1000);
+                    ShowShotWindowAsync(osd, 0); // SW_HIDE
+                    for (int i = 0; i < 15 && IsWindowVisible(osd); i++) await Task.Delay(15);
+                    if (IsWindowVisible(osd)) throw new InvalidOperationException("无法隐藏性能显示");
                 }
-                catch (Exception ex) { Log.Info($"screenshot: window capture refused ({ex.Message}); using the monitor"); }
+
+                await Task.Run(() => FlushScreenshotDwm());
+                if (restoreMagpie)
+                {
+                    // Desktop Duplication may have baked the menu into the last scaled frame.
+                    // Let the cleared source reach Magpie's output before holding it for the capture.
+                    await Task.Delay(200);
+                    if (!SetMagpieScreenshot(magpie, true))
+                        throw new InvalidOperationException("Magpie 未能准备缩放画面截图");
+                }
+                (frame, _) = await CaptureMonitorFrameAsync(_qsWin?.Hwnd ?? 0, 1250, monitor: monitor);
             }
-            if (frame == null)
+            finally
             {
-                how = "monitor";
-                var (mon, rect) = await CaptureMonitorFrameAsync(_qsWin?.Hwnd ?? 0, 1500, alive ? target : 0);
-                if (mon != null && alive && GetWindowRect(target, out var wr))
-                {
-                    // 裁到游戏窗口（和显示器求交）
-                    int l = Math.Max(wr.Left, rect.L), tp = Math.Max(wr.Top, rect.T), r = Math.Min(wr.Right, rect.L + rect.W), bt = Math.Min(wr.Bottom, rect.T + rect.H);
-                    if (r - l > 16 && bt - tp > 16 && (r - l < rect.W || bt - tp < rect.H))
-                    {
-                        var crop = new CanvasRenderTarget(mon.Device, r - l, bt - tp, 96);
-                        using (var ds = crop.CreateDrawingSession())
-                            ds.DrawImage(mon, new Windows.Foundation.Rect(0, 0, r - l, bt - tp), new Windows.Foundation.Rect(l - rect.L, tp - rect.T, r - l, bt - tp));
-                        mon.Dispose();
-                        mon = crop;
-                    }
-                }
-                frame = mon;
-                if (title.Length == 0) title = "Screenshot";
+                if (restoreMagpie) SetMagpieScreenshot(magpie, false);
+                if (osd != 0) ShowShotWindowAsync(osd, 4); // SW_SHOWNOACTIVATE
             }
-            if (frame == null)
+            if (frame == null) return null;
+
+            using (frame)
             {
-                // 还没有截屏许可：交给 Game Bar 截（游戏模式保留 explorer 时 Win+Alt+PrtScn 有人接），图同样进「捕获」文件夹
-                Log.Warn($"screenshot: no frame (consent {CaptureConsent()}); asking Game Bar");
-                try
-                {
-                    var since = DateTime.Now.AddSeconds(-1);
-                    _agent ??= new AgentClient(); await _agent.Call("screenshot");
-                    // Game Bar 截没截到看文件：3 秒内「捕获」文件夹里出现新图才算
-                    string dir = Captures.GameBarFolder();
-                    for (int i = 0; i < 15; i++)
-                    {
-                        await Task.Delay(200);
-                        var hit = Directory.Exists(dir) ? new DirectoryInfo(dir).GetFiles().Where(fi => fi.LastWriteTime > since).OrderByDescending(fi => fi.LastWriteTime).FirstOrDefault() : null;
-                        if (hit != null) { Log.Info($"screenshot saved (Game Bar) {hit.FullName}"); return hit.FullName; }
-                    }
-                    Log.Warn("screenshot: Game Bar saved nothing");
-                    _shotNeedsPermission = CaptureConsent() != "Allow";
-                    return null;
-                }
-                catch (Exception ex) { Log.Warn($"screenshot via Game Bar: {ex.Message}"); return null; }
+                string folder = Captures.GameBarFolder();
+                Directory.CreateDirectory(folder);
+                string name = new string(title.Where(c => !Path.GetInvalidFileNameChars().Contains(c)).ToArray()).Trim();
+                if (name.Length == 0) name = "Screenshot";
+                if (name.Length > 80) name = name[..80].Trim();
+                var now = DateTime.Now;
+                string stem = $"{name} {now.Year}_{now.Month}_{now.Day} {now.Hour}_{now.Minute:00}_{now.Second:00}";
+                string path = Path.Combine(folder, stem + ".png");
+                for (int i = 1; File.Exists(path); i++) path = Path.Combine(folder, $"{stem} ({i}).png");
+                await frame.SaveAsync(path, CanvasBitmapFileFormat.Png);
+                Log.Info($"screenshot saved (monitor{(magpie != 0 ? ", Magpie" : "")}) {path} ({frame.SizeInPixels.Width}x{frame.SizeInPixels.Height})");
+                return path;
             }
-            using var _f = frame;
-            string folder = Captures.GameBarFolder();
-            Directory.CreateDirectory(folder);
-            string name = new string(title.Where(c => !Path.GetInvalidFileNameChars().Contains(c)).ToArray()).Trim();
-            if (name.Length == 0) name = "Screenshot";
-            if (name.Length > 80) name = name[..80].Trim();
-            var now = DateTime.Now;
-            string stem = $"{name} {now.Year}_{now.Month}_{now.Day} {now.Hour}_{now.Minute:00}_{now.Second:00}";
-            string path = Path.Combine(folder, stem + ".png");
-            for (int i = 1; File.Exists(path); i++) path = Path.Combine(folder, $"{stem} ({i}).png");
-            await frame.SaveAsync(path, CanvasBitmapFileFormat.Png);
-            Log.Info($"screenshot saved ({how}) {path} ({frame.SizeInPixels.Width}x{frame.SizeInPixels.Height})");
-            return path;
         }
         catch (Exception ex) { Log.Warn($"screenshot: {ex.Message}"); return null; }
         finally { _shotBusy = false; }
     }
-    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern nint MonitorFromWindow(nint hwnd, uint flags);
+
+    private static bool IsPerformanceOverlay(nint hwnd)
+    {
+        GetWindowThreadProcessIdQs(hwnd, out uint pid);
+        try
+        {
+            using var process = Process.GetProcessById((int)pid);
+            return process.ProcessName.Equals("ClawPerformanceOverlay", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (ArgumentException) { return false; }
+    }
+
+    private static bool SetMagpieScreenshot(nint hwnd, bool begin)
+    {
+        uint message = RegisterShotWindowMessage("ClawToolbox.Magpie.MonitorScreenshot.v1");
+        return message != 0 && SendShotMessage(hwnd, message, begin ? 1 : 0, 0, 2 /* SMTO_ABORTIFHUNG */, 450, out nint result) != 0 && result == 1;
+    }
+
+    [DllImport("user32.dll")] private static extern nint MonitorFromWindow(nint hwnd, uint flags);
+    [DllImport("user32.dll")] private static extern bool GetWindowDisplayAffinity(nint hwnd, out uint affinity);
+    [DllImport("user32.dll", EntryPoint = "FindWindowW", CharSet = CharSet.Unicode)] private static extern nint FindShotWindow(string? cls, string? title);
+    [DllImport("user32.dll", EntryPoint = "GetPropW", CharSet = CharSet.Unicode)] private static extern nint GetShotWindowProp(nint hwnd, string name);
+    [DllImport("user32.dll", EntryPoint = "RegisterWindowMessageW", CharSet = CharSet.Unicode)] private static extern uint RegisterShotWindowMessage(string name);
+    [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW")] private static extern nint SendShotMessage(nint hwnd, uint message, nint wp, nint lp, uint flags, uint timeout, out nint result);
+    [DllImport("user32.dll", EntryPoint = "ShowWindowAsync")] private static extern bool ShowShotWindowAsync(nint hwnd, int command);
+    [DllImport("dwmapi.dll", EntryPoint = "DwmFlush")] private static extern int FlushScreenshotDwm();
 }

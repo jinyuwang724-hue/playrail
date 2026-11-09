@@ -1,0 +1,32 @@
+# 任务：游戏模式下在系统层面禁用底部上滑 / 开始菜单
+
+## 背景
+- 项目：ClawToolbox（MSI Claw 8 EX，Windows，1920x1200，用户缩放 150–175%）。仓库 `C:\Users\13304\Desktop\Claw-Playhub-ButtonRouter-Handoff`，入口文档 `CLAUDE_HANDOFF.md`。
+- 游戏模式 = ClawShell 1.0.9「保留 explorer」变体：explorer 保留（输入法、触摸键盘、Game Bar 需要它），任务栏隐藏，单独按 Win 键已屏蔽。设置开关：设置 > 通用 > 游戏模式窗口管理（试验）、游戏模式保留系统输入法（试验）。
+- 现状：游戏库 0.1.243 只做到「开始菜单 / 搜索一出现就关掉」（检测 StartMenuExperienceHost / SearchHost 前台后 dismiss）。窗口切换器会先 dismiss、重试 3 次，失败退回游戏库。
+- 问题：在非游戏库页面（系统设置、游戏、文件管理器等）从屏幕底边上滑，开始菜单仍然会弹出一下。触摸手势本身没被拦住，只是事后关掉。
+
+## 要做的
+1. 进入游戏模式时在系统层面关掉边缘滑动：
+   - 策略 `HKLM\SOFTWARE\Policies\Microsoft\Windows\EdgeUI` `AllowEdgeSwipe` = 0（DWORD）。需要管理员权限。
+   - 先验证 Win11 当前版本上它是否也能拦住底边上滑开始菜单，以及是否需要重启 explorer 或注销才生效。不生效的话，调研替代方案（例如 `HKCU\...\Explorer\Advanced` 相关项、触摸手势设置 `TaskbarGestures` / 三指四指手势开关），把实测结果写清楚。
+2. 通过已有的管理员计划任务机制执行（参考 `\ClawToolbox\TouchKeyboardReset`，OOBE 会在新机器上注册）。新建一个 `\ClawToolbox\GameModeEdgeSwipe`（或同类），带参数 on/off。游戏库与 ClawShell 只触发任务，不要求 UAC 弹窗。
+3. 恢复：
+   - 回到桌面模式（长按 View+Menu 2 秒、开机按 Shift、设置里切回）时恢复原值。
+   - 进入前先记下原值（包括「不存在」这种状态），恢复时还原，不要简单写 1。
+   - 异常退出（崩溃、强制关机）后下次启动也要能恢复：启动时如果不在游戏模式但标记残留，就执行 off。
+4. 保留现有的「出现即关闭」作为兜底，不要删掉。
+5. OOBE 注册新任务；已经装过的机器上，升级时检测任务是否存在，不存在就注册（需要一次管理员授权，可以并进现有流程）。
+
+## 约束
+- 升级安装 ClawToolbox.Library，不要先卸载（会清空设置和封面缓存）。
+- 不碰 Clash Verge 的代理、节点、TUN 和订阅。
+- 不要跳转到 Windows 设置或厂商工具。不加提示文案。
+- 版本号递增，ClawShell 构建脚本会强制校验版本一致。打包用 main 检出里的 `ClawLibrary\Payload`。
+
+## 验收
+- 游戏模式下，在游戏库、系统设置、全屏游戏、文件管理器四种前台下，从底边上滑 20 次，开始菜单一次都不出现（录屏或日志为证，注明是真机手指操作还是模拟注入）。
+- 回到桌面模式后底边上滑恢复正常，注册表值与进入前一致。
+- 强制结束游戏库进程、重启后，策略能被恢复。
+- 触摸键盘、输入法、Game Bar 在游戏模式下仍然正常。
+- 汇报时如实写明哪些是真机测、哪些只是构建或日志。

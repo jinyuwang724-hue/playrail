@@ -93,6 +93,8 @@ public sealed partial class WallStage
         _obLang = _prefs.Lang.Length > 0 ? Math.Max(0, Array.FindIndex(ObLangs, l => l.Code == _prefs.Lang))
             : CultureInfo.CurrentUICulture.Name.StartsWith("zh", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
         _obClosing = _obUserWall = _obPrepared = false;
+        _obInstall = null;
+        _obInstallStatus = null;
         _obSteam = -1;
         _obTasks = ObBuildTasks();
         _obAgentReady = new TaskCompletionSource<bool>();
@@ -1030,18 +1032,11 @@ public sealed partial class WallStage
     {
         try
         {
-            string home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClawToolbox");
             string run = Guid.NewGuid().ToString("N");
-            string script = Path.Combine(AppContext.BaseDirectory, "Payload", "Install-Components.ps1");
-            string steps = _obDevice.Claw ? "fonts,agent,sleep,pawnio,fan,widget" : "fonts,agent,sleep,widget";
-            var me = System.Security.Principal.WindowsIdentity.GetCurrent();
-            _obInstallStatus = Path.Combine(home, "setup", $"status-{run}.json");
-            var psi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
-                $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File \"{script}\" -AgentHome \"{home}\" -User \"{me.Name}\" -UserSid {me.User?.Value} -Steps {steps} -Run {run}")
-            { UseShellExecute = true, Verb = "runas", WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden };
-            using var p = System.Diagnostics.Process.Start(psi);
-            Log.Info($"oobe: component installer started ({steps})");
-            return p != null;
+            _obInstallStatus = BackendSetup.StatusPath(run);
+            using var process = BackendSetup.Start(run);
+            Log.Info("oobe: unified backend setup started");
+            return true;
         }
         catch (Exception ex) { Log.Warn($"oobe: component installer: {ex.Message}"); return false; }   // 1223 = 用户拒绝了 UAC
     });
@@ -1077,9 +1072,9 @@ public sealed partial class WallStage
     private async Task<bool> ObInstallAgentAsync()
     {
         bool installed = await ObInstallStepAsync("agent");
-        if (installed && !await ObInstallStepAsync("sleep")) return false;
-        if (_obAgentReady != null && _obAgentReady.Task.IsCompleted && _obAgentReady.Task.Result) return true;
         if (!installed) return false;
+        if (!await ObInstallStepAsync("sleep") || !await ObInstallStepAsync("edge-swipe") || !await ObInstallStepAsync("shell")) return false;
+        if (_obAgentReady != null && _obAgentReady.Task.IsCompleted && _obAgentReady.Task.Result) return true;
         long until = NowMs + 30000;
         while (NowMs < until && _ob != null)
         {

@@ -1,4 +1,4 @@
-﻿param([switch]$FrontendOnly, [switch]$RouterOnly, [string]$Python = $env:CLAW_PYTHON)
+param([switch]$FrontendOnly, [switch]$RouterOnly, [string]$Python = $env:CLAW_PYTHON)
 $ErrorActionPreference = 'Stop'
 $taskRoot = $PSScriptRoot
 # The agent's private Python runtime (the device has no system Python). Built once from a local
@@ -19,13 +19,15 @@ $taskOutput = Join-Path $taskRoot 'plugin\bin'
 if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:winexe /platform:x64 ("/out:" + (Join-Path $taskOutput 'ClawTouchBridge.exe')) (Join-Path $taskRoot 'native\ClawTouchBridge.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Touch bridge build failed.' }
-& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Management.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /reference:Microsoft.CSharp.dll ("/out:" + (Join-Path $taskOutput 'ClawPower.exe')) (Join-Path $taskRoot 'native\ClawPower.cs') (Join-Path $taskRoot 'native\ClawSmallCores.cs') (Join-Path $taskRoot 'native\ClawMappedInput.cs') (Join-Path $taskRoot 'native\ClawFanHardware.cs') (Join-Path $taskRoot 'native\ClawDisplay.cs') (Join-Path $taskRoot 'native\ClawGpu.cs') (Join-Path $taskRoot 'native\ClawFrameLimit.cs') (Join-Path $taskRoot 'native\ClawSystem.cs') (Join-Path $taskRoot 'native\ClawUpdate.cs')
+& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Management.dll /reference:System.IO.Compression.dll /reference:System.IO.Compression.FileSystem.dll /reference:Microsoft.CSharp.dll ("/out:" + (Join-Path $taskOutput 'ClawPower.exe')) (Join-Path $taskRoot 'native\ClawPower.cs') (Join-Path $taskRoot 'native\ClawGpuEngineSampler.cs') (Join-Path $taskRoot 'native\ClawSmallCores.cs') (Join-Path $taskRoot 'native\ClawMappedInput.cs') (Join-Path $taskRoot 'native\ClawLosslessStatus.cs') (Join-Path $taskRoot 'native\ClawFanHardware.cs') (Join-Path $taskRoot 'native\ClawDisplay.cs') (Join-Path $taskRoot 'native\ClawGpu.cs') (Join-Path $taskRoot 'native\ClawFrameLimit.cs') (Join-Path $taskRoot 'native\ClawSystem.cs') (Join-Path $taskRoot 'native\ClawUpdate.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Power helper build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Management.dll /reference:System.ServiceProcess.dll ("/out:" + (Join-Path $taskOutput 'ClawFanService.exe')) (Join-Path $taskRoot 'native\ClawFanService.cs') (Join-Path $taskRoot 'native\ClawFanHardware.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Fan service build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Web.Extensions.dll /reference:System.Core.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll ("/out:" + (Join-Path $taskOutput 'ClawInput.exe')) (Get-ChildItem -LiteralPath (Join-Path $taskRoot 'native\InputLayer') -Filter *.cs | ForEach-Object FullName)
 if ($LASTEXITCODE -ne 0) { throw 'Input layer build failed.' }
 if (-not $RouterOnly) {
+& dotnet publish (Join-Path $taskRoot 'native\GameFreeze\ClawGameFreeze.csproj') -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o $taskOutput -v quiet
+if ($LASTEXITCODE -ne 0) { throw 'Game freeze helper build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:winexe /platform:x64 /reference:System.Web.Extensions.dll ("/win32manifest:" + (Join-Path $taskRoot 'native\SteamAdminLauncher.manifest')) ("/out:" + (Join-Path $taskOutput 'SteamAdminLauncher.exe')) (Join-Path $taskRoot 'native\SteamAdminLauncher.cs') (Join-Path $taskRoot 'native\SteamPaths.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Steam launcher build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:winexe /platform:x64 /reference:System.Web.Extensions.dll ("/out:" + (Join-Path $taskOutput 'CompatibilityUtility.exe')) (Join-Path $taskRoot 'native\CompatibilityUtility.cs') (Join-Path $taskRoot 'native\SteamPaths.cs') (Join-Path $taskRoot 'native\GameBarHomePreference.cs')

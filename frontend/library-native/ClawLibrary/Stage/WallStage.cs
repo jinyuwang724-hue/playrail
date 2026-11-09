@@ -400,7 +400,7 @@ public sealed partial class WallStage : IDisposable
         _root.Children.InsertAtTop(wallR);
         Expr(wallL, "Opacity", "p.fade");
         Expr(wallR, "Opacity", "p.fade");
-        _backdrop = new Backdrop(G) { Dpi = Chrome.Dpi };
+        _backdrop = new Backdrop(G) { Dpi = Chrome.Dpi, ShareModeTransitionFrame = App.Packaged };
         _backdrop.Configure(_backgroundSettings);
         _backdrop.SetFilmCovers(FilmCoverPaths(), a => _dq.TryEnqueue(() => { a(); EnsureBackdropLoop(); }));
         _root.Children.InsertAtBottom(_backdrop.Root);
@@ -834,6 +834,7 @@ public sealed partial class WallStage : IDisposable
     /// <summary>A：游戏卡展开聚焦卡；聚焦卡上再按 = 启动；集合卡 = 进入。</summary>
     public void Activate() => WithCue(Sfx.Activate, () =>
     {
+        if (!_wsOpen && NowMs < _wsLibraryConfirmUntil) { Cue(Sfx.None); return; }
         // 屏保里按 A：回到首页并选中屏幕上那款（只唤醒，不启动）
         if (_screensaverActive && CsSaverWakeWithGame()) return;
         if (ConsumeScreensaverWake()) return;
@@ -1253,7 +1254,10 @@ public sealed partial class WallStage : IDisposable
             // The same renderer remains available while the agent is restarting.
             try
             {
-                string app = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClawToolbox", "app");
+                string app = Path.Combine(BackendSetup.Home, "app");
+                string current = Path.Combine(BackendSetup.Home, "current.json");
+                if (File.Exists(current) && JsonNode.Parse(File.ReadAllText(current))?["agent"]?.GetValue<string>() is string script)
+                    app = Path.GetDirectoryName(script) ?? app;
                 string version = JsonNode.Parse(File.ReadAllText(Path.Combine(app, "plugin.json")))?["version"]?.GetValue<string>() ?? "";
                 if (version.Length == 0 || version.Any(c => !char.IsAsciiDigit(c) && c != '.')) return;
                 var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(app, "bin", $"ClawInput-{version}.exe")) { UseShellExecute = false, CreateNoWindow = true };
@@ -1294,6 +1298,7 @@ public sealed partial class WallStage : IDisposable
     /// <summary>鼠标：点卡 = 聚焦并激活。</summary>
     public void ClickAt(double sx, double sy)
     {
+        if (!_wsOpen && NowMs < _wsLibraryConfirmUntil) return;
         if (ConsumeScreensaverWake()) return;
         MarkInput();
         if (_wsOpen) { WsClick(sx, sy); return; }
@@ -1319,6 +1324,8 @@ public sealed partial class WallStage : IDisposable
         foreach (var t in _tiles.Values)
             if (t.CurrentRect(now).Contains(wx, wy) && (hit == null || t.Expanded || (t.Focused && !hit.Expanded))) hit = t;
         if (hit == null || !HasContent(hit.Slot)) return;
+        if (hit.HitsEndGame(wx, wy) && RunningGame(hit.Shown) is { } running)
+        { _ = ForceQuitAsync(running); return; }
         var key = hit.Slot.Key;
         bool fromRail = _railFocused;
         if (fromRail)
@@ -1499,13 +1506,15 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         if (!_pagePointer.Begin(pt.PointerId, pt.Position.X, pt.Position.Y, PointerSurface)) return;
-        _quickTouchId = _qsOpen ? QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id : null;
+        var quickSlider = _qsOpen ? QsDirectSliderAt(pt.Position.X / QsK, pt.Position.Y / QsK) : null;
+        _quickTouchId = quickSlider ?? (_qsOpen ? QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id : null);
         _shFilterDragRemainder = 0;
         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, 0, 0, 0, pt.PointerId);
         _dragFrom = (pt.Position.X, pt.Position.Y);
         CsDragEnd();
         _glide = Vector2.Zero;
         if (!_rootEl.CapturePointer(e.Pointer)) { _pagePointer.Reset(); _drag = null; return; }
+        if (quickSlider != null) { QsSetFocus(quickSlider); QsTouchDrag(quickSlider, pt.Position.X); }
         _rootEl.Focus(FocusState.Pointer);
         e.Handled = true;
     }
@@ -1545,10 +1554,16 @@ public sealed partial class WallStage : IDisposable
         double dt = Math.Max(1, (pt.Timestamp - d.t) / 1000.0);
         double moved = Math.Max(d.moved, Math.Max(Math.Abs(pt.Position.X - _dragFrom.x), Math.Abs(pt.Position.Y - _dragFrom.y)));
         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, dx / dt * 1000, dy / dt * 1000, moved, d.id);
+        if (_qsOpen && QsDirectSliderAt(_dragFrom.x / QsK, _dragFrom.y / QsK) == _quickTouchId && _quickTouchId != null)
+        {
+            QsTouchDrag(_quickTouchId, pt.Position.X);
+            e.Handled = true;
+            return;
+        }
         if (intent != TouchResult.Tap)
         {
             if (_wsOpen) { }
-            else if (_qsOpen) { if (intent == TouchResult.Horizontal && _quickTouchId != null) QsTouchDrag(_quickTouchId, pt.Position.X); }
+            else if (_qsOpen) { if (intent == TouchResult.Horizontal && _quickTouchId == "tdp") QsTouchDrag(_quickTouchId, pt.Position.X); }
             else if (_ob != null || _lm is { Leaving: false } || _searchOpen || _backgroundSettingsOpen || TouchNavigationHit(_dragFrom.x, _dragFrom.y)) { }
             else if (_ccOpen) { if (intent == TouchResult.Vertical) CcDrag(dx, dy); }
             else PanBy(dx, dy);
@@ -1600,7 +1615,9 @@ public sealed partial class WallStage : IDisposable
         }
         if (_qsOpen)
         {
-            if (result == TouchResult.Tap && _quickTouchId == QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id) ClickAt(pt.Position.X, pt.Position.Y);
+            if (_quickTouchId != null && QsDirectSliderAt(_dragFrom.x / QsK, _dragFrom.y / QsK) == _quickTouchId)
+                QsTouchDrag(_quickTouchId, pt.Position.X);
+            else if (result == TouchResult.Tap && _quickTouchId == QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id) ClickAt(pt.Position.X, pt.Position.Y);
             return;
         }
         if (result == TouchResult.Tap) { ClickAt(pt.Position.X, pt.Position.Y); return; }
@@ -1653,6 +1670,9 @@ public sealed partial class WallStage : IDisposable
         _pagePointer.Reset();
         DisposeStartupReadiness();
         DisposeShortcutMotion();
+        CloseSpecialSurfaces();
+        foreach (var session in _networkBtSessions.Values) session.Dispose();
+        _networkBtSessions.Clear();
         _servicesDisposed = true;
         _connectCancel?.Cancel();
         _steamCloudLifetime.Cancel();
@@ -1669,6 +1689,14 @@ public sealed partial class WallStage : IDisposable
         _agent?.Dispose();
         _cpuFreq?.Dispose();
         _ccBack?.Dispose();
+        foreach (var timer in _pendingTimers) timer.Stop();
+        _pendingTimers.Clear();
+
+        // The prewarmed QAM is a separate WinUI window. Release it on real exit so
+        // the process cannot keep receiving activations after the main window closes.
+        var quickPanel = _qsWin;
+        _qsWin = null;
+        quickPanel?.Win.Close();
     }
 
     // 给自动测试用

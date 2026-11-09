@@ -490,19 +490,21 @@ public sealed partial class WallStage
             }
         }
 
-        // ---- 微星 / Intel ----
-        foreach (var (vendorId, vendorName) in new[] { ("msi", "微星"), ("intel", "Intel") })
+        _syRows.Add(new PerfRow { Section = true, Title = "微星中国区" });
+        if (Bool(u?["catalogCached"]))
+            _syRows.Add(new PerfRow { Title = "当前使用已保存的驱动目录", Disabled = true });
+        if (items.Length == 0)
         {
-            _syRows.Add(new PerfRow { Section = true, Title = vendorName });
-            var mine = items.Where(i => Str(i["vendor"]) == vendorId).ToArray();
-            if (mine.Length == 0)
+            string why = checking ? "正在检查…" : state switch
             {
-                string why = (u?["errors"] as JsonArray)?.Select(e => Str(e) ?? "").FirstOrDefault(e => e.StartsWith(vendorName)) is string err && err.Length > 0 ? "没查成" : checking ? "正在检查…" : state is "done" or "partial" ? "已是最新" : "—";
-                _syRows.Add(new PerfRow { Title = $"{vendorName}驱动和固件", Value = why, Disabled = true });
-                continue;
-            }
-            foreach (var item in mine) _syRows.Add(SyUpdateItem(item, u, active, queued));
+                "done" => "已是最新",
+                "partial" => "目录内暂无可用更新",
+                "error" => Str(u?["error"]) ?? "检查失败",
+                _ => "—",
+            };
+            _syRows.Add(new PerfRow { Title = "驱动和固件", Value = why, Disabled = true });
         }
+        foreach (var item in items) _syRows.Add(SyUpdateItem(item, u, active, queued));
     }
 
     private PerfRow SyUpdateItem(JsonObject item, JsonObject? u, string active, HashSet<string> queued)
