@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/branding/claw-pages-128.png" alt="掌界应用图标" width="96">
+  <img src="assets/branding/claw-pages-128.png" alt="Playrail 应用图标" width="96">
 </p>
 
-# 掌界 · ClawHelm
+# Playrail
 
 **面向 MSI Claw 的 Windows 掌机游戏库与游戏内控制面板。** 用手柄浏览和启动 Steam、本地游戏。在游戏里打开快捷面板，调节功耗、亮度或音量，连接网络，切换到另一个窗口。
 
