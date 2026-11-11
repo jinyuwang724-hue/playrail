@@ -49,8 +49,8 @@
                          space under the bar, like its own widget panels. TryResizeWindowAsync is ignored there. -->
                     <Height>1000</Height>
                     <Width>464</Width>
-                    <MinHeight>400</MinHeight>
-                    <MinWidth>400</MinWidth>
+                    <MinHeight>520</MinHeight>
+                    <MinWidth>464</MinWidth>
                     <MaxHeight>1080</MaxHeight>
                     <MaxWidth>900</MaxWidth>
                   </Size>

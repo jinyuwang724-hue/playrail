@@ -8,6 +8,94 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <muxc:XamlControlsResources />
+                <!-- Layout tokens (grid system). The only place where sizes, spacing and type sizes are
+                     written as numbers; pages and code read these keys. Spec: "Game Bar 快捷面板 · 栅格系统规范".
+                     Grid: rail + page; page = 6 star columns, gutter = row spacing = column spacing.
+                     Breakpoints: width S (464–559) / M (560–900); content height Regular (>= 560) / Compact (478–559).
+                     Values that change with a breakpoint carry the suffix S / M / Regular / Compact and are applied
+                     by the VisualStateGroups on the WidgetPage root; nothing else decides sizes. -->
+                <ResourceDictionary>
+
+                    <!-- Base unit 4. Spacing scale: inside a component < between components < between groups. -->
+                    <x:Double x:Key="SpaceXS">4</x:Double>
+                    <x:Double x:Key="SpaceS">8</x:Double>
+                    <x:Double x:Key="SpaceM">12</x:Double>
+                    <x:Double x:Key="SpaceL">16</x:Double>
+                    <x:Double x:Key="SpaceXL">24</x:Double>
+
+                    <!-- Page grid -->
+                    <x:Double x:Key="GridGutterS">8</x:Double>
+                    <x:Double x:Key="GridGutterM">12</x:Double>
+                    <x:Double x:Key="GridGroupGapS">16</x:Double>
+                    <x:Double x:Key="GridGroupGapM">24</x:Double>
+                    <x:Double x:Key="GridGroupGapCompact">8</x:Double>
+                    <x:Double x:Key="PageMaxContentWidth">560</x:Double>
+
+                    <!-- Shell -->
+                    <x:Double x:Key="ShellRailWidthS">64</x:Double>
+                    <x:Double x:Key="ShellRailWidthM">72</x:Double>
+                    <x:Double x:Key="ShellRailItemMinHeight">48</x:Double>
+                    <Thickness x:Key="PageMarginS">12,0,12,12</Thickness>
+                    <Thickness x:Key="PageMarginM">16,0,16,16</Thickness>
+                    <x:Double x:Key="PageHeaderHeightRegular">44</x:Double>
+                    <x:Double x:Key="PageHeaderHeightCompact">36</x:Double>
+                    <Thickness x:Key="PageTitleInset">2,0,0,0</Thickness>
+
+                    <!-- Components: widths come from spans, heights from row tracks; these are fixed tracks and minimums -->
+                    <Thickness x:Key="ComponentInset">12,12,12,12</Thickness>
+                    <Thickness x:Key="CellInsetRegular">12,8,12,8</Thickness>
+                    <Thickness x:Key="CellInsetCompact">12,4,12,4</Thickness>
+                    <Thickness x:Key="RowInset">12,0,12,0</Thickness>
+                    <x:Double x:Key="TileMinHeight">56</x:Double>
+                    <x:Double x:Key="TileMaxHeight">160</x:Double>
+                    <x:Double x:Key="CellMinHeightRegular">52</x:Double>
+                    <x:Double x:Key="CellMinHeightCompact">44</x:Double>
+                    <x:Double x:Key="CellMaxHeight">96</x:Double>
+                    <x:Double x:Key="LineMinHeightRegular">44</x:Double>
+                    <x:Double x:Key="LineMinHeightCompact">40</x:Double>
+                    <x:Double x:Key="LineMaxHeight">72</x:Double>
+                    <x:Double x:Key="ShortcutHeightRegular">48</x:Double>
+                    <x:Double x:Key="ShortcutHeightCompact">40</x:Double>
+                    <x:Double x:Key="SliderRowHeightRegular">44</x:Double>
+                    <x:Double x:Key="SliderRowHeightCompact">40</x:Double>
+                    <x:Double x:Key="HeroHeight">64</x:Double>
+                    <x:Double x:Key="PowerCardHeightRegular">112</x:Double>
+                    <x:Double x:Key="PowerCardHeightCompact">92</x:Double>
+                    <x:Double x:Key="RumbleRowHeight">52</x:Double>
+                    <x:Double x:Key="SegmentHeight">32</x:Double>
+                    <x:Double x:Key="SegmentGap">4</x:Double>
+                    <x:Double x:Key="SliderIconCell">24</x:Double>
+                    <x:Double x:Key="SliderValueCell">40</x:Double>
+                    <x:Double x:Key="HeroIconBox">40</x:Double>
+                    <x:Double x:Key="SwitchWidth">40</x:Double>
+                    <x:Double x:Key="SwitchHeight">20</x:Double>
+                    <x:Double x:Key="FocusBarWidth">3</x:Double>
+                    <x:Double x:Key="FocusBarHeight">24</x:Double>
+
+                    <!-- Icons -->
+                    <x:Double x:Key="IconRail">24</x:Double>
+                    <x:Double x:Key="IconContent">20</x:Double>
+                    <x:Double x:Key="IconMark">16</x:Double>
+                    <x:Double x:Key="IconPower">28</x:Double>
+
+                    <!-- Radius -->
+                    <CornerRadius x:Key="RadiusOuter">4</CornerRadius>
+                    <CornerRadius x:Key="RadiusInner">2</CornerRadius>
+
+                    <!-- Type: size / line height, all line heights on the 4 grid -->
+                    <x:Double x:Key="TypeCaptionSize">11</x:Double>
+                    <x:Double x:Key="TypeCaptionLine">16</x:Double>
+                    <x:Double x:Key="TypeLabelSize">12</x:Double>
+                    <x:Double x:Key="TypeLabelLine">16</x:Double>
+                    <x:Double x:Key="TypeBodySize">14</x:Double>
+                    <x:Double x:Key="TypeBodyLine">20</x:Double>
+                    <x:Double x:Key="TypeSubtitleSize">16</x:Double>
+                    <x:Double x:Key="TypeSubtitleLine">24</x:Double>
+                    <x:Double x:Key="TypeTitleSize">18</x:Double>
+                    <x:Double x:Key="TypeTitleLine">24</x:Double>
+                    <x:Double x:Key="TypeDisplaySize">48</x:Double>
+                    <x:Double x:Key="TypeDisplayLine">48</x:Double>
+                </ResourceDictionary>
             </ResourceDictionary.MergedDictionaries>
             <!-- Game Bar's own palette (measured on its widget panels): blue-grey #25282C panels,
                  #3E434B buttons, #45484B dividers, #484B4E slider tracks. Fluent's neutral greys

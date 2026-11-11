@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Game Bar 快捷面板 · 布局与缩放页</title>
+<style>
+:root{--panel:#25282C;--card:#2E3237;--btn:#3E434B;--btnh:#4A5059;--div:#45484B;--track:#484B4E;--acc:#4CC2FF;--ink:#F4F4F5;--ink2:rgba(244,244,245,.66);--ink3:rgba(244,244,245,.38)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0F1012;color:var(--ink);font-family:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC",-apple-system,sans-serif;padding:28px 24px 56px}
+h1{font-size:22px;font-weight:600}
+.sub{color:var(--ink2);font-size:13px;margin-top:6px;max-width:980px;line-height:1.6}
+.seg{display:inline-flex;background:#1B1D20;border-radius:6px;padding:3px;margin-top:18px}
+.seg button{font:inherit;font-size:13px;color:var(--ink2);background:none;border:0;border-radius:4px;padding:6px 14px;cursor:pointer}
+.seg button.a{background:var(--btn);color:var(--ink)}
+.stage{display:flex;gap:28px;flex-wrap:wrap;margin-top:18px;align-items:flex-start}
+.col{width:464px}
+.cap{font-size:13px;color:var(--ink2);margin-bottom:10px;display:flex;justify-content:space-between}
+.cap b{color:var(--ink);font-weight:600}
+.frame{width:464px;height:671px;border-radius:8px;overflow:hidden;background:var(--panel);box-shadow:0 0 0 1px #3A3D42,0 20px 60px rgba(0,0,0,.55);display:flex;flex-direction:column}
+.chrome{height:42px;flex:none;display:flex;align-items:center;padding:0 16px;font-size:15px}
+.body{flex:1;padding:4px 12px 12px;display:flex;flex-direction:column;gap:8px;min-height:0}
+svg{display:block;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-align:left}
+button:focus{outline:none}
+.fx:focus-visible,.fx:hover{box-shadow:inset 0 0 0 2px var(--ink)}
+
+/* hero */
+.hero{background:var(--card);border-radius:4px;padding:12px 14px 6px;position:relative;flex:none}
+.hero .tp{display:flex;align-items:flex-start;gap:12px}
+.big{display:flex;align-items:baseline;gap:4px}
+.big b{font-size:44px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.big span{font-size:17px;color:var(--ink2);font-weight:600}
+.lab{font-size:12px;color:var(--ink2);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+.reads{margin-left:auto;display:grid;grid-template-columns:repeat(3,auto);column-gap:16px;row-gap:2px;text-align:right;padding-top:2px}
+.reads .k{font-size:11px;color:var(--ink3)}
+.reads .v{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums}
+.reads .v small{font-size:11px;color:var(--ink2);font-weight:500;margin-left:1px}
+.tools{position:absolute;right:8px;top:8px;display:flex;gap:2px}
+.ib{width:34px;height:34px;border-radius:4px;display:grid;place-items:center;color:var(--ink2)}
+.ib:hover,.ib:focus-visible{background:var(--btn);color:var(--ink)}
+
+/* slider */
+.sl{display:grid;align-items:center;gap:10px;height:40px}
+.sl .ic{color:var(--ink2);display:grid;place-items:center}
+.sl .v{text-align:right;font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:28px;background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(to right,var(--acc) var(--p,50%),var(--track) var(--p,50%))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;background:var(--acc);margin-top:-8px;box-shadow:0 0 0 4px var(--card)}
+input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:var(--track)}
+input[type=range]::-moz-range-progress{height:4px;border-radius:2px;background:var(--acc)}
+input[type=range]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:var(--acc);border:4px solid var(--card)}
+input[type=range]:focus{outline:none}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 2px var(--card),0 0 0 4px var(--ink)}
+
+.card{background:var(--card);border-radius:4px;padding:0 12px;flex:none}
+.card .sl{grid-template-columns:22px 1fr 34px}
+.card .sl+.sl{border-top:1px solid var(--div)}
+.hero .sl{grid-template-columns:1fr;height:34px;margin-top:2px}
+
+/* shortcuts */
+.qs{display:grid;gap:6px;flex:none}
+.q{border-radius:4px;background:var(--btn);display:grid;place-items:center;color:var(--ink);height:46px;position:relative}
+.q:hover{background:var(--btnh)}
+.q.on{background:var(--acc);color:#0B1B24}
+.q.warn{color:var(--ink2)}
+
+/* vertical rail (variant B) */
+.vrail{background:var(--card);border-radius:4px;display:grid;grid-template-columns:1fr 1fr;padding:10px 0 6px}
+.vs{display:flex;flex-direction:column;align-items:center;gap:6px;min-height:0}
+.vs .v{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.vs .ic{color:var(--ink2)}
+.vtrack{flex:1;width:28px;position:relative;cursor:pointer}
+.vtrack::before{content:"";position:absolute;left:12px;top:8px;bottom:8px;width:4px;border-radius:2px;background:var(--track)}
+.vtrack i{position:absolute;left:12px;bottom:8px;width:4px;border-radius:2px;background:var(--acc)}
+.vtrack em{position:absolute;left:4px;width:20px;height:20px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 4px var(--card);margin-bottom:-10px}
+
+/* tiles (unchanged) */
+.tiles{flex:1;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);gap:8px;min-height:0}
+.t{background:var(--btn);border-radius:4px;padding:10px 12px;display:flex;flex-direction:column}
+.t:hover{background:var(--btnh)}
+.t .h{display:flex;justify-content:space-between;align-items:center;height:20px}
+.dots{display:flex;gap:3px}
+.dots i{width:5px;height:5px;border-radius:50%;background:var(--ink3)}
+.dots i.a{background:var(--ink)}
+.t .n{margin-top:auto;font-size:14px;font-weight:600}
+.t .val{font-size:13px;color:var(--ink2);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* sub pages */
+.ph{height:40px;display:flex;align-items:center;gap:6px;flex:none}
+.ph .tt{font-size:18px;font-weight:600;flex:1}
+.ph .gm{font-size:12px;color:var(--ink2);max-width:190px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:4px}
+.scroll{flex:1;overflow-y:auto;margin-right:-8px;padding-right:8px;display:flex;flex-direction:column;gap:8px}
+.scroll::-webkit-scrollbar{width:4px}.scroll::-webkit-scrollbar-thumb{background:#5A5F66;border-radius:2px}
+.grp{font-size:12px;color:var(--ink2);margin:8px 2px 0;font-weight:600}
+.list{background:var(--card);border-radius:4px;flex:none}
+.row{width:100%;min-height:46px;display:flex;align-items:center;gap:10px;padding:0 12px;font-size:14px;position:relative}
+.row+.row{border-top:1px solid var(--div)}
+.row:hover,.row:focus-visible,.row:focus-within{background:rgba(255,255,255,.04)}
+.row:focus-visible::before,.row:focus-within::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:2px;background:var(--acc)}
+.row .l{flex:1;min-width:0}
+.row .l small{display:block;font-size:12px;color:var(--ink2);margin-top:1px}
+.row .r{display:flex;align-items:center;gap:2px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.row .r b{color:var(--ink);font-weight:400;min-width:96px;text-align:center;font-size:14px;white-space:nowrap}
+.row .r .ch{width:28px;height:28px;display:grid;place-items:center;border-radius:4px}
+.row .r .ch:hover{background:var(--btn);color:var(--ink)}
+.row.sub{padding-left:28px}
+.hero-row{min-height:60px}
+.hero-row .l{font-size:16px;font-weight:600}
+.sw{width:40px;height:20px;border-radius:10px;border:1px solid rgba(244,244,245,.6);position:relative;flex:none}
+.sw::after{content:"";position:absolute;left:4px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--ink2);transition:transform .12s}
+.on>.sw{background:var(--acc);border-color:var(--acc)}
+.on>.sw::after{transform:translateX(20px);background:#0B1B24;width:12px;height:12px;top:3px}
+.tag{font-size:10.5px;padding:1px 6px;border-radius:3px;background:rgba(255,196,80,.16);color:#FFC450;margin-left:6px;vertical-align:1px;font-weight:600}
+.legend .tag{margin:0 4px 0 0}
+
+.notes{margin-top:34px;max-width:1448px;display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:18px}
+.note{background:#17191C;border:1px solid #2A2D31;border-radius:8px;padding:16px 18px}
+.note h3{font-size:14px;font-weight:600;margin-bottom:8px}
+.note li{font-size:13px;line-height:1.7;color:var(--ink2);margin-left:16px}
+.note li b{color:var(--ink);font-weight:600}
+</style>
+</head>
+<body>
+<h1>Game Bar 快捷面板 · 第二版</h1>
+<p class="sub">按 Game Bar 自己的样式画（深灰面板、白字、Game Bar 蓝），464 宽实际尺寸。下半部分九宫格不动；上半部分给了两种排法，用下面的按钮切换。滑块、开关、左右切换都可以点。</p>
+<div class="seg" id="seg"><button class="a" data-v="A">A · 功耗为主，滑块横排</button><button data-v="B">B · 保留竖滑块，收进左上</button><button data-v="O">现在的（0.4.70）</button></div>
+
+<div class="stage">
+  <div class="col"><div class="cap"><b>主面板</b><span id="vcap"></span></div>
+    <div class="frame"><div class="chrome">Claw 掌机工具箱</div><div class="body" id="main"></div></div></div>
+  <div class="col"><div class="cap"><b>Magpie</b><span>原版功能全集，可滚动</span></div>
+    <div class="frame"><div class="chrome">Claw 掌机工具箱</div><div class="body" id="magpie"></div></div></div>
+  <div class="col"><div class="cap"><b>小黄鸭</b><span>改动直接写入档案</span></div>
+    <div class="frame"><div class="chrome">Claw 掌机工具箱</div><div class="body" id="duck"></div></div></div>
+</div>
+
+<div class="notes">
+  <div class="note"><h3>上半部分的两种排法</h3><ul>
+    <li><b>视觉重心都是功耗</b>：大号数字 + 实际功耗/温度/电量三个读数，滑块紧贴在下面</li>
+    <li><b>A</b>：去掉左侧竖栏，亮度和音量改成横向滑块放一张卡里；8 个快捷键一行等宽；编辑和电源收到功耗卡右上角。九宫格因此变宽一些，排列和内容不变</li>
+    <li><b>B</b>：竖滑块保留但只占左上角，和功耗卡、快捷键拼成一块；九宫格放到下面，占满整宽</li>
+    <li>两种都把原来大小不一的快捷键（3 个方块 + 1 个长条）统一成同尺寸图标按钮</li>
+  </ul></div>
+  <div class="note"><h3>Magpie 页：原版功能</h3><ul class="legend">
+    <li>按原版 Magpie 0.12「配置文件」页的分组排：缩放、性能、光标、高级，再加原版「设置」里和游戏中有关的几项</li>
+    <li>原版里只对“从 Magpie 启动游戏”有用的启动参数、程序路径不放</li>
+    <li><span class="tag">需补引擎</span>标出的项，我们改过的 Magpie 现在还收不到，要在引擎控制接口里补上（源码在手，能做）</li>
+    <li>我们自加的「铺满屏幕」「锐化」按你的意思不放进这页，游戏库里照旧</li>
+  </ul></div>
+  <div class="note"><h3>小黄鸭页</h3><ul>
+    <li>缩放开关按 A 直接对当前游戏生效（现在是倒数 5 秒、自己切回游戏）</li>
+    <li>档案按游戏自动匹配；算法、帧生成、倍率、性能模式左右切换即写入档案，去掉“应用 / 放弃”</li>
+    <li>其余冷门参数走“打开小黄鸭”</li>
+  </ul></div>
+</div>
+
+<script>
+const I={
+ edit:'M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4',power:'M12 3v9M6.3 6.8a8 8 0 1 0 11.4 0',
+ bolt:'M13 3 5 14h6l-1 7 8-11h-6l1-7z',sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M5 19l1.4-1.4M17.6 6.4 19 5',
+ vol:'M4 10v4h3l5 4V6L7 10H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11',
+ freeze:'M12 3v18M4.2 7.5l15.6 9M19.8 7.5l-15.6 9M9.5 4.5 12 7l2.5-2.5M9.5 19.5 12 17l2.5 2.5',
+ tasks:'M4 5h16v14H4zM8 15v-3M12 15V9M16 15v-5',desk:'M3 5h18v12H3zM9 21h6M12 17v4',
+ lib:'M5 4v16M9 4v16M13 5l5 14',shot:'M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+ kb:'M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M8 14h8',pad:'M7 8h10a4 4 0 0 1 4 4v2a3 3 0 0 1-5.5 1.6L15 15H9l-.5.6A3 3 0 0 1 3 14v-2a4 4 0 0 1 4-4zM8 11v2M7 12h2M16 12h.01',
+ x:'M5 5h14v14H5zM9.5 9.5l5 5M14.5 9.5l-5 5',fan:'M12 12c0-4 1-7 3.5-7S18 9 12 12zM12 12c4 0 7 1 7 3.5S15 18 12 12zM12 12c0 4-1 7-3.5 7S6 15 12 12zM12 12c-4 0-7-1-7-3.5S9 6 12 12z',
+ fps:'M4 18a8 8 0 1 1 16 0M12 18l4-6',hz:'M3 5h18v11H3zM8 20h8M12 16v4',osd:'M4 5h16v14H4zM7 14l3-3 3 2 4-4',
+ rumble:'M9 4h6v16H9zM5 8v8M19 8v8',scale:'M4 9V4h5M20 15v5h-5M4 4l6 6M20 20l-6-6',
+ duck:'M8.5 8.5a3.5 3.5 0 1 1 6.2 2.2c2.6.5 4.3 2.3 4.3 4.3a4 4 0 0 1-4 4H9a5 5 0 0 1-4-8M8.5 8.5H5.5L7 10.5M12 7.5h.01',
+ fse:'M4 4h16v12H4zM9 20h6',back:'M15 5l-7 7 7 7',l:'M14 6l-6 6 6 6',r:'M10 6l6 6-6 6',out:'M9 6h9v9M18 6 7 17'
+};
+const ic=(n,s=20)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24"><path d="${I[n]}"/></svg>`;
+const $=s=>document.querySelector(s);
+let V='A';
+const S={power:15,bri:70,vol:45,pad:true,magpie:false,duck:true,
+ tiles:[['功耗','bolt',['智能','均衡','性能','15 W'],3],['风扇','fan',['静音','均衡','性能'],1],['限帧','fps',['不限','30','40','45','60','90','120'],4],
+        ['刷新率','hz',['60 Hz','90 Hz','120 Hz'],2],['性能显示','osd',['关','1 档','2 档','3 档','4 档'],2],['Magpie','scale',['关','缩放中'],0],
+        ['震动','rumble',['关','弱','中','强'],3],['小黄鸭','duck',['关','缩放中'],1],['返回 FSE','fse',['大屏幕主页'],0]]};
+
+/* ---------- main ---------- */
+const range=(k,min,max)=>`<input type="range" min="${min}" max="${max}" value="${S[k]}" data-k="${k}" style="--p:${(S[k]-min)/(max-min)*100}%">`;
+const hslider=(icon,k)=>`<div class="sl"><span class="ic">${ic(icon,20)}</span>${range(k,0,100)}<span class="v" data-v="${k}">${S[k]}</span></div>`;
+const shortcuts=['freeze','tasks','desk','lib','shot','kb','pad','x'];
+const qbtn=(n,i)=>`<button class="q${n=='pad'&&S.pad?' on':''}${n=='x'?' warn':''}">${ic(n,22)}</button>`;
+function hero(tools=true){return `<div class="hero">
+  ${tools?`<div class="tools"><button class="ib">${ic('edit',18)}</button><button class="ib">${ic('power',18)}</button></div>`:''}
+  <div class="lab">${ic('bolt',14)}功耗上限</div>
+  <div class="tp"><div class="big"><b data-v="power">${S.power}</b><span>W</span></div>
+   <div class="reads" style="${tools?'margin-top:6px':''}"><span class="k">实际</span><span class="k">温度</span><span class="k">电量</span>
+    <span class="v">9.7<small>W</small></span><span class="v">54<small>°C</small></span><span class="v">82<small>%</small></span></div></div>
+  <div class="sl">${range('power',8,35)}</div></div>`}
+function tiles(){return `<div class="tiles">${S.tiles.map(([n,icn,l,i])=>`<button class="t"><span class="h">${ic(icn)}${l.length>1?`<span class="dots">${l.map((_,k)=>`<i class="${k==i?'a':''}"></i>`).join('')}</span>`:''}</span><span class="n">${n}</span><span class="val">${l[i]}</span></button>`).join('')}</div>`}
+function vtrack(k,icon){const p=S[k];return `<div class="vs"><span class="v" data-v="${k}">${p}</span><div class="vtrack" data-vk="${k}"><i style="height:calc((100% - 16px)*${p/100})"></i><em style="bottom:calc(8px + (100% - 16px)*${p/100})"></em></div><span class="ic">${ic(icon,18)}</span></div>`}
+function drawMain(){
+ let h='';
+ if(V=='A'){
+  $('#vcap').textContent='功耗为主，滑块横排';
+  h=hero()+`<div class="card">${hslider('sun','bri')}${hslider('vol','vol')}</div>
+   <div class="qs" style="grid-template-columns:repeat(8,1fr)">${shortcuts.map(qbtn).join('')}</div>`+tiles();
+ }else if(V=='B'){
+  $('#vcap').textContent='竖滑块收进左上';
+  h=`<div style="display:grid;grid-template-columns:92px 1fr;gap:8px;flex:none;height:222px">
+    <div class="vrail">${vtrack('bri','sun')}${vtrack('vol','vol')}</div>
+    <div style="display:flex;flex-direction:column;gap:8px;min-width:0">${hero()}<div class="qs" style="grid-template-columns:repeat(4,1fr);flex:1">${shortcuts.map(qbtn).join('')}</div></div>
+   </div>`+tiles();
+ }else{
+  $('#vcap').textContent='0.4.70 源码还原';
+  h=`<div style="display:grid;grid-template-columns:48px 1fr;gap:12px;flex:1;min-height:0">
+   <div style="background:var(--card);border-radius:4px;display:flex;flex-direction:column;align-items:center;padding:6px 0;gap:6px">
+    <button class="ib">${ic('edit',18)}</button><div style="width:32px;height:1px;background:var(--div)"></div>
+    <span style="font-size:13px;font-weight:600">${S.bri}</span><div class="vtrack" style="flex:1"><i style="height:calc((100% - 16px)*.7)"></i><em style="bottom:calc(8px + (100% - 16px)*.7)"></em></div><span class="ic" style="color:var(--ink2)">${ic('sun',18)}</span>
+    <div style="width:32px;height:1px;background:var(--div)"></div>
+    <span style="font-size:13px;font-weight:600">${S.vol}</span><div class="vtrack" style="flex:1"><i style="height:calc((100% - 16px)*.45)"></i><em style="bottom:calc(8px + (100% - 16px)*.45)"></em></div><span class="ic" style="color:var(--ink2)">${ic('vol',18)}</span>
+    <div style="width:32px;height:1px;background:var(--div)"></div><button class="ib">${ic('power',18)}</button></div>
+   <div style="display:flex;flex-direction:column;gap:12px;min-width:0">
+    <div class="hero" style="padding:10px 14px 4px"><div class="lab" style="font-size:15px;margin:6px 0 0">${ic('bolt',16)}功耗</div><div style="position:absolute;right:14px;top:8px" class="big"><b style="font-size:40px">${S.power}</b><span>W</span></div><div style="font-size:13px;color:var(--ink2);margin:6px 0 0 22px">实际 9.7 W · 54 °C</div><div class="sl">${range('power',8,35)}</div></div>
+    <div style="display:grid;grid-template-columns:repeat(3,52px) 1fr;gap:8px;flex:none">${shortcuts.map((n,i)=>i==3||i==7?`<button class="q" style="justify-content:start;padding-left:10px;display:flex;gap:10px">${ic(n,20)}<span style="font-size:14px;font-weight:600">${i==3?'游戏库':'退出游戏'}</span></button>`:`<button class="q" style="height:52px">${ic(n,22)}</button>`).join('')}</div>
+    ${tiles()}</div></div>`;
+ }
+ $('#main').innerHTML=h;
+}
+
+/* ---------- rows ---------- */
+const sw=(k,label,on,sub='',tag=false,cls='')=>`<button class="row fx2 ${cls} ${on?'on':''}" data-sw="${k}"><span class="l">${label}${tag?'<span class="tag">需补引擎</span>':''}${sub?`<small>${sub}</small>`:''}</span><span class="sw"></span></button>`;
+const pick=(k,label,list,i,tag=false,cls='')=>`<div class="row ${cls}" tabindex="0"><span class="l">${label}${tag?'<span class="tag">需补引擎</span>':''}</span><span class="r"><button class="ch" data-pk="${k}" data-d="-1">${ic('l',16)}</button><b>${list[i]}</b><button class="ch" data-pk="${k}" data-d="1">${ic('r',16)}</button></span></div>`;
+const head=t=>`<div class="ph"><button class="ib">${ic('back',18)}</button><span class="tt">${t}</span><span class="gm">黑神话：悟空</span></div>`;
+
+const M={mode:['无','Lanczos','FSR','FSRCNNX','CuNNy','Anime4K','CRT-Geom','Integer Scale 2x'],cap:['Graphics Capture','Desktop Duplication','GDI','DwmSharedSurface'],
+ auto:['关','全屏时','窗口化时'],winf:['自动','1.25×','1.5×','1.75×','2×','3×'],fps:['30','40','45','60','72','90','120','144'],
+ gpu:['自动','Intel Arc 140V'],mon:['最近的显示器','相交的显示器','所有显示器'],cur:['0.5×','0.75×','不缩放','1.25×','1.5×','2×','和源窗口相同'],
+ interp:['最近邻','双线性'],hide:['1 秒','2 秒','3 秒','5 秒'],crop:['0','8','16','32','64','120'],tool:['关','始终显示','自动隐藏'],dup:['总是','动态','从不']};
+const m={mode:2,cap:0,auto:1,winf:0,game3D:false,lim:true,fps:3,gpu:0,mon:0,cur:2,interp:0,speed:true,hide:false,hideD:2,title:false,crop:false,cT:0,cB:0,cL:0,cR:0,dflip:false,tool:2,dup:1,maxi:false,excl:false,touch:false};
+function drawMagpie(){
+ $('#magpie').innerHTML=head('Magpie')+`<div class="scroll">
+ <div class="list">${sw('magpie','缩放',S.magpie,S.magpie?'1280 × 800 → 1920 × 1200 · 60 FPS':'','','hero-row')}</div>
+ <div class="grp">缩放</div><div class="list">
+  ${pick('mode','缩放模式',M.mode,m.mode)}${pick('cap','捕获方式',M.cap,m.cap)}
+  ${pick('auto','自动缩放',M.auto,m.auto)}${m.auto==2?pick('winf','窗口缩放倍数',M.winf,m.winf,true,'sub'):''}
+  ${sw('game3D','3D 游戏模式',m.game3D)}</div>
+ <div class="grp">性能</div><div class="list">
+  ${sw('lim','限制帧率',m.lim)}${m.lim?pick('fps','最大帧率',M.fps,m.fps,false,'sub'):''}
+  ${pick('gpu','显卡',M.gpu,m.gpu,true)}</div>
+ <div class="grp">光标</div><div class="list">
+  ${pick('cur','光标缩放',M.cur,m.cur,true)}${pick('interp','插值算法',M.interp,m.interp,true)}
+  ${sw('speed','缩放时调整光标速度',m.speed)}
+  ${sw('hide','自动隐藏光标',m.hide,'','tag')}${m.hide?pick('hideD','隐藏延迟',M.hide,m.hideD,false,'sub'):''}</div>
+ <div class="grp">高级</div><div class="list">
+  ${sw('title','捕获标题栏',m.title,'','tag')}
+  ${sw('crop','裁剪',m.crop)}${m.crop?['T:上','B:下','L:左','R:右'].map(s=>{const[k,n]=s.split(':');return pick('c'+k,n+'（像素）',M.crop,m['c'+k],false,'sub')}).join(''):''}
+  ${sw('dflip','禁用 DirectFlip',m.dflip,'','tag')}${pick('mon','多显示器',M.mon,m.mon,true)}</div>
+ <div class="grp">全局</div><div class="list">
+  ${pick('tool','叠加层工具栏',M.tool,m.tool,true)}${pick('dup','重复帧检测',M.dup,m.dup,true)}
+  ${sw('maxi','允许缩放最大化的窗口',m.maxi,'','tag')}${sw('excl','模拟独占全屏',m.excl,'','tag')}${sw('touch','触控支持',m.touch,'','tag')}</div>
+ </div>`;
+}
+const DK={profile:['默认档案','黑神话：悟空','艾尔登法环'],alg:['关闭','LS1','AMD FSR','NVIDIA NIS','SGSR','Bicubic CAS','Anime4K','xBR','锐化双线性','整数缩放','最近邻'],fg:['关闭','LSFG 3.1','LSFG 2.3'],mode:['固定倍率','自适应'],mult:['×1.5','×2','×2.5','×3','×4'],target:['跟随屏幕','40','48','60','72','90','120']};
+const d={profile:1,alg:1,fg:1,mode:0,mult:1,target:3,perf:false};
+function drawDuck(){const fg=d.fg>0,l3=d.fg==1;
+ $('#duck').innerHTML=head('小黄鸭')+`<div class="scroll">
+ <div class="list">${sw('duck','缩放',S.duck,S.duck?DK.alg[d.alg]+(fg?' · '+DK.fg[d.fg]:''):'','','hero-row')}</div>
+ <div class="list" style="margin-top:4px">${pick('d.profile','档案',DK.profile,d.profile)}${pick('d.alg','缩放算法',DK.alg,d.alg)}${pick('d.fg','帧生成',DK.fg,d.fg)}
+  ${l3?pick('d.mode','模式',DK.mode,d.mode,false,'sub'):''}
+  ${fg?(l3&&d.mode?pick('d.target','目标帧率',DK.target,d.target,false,'sub'):pick('d.mult','倍率',l3?DK.mult:DK.mult.slice(1,4),l3?d.mult:Math.min(d.mult,2),false,'sub')):''}
+  ${fg?sw('d.perf','性能模式',d.perf,'','', 'sub'):''}</div>
+ <div class="list"><button class="row"><span class="l">打开小黄鸭</span><span class="r" style="padding-right:4px">${ic('out',16)}</span></button></div></div>`;
+}
+function draw(){drawMain();drawMagpie();drawDuck()}
+draw();
+
+$('#seg').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;V=b.dataset.v;document.querySelectorAll('#seg button').forEach(x=>x.classList.toggle('a',x==b));drawMain()});
+document.addEventListener('click',e=>{
+ const s=e.target.closest('[data-sw]'),p=e.target.closest('[data-pk]'),q=e.target.closest('.q'),t=e.target.closest('.t');
+ if(s){const k=s.dataset.sw;
+  if(k=='magpie'){S.magpie=!S.magpie;if(S.magpie)S.duck=false;S.tiles[5][3]=+S.magpie;S.tiles[7][3]=+S.duck;draw();return}
+  if(k=='duck'){S.duck=!S.duck;if(S.duck)S.magpie=false;S.tiles[5][3]=+S.magpie;S.tiles[7][3]=+S.duck;draw();return}
+  if(k.startsWith('d.')){const b=k.slice(2);d[b]=!d[b];drawDuck();return}
+  m[k]=!m[k];const top=$('#magpie .scroll').scrollTop;drawMagpie();$('#magpie .scroll').scrollTop=top}
+ else if(p){const k=p.dataset.pk,dd=+p.dataset.d;
+  if(k.startsWith('d.')){const b=k.slice(2);let len=DK[b].length;if(b=='mult'&&d.fg==2)len=3;d[b]=(d[b]+dd+len)%len;drawDuck();return}
+  const list=M[k]||M[k.replace(/^c[TBLR]$/,'crop')]||M.hide;const key=k=='hideD'?'hide':k;const L=(M[key]||M.crop).length;
+  m[k]=(m[k]+dd+L)%L;const top=$('#magpie .scroll').scrollTop;drawMagpie();$('#magpie .scroll').scrollTop=top}
+ else if(q&&q.innerHTML.includes(I.pad)){S.pad=!S.pad;drawMain()}
+ else if(t){const i=[...t.parentNode.children].indexOf(t);const tl=S.tiles[i];if(i==5||i==7)return;tl[3]=(tl[3]+1)%tl[2].length;drawMain()}
+});
+document.addEventListener('input',e=>{const r=e.target;if(r.type!='range')return;S[r.dataset.k]=+r.value;
+ r.style.setProperty('--p',(r.value-r.min)/(r.max-r.min)*100+'%');document.querySelectorAll(`[data-v="${r.dataset.k}"]`).forEach(x=>x.textContent=r.value)});
+document.addEventListener('pointerdown',e=>{const tr=e.target.closest('.vtrack[data-vk]');if(!tr)return;
+ const move=ev=>{const b=tr.getBoundingClientRect();const v=Math.round(Math.max(0,Math.min(1,(b.bottom-8-ev.clientY)/(b.height-16)))*100);S[tr.dataset.vk]=v;drawMain()};
+ move(e);const up=()=>{removeEventListener('pointermove',move);removeEventListener('pointerup',up)};addEventListener('pointermove',move);addEventListener('pointerup',up)});
+</script>
+</body>
+</html>

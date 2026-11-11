@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Game Bar 快捷面板 · 左右分栏</title>
+<style>
+/* ===================== Tokens (the only place with numbers) ===================== */
+:root{
+ /* colour */
+ --c-panel:#25282C;--c-rail:#1C1E22;--c-card:#2E3237;--c-ctl:#363A40;--c-ctl-h:#41464D;--c-div:#3D4045;--c-track:#484B4E;
+ --c-acc:#4CC2FF;--c-acc-ink:#0B1B24;--c-ink:#F4F4F5;--c-ink2:rgba(244,244,245,.64);--c-ink3:rgba(244,244,245,.36);--c-warn:#FF5A4E;--c-eng:#FFC450;
+ --c-grid:rgba(255,64,129,.13);--c-page:#0F1012;
+ /* base unit + spacing scale */
+ --space-xs:4px;--space-s:8px;--space-m:12px;--space-l:16px;--space-xl:24px;
+ /* breakpoint-dependent (S / Regular defaults) */
+ --gutter:var(--space-s);--group:var(--space-l);--margin:var(--space-m);--rail:64px;--header:44px;
+ --content-max:560px;
+ /* fixed tracks and minimums */
+ --rail-item-min:48px;--tile-min:56px;--tile-max:160px;--cell-min:52px;--cell-max:96px;--line-min:44px;--line-max:72px;
+ --shortcut-h:48px;--slider-h:44px;--hero:64px;--power-card:112px;--rumble-h:52px;--segment-h:32px;
+ --slider-icon:24px;--slider-value:40px;--hero-icon:40px;--switch-w:40px;--switch-h:20px;--focus-w:3px;--focus-h:24px;
+ /* insets */
+ --inset:var(--space-m);--cell-pad-y:var(--space-s);
+ /* icons */
+ --i-rail:24px;--i-content:20px;--i-mark:16px;--i-power:28px;
+ /* radius */
+ --r-outer:4px;--r-inner:2px;
+ /* type: size / line */
+ --t-caption:11px/16px;--t-label:12px/16px;--t-body:14px/20px;--t-subtitle:16px/24px;--t-title:18px/24px;--t-display:48px/48px;--t-display-compact:36px/40px;
+ --ff:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","PingFang SC",-apple-system,sans-serif;
+ /* frame (Game Bar) */
+ --gb-title:42px;
+}
+/* width M: 560–900 */
+@container widget (min-width: 560px){
+ .win{--gutter:12px;--group:var(--space-xl);--margin:var(--space-l);--rail:72px}
+}
+/* height Compact: content 478–559 (widget height 520–601) */
+@container widget (max-height: 601px){
+ .win{--header:36px;--group:var(--space-s);--cell-min:44px;--cell-pad-y:var(--space-xs);--line-min:40px;--shortcut-h:40px;--slider-h:40px;--power-card:92px}
+}
+
+/* ===================== Page chrome (not part of the widget) ===================== */
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--c-page);color:var(--c-ink);font:var(--t-body) var(--ff);padding:28px 24px 56px}
+h1{font-size:22px;font-weight:600}
+.sub{color:var(--c-ink2);font-size:13px;margin-top:6px;max-width:1040px;line-height:1.6}
+.bar{display:flex;gap:12px;margin-top:16px;flex-wrap:wrap;align-items:center}
+.seg{display:inline-flex;background:#1B1D20;border-radius:6px;padding:3px}
+.seg button,.tog{font:inherit;font-size:13px;color:var(--c-ink2);background:none;border:0;border-radius:4px;padding:6px 12px;cursor:pointer}
+.seg button.a,.tog.a{background:#3E434B;color:var(--c-ink)}
+.tog{background:#1B1D20}
+.stage{display:flex;flex-wrap:wrap;gap:30px 28px;margin-top:20px;align-items:flex-start}
+.cap{font-size:13px;color:var(--c-ink2);margin-bottom:10px}
+.cap b{color:var(--c-ink);font-weight:600}
+
+/* ===================== Widget ===================== */
+.frame{width:var(--fw,464px);height:var(--fh,671px);border-radius:8px;overflow:hidden;background:var(--c-panel);box-shadow:0 0 0 1px #3A3D42,0 20px 60px rgba(0,0,0,.55);display:flex;flex-direction:column;position:relative;container:widget/size}
+.chrome{height:var(--gb-title);flex:none;display:flex;align-items:center;padding:0 var(--space-l);font:var(--t-body) var(--ff);font-size:15px;border-bottom:1px solid #303338}
+.win{flex:1;display:flex;min-height:0}
+svg{display:block;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.i-rail{width:var(--i-rail);height:var(--i-rail)}.i-c{width:var(--i-content);height:var(--i-content)}.i-m{width:var(--i-mark);height:var(--i-mark)}.i-p{width:var(--i-power);height:var(--i-power)}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-align:left}
+button:focus{outline:none}
+
+/* rail: 7 equal rows */
+.rail{width:var(--rail);flex:none;background:var(--c-rail);display:grid;grid-template-rows:repeat(7,minmax(var(--rail-item-min),1fr))}
+.ri{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-xs);color:var(--c-ink3);font:var(--t-caption) var(--ff);position:relative}
+.ri:hover{color:var(--c-ink2)}
+.ri.a{color:var(--c-ink);background:var(--c-panel)}
+.ri.a::before{content:"";position:absolute;left:0;top:50%;height:var(--focus-h);margin-top:calc(var(--focus-h) / -2);width:var(--focus-w);border-radius:0 var(--r-inner) var(--r-inner) 0;background:var(--c-acc)}
+@container widget (max-height: 601px){.ri span{display:none}}
+
+/* page */
+.pg{flex:1;min-width:0;display:flex;justify-content:center;padding:0 var(--margin) var(--margin)}
+.pgi{flex:1;max-width:var(--content-max);min-width:0;display:flex;flex-direction:column}
+.ph{height:var(--header);flex:none;display:flex;align-items:center;gap:var(--space-s)}
+.ph .tt{font:var(--t-title) var(--ff);font-weight:600;padding-left:var(--r-inner)}
+.ph .ctx{margin-left:auto;font:var(--t-label) var(--ff);color:var(--c-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ph .hsw{display:none}
+@container widget (max-height: 601px){.ph .hsw{display:flex}.ph .ctx{display:none}.hero{display:none!important}}
+.body{flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--group);position:relative}
+
+/* the grid */
+.g6{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:var(--gutter);min-height:0}
+.fl{flex:1}
+.s2{grid-column:span 2}.s3{grid-column:span 3}.s4{grid-column:span 4}.s6{grid-column:span 6}
+.sub6{display:grid;grid-template-columns:subgrid;align-items:center}
+/* grid overlay */
+.showgrid .body::after{content:"";position:absolute;inset:0;pointer-events:none;
+ background:repeating-linear-gradient(to right,var(--c-grid) 0 calc((100% - 5 * var(--gutter)) / 6),transparent calc((100% - 5 * var(--gutter)) / 6) calc((100% - 5 * var(--gutter)) / 6 + var(--gutter)));
+ outline:1px dashed rgba(255,64,129,.5)}
+
+/* per-page row tracks */
+.rows-tiles{grid-template-rows:repeat(3,minmax(var(--tile-min),1fr))}
+.rows-short{grid-template-rows:repeat(3,var(--shortcut-h))}
+.rows-perf{grid-template-rows:var(--power-card) repeat(6,minmax(var(--line-min),1fr))}
+.rows-hand{grid-template-rows:calc(2 * var(--slider-h)) repeat(3,minmax(var(--tile-min),1fr)) var(--rumble-h)}
+.rows-mag{grid-template-rows:var(--hero) repeat(7,minmax(var(--cell-min),1fr))}
+.rows-duck{grid-template-rows:var(--hero) repeat(6,minmax(var(--cell-min),1fr))}
+.rows-win{grid-template-rows:repeat(5,minmax(var(--tile-min),1fr))}
+.rows-pwr{grid-template-rows:repeat(3,1fr)}
+@container widget (max-height: 601px){.rows-mag{grid-template-rows:repeat(7,minmax(var(--cell-min),1fr))}.rows-duck{grid-template-rows:repeat(6,minmax(var(--cell-min),1fr))}}
+
+/* surfaces */
+.card{background:var(--c-card);border-radius:var(--r-outer)}
+.ctl{background:var(--c-ctl);border-radius:var(--r-outer)}
+.ctl:hover{background:var(--c-ctl-h)}
+
+/* tile (九宫格, 开关磁贴, 跳转格) */
+.tile{padding:var(--inset);display:flex;flex-direction:column;justify-content:space-between;min-height:0;max-height:var(--tile-max);position:relative}
+.tile .h{display:flex;justify-content:space-between;align-items:center}
+.tile .n{font:var(--t-body) var(--ff);font-weight:600}
+.tile .v{font:var(--t-label) var(--ff);color:var(--c-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .o{position:absolute;right:var(--space-s);top:var(--space-s);color:var(--c-ink3)}
+.tile.on{background:var(--c-acc);color:var(--c-acc-ink)}.tile.on .v{color:var(--c-acc-ink);opacity:.72}
+.dots{display:flex;gap:var(--space-xs)}.dots i{width:var(--space-xs);height:var(--space-xs);border-radius:50%;background:var(--c-ink3)}.dots i.a{background:var(--c-ink)}
+
+/* shortcut */
+.sc{display:flex;align-items:center;gap:var(--space-s);padding:0 var(--inset);font:var(--t-label) var(--ff);color:var(--c-ink2);min-width:0}
+.sc span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc svg{color:var(--c-ink)}
+.sc.on{background:var(--c-acc);color:var(--c-acc-ink)}.sc.on svg{color:var(--c-acc-ink)}
+.sc.armed,.sc.armed svg{color:var(--c-warn)}
+
+/* setting cell */
+.cell{padding:var(--cell-pad-y) var(--inset);display:flex;flex-direction:column;justify-content:space-between;position:relative;min-width:0;min-height:0;max-height:var(--cell-max)}
+.cell .k{font:var(--t-label) var(--ff);color:var(--c-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:calc(var(--i-mark) + var(--space-xs))}
+.cell .v{font:var(--t-body) var(--ff);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cell .mk{position:absolute;right:var(--space-s);top:var(--space-s);color:var(--c-ink3);display:grid;place-items:center;width:var(--i-mark);height:var(--i-mark)}
+.cell.tg .mk::after{content:"";width:var(--space-s);height:var(--space-s);border-radius:50%;background:var(--c-ink3)}
+.cell.tg.on .mk::after{background:var(--c-acc)}
+.cell.tg.on .v{color:var(--c-acc)}
+.cell .eng{display:inline-block;width:var(--space-xs);height:var(--space-xs);border-radius:50%;background:var(--c-eng);margin-left:var(--space-xs);vertical-align:middle}
+
+.off{opacity:.36;pointer-events:none}
+
+/* line: name span 2 + control span 4 (subgrid keeps the page columns) */
+.line{padding:0 var(--space-xs) 0 0;max-height:var(--line-max);align-self:stretch}
+.line .lb{grid-column:span 2;display:flex;align-items:center;gap:var(--space-s);padding-left:var(--inset);font:var(--t-label) var(--ff);color:var(--c-ink2);white-space:nowrap}
+.line .segs{grid-column:span 4;display:flex;gap:var(--space-xs)}
+.sg{flex:1;height:var(--segment-h);border-radius:var(--r-inner);background:var(--c-ctl);font:var(--t-label) var(--ff);display:grid;place-items:center;white-space:nowrap}
+.sg:hover{background:var(--c-ctl-h)}
+.sg.a{background:var(--c-acc);color:var(--c-acc-ink);font-weight:600}
+
+/* slider */
+.sliders{display:grid;grid-template-rows:repeat(2,1fr)}
+.sl{display:grid;grid-template-columns:var(--slider-icon) 1fr var(--slider-value);align-items:center;gap:var(--space-s);padding:0 var(--inset)}
+.sl+.sl{border-top:1px solid var(--c-div)}
+.sl .ic{color:var(--c-ink2)}
+.sl .val{text-align:right;font:var(--t-body) var(--ff);font-weight:600;font-variant-numeric:tabular-nums}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:var(--slider-icon);background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:var(--space-xs);border-radius:var(--r-inner);background:linear-gradient(to right,var(--c-acc) var(--p,50%),var(--c-track) var(--p,50%))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:var(--i-content);height:var(--i-content);border-radius:50%;background:var(--c-acc);margin-top:calc((var(--space-xs) - var(--i-content)) / 2);box-shadow:0 0 0 var(--space-xs) var(--c-card)}
+input[type=range]::-moz-range-track{height:var(--space-xs);border-radius:var(--r-inner);background:var(--c-track)}
+input[type=range]::-moz-range-progress{height:var(--space-xs);border-radius:var(--r-inner);background:var(--c-acc)}
+input[type=range]::-moz-range-thumb{width:var(--i-content);height:var(--i-content);border-radius:50%;background:var(--c-acc);border:var(--space-xs) solid var(--c-card)}
+input[type=range]:focus{outline:none}
+
+/* power card */
+.pc{padding:var(--inset) var(--inset) 0;display:flex;flex-direction:column;justify-content:space-between}
+.pc .top{display:flex;align-items:flex-end;gap:var(--space-s)}
+.pc .lbl{font:var(--t-label) var(--ff);color:var(--c-ink2)}
+.big{display:flex;align-items:baseline;gap:var(--space-xs)}
+.big b{font:var(--t-display) var(--ff);font-weight:600;font-variant-numeric:tabular-nums}
+.big span{font:var(--t-subtitle) var(--ff);color:var(--c-ink2);font-weight:600}
+.reads{margin-left:auto;display:grid;grid-template-columns:repeat(4,auto);column-gap:var(--space-m);text-align:right}
+.reads .k{font:var(--t-caption) var(--ff);color:var(--c-ink3)}
+.reads .v{font:var(--t-body) var(--ff);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.reads .v small{font:var(--t-caption) var(--ff);color:var(--c-ink2)}
+@container widget (max-height: 601px){.big b{font:var(--t-display-compact) var(--ff);font-weight:600}}
+
+/* hero */
+.hero{display:flex;align-items:center;gap:var(--space-m);padding:0 var(--inset);width:100%}
+.hero .hi{width:var(--hero-icon);height:var(--hero-icon);border-radius:var(--r-outer);background:var(--c-ctl);display:grid;place-items:center}
+.hero .l{flex:1;min-width:0}
+.hero .l b{display:block;font:var(--t-subtitle) var(--ff);font-weight:600}
+.hero .l small{display:block;font:var(--t-label) var(--ff);color:var(--c-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hero.on .hi{background:var(--c-acc);color:var(--c-acc-ink)}
+.sw{width:var(--switch-w);height:var(--switch-h);border-radius:calc(var(--switch-h) / 2);border:1px solid var(--c-ink2);position:relative;flex:none}
+.sw::after{content:"";position:absolute;left:var(--space-xs);top:50%;width:calc(var(--switch-h) / 2);height:calc(var(--switch-h) / 2);margin-top:calc(var(--switch-h) / -4);border-radius:50%;background:var(--c-ink2)}
+.on .sw,.sw.on{background:var(--c-acc);border-color:var(--c-acc)}
+.on .sw::after,.sw.on::after{left:auto;right:var(--space-xs);background:var(--c-acc-ink)}
+
+/* power */
+.pw{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-s);font:var(--t-body) var(--ff);font-weight:600}
+.pw.armed{background:rgba(255,90,78,.14);color:var(--c-warn)}
+
+/* option sheet */
+.sheet{position:absolute;top:var(--gb-title);right:0;bottom:0;left:var(--rail);background:rgba(18,19,22,.72);display:flex;align-items:flex-end;padding:var(--margin)}
+.sheet .box{width:100%;background:var(--c-card);border-radius:var(--r-outer);box-shadow:0 10px 40px rgba(0,0,0,.6);padding:var(--space-s);display:grid;gap:var(--space-xs)}
+.sheet .op{height:var(--line-min);border-radius:var(--r-outer);padding:0 var(--inset);font:var(--t-body) var(--ff);display:flex;align-items:center;justify-content:space-between}
+.sheet .op:hover{background:var(--c-ctl-h)}
+.sheet .op.a{color:var(--c-acc);font-weight:600}
+
+.notes{margin-top:34px;max-width:1476px;display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:18px}
+.note{background:#17191C;border:1px solid #2A2D31;border-radius:8px;padding:16px 18px}
+.note h3{font-size:14px;font-weight:600;margin-bottom:8px}
+.note li{font-size:13px;line-height:1.7;color:var(--c-ink2);margin-left:16px}
+.note li b{color:var(--c-ink);font-weight:600}
+</style>
+</head>
+<body>
+<h1>Game Bar 快捷面板 · 左右分栏（第五版：栅格系统）</h1>
+<p class="sub">所有尺寸都来自同一组 token：6 列、Gutter 8、页边距 12、间距 4/8/12/16/24。用“显示栅格”看每页怎么落在 6 列上；切换尺寸看断点：掌机 464×671、矮窗 464×520（Compact）、宽窗 640×760（M）。</p>
+<div class="bar">
+ <div class="seg" id="size"><button class="a" data-w="464" data-h="671">掌机 464 × 671</button><button data-w="464" data-h="520">矮窗 464 × 520</button><button data-w="640" data-h="760">宽窗 640 × 760</button></div>
+ <button class="tog" id="grid">显示栅格</button>
+</div>
+<div class="stage" id="stage"></div>
+
+<div class="notes">
+  <div class="note"><h3>栅格</h3><ul>
+    <li><b>6 列</b>：内容只需要二分、三分和 1/3 + 2/3，6 是 2 和 3 的最小公倍数</li>
+    <li><b>Gutter 8</b>，行间距等于列间距；不同组之间 16</li>
+    <li>每页的行轨 = 固定行 + 比例行（带最小高度），所以总是刚好铺满、从不滚动</li>
+    <li>名称 + 档位行用子栅格，档位起点落在第 3 列线上</li>
+  </ul></div>
+  <div class="note"><h3>断点</h3><ul>
+    <li><b>宽 M（≥ 560）</b>：页签栏 72、边距 16、Gutter 12、组间距 24，内容最宽 560 居中</li>
+    <li><b>高 Compact（内容 &lt; 560）</b>：页签只留图标、页头 36、组间距 8、格子上下内边距 4；Magpie / 小黄鸭的缩放开关并入页头</li>
+    <li>组件最小 464 × 520：再窄 Magpie 格子名称放不下 6 个字，再矮性能页格子低于 44</li>
+  </ul></div>
+  <div class="note"><h3>和第四版相比</h3><ul>
+    <li>快捷操作从 4×2 改为 3×3（多一个“编辑快设”），和上面九宫格共用列线</li>
+    <li>所有间距、尺寸改成引用 token，组件代码里同名同值</li>
+  </ul></div>
+</div>
+
+<script>
+const I={
+ edit:'M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4',power:'M12 3v9M6.3 6.8a8 8 0 1 0 11.4 0',
+ bolt:'M13 3 5 14h6l-1 7 8-11h-6l1-7z',sun:'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.4 1.4M17.6 17.6 19 19M5 19l1.4-1.4M17.6 6.4 19 5',
+ vol:'M4 10v4h3l5 4V6L7 10H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11',grid:'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+ handheld:'M7 7h10a5 5 0 0 1 0 10H7A5 5 0 0 1 7 7zM9 12h.01M15 12h.01',win:'M4 5.5 11 4.5v7H4zM13 4.2 20 3v8.5h-7zM4 12.5h7v7L4 18.5zM13 12.5h7V21l-7-1.2z',
+ freeze:'M12 3v18M4.2 7.5l15.6 9M19.8 7.5l-15.6 9M9.5 4.5 12 7l2.5-2.5M9.5 19.5 12 17l2.5 2.5',
+ tasks:'M4 5h16v14H4zM8 15v-3M12 15V9M16 15v-5',desk:'M3 5h18v12H3zM9 21h6M12 17v4',
+ lib:'M5 4v16M9 4v16M13 5l5 14',shot:'M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+ kb:'M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M8 14h8',pad:'M7 8h10a4 4 0 0 1 4 4v2a3 3 0 0 1-5.5 1.6L15 15H9l-.5.6A3 3 0 0 1 3 14v-2a4 4 0 0 1 4-4zM8 11v2M7 12h2M16 12h.01',
+ x:'M5 5h14v14H5zM9.5 9.5l5 5M14.5 9.5l-5 5',fan:'M12 12c0-4 1-7 3.5-7S18 9 12 12zM12 12c4 0 7 1 7 3.5S15 18 12 12zM12 12c0 4-1 7-3.5 7S6 15 12 12zM12 12c-4 0-7-1-7-3.5S9 6 12 12z',
+ fps:'M4 18a8 8 0 1 1 16 0M12 18l4-6',hz:'M3 5h18v11H3zM8 20h8M12 16v4',osd:'M4 5h16v14H4zM7 14l3-3 3 2 4-4',cpu:'M7 7h10v10H7zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4',
+ rumble:'M9 4h6v16H9zM5 8v8M19 8v8',scale:'M4 9V4h5M20 15v5h-5M4 4l6 6M20 20l-6-6',mute:'M4 10v4h3l5 4V6L7 10H4zM16 10l4 4M20 10l-4 4',
+ duck:'M8.5 8.5a3.5 3.5 0 1 1 6.2 2.2c2.6.5 4.3 2.3 4.3 4.3a4 4 0 0 1-4 4H9a5 5 0 0 1-4-8M8.5 8.5H5.5L7 10.5M12 7.5h.01',
+ fse:'M4 4h16v12H4zM9 20h6',down:'M6 9l6 6 6-6',out:'M9 6h9v9M18 6 7 17',moon:'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z',lock:'M6 11h12v9H6zM8.5 11V8a3.5 3.5 0 0 1 7 0v3',
+ restart:'M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4',wifi:'M5 10a10 10 0 0 1 14 0M8 13.5a5.5 5.5 0 0 1 8 0M12 17h.01',bt:'M7 7l10 10-5 4V3l5 4L7 17',plane:'M10 4.5a2 2 0 0 1 4 0V9l7 4v2l-7-2v4l2 2v1.5l-4-1-4 1V19l2-2v-4l-7 2v-2l7-4z',
+ dl:'M12 4v11M7 10l5 5 5-5M5 20h14',night:'M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5zM17 4v3M15.5 5.5h3',leaf:'M5 19c0-8 5-13 14-14-1 9-6 14-14 14zM5 19l7-7',signout:'M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10'
+};
+const ic=(n,c='i-c')=>`<svg class="${c}" viewBox="0 0 24 24"><path d="${I[n]}"/></svg>`;
+
+const S={power:15,bri:70,vol:45,mode:0,fps:0,hz:2,fan:1,osd:2,ecore:false,rumble:3,
+ wifi:true,bt:true,plane:false,mute:false,dark:false,night:false,saver:false,pad:true,magpie:false,duck:true,arm:''};
+const T=[['功耗','bolt',['智能','均衡','性能','15 W'],0],['风扇','fan',['静音','均衡','性能'],1],['限帧','fps',['不限','30','40','45','60','90','120'],0],
+ ['刷新率','hz',['60 Hz','90 Hz','120 Hz'],2],['性能显示','osd',['关','1 档','2 档','3 档','4 档'],2],['Magpie','scale',['关','缩放中'],0],
+ ['震动','rumble',['关','弱','中','强'],3],['小黄鸭','duck',['关','缩放中'],1],['返回 FSE','fse',['大屏幕主页'],0]];
+const OPT={
+ 'm.mode':['无','Lanczos','FSR','FSRCNNX','CuNNy','Anime4K','CRT-Geom','Integer Scale 2x'],'m.cap':['Graphics Capture','Desktop Duplication','GDI','DwmSharedSurface'],
+ 'm.auto':['关','全屏时','窗口化时'],'m.winf':['自动','1.25×','1.5×','1.75×','2×','3×'],'m.fps':['不限','30','40','45','60','72','90','120'],'m.gpu':['自动','Intel Arc 140V'],
+ 'm.mon':['最近的显示器','相交的显示器','所有显示器'],'m.cur':['0.5×','0.75×','不缩放','1.25×','1.5×','2×','和源窗口相同'],'m.interp':['最近邻','双线性'],
+ 'm.hide':['关','1 秒','2 秒','3 秒','5 秒'],'m.crop':['关','上下 8','上下 16','四边 8','自定义…'],'m.tool':['关','始终显示','自动隐藏'],'m.dup':['总是','动态','从不'],'m.fx':['FSR · 锐度 0.87','FSR · 锐度 0.5'],
+ 'd.profile':['默认档案','黑神话：悟空','艾尔登法环'],'d.alg':['关闭','LS1','AMD FSR','NVIDIA NIS','SGSR','Bicubic CAS','Anime4K','xBR','锐化双线性','整数缩放','最近邻'],
+ 'd.sharp':['0','1','2','3','4','5','6','7','8','9','10'],'d.fit':['保持宽高比','全屏拉伸'],'d.fg':['关闭','LSFG 3.1','LSFG 2.3'],'d.fgmode':['固定倍率','自适应'],
+ 'd.mult':['×1.5','×2','×2.5','×3','×4'],'d.target':['跟随屏幕','40 FPS','48 FPS','60 FPS','72 FPS','90 FPS','120 FPS'],'d.flow':['25%','50%','75%','100%'],'d.capi':['DXGI','WGC'],
+ 'd.sync':['默认','关闭（允许撕裂）','垂直同步','垂直同步 1/2','垂直同步 1/3'],'d.lat':['1','2','3','4','5','6','8','10'],'p.cpu':['不限','3.0 GHz','2.4 GHz','1.8 GHz','1.2 GHz']};
+const V={'m.mode':2,'m.cap':0,'m.auto':1,'m.winf':0,'m.fps':4,'m.gpu':0,'m.mon':0,'m.cur':2,'m.interp':0,'m.hide':0,'m.crop':0,'m.tool':2,'m.dup':1,'m.fx':0,
+ 'd.profile':1,'d.alg':1,'d.sharp':5,'d.fit':0,'d.fg':1,'d.fgmode':0,'d.mult':1,'d.target':3,'d.flow':3,'d.capi':0,'d.sync':0,'d.lat':2,'p.cpu':0};
+const B={'m.game3D':false,'m.speed':true,'m.title':false,'m.dflip':true,'m.maxi':false,'m.excl':false,'m.touch':false,'d.perf':false,'d.fps':true,'d.hdr':false,'d.clip':true,'d.win':false};
+
+/* components: every one takes a span class */
+const pk=(k,label,sp='s2',o={})=>`<button class="ctl cell ${sp} ${o.off?'off':''}" data-pk="${k}"><span class="k">${label}</span><span class="v">${OPT[k][V[k]]}${o.eng?'<i class="eng"></i>':''}</span><span class="mk">${ic('down','i-m')}</span></button>`;
+const tg=(k,label,sp='s2',o={})=>`<button class="ctl cell tg ${sp} ${B[k]?'on':''} ${o.off?'off':''}" data-tg="${k}"><span class="k">${label}</span><span class="v">${B[k]?'开':'关'}${o.eng?'<i class="eng"></i>':''}</span><span class="mk"></span></button>`;
+const range=(k,min,max)=>`<input type="range" min="${min}" max="${max}" value="${S[k]}" data-k="${k}" style="--p:${(S[k]-min)/(max-min)*100}%">`;
+const line=(icon,label,k,list)=>`<div class="card line s6 sub6"><span class="lb">${ic(icon,'i-m')}${label}</span><span class="segs">${list.map((x,j)=>`<button class="sg ${j==S[k]?'a':''}" data-sg="${k}" data-i="${j}">${x}</button>`).join('')}</span></div>`;
+const hero=(k,icon,sub)=>`<button class="card hero s6 ${S[k]?'on':''}" data-sw="${k}"><span class="hi">${ic(icon)}</span><span class="l"><b>缩放</b><small>${sub}</small></span><span class="sw"></span></button>`;
+const head=(t,ctx='',swk='')=>`<div class="ph"><span class="tt">${t}</span>${ctx?`<span class="ctx">${ctx}</span>`:''}${swk?`<button class="hsw ${S[swk]?'on':''}" data-sw="${swk}" style="margin-left:auto"><span class="sw ${S[swk]?'on':''}"></span></button>`:''}</div>`;
+const game='黑神话：悟空';
+
+const P={
+ home:()=>head('快设',game)+`<div class="body">
+  <div class="g6 fl rows-tiles">${T.map(([n,icn,l,i],j)=>`<button class="ctl tile s2" data-tile="${j}"><span class="h">${ic(icn)}${l.length>2?`<span class="dots">${l.map((_,k)=>`<i class="${k==i?'a':''}"></i>`).join('')}</span>`:''}</span><span><span class="n" style="display:block">${n}</span><span class="v" style="display:block">${l[i]}</span></span></button>`).join('')}</div>
+  <div class="g6 rows-short">${[['freeze','冻结游戏'],['tasks','任务管理器'],['desk','返回桌面'],['lib','游戏库'],['shot','截图'],['kb','键盘'],['pad','手柄模式'],['x','退出游戏'],['edit','编辑快设']].map(([n,l])=>{const armed=S.arm=='qx'&&n=='x';return `<button class="ctl sc s2 ${n=='pad'&&S.pad?'on':''} ${armed?'armed':''}" ${n=='x'?'data-arm="qx"':''} ${n=='pad'?'data-sw="pad"':''}>${ic(n)}<span>${armed?'再按一次':l}</span></button>`}).join('')}</div></div>`,
+ perf:()=>head('性能',game)+`<div class="body"><div class="g6 fl rows-perf">
+  <div class="card pc s6"><span class="lbl">功耗上限</span><div class="top"><div class="big"><b data-v="power">${S.power}</b><span>W</span></div>
+   <div class="reads"><span class="k">实际</span><span class="k">CPU</span><span class="k">风扇</span><span class="k">帧率</span>
+   <span class="v">9.7<small>W</small></span><span class="v">54<small>°C</small></span><span class="v">2147<small>rpm</small></span><span class="v">58</span></div></div>${range('power',8,35)}</div>
+  ${line('bolt','模式','mode',['智能','均衡','性能','手动'])}${line('fps','限帧','fps',['不限','30','40','45','60','90'])}${line('hz','刷新率','hz',['60','90','120'])}
+  ${line('fan','风扇','fan',['静音','均衡','性能','全速'])}${line('osd','性能显示','osd',['关','1','2','3','4'])}
+  ${pk('p.cpu','CPU 最高频率','s3')}<button class="ctl cell tg s3 ${S.ecore?'on':''}" data-sw="ecore"><span class="k">全 E 核调度</span><span class="v">${S.ecore?'开 · 重启后生效':'关'}</span><span class="mk"></span></button>
+ </div></div>`,
+ hand:()=>head('掌机')+`<div class="body"><div class="g6 fl rows-hand">
+  <div class="card sliders s6"><div class="sl"><span class="ic">${ic('sun')}</span>${range('bri',0,100)}<span class="val" data-v="bri">${S.bri}</span></div>
+   <div class="sl"><span class="ic">${ic(S.mute?'mute':'vol')}</span>${range('vol',0,100)}<span class="val" data-v="vol">${S.mute?'—':S.vol}</span></div></div>
+  ${[['wifi','wifi','Wi-Fi',S.wifi?'Home-5G':'关'],['bt','bt','蓝牙',S.bt?'已连接 2 台':'关'],['plane','plane','飞行模式',S.plane?'开':'关'],
+     ['mute','mute','静音',S.mute?'开':'关'],['dark','dl','熄屏下载',S.dark?'屏幕已关':'关'],['night','night','夜间模式',S.night?'开':'关'],
+     ['saver','leaf','节电模式',S.saver?'开':'关'],['pad','pad','手柄模式',S.pad?'手柄':'桌面'],['kb','kb','屏幕键盘','打开']]
+    .map(([k,icn,n,s])=>`<button class="ctl tile s2 ${k!='kb'&&S[k]?'on':''}" data-sw="${k}">${ic(icn)}<span><span class="n" style="display:block">${n}</span><span class="v" style="display:block">${s}</span></span></button>`).join('')}
+  ${line('rumble','震动','rumble',['关','弱','中','强'])}
+ </div></div>`,
+ magpie:()=>head('Magpie',game,'magpie')+`<div class="body"><div class="g6 fl rows-mag">
+  ${hero('magpie','scale',S.magpie?'1280 × 800 → 1920 × 1200':'关')}
+  ${pk('m.mode','缩放模式')}${pk('m.cap','捕获方式')}${tg('m.game3D','3D 游戏模式')}
+  ${pk('m.auto','自动缩放')}${pk('m.winf','窗口缩放倍数','s2',{eng:1,off:V['m.auto']!=2})}${pk('m.fps','帧率限制')}
+  ${pk('m.cur','光标缩放','s2',{eng:1})}${pk('m.interp','光标插值','s2',{eng:1})}${pk('m.hide','自动隐藏光标','s2',{eng:1})}
+  ${tg('m.speed','调整光标速度')}${tg('m.touch','触控支持','s2',{eng:1})}${tg('m.title','捕获标题栏','s2',{eng:1})}
+  ${pk('m.crop','裁剪')}${tg('m.dflip','DirectFlip','s2',{eng:1})}${tg('m.excl','模拟独占全屏','s2',{eng:1})}
+  ${tg('m.maxi','最大化窗口','s2',{eng:1})}${pk('m.tool','叠加层工具栏','s2',{eng:1})}${pk('m.dup','重复帧检测','s2',{eng:1})}
+  ${pk('m.gpu','显卡','s2',{eng:1})}${pk('m.mon','多显示器','s2',{eng:1})}${pk('m.fx','效果参数')}
+ </div></div>`,
+ duck:()=>{const fg=V['d.fg']>0,l3=V['d.fg']==1,ad=l3&&V['d.fgmode']==1;return head('小黄鸭',game,'duck')+`<div class="body"><div class="g6 fl rows-duck">
+  ${hero('duck','duck',S.duck?OPT['d.alg'][V['d.alg']]+(fg?' · '+OPT['d.fg'][V['d.fg']]:''):'关')}
+  ${pk('d.profile','档案','s4')}<button class="ctl cell s2" data-sw="none"><span class="k">原版</span><span class="v">打开小黄鸭</span><span class="mk">${ic('out','i-m')}</span></button>
+  ${pk('d.alg','缩放算法')}${pk('d.sharp','锐化强度','s2',{off:![2,3,5].includes(V['d.alg'])})}${pk('d.fit','画面适配')}
+  ${pk('d.fg','帧生成')}${pk('d.fgmode','帧生成模式','s2',{off:!l3})}${pk(ad?'d.target':'d.mult',ad?'目标帧率':'倍率','s2',{off:!fg})}
+  ${pk('d.flow','光流比例','s2',{off:!fg})}${tg('d.perf','性能模式','s2',{off:!fg})}${pk('d.capi','捕获 API')}
+  ${pk('d.sync','同步模式')}${pk('d.lat','最大帧延迟')}${tg('d.fps','显示帧率')}
+  ${tg('d.hdr','HDR 支持')}${tg('d.clip','限制光标范围')}${tg('d.win','窗口化输出')}
+ </div></div>`},
+ win:()=>head('Windows')+`<div class="body"><div class="g6 fl rows-win">
+  ${[['wifi','WLAN'],['bt','蓝牙和设备'],['desk','显示'],['vol','声音'],['leaf','电源和电池'],['lib','存储'],['restart','Windows 更新'],['grid','应用'],['pad','游戏模式'],
+     ['hz','图形设置'],['tasks','任务管理器'],['cpu','设备管理器'],['win','控制面板'],['lib','文件资源管理器'],['kb','触摸键盘设置']]
+    .map(([icn,n])=>`<button class="ctl tile s2">${ic(icn)}<span class="n">${n}</span><span class="o">${ic('out','i-m')}</span></button>`).join('')}
+ </div></div>`,
+ pwr:()=>head('电源')+`<div class="body"><div class="g6 fl rows-pwr">
+  ${[['sleep','moon','睡眠','s3'],['lock','lock','锁定','s3'],['signout','signout','注销','s3',1],['restart','restart','重启','s3',1],['off','power','关机','s6',1]].map(([k,icn,n,sp,arm])=>{const a=S.arm==k;return `<button class="ctl pw ${sp} ${a?'armed':''}" ${arm?`data-arm="${k}"`:''}>${ic(icn,'i-p')}<span>${a?'再按一次'+n:n}</span></button>`}).join('')}
+ </div></div>`
+};
+const TABS=[['home','grid','快设'],['perf','bolt','性能'],['hand','handheld','掌机'],['magpie','scale','Magpie'],['duck','duck','小黄鸭'],['win','win','Windows'],['pwr','power','电源']];
+const st=document.getElementById('stage');
+TABS.forEach(([k,,n])=>st.insertAdjacentHTML('beforeend',`<div><div class="cap"><b>${n}</b></div><div class="frame" data-p="${k}"><div class="chrome">Claw 掌机工具箱</div><div class="win"></div></div></div>`));
+function render(f){const p=f.dataset.p;f.querySelector('.sheet')?.remove();
+ f.querySelector('.win').innerHTML=`<div class="rail">${TABS.map(([k,n,l])=>`<button class="ri ${k==p?'a':''}" data-go="${k}">${ic(n,'i-rail')}<span>${l}</span></button>`).join('')}</div><div class="pg"><div class="pgi">${P[p]()}</div></div>`;
+ if(f.sheet){const k=f.sheet;f.insertAdjacentHTML('beforeend',`<div class="sheet" data-close="1"><div class="box">${OPT[k].map((o,i)=>`<button class="op ${i==V[k]?'a':''}" data-op="${i}">${o}</button>`).join('')}</div></div>`)}}
+const all=()=>document.querySelectorAll('.frame').forEach(render);all();
+
+document.getElementById('size').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;document.querySelectorAll('#size button').forEach(x=>x.classList.toggle('a',x==b));
+ document.querySelectorAll('.frame').forEach(f=>{f.style.setProperty('--fw',b.dataset.w+'px');f.style.setProperty('--fh',b.dataset.h+'px')})});
+document.getElementById('grid').addEventListener('click',e=>{e.target.classList.toggle('a');document.body.classList.toggle('showgrid')});
+document.addEventListener('click',e=>{
+ const f=e.target.closest('.frame');if(!f)return;const q=s=>e.target.closest(s);
+ const go=q('[data-go]'),op=q('[data-op]'),cl=q('[data-close]'),p=q('[data-pk]'),t=q('[data-tg]'),s=q('[data-sw]'),sg=q('[data-sg]'),tile=q('[data-tile]'),arm=q('[data-arm]');
+ if(op){V[f.sheet]=+op.dataset.op;f.sheet=null;all();return}
+ if(cl){f.sheet=null;all();return}
+ if(go){f.dataset.p=go.dataset.go;f.sheet=null;all();return}
+ if(p){f.sheet=p.dataset.pk;all();return}
+ if(arm){S.arm=S.arm==arm.dataset.arm?'':arm.dataset.arm;all();return}
+ S.arm='';
+ if(t){B[t.dataset.tg]=!B[t.dataset.tg]}
+ else if(s){const k=s.dataset.sw;if(k=='none'||k=='kb')return;S[k]=!S[k];if(k=='magpie'&&S.magpie)S.duck=false;if(k=='duck'&&S.duck)S.magpie=false;if(k=='plane'&&S.plane){S.wifi=false;S.bt=false}T[5][3]=+S.magpie;T[7][3]=+S.duck}
+ else if(sg){const k=sg.dataset.sg;S[k]=+sg.dataset.i;if(k=='rumble')T[6][3]=S.rumble;if(k=='hz')T[3][3]=S.hz;if(k=='fan')T[1][3]=Math.min(S.fan,2);if(k=='osd')T[4][3]=S.osd;if(k=='fps')T[2][3]=S.fps}
+ else if(tile){const j=+tile.dataset.tile;if(j==5)f.dataset.p='magpie';else if(j==7)f.dataset.p='duck';else if(j!=8){T[j][3]=(T[j][3]+1)%T[j][2].length;if(j==6)S.rumble=T[6][3];if(j==3)S.hz=T[3][3];if(j==4)S.osd=T[4][3]}}
+ else return;
+ all();
+});
+document.addEventListener('input',e=>{const r=e.target;if(r.type!='range')return;const k=r.dataset.k;S[k]=+r.value;
+ document.querySelectorAll(`input[data-k="${k}"]`).forEach(x=>{x.value=r.value;x.style.setProperty('--p',(r.value-r.min)/(r.max-r.min)*100+'%')});
+ document.querySelectorAll(`[data-v="${k}"]`).forEach(x=>x.textContent=r.value)});
+</script>
+</body>
+</html>
