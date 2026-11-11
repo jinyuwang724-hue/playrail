@@ -16,12 +16,12 @@
  /* breakpoint-dependent (S / Regular defaults) */
  --gutter:var(--space-s);--group:var(--space-l);--margin:var(--space-m);--rail:64px;--header:44px;
  --content-max:560px;
- /* fixed tracks and minimums */
- --rail-item-min:48px;--tile-min:56px;--tile-max:160px;--cell-min:52px;--cell-max:96px;--line-min:44px;--line-max:72px;
- --shortcut-h:48px;--slider-h:44px;--hero:64px;--power-card:112px;--rumble-h:52px;--segment-h:32px;
+ /* component heights: every component has its own natural height; pages stack them top-down */
+ --rail-item-min:48px;--tile-h:92px;--toggle-h:64px;--cell-h:48px;--line-h:44px;--shortcut-h:40px;--jump-h:40px;
+ --slider-h:44px;--hero:64px;--power-card:112px;--power-tile:80px;--status-h:64px;--group-label:16px;--segment-h:32px;
  --slider-icon:24px;--slider-value:40px;--hero-icon:40px;--switch-w:40px;--switch-h:20px;--focus-w:3px;--focus-h:24px;
  /* insets */
- --inset:var(--space-m);--cell-pad-y:var(--space-s);
+ --inset:var(--space-m);--cell-pad-y:var(--space-xs);
  /* icons */
  --i-rail:24px;--i-content:20px;--i-mark:16px;--i-power:28px;
  /* radius */
@@ -38,7 +38,7 @@
 }
 /* height Compact: content 478–559 (widget height 520–601) */
 @container widget (max-height: 601px){
- .win{--header:36px;--group:var(--space-s);--cell-min:44px;--cell-pad-y:var(--space-xs);--line-min:40px;--shortcut-h:40px;--slider-h:40px;--power-card:92px}
+ .win{--header:36px;--group:var(--space-s);--tile-h:76px;--toggle-h:56px;--slider-h:40px;--power-card:92px;--line-h:40px}
 }
 
 /* ===================== Page chrome (not part of the widget) ===================== */
@@ -79,12 +79,14 @@ button:focus{outline:none}
 .ph .tt{font:var(--t-title) var(--ff);font-weight:600;padding-left:var(--r-inner)}
 .ph .ctx{margin-left:auto;font:var(--t-label) var(--ff);color:var(--c-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ph .hsw{display:none}
-@container widget (max-height: 601px){.ph .hsw{display:flex}.ph .ctx{display:none}.hero{display:none!important}}
-.body{flex:1;min-height:0;display:flex;flex-direction:column;gap:var(--group);position:relative}
+@container widget (max-height: 601px){.ph .hsw{display:flex}.ph .ctx{display:none}.hero,.gl{display:none!important}}
+.body{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:flex-start;gap:var(--group);position:relative}
+.sec{display:flex;flex-direction:column;gap:var(--space-s)}
+.gl{height:var(--group-label);font:var(--t-label) var(--ff);color:var(--c-ink2);padding-left:var(--r-inner)}
 
 /* the grid */
 .g6{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:var(--gutter);min-height:0}
-.fl{flex:1}
+
 .s2{grid-column:span 2}.s3{grid-column:span 3}.s4{grid-column:span 4}.s6{grid-column:span 6}
 .sub6{display:grid;grid-template-columns:subgrid;align-items:center}
 /* grid overlay */
@@ -92,24 +94,15 @@ button:focus{outline:none}
  background:repeating-linear-gradient(to right,var(--c-grid) 0 calc((100% - 5 * var(--gutter)) / 6),transparent calc((100% - 5 * var(--gutter)) / 6) calc((100% - 5 * var(--gutter)) / 6 + var(--gutter)));
  outline:1px dashed rgba(255,64,129,.5)}
 
-/* per-page row tracks */
-.rows-tiles{grid-template-rows:repeat(3,minmax(var(--tile-min),1fr))}
-.rows-short{grid-template-rows:repeat(3,var(--shortcut-h))}
-.rows-perf{grid-template-rows:var(--power-card) repeat(6,minmax(var(--line-min),1fr))}
-.rows-hand{grid-template-rows:calc(2 * var(--slider-h)) repeat(3,minmax(var(--tile-min),1fr)) var(--rumble-h)}
-.rows-mag{grid-template-rows:var(--hero) repeat(7,minmax(var(--cell-min),1fr))}
-.rows-duck{grid-template-rows:var(--hero) repeat(6,minmax(var(--cell-min),1fr))}
-.rows-win{grid-template-rows:repeat(5,minmax(var(--tile-min),1fr))}
-.rows-pwr{grid-template-rows:repeat(3,1fr)}
-@container widget (max-height: 601px){.rows-mag{grid-template-rows:repeat(7,minmax(var(--cell-min),1fr))}.rows-duck{grid-template-rows:repeat(6,minmax(var(--cell-min),1fr))}}
-
 /* surfaces */
 .card{background:var(--c-card);border-radius:var(--r-outer)}
 .ctl{background:var(--c-ctl);border-radius:var(--r-outer)}
 .ctl:hover{background:var(--c-ctl-h)}
 
 /* tile (九宫格, 开关磁贴, 跳转格) */
-.tile{padding:var(--inset);display:flex;flex-direction:column;justify-content:space-between;min-height:0;max-height:var(--tile-max);position:relative}
+.tile{height:var(--tile-h);padding:var(--inset);display:flex;flex-direction:column;justify-content:space-between;position:relative}
+.tile.tgl{height:var(--toggle-h);flex-direction:row;align-items:center;justify-content:flex-start;gap:var(--space-s);padding:0 var(--inset)}
+.tile.tgl .n{font:var(--t-label) var(--ff);font-weight:600}.tile.tgl .tx{min-width:0}
 .tile .h{display:flex;justify-content:space-between;align-items:center}
 .tile .n{font:var(--t-body) var(--ff);font-weight:600}
 .tile .v{font:var(--t-label) var(--ff);color:var(--c-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -118,17 +111,17 @@ button:focus{outline:none}
 .dots{display:flex;gap:var(--space-xs)}.dots i{width:var(--space-xs);height:var(--space-xs);border-radius:50%;background:var(--c-ink3)}.dots i.a{background:var(--c-ink)}
 
 /* shortcut */
-.sc{display:flex;align-items:center;gap:var(--space-s);padding:0 var(--inset);font:var(--t-label) var(--ff);color:var(--c-ink2);min-width:0}
+.sc{height:var(--shortcut-h);display:flex;align-items:center;gap:var(--space-s);padding:0 var(--inset);font:var(--t-label) var(--ff);color:var(--c-ink2);min-width:0}
 .sc span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sc svg{color:var(--c-ink)}
 .sc.on{background:var(--c-acc);color:var(--c-acc-ink)}.sc.on svg{color:var(--c-acc-ink)}
 .sc.armed,.sc.armed svg{color:var(--c-warn)}
 
 /* setting cell */
-.cell{padding:var(--cell-pad-y) var(--inset);display:flex;flex-direction:column;justify-content:space-between;position:relative;min-width:0;min-height:0;max-height:var(--cell-max)}
+.cell{height:var(--cell-h);padding:var(--cell-pad-y) var(--inset);display:flex;flex-direction:column;justify-content:space-between;position:relative;min-width:0}
 .cell .k{font:var(--t-label) var(--ff);color:var(--c-ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:calc(var(--i-mark) + var(--space-xs))}
 .cell .v{font:var(--t-body) var(--ff);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cell .mk{position:absolute;right:var(--space-s);top:var(--space-s);color:var(--c-ink3);display:grid;place-items:center;width:var(--i-mark);height:var(--i-mark)}
+.cell .mk{position:absolute;right:var(--space-s);top:var(--space-xs);color:var(--c-ink3);display:grid;place-items:center;width:var(--i-mark);height:var(--i-mark)}
 .cell.tg .mk::after{content:"";width:var(--space-s);height:var(--space-s);border-radius:50%;background:var(--c-ink3)}
 .cell.tg.on .mk::after{background:var(--c-acc)}
 .cell.tg.on .v{color:var(--c-acc)}
@@ -137,7 +130,7 @@ button:focus{outline:none}
 .off{opacity:.36;pointer-events:none}
 
 /* line: name span 2 + control span 4 (subgrid keeps the page columns) */
-.line{padding:0 var(--space-xs) 0 0;max-height:var(--line-max);align-self:stretch}
+.line{height:var(--line-h);padding:0 var(--space-xs) 0 0}
 .line .lb{grid-column:span 2;display:flex;align-items:center;gap:var(--space-s);padding-left:var(--inset);font:var(--t-label) var(--ff);color:var(--c-ink2);white-space:nowrap}
 .line .segs{grid-column:span 4;display:flex;gap:var(--space-xs)}
 .sg{flex:1;height:var(--segment-h);border-radius:var(--r-inner);background:var(--c-ctl);font:var(--t-label) var(--ff);display:grid;place-items:center;white-space:nowrap}
@@ -145,7 +138,7 @@ button:focus{outline:none}
 .sg.a{background:var(--c-acc);color:var(--c-acc-ink);font-weight:600}
 
 /* slider */
-.sliders{display:grid;grid-template-rows:repeat(2,1fr)}
+.sliders{display:grid;grid-template-rows:repeat(2,var(--slider-h))}
 .sl{display:grid;grid-template-columns:var(--slider-icon) 1fr var(--slider-value);align-items:center;gap:var(--space-s);padding:0 var(--inset)}
 .sl+.sl{border-top:1px solid var(--c-div)}
 .sl .ic{color:var(--c-ink2)}
@@ -159,7 +152,7 @@ input[type=range]::-moz-range-thumb{width:var(--i-content);height:var(--i-conten
 input[type=range]:focus{outline:none}
 
 /* power card */
-.pc{padding:var(--inset) var(--inset) 0;display:flex;flex-direction:column;justify-content:space-between}
+.pc{height:var(--power-card);padding:var(--inset) var(--inset) 0;display:flex;flex-direction:column;justify-content:space-between}
 .pc .top{display:flex;align-items:flex-end;gap:var(--space-s)}
 .pc .lbl{font:var(--t-label) var(--ff);color:var(--c-ink2)}
 .big{display:flex;align-items:baseline;gap:var(--space-xs)}
@@ -172,7 +165,7 @@ input[type=range]:focus{outline:none}
 @container widget (max-height: 601px){.big b{font:var(--t-display-compact) var(--ff);font-weight:600}}
 
 /* hero */
-.hero{display:flex;align-items:center;gap:var(--space-m);padding:0 var(--inset);width:100%}
+.hero{height:var(--hero);display:flex;align-items:center;gap:var(--space-m);padding:0 var(--inset);width:100%}
 .hero .hi{width:var(--hero-icon);height:var(--hero-icon);border-radius:var(--r-outer);background:var(--c-ctl);display:grid;place-items:center}
 .hero .l{flex:1;min-width:0}
 .hero .l b{display:block;font:var(--t-subtitle) var(--ff);font-weight:600}
@@ -183,8 +176,14 @@ input[type=range]:focus{outline:none}
 .on .sw,.sw.on{background:var(--c-acc);border-color:var(--c-acc)}
 .on .sw::after,.sw.on::after{left:auto;right:var(--space-xs);background:var(--c-acc-ink)}
 
+/* jump row (Windows) */
+.jr{height:var(--jump-h);display:flex;align-items:center;gap:var(--space-s);padding:0 var(--inset);font:var(--t-label) var(--ff);position:relative}
+.jr .o{margin-left:auto;color:var(--c-ink3)}
+/* status (电源) */
+.stat{height:var(--status-h);display:flex;align-items:center;gap:var(--space-l);padding:0 var(--inset)}
+.stat .k{font:var(--t-caption) var(--ff);color:var(--c-ink3)}.stat .v{font:var(--t-body) var(--ff);font-weight:600;font-variant-numeric:tabular-nums}
 /* power */
-.pw{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-s);font:var(--t-body) var(--ff);font-weight:600}
+.pw{height:var(--power-tile);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-s);font:var(--t-body) var(--ff);font-weight:600}
 .pw.armed{background:rgba(255,90,78,.14);color:var(--c-warn)}
 
 /* option sheet */
@@ -202,7 +201,7 @@ input[type=range]:focus{outline:none}
 </style>
 </head>
 <body>
-<h1>Game Bar 快捷面板 · 左右分栏（第五版：栅格系统）</h1>
+<h1>Game Bar 快捷面板 · 左右分栏（第六版：按内容排布）</h1>
 <p class="sub">所有尺寸都来自同一组 token：6 列、Gutter 8、页边距 12、间距 4/8/12/16/24。用“显示栅格”看每页怎么落在 6 列上；切换尺寸看断点：掌机 464×671、矮窗 464×520（Compact）、宽窗 640×760（M）。</p>
 <div class="bar">
  <div class="seg" id="size"><button class="a" data-w="464" data-h="671">掌机 464 × 671</button><button data-w="464" data-h="520">矮窗 464 × 520</button><button data-w="640" data-h="760">宽窗 640 × 760</button></div>
@@ -214,7 +213,7 @@ input[type=range]:focus{outline:none}
   <div class="note"><h3>栅格</h3><ul>
     <li><b>6 列</b>：内容只需要二分、三分和 1/3 + 2/3，6 是 2 和 3 的最小公倍数</li>
     <li><b>Gutter 8</b>，行间距等于列间距；不同组之间 16</li>
-    <li>每页的行轨 = 固定行 + 比例行（带最小高度），所以总是刚好铺满、从不滚动</li>
+    <li>每个组件有自己的固定高度，页面从上往下按组排，组内间距 8、组间 16；放不下才算超出，余下的空间留在底部</li>
     <li>名称 + 档位行用子栅格，档位起点落在第 3 列线上</li>
   </ul></div>
   <div class="note"><h3>断点</h3><ul>
@@ -222,8 +221,8 @@ input[type=range]:focus{outline:none}
     <li><b>高 Compact（内容 &lt; 560）</b>：页签只留图标、页头 36、组间距 8、格子上下内边距 4；Magpie / 小黄鸭的缩放开关并入页头</li>
     <li>组件最小 464 × 520：再窄 Magpie 格子名称放不下 6 个字，再矮性能页格子低于 44</li>
   </ul></div>
-  <div class="note"><h3>和第四版相比</h3><ul>
-    <li>快捷操作从 4×2 改为 3×3（多一个“编辑快设”），和上面九宫格共用列线</li>
+  <div class="note"><h3>和上一版相比</h3><ul>
+    <li>不再拉伸铺满：格子、行、磁贴都是固定高度，页面靠分组和小标题分层</li><li>掌机页开关分成连接、屏幕、声音与手柄三组；Windows 页改成两列跳转行；电源页加了电量状态</li>
     <li>所有间距、尺寸改成引用 token，组件代码里同名同值</li>
   </ul></div>
 </div>
@@ -275,55 +274,45 @@ const hero=(k,icon,sub)=>`<button class="card hero s6 ${S[k]?'on':''}" data-sw="
 const head=(t,ctx='',swk='')=>`<div class="ph"><span class="tt">${t}</span>${ctx?`<span class="ctx">${ctx}</span>`:''}${swk?`<button class="hsw ${S[swk]?'on':''}" data-sw="${swk}" style="margin-left:auto"><span class="sw ${S[swk]?'on':''}"></span></button>`:''}</div>`;
 const game='黑神话：悟空';
 
+const sec=(label,inner)=>`<div class="sec">${label?`<div class="gl">${label}</div>`:''}<div class="g6">${inner}</div></div>`;
 const P={
  home:()=>head('快设',game)+`<div class="body">
-  <div class="g6 fl rows-tiles">${T.map(([n,icn,l,i],j)=>`<button class="ctl tile s2" data-tile="${j}"><span class="h">${ic(icn)}${l.length>2?`<span class="dots">${l.map((_,k)=>`<i class="${k==i?'a':''}"></i>`).join('')}</span>`:''}</span><span><span class="n" style="display:block">${n}</span><span class="v" style="display:block">${l[i]}</span></span></button>`).join('')}</div>
-  <div class="g6 rows-short">${[['freeze','冻结游戏'],['tasks','任务管理器'],['desk','返回桌面'],['lib','游戏库'],['shot','截图'],['kb','键盘'],['pad','手柄模式'],['x','退出游戏'],['edit','编辑快设']].map(([n,l])=>{const armed=S.arm=='qx'&&n=='x';return `<button class="ctl sc s2 ${n=='pad'&&S.pad?'on':''} ${armed?'armed':''}" ${n=='x'?'data-arm="qx"':''} ${n=='pad'?'data-sw="pad"':''}>${ic(n)}<span>${armed?'再按一次':l}</span></button>`}).join('')}</div></div>`,
- perf:()=>head('性能',game)+`<div class="body"><div class="g6 fl rows-perf">
-  <div class="card pc s6"><span class="lbl">功耗上限</span><div class="top"><div class="big"><b data-v="power">${S.power}</b><span>W</span></div>
+  ${sec('',T.map(([n,icn,l,i],j)=>`<button class="ctl tile s2" data-tile="${j}"><span class="h">${ic(icn)}${l.length>2?`<span class="dots">${l.map((_,k)=>`<i class="${k==i?'a':''}"></i>`).join('')}</span>`:''}</span><span><span class="n" style="display:block">${n}</span><span class="v" style="display:block">${l[i]}</span></span></button>`).join(''))}
+  ${sec('',[['freeze','冻结游戏'],['tasks','任务管理器'],['desk','返回桌面'],['lib','游戏库'],['shot','截图'],['kb','键盘'],['pad','手柄模式'],['x','退出游戏'],['edit','编辑快设']].map(([n,l])=>{const armed=S.arm=='qx'&&n=='x';return `<button class="ctl sc s2 ${n=='pad'&&S.pad?'on':''} ${armed?'armed':''}" ${n=='x'?'data-arm="qx"':''} ${n=='pad'?'data-sw="pad"':''}>${ic(n)}<span>${armed?'再按一次':l}</span></button>`}).join(''))}</div>`,
+ perf:()=>head('性能',game)+`<div class="body">
+  ${sec('',`<div class="card pc s6"><span class="lbl">功耗上限</span><div class="top"><div class="big"><b data-v="power">${S.power}</b><span>W</span></div>
    <div class="reads"><span class="k">实际</span><span class="k">CPU</span><span class="k">风扇</span><span class="k">帧率</span>
-   <span class="v">9.7<small>W</small></span><span class="v">54<small>°C</small></span><span class="v">2147<small>rpm</small></span><span class="v">58</span></div></div>${range('power',8,35)}</div>
-  ${line('bolt','模式','mode',['智能','均衡','性能','手动'])}${line('fps','限帧','fps',['不限','30','40','45','60','90'])}${line('hz','刷新率','hz',['60','90','120'])}
-  ${line('fan','风扇','fan',['静音','均衡','性能','全速'])}${line('osd','性能显示','osd',['关','1','2','3','4'])}
-  ${pk('p.cpu','CPU 最高频率','s3')}<button class="ctl cell tg s3 ${S.ecore?'on':''}" data-sw="ecore"><span class="k">全 E 核调度</span><span class="v">${S.ecore?'开 · 重启后生效':'关'}</span><span class="mk"></span></button>
- </div></div>`,
- hand:()=>head('掌机')+`<div class="body"><div class="g6 fl rows-hand">
-  <div class="card sliders s6"><div class="sl"><span class="ic">${ic('sun')}</span>${range('bri',0,100)}<span class="val" data-v="bri">${S.bri}</span></div>
-   <div class="sl"><span class="ic">${ic(S.mute?'mute':'vol')}</span>${range('vol',0,100)}<span class="val" data-v="vol">${S.mute?'—':S.vol}</span></div></div>
-  ${[['wifi','wifi','Wi-Fi',S.wifi?'Home-5G':'关'],['bt','bt','蓝牙',S.bt?'已连接 2 台':'关'],['plane','plane','飞行模式',S.plane?'开':'关'],
-     ['mute','mute','静音',S.mute?'开':'关'],['dark','dl','熄屏下载',S.dark?'屏幕已关':'关'],['night','night','夜间模式',S.night?'开':'关'],
-     ['saver','leaf','节电模式',S.saver?'开':'关'],['pad','pad','手柄模式',S.pad?'手柄':'桌面'],['kb','kb','屏幕键盘','打开']]
-    .map(([k,icn,n,s])=>`<button class="ctl tile s2 ${k!='kb'&&S[k]?'on':''}" data-sw="${k}">${ic(icn)}<span><span class="n" style="display:block">${n}</span><span class="v" style="display:block">${s}</span></span></button>`).join('')}
-  ${line('rumble','震动','rumble',['关','弱','中','强'])}
- </div></div>`,
- magpie:()=>head('Magpie',game,'magpie')+`<div class="body"><div class="g6 fl rows-mag">
-  ${hero('magpie','scale',S.magpie?'1280 × 800 → 1920 × 1200':'关')}
-  ${pk('m.mode','缩放模式')}${pk('m.cap','捕获方式')}${tg('m.game3D','3D 游戏模式')}
-  ${pk('m.auto','自动缩放')}${pk('m.winf','窗口缩放倍数','s2',{eng:1,off:V['m.auto']!=2})}${pk('m.fps','帧率限制')}
-  ${pk('m.cur','光标缩放','s2',{eng:1})}${pk('m.interp','光标插值','s2',{eng:1})}${pk('m.hide','自动隐藏光标','s2',{eng:1})}
-  ${tg('m.speed','调整光标速度')}${tg('m.touch','触控支持','s2',{eng:1})}${tg('m.title','捕获标题栏','s2',{eng:1})}
-  ${pk('m.crop','裁剪')}${tg('m.dflip','DirectFlip','s2',{eng:1})}${tg('m.excl','模拟独占全屏','s2',{eng:1})}
-  ${tg('m.maxi','最大化窗口','s2',{eng:1})}${pk('m.tool','叠加层工具栏','s2',{eng:1})}${pk('m.dup','重复帧检测','s2',{eng:1})}
-  ${pk('m.gpu','显卡','s2',{eng:1})}${pk('m.mon','多显示器','s2',{eng:1})}${pk('m.fx','效果参数')}
- </div></div>`,
- duck:()=>{const fg=V['d.fg']>0,l3=V['d.fg']==1,ad=l3&&V['d.fgmode']==1;return head('小黄鸭',game,'duck')+`<div class="body"><div class="g6 fl rows-duck">
-  ${hero('duck','duck',S.duck?OPT['d.alg'][V['d.alg']]+(fg?' · '+OPT['d.fg'][V['d.fg']]:''):'关')}
-  ${pk('d.profile','档案','s4')}<button class="ctl cell s2" data-sw="none"><span class="k">原版</span><span class="v">打开小黄鸭</span><span class="mk">${ic('out','i-m')}</span></button>
-  ${pk('d.alg','缩放算法')}${pk('d.sharp','锐化强度','s2',{off:![2,3,5].includes(V['d.alg'])})}${pk('d.fit','画面适配')}
-  ${pk('d.fg','帧生成')}${pk('d.fgmode','帧生成模式','s2',{off:!l3})}${pk(ad?'d.target':'d.mult',ad?'目标帧率':'倍率','s2',{off:!fg})}
-  ${pk('d.flow','光流比例','s2',{off:!fg})}${tg('d.perf','性能模式','s2',{off:!fg})}${pk('d.capi','捕获 API')}
-  ${pk('d.sync','同步模式')}${pk('d.lat','最大帧延迟')}${tg('d.fps','显示帧率')}
-  ${tg('d.hdr','HDR 支持')}${tg('d.clip','限制光标范围')}${tg('d.win','窗口化输出')}
- </div></div>`},
- win:()=>head('Windows')+`<div class="body"><div class="g6 fl rows-win">
-  ${[['wifi','WLAN'],['bt','蓝牙和设备'],['desk','显示'],['vol','声音'],['leaf','电源和电池'],['lib','存储'],['restart','Windows 更新'],['grid','应用'],['pad','游戏模式'],
-     ['hz','图形设置'],['tasks','任务管理器'],['cpu','设备管理器'],['win','控制面板'],['lib','文件资源管理器'],['kb','触摸键盘设置']]
-    .map(([icn,n])=>`<button class="ctl tile s2">${ic(icn)}<span class="n">${n}</span><span class="o">${ic('out','i-m')}</span></button>`).join('')}
- </div></div>`,
- pwr:()=>head('电源')+`<div class="body"><div class="g6 fl rows-pwr">
-  ${[['sleep','moon','睡眠','s3'],['lock','lock','锁定','s3'],['signout','signout','注销','s3',1],['restart','restart','重启','s3',1],['off','power','关机','s6',1]].map(([k,icn,n,sp,arm])=>{const a=S.arm==k;return `<button class="ctl pw ${sp} ${a?'armed':''}" ${arm?`data-arm="${k}"`:''}>${ic(icn,'i-p')}<span>${a?'再按一次'+n:n}</span></button>`}).join('')}
- </div></div>`
+   <span class="v">9.7<small>W</small></span><span class="v">54<small>°C</small></span><span class="v">2147<small>rpm</small></span><span class="v">58</span></div></div>${range('power',8,35)}</div>`)}
+  ${sec('',line('bolt','模式','mode',['智能','均衡','性能','手动'])+line('fps','限帧','fps',['不限','30','40','45','60','90'])+line('hz','刷新率','hz',['60','90','120'])+line('fan','风扇','fan',['静音','均衡','性能','全速'])+line('osd','性能显示','osd',['关','1','2','3','4']))}
+  ${sec('',pk('p.cpu','CPU 最高频率','s3')+`<button class="ctl cell tg s3 ${S.ecore?'on':''}" data-sw="ecore"><span class="k">全 E 核调度</span><span class="v">${S.ecore?'开 · 重启后生效':'关'}</span><span class="mk"></span></button>`)}</div>`,
+ hand:()=>head('掌机')+`<div class="body">
+  ${sec('',`<div class="card sliders s6"><div class="sl"><span class="ic">${ic('sun')}</span>${range('bri',0,100)}<span class="val" data-v="bri">${S.bri}</span></div>
+   <div class="sl"><span class="ic">${ic(S.mute?'mute':'vol')}</span>${range('vol',0,100)}<span class="val" data-v="vol">${S.mute?'—':S.vol}</span></div></div>`)}
+  ${sec('连接',[['wifi','wifi','Wi-Fi',S.wifi?'Home-5G':'关'],['bt','bt','蓝牙',S.bt?'2 台设备':'关'],['plane','plane','飞行模式',S.plane?'开':'关']].map(tgl).join(''))}
+  ${sec('屏幕',[['dark','dl','熄屏下载',S.dark?'屏幕已关':'关'],['night','night','夜间模式',S.night?'开':'关'],['saver','leaf','节电模式',S.saver?'开':'关']].map(tgl).join(''))}
+  ${sec('声音与手柄',[['mute','mute','静音',S.mute?'开':'关'],['pad','pad','手柄模式',S.pad?'手柄':'桌面'],['kb','kb','屏幕键盘','打开']].map(tgl).join('')+line('rumble','震动','rumble',['关','弱','中','强']))}</div>`,
+ magpie:()=>head('Magpie',game,'magpie')+`<div class="body">
+  ${sec('',hero('magpie','scale',S.magpie?'1280 × 800 → 1920 × 1200':'关'))}
+  ${sec('画面',pk('m.mode','缩放模式')+pk('m.cap','捕获方式')+tg('m.game3D','3D 游戏模式')+pk('m.auto','自动缩放')+pk('m.winf','窗口缩放倍数','s2',{eng:1,off:V['m.auto']!=2})+pk('m.fps','帧率限制'))}
+  ${sec('光标与输入',pk('m.cur','光标缩放','s2',{eng:1})+pk('m.interp','光标插值','s2',{eng:1})+pk('m.hide','自动隐藏光标','s2',{eng:1})+tg('m.speed','调整光标速度')+tg('m.touch','触控支持','s2',{eng:1})+tg('m.title','捕获标题栏','s2',{eng:1}))}
+  ${sec('高级',pk('m.crop','裁剪')+tg('m.dflip','DirectFlip','s2',{eng:1})+tg('m.excl','模拟独占全屏','s2',{eng:1})+tg('m.maxi','最大化窗口','s2',{eng:1})+pk('m.tool','叠加层工具栏','s2',{eng:1})+pk('m.dup','重复帧检测','s2',{eng:1})+pk('m.gpu','显卡','s2',{eng:1})+pk('m.mon','多显示器','s2',{eng:1})+pk('m.fx','效果参数'))}</div>`,
+ duck:()=>{const fg=V['d.fg']>0,l3=V['d.fg']==1,ad=l3&&V['d.fgmode']==1;return head('小黄鸭',game,'duck')+`<div class="body">
+  ${sec('',hero('duck','duck',S.duck?OPT['d.alg'][V['d.alg']]+(fg?' · '+OPT['d.fg'][V['d.fg']]:''):'关'))}
+  ${sec('',pk('d.profile','档案','s4')+`<button class="ctl cell s2" data-sw="none"><span class="k">原版</span><span class="v">打开小黄鸭</span><span class="mk">${ic('out','i-m')}</span></button>`)}
+  ${sec('缩放',pk('d.alg','缩放算法')+pk('d.sharp','锐化强度','s2',{off:![2,3,5].includes(V['d.alg'])})+pk('d.fit','画面适配'))}
+  ${sec('帧生成',pk('d.fg','帧生成')+pk('d.fgmode','模式','s2',{off:!l3})+pk(ad?'d.target':'d.mult',ad?'目标帧率':'倍率','s2',{off:!fg})+pk('d.flow','光流比例','s2',{off:!fg})+tg('d.perf','性能模式','s2',{off:!fg})+pk('d.lat','最大帧延迟'))}
+  ${sec('捕获与输出',pk('d.capi','捕获 API')+pk('d.sync','同步模式')+tg('d.hdr','HDR 支持')+tg('d.fps','显示帧率')+tg('d.clip','限制光标范围')+tg('d.win','窗口化输出'))}</div>`},
+ win:()=>head('Windows')+`<div class="body">
+  ${sec('设置',[['wifi','WLAN'],['bt','蓝牙和设备'],['desk','显示'],['vol','声音'],['leaf','电源和电池'],['lib','存储'],['restart','Windows 更新'],['grid','应用'],['pad','游戏模式'],['hz','图形设置']].map(jr).join(''))}
+  ${sec('工具',[['tasks','任务管理器'],['cpu','设备管理器'],['win','控制面板'],['lib','文件资源管理器']].map(jr).join(''))}</div>`,
+ pwr:()=>head('电源')+`<div class="body">
+  ${sec('',`<div class="card stat s6">${ic('leaf')}<span><span class="k" style="display:block">电量</span><span class="v">82%</span></span><span><span class="k" style="display:block">剩余</span><span class="v">约 2 小时 15 分</span></span><span><span class="k" style="display:block">电源</span><span class="v">电池</span></span></div>`)}
+  ${sec('',[['sleep','moon','睡眠','s3'],['lock','lock','锁定','s3']].map(pwb).join(''))}
+  ${sec('',[['signout','signout','注销','s2',1],['restart','restart','重启','s2',1],['off','power','关机','s2',1]].map(pwb).join(''))}</div>`
 };
+const tgl=([k,icn,n,s])=>`<button class="ctl tile tgl s2 ${k!='kb'&&S[k]?'on':''}" data-sw="${k}">${ic(icn)}<span class="tx"><span class="n" style="display:block">${n}</span><span class="v" style="display:block">${s}</span></span></button>`;
+const jr=([icn,n])=>`<button class="ctl jr s3">${ic(icn)}<span>${n}</span><span class="o">${ic('out','i-m')}</span></button>`;
+const pwb=([k,icn,n,sp,arm])=>{const a=S.arm==k;return `<button class="ctl pw ${sp} ${a?'armed':''}" ${arm?`data-arm="${k}"`:''}>${ic(icn,'i-p')}<span>${a?'再按一次'+n:n}</span></button>`};
 const TABS=[['home','grid','快设'],['perf','bolt','性能'],['hand','handheld','掌机'],['magpie','scale','Magpie'],['duck','duck','小黄鸭'],['win','win','Windows'],['pwr','power','电源']];
 const st=document.getElementById('stage');
 TABS.forEach(([k,,n])=>st.insertAdjacentHTML('beforeend',`<div><div class="cap"><b>${n}</b></div><div class="frame" data-p="${k}"><div class="chrome">Claw 掌机工具箱</div><div class="win"></div></div></div>`));

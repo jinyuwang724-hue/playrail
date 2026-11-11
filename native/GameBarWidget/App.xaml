@@ -41,27 +41,28 @@
                     <x:Double x:Key="PageHeaderHeightCompact">36</x:Double>
                     <Thickness x:Key="PageTitleInset">2,0,0,0</Thickness>
 
-                    <!-- Components: widths come from spans, heights from row tracks; these are fixed tracks and minimums -->
+                    <!-- Components: widths come from spans; every component has its own fixed height and pages
+                         stack groups top-down (title 16 + 8 + grid), leaving any spare height at the bottom. -->
                     <Thickness x:Key="ComponentInset">12,12,12,12</Thickness>
-                    <Thickness x:Key="CellInsetRegular">12,8,12,8</Thickness>
-                    <Thickness x:Key="CellInsetCompact">12,4,12,4</Thickness>
+                    <Thickness x:Key="CellInset">12,4,12,4</Thickness>
                     <Thickness x:Key="RowInset">12,0,12,0</Thickness>
-                    <x:Double x:Key="TileMinHeight">56</x:Double>
-                    <x:Double x:Key="TileMaxHeight">160</x:Double>
-                    <x:Double x:Key="CellMinHeightRegular">52</x:Double>
-                    <x:Double x:Key="CellMinHeightCompact">44</x:Double>
-                    <x:Double x:Key="CellMaxHeight">96</x:Double>
-                    <x:Double x:Key="LineMinHeightRegular">44</x:Double>
-                    <x:Double x:Key="LineMinHeightCompact">40</x:Double>
-                    <x:Double x:Key="LineMaxHeight">72</x:Double>
-                    <x:Double x:Key="ShortcutHeightRegular">48</x:Double>
-                    <x:Double x:Key="ShortcutHeightCompact">40</x:Double>
+                    <x:Double x:Key="GroupLabelHeight">16</x:Double>
+                    <x:Double x:Key="TileHeightRegular">92</x:Double>
+                    <x:Double x:Key="TileHeightCompact">76</x:Double>
+                    <x:Double x:Key="ToggleTileHeightRegular">64</x:Double>
+                    <x:Double x:Key="ToggleTileHeightCompact">56</x:Double>
+                    <x:Double x:Key="CellHeight">48</x:Double>
+                    <x:Double x:Key="LineHeightRegular">44</x:Double>
+                    <x:Double x:Key="LineHeightCompact">40</x:Double>
+                    <x:Double x:Key="ShortcutHeight">40</x:Double>
+                    <x:Double x:Key="JumpRowHeight">40</x:Double>
                     <x:Double x:Key="SliderRowHeightRegular">44</x:Double>
                     <x:Double x:Key="SliderRowHeightCompact">40</x:Double>
                     <x:Double x:Key="HeroHeight">64</x:Double>
                     <x:Double x:Key="PowerCardHeightRegular">112</x:Double>
                     <x:Double x:Key="PowerCardHeightCompact">92</x:Double>
-                    <x:Double x:Key="RumbleRowHeight">52</x:Double>
+                    <x:Double x:Key="PowerTileHeight">80</x:Double>
+                    <x:Double x:Key="StatusCardHeight">64</x:Double>
                     <x:Double x:Key="SegmentHeight">32</x:Double>
                     <x:Double x:Key="SegmentGap">4</x:Double>
                     <x:Double x:Key="SliderIconCell">24</x:Double>
