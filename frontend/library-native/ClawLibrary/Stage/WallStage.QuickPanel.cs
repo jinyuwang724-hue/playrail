@@ -576,7 +576,7 @@ public sealed partial class WallStage
             try { if (await _agent.Call("get_display_state") is JsonObject d) _qsVrr = d["vrr"] is JsonValue ? Bool(d["vrr"]) : null; }
             catch (Exception ex) { Log.Warn($"quick panel display: {ex.Message}"); }
             _qsVrrRange ??= await Task.Run(QsVrrRange);
-            try { if (await _agent.Call("get_gamepad_state") is JsonObject g) _qsPadMode = Str(g["mode"]); }
+            try { if (await _agent.Call("get_gamepad_state") is JsonObject g) _qsPadMode = Str(g["chosen"]) ?? Str(g["mode"]); }   // chosen: not a temporary hold
             catch (Exception ex) { Log.Warn($"quick panel gamepad: {ex.Message}"); }
         }
         if (!_qsLosslessKnown)
@@ -1723,9 +1723,9 @@ public sealed partial class WallStage
                 Cue(Sfx.Activate);
                 if (next == "desktop")
                 {
-                    // 切成键鼠后手柄不再驱动面板：先收起，回到游戏再切
+                    // 切成键鼠后手柄不再驱动面板：收起面板，同时就切（以前等 400 毫秒，切换显得慢）
                     CloseQuickPanel();
-                    After(400, () => _ = QsCall("手柄模式", "set_gamepad_mode", JsonValue.Create(next)));
+                    _ = QsCall("手柄模式", "set_gamepad_mode", JsonValue.Create(next));
                     return;
                 }
                 _ = QsCall("手柄模式", "set_gamepad_mode", JsonValue.Create(next));

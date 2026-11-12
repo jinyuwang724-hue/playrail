@@ -165,7 +165,11 @@ namespace winrt::ClawWidget::implementation
             auto data = Clone(m_data);
             if (event == L"power_status") data.SetNamedValue(L"power", Clone(value.GetObject()));
             else if (event == L"magpie_status") data.SetNamedValue(L"magpie", Clone(value.GetObject()));
-            else if (event == L"gamepad_mode") SetPath(data, L"gamepad.mode", value.GetObject().GetNamedValue(L"mode"));
+            else if (event == L"gamepad_mode")
+            {
+                SetPath(data, L"gamepad.mode", value.GetObject().GetNamedValue(L"mode"));
+                if (value.GetObject().HasKey(L"chosen")) SetPath(data, L"gamepad.chosen", value.GetObject().GetNamedValue(L"chosen"));
+            }
             else return;
             Accept(data);
         };
@@ -383,11 +387,24 @@ namespace winrt::ClawWidget::implementation
                     HoldValue(L"gamepad.mode", JsonValue::CreateStringValue(mode), L"padmode");
                     ReleaseHold(L"padmode");
                 }
+                auto chosen = result.GetObject().GetNamedString(L"chosen", L"");
+                if (chosen == L"desktop" || chosen == L"xinput")
+                    SetPath(m_data, L"gamepad.chosen", JsonValue::CreateStringValue(chosen));
             }
             Refresh(); Update();
         };
-        // Polls and mode events may still describe the previous mode. Read the
-        // actual logical/firmware state before choosing the opposite mode.
+        // One call: the agent switches away from the mode the user picked. Reading the live mode
+        // here is wrong while Game Bar is open (the pad is lent back as a gamepad then).
+        m_agent->Call(L"toggle_gamepad_mode", JsonArray(), [this, strong, finish](IJsonValue const& result, hstring const& error) {
+            if (error.empty() || std::wstring_view(error).find(L"不支持") == std::wstring_view::npos) { finish(result, error); return; }
+            TogglePadModeLegacy(finish);
+        });
+    }
+
+    // Older agents without toggle_gamepad_mode.
+    void WidgetPage::TogglePadModeLegacy(std::function<void(IJsonValue const&, hstring const&)> finish)
+    {
+        auto strong = get_strong();
         m_agent->Call(L"get_gamepad_state", JsonArray(), [this, strong, finish](IJsonValue const& result, hstring const& error) {
             if (!error.empty()) { finish(result, error); return; }
             if (result.ValueType() != JsonValueType::Object || !Bool(result.GetObject(), L"available"))
@@ -1517,7 +1534,9 @@ namespace winrt::ClawWidget::implementation
         MuteButton().IsEnabled(usable);
         PowerButton().IsEnabled(usable);
         EditButton().IsEnabled(usable || m_editing);
-        bool desktop = Str(m_data, L"gamepad.mode") == L"desktop";
+        // While Game Bar is open the agent lends the pad back as a gamepad; show the mode the user picked.
+        auto chosenMode = Str(m_data, L"gamepad.chosen");
+        bool desktop = (chosenMode.empty() ? Str(m_data, L"gamepad.mode") : chosenMode) == L"desktop";
         m_quickPad.IsEnabled(connected && usable && Bool(m_data, L"gamepad.available") && !m_modeSwitching);
         m_quickTaskManager.IsEnabled(connected);
         bool frozen = Has(m_data, L"gameFreeze.frozen") || Bool(m_data, L"gameFreeze.recoveryPending");

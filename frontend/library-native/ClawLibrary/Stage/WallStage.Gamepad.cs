@@ -1,4 +1,4 @@
-// 控制中心 → 手柄：左边一列轻量的分类（只有字，竖向居中），右边那块是 Claw 8 EX 线稿，这一类的设置挂在线稿两侧。
+﻿// 控制中心 → 手柄：左边一列轻量的分类（只有字，竖向居中），右边那块是 Claw 8 EX 线稿，这一类的设置挂在线稿两侧。
 // 线稿（Assets/Pad，来自 MSI Center M 里 1T91 机型的图）：正面高清 900×412、背面 700×310、左右扳机侧视 420×414；
 // 线稿后面压一圈柔和的暗光把视线收到中间。焦点所在的设置拉一根细线到它管的键上，那块区域整块染强调色（矢量轮廓，抗锯齿）。
 // 按键映射页：线稿照常大小，每个键映射到什么紧凑地列在线稿两侧（按手柄上的位置从上到下），A 打开「映射到」（WallStage.GamepadPicker.cs）。
@@ -422,6 +422,7 @@ public sealed partial class WallStage
             // desktop-mode restore owned by this library window.
             ++_gpHoldVersion;
             _gpDesktopHeld = _gpDesktopNoticePending = false;
+            _qsPadMode = Str(mode["chosen"]) ?? Str(mode["mode"]) ?? _qsPadMode;   // 快捷面板的手柄 / 键鼠磁贴跟着变
             if (_windowActive && Str(mode["mode"]) == "desktop") After(250, () => { if (_windowActive) _ = GpCheckDesktopMode(); });
             _pad?.RequestRescan();
         });

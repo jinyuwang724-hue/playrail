@@ -102,6 +102,7 @@ namespace winrt::ClawWidget::implementation
         void OnPreviewKey(Windows::Foundation::IInspectable const&, Windows::UI::Xaml::Input::KeyRoutedEventArgs const& e);
         void SetRailAdjustment(Windows::UI::Xaml::Controls::Slider const& slider);
         void TogglePadMode();
+        void TogglePadModeLegacy(std::function<void(Windows::Data::Json::IJsonValue const&, hstring const&)> finish);
 
         Microsoft::Gaming::XboxGameBar::XboxGameBarWidget m_widget{ nullptr };
         std::shared_ptr<claw::Agent> m_agent;

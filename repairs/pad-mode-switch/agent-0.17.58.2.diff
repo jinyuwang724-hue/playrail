@@ -1,0 +1,252 @@
+--- a/claw_service.py
++++ b/claw_service.py
+@@ -222,6 +222,9 @@
+         self._session_epoch = 0
+         self._session_prepare_lock = asyncio.Lock()
+         self._pad_choice_revision = 0
++        # The mode the user picked last (front ends, the pad's own toggle). Temporary switches
++        # (Game Bar hold, library in front) change the live mode but not this.
++        self._pad_choice = None
+         self._last_mapping = None
+         self._toolbox_last_press = None
+         self._compatibility = _compatibility_module.Compatibility(PLUGIN_ROOT, self._data, self._maintenance)
+@@ -542,7 +545,8 @@
+         return {"power": self._power.view(), "system": system, "gameFreeze": self._freeze_view(system.get("game")),
+                 "xboxFse": _buttons_module.xbox_fse_active(),
+                 "rumble": self._rumble.view(), "magpie": self._magpie.view(),
+-                "gamepad": {"mode": mode, "available": mode in ("xinput", "desktop")}}
++                "gamepad": {"mode": mode, "available": mode in ("xinput", "desktop"),
++                            "chosen": self._chosen_mode(mode)}}
+ 
+     async def get_monitor_state(self, window=None):
+         return self._power.monitor_heartbeat(window) if window is not None else self._power.monitor_view()
+@@ -925,12 +929,34 @@
+         state = await self._gamepad.read()
+         if self._input.desktop:
+             state["mode"] = "desktop"
++        return self._with_choice(state)
++
++    def _chosen_mode(self, live=None):
++        if self._pad_choice in ("xinput", "desktop"):
++            return self._pad_choice
++        if self._input._settings.get("desktopRequested"):
++            return "desktop"
++        return live if live in ("xinput", "desktop") else ("desktop" if self._input.desktop else "xinput")
++
++    def _with_choice(self, state):
++        live = state.get("mode")
++        chosen = self._chosen_mode(live)
++        state["chosen"] = chosen
++        state["held"] = live in ("xinput", "desktop") and live != chosen
+         return state
+ 
++    async def toggle_gamepad_mode(self):
++        """One call from a front end: switch away from the mode the user picked (not from a temporary hold)."""
++        target = "xinput" if self._chosen_mode() == "desktop" else "desktop"
++        await self._switch_pad_mode(target, True)
++        return {"available": True, "mode": "desktop" if self._input.desktop else "xinput",
++                "chosen": self._chosen_mode(), "held": False}
++
+     async def _gamepad_write(self, call, *args):
+         if self._stopping:
+             raise RuntimeError("工具箱后台正在退出，请稍候")
+         await call(*args)
++        self._input.forget_desktop_firmware()
+         if self._input.desktop:
+             await self._input.use_desktop(True)
+         return await self.get_gamepad_state()
+@@ -1010,6 +1036,11 @@
+             raise
+ 
+     async def set_gamepad_mode(self, mode, notify=True):
++        await self._switch_pad_mode(mode, notify)
++        return await self.get_gamepad_state()
++
++    async def _switch_pad_mode(self, mode, notify=True):
++        started = time.perf_counter()
+         if notify: self._pad_choice_revision += 1
+         # notify=False: a temporary switch (the game library in front), no mode notice.
+         if mode not in ("xinput", "desktop") or type(notify) is not bool:
+@@ -1027,7 +1058,7 @@
+             try:
+                 await self._gamepad.set_mode("xinput", False)
+                 await self._input.set_pad_mode("xinput")
+-                await self._input.use_desktop(True, True)
++                await self._input.use_desktop(True, True, fast=True)
+             except Exception as error:
+                 await self._input.use_desktop(False)
+                 await self._gamepad.set_mode("desktop", False)
+@@ -1035,13 +1066,15 @@
+                 # just like the software path so every front end can switch back.
+                 logging.info("Desktop translator unavailable; using firmware desktop mode: %s", error)
+         else:
+-            await self._input.use_desktop(False, False)
++            await self._input.use_desktop(False, False, fast=True)
+             await self._gamepad.set_mode("xinput", False)
+             await self._input.set_pad_mode("xinput")
+         if notify:
+-            await self._notifications.mode(mode)
+-            await self._emit("gamepad_mode", {"mode": mode, "notify": True})
+-        return await self.get_gamepad_state()
++            self._pad_choice = mode
++            # The notice is cosmetic: do not hold the caller (and its button) for it.
++            asyncio.create_task(self._notifications.mode(mode))
++            await self._emit("gamepad_mode", {"mode": mode, "notify": True, "chosen": mode})
++        logging.info("Pad mode %s (notify=%s) in %d ms", mode, notify, (time.perf_counter() - started) * 1000)
+ 
+     async def get_desktop_layout(self):
+         return await self._input.desktop_layout()
+@@ -1088,6 +1121,8 @@
+         mode = await self._gamepad.watcher.poll()  # the mode before the layer decides anything
+         self._gamepad.watcher.start()
+         await self._input.start(pad_mode=mode)
++        if self._pad_choice is None:
++            self._pad_choice = "desktop" if (mode == "desktop" or self._input._settings.get("desktopRequested")) else "xinput"
+         if mode == "desktop" or self._input._settings.get("desktopRequested"):
+             await self.set_gamepad_mode("desktop", False)
+ 
+@@ -1103,6 +1138,7 @@
+         if (notify and mode != "desktop") or (mode != "xinput" and self._input.desktop):
+             await self._input.use_desktop(False, False)
+         if notify:
++            self._pad_choice = shown_mode
+             await self._notifications.mode(shown_mode)
+         await self._emit("gamepad_mode", {"mode": shown_mode, "previous": previous, "notify": notify,
+                                           "at": self._gamepad.watcher.changed_at})
+--- a/claw_agent.py
++++ b/claw_agent.py
+@@ -47,7 +47,7 @@
+     "manage_compatibility",
+     "get_power_state", "set_screensaver_power", "save_power", "get_osd_state", "save_osd", "restore_power", "set_ecore", "restore_ecore", "fan_test",
+     "get_rumble_state", "set_rumble_strength", "restore_rumble", "test_rumble",
+-    "get_gamepad_state", "set_gamepad_mode", "set_stick_deadzone", "set_stick_swap", "set_trigger_range",
++    "get_gamepad_state", "set_gamepad_mode", "toggle_gamepad_mode", "set_stick_deadzone", "set_stick_swap", "set_trigger_range",
+     "set_quick_trigger", "set_back_key", "set_key_map", "set_desktop_key_map", "set_light", "restore_gamepad",
+     "get_input_layer_state", "set_input_layer_enabled", "refresh_input_layer_apps", "get_input_layout", "save_input_layout",
+     "get_input_layer_catalog", "test_input_layer", "set_desktop_stick_deadzone", "set_desktop_stick",
+@@ -210,6 +210,7 @@
+         self.version = version()
+         self.endpoint = Path(endpoint)
+         self.token = token or secrets.token_hex(32)
++        self._event_tasks = set()
+         self.connections = set()
+         self.stopped = asyncio.Event()
+         self.server = None
+@@ -233,8 +234,12 @@
+             except (ConnectionError, OSError, RuntimeError):
+                 connection.writer.close()
+ 
+-        # A suspended renderer must not stop hardware replies or updates to other clients.
+-        await asyncio.gather(*(send(connection) for connection in list(self.connections)))
++        # A suspended renderer must not stop hardware replies, updates to other clients, or the caller:
++        # each send runs on its own, in order per connection (write happens when the task starts).
++        for connection in list(self.connections):
++            task = asyncio.create_task(send(connection))
++            self._event_tasks.add(task)
++            task.add_done_callback(self._event_tasks.discard)
+ 
+     async def overlay_hold(self, connection, on):
+         if type(on) is not bool:
+--- a/claw_input_layer.py
++++ b/claw_input_layer.py
+@@ -759,7 +759,25 @@
+             await self.use_desktop(True)
+         return await self.desktop_layout()
+ 
+-    async def use_desktop(self, enabled, remember=None):
++    def forget_desktop_firmware(self):
++        self._desktop_firmware_known = False
++
++    def _queue_firmware(self):
++        """Firmware tweaks for the new layout (stick dead zones, M1/M2, key maps) after the switch is live."""
++        previous = getattr(self, "_firmware_task", None)
++
++        async def run():
++            if previous is not None and not previous.done():
++                await asyncio.gather(previous, return_exceptions=True)
++            try:
++                async with self._lock:
++                    if self._phase == "active" and self._process:
++                        await self._take_firmware()
++            except Exception as error:
++                self._log("Input layer firmware update failed: %s" % error)
++        self._firmware_task = asyncio.create_task(run())
++
++    async def use_desktop(self, enabled, remember=None, fast=False):
+         previous = self.desktop
+         self.desktop = enabled
+         if remember is not None:
+@@ -769,15 +787,19 @@
+             os.replace(temp, self._settings_path)
+         if not enabled and not previous:
+             return  # Already in gamepad mapping: no redundant engine restart.
+-        if enabled and self._gamepad:
++        if enabled and self._gamepad and not (fast and getattr(self, "_desktop_firmware_known", False)):
+             state = await self._gamepad.read()
+             self._desktop_buttons = state.get("desktopKeys") or {}
+             self._desktop_sticks = state.get("desktopSticks") or {}
+             self._desktop_maps = state.get("desktopStickMappings") or {}
++            self._desktop_firmware_known = bool(state.get("available", True))
+         async with self._lock:
+             if self._phase == "active" and self._process:
+                 await self._call("configure", **self._configure_args())
+-                await self._take_firmware()
++                if not fast:
++                    await self._take_firmware()
++        if fast:
++            self._queue_firmware()
+         await self.reconcile("desktop layout")
+         if enabled and self._phase != "active":
+             raise RuntimeError(self._error or "桌面映射未启动")
+--- a/claw_gamepad_fw.py
++++ b/claw_gamepad_fw.py
+@@ -262,17 +262,30 @@
+         data = b""
+         while len(data) < length:
+             part, at = min(_CHUNK, length - len(data)), address + len(data)
+-            channel.send(read_request(self._rumble, at, part))
++            accept = (lambda frame, at=at, part=part: (parsed := parse_read_reply(frame))
++                      and parsed[0] == at and len(parsed[1]) == part and parsed[1] or None)
+             # Replies for other addresses (stale, or another reader on the pad) are skipped.
+-            reply = self._await(channel, lambda frame: (parsed := parse_read_reply(frame))
+-                                and parsed[0] == at and len(parsed[1]) == part and parsed[1] or None)
++            for attempt in (0, 1):
++                channel.send(read_request(self._rumble, at, part))
++                try:
++                    reply = self._await(channel, accept)
++                    break
++                except TimeoutError:
++                    if attempt:
++                        raise
+             data += reply
+         return data
+ 
+     def _write(self, channel, address, data):
+         for offset in range(0, len(data), _CHUNK):
+-            channel.send(write_request(self._rumble, address + offset, data[offset:offset + _CHUNK]))
+-            self._await(channel, lambda frame: True if is_reply(frame, _ACK) else None)
++            for attempt in (0, 1):
++                channel.send(write_request(self._rumble, address + offset, data[offset:offset + _CHUNK]))
++                try:
++                    self._await(channel, lambda frame: True if is_reply(frame, _ACK) else None)
++                    break
++                except TimeoutError:
++                    if attempt:
++                        raise
+ 
+     def _sync(self, channel):
+         channel.send(self._rumble.packet(_SYNC))
+@@ -804,9 +817,11 @@
+         self.watcher.expect(name, notify)
+         async with self._lock:
+             mode, mkeys = await self._run(self._firmware.read_mode)
+-            if mode != target:
++            changed = mode != target
++            if changed:
+                 await self._run(self._firmware.switch_mode, target, mkeys)
+-        await self.enforce("mode")
++        if changed:
++            await self.enforce("mode")
+         await self.watcher.observe(name)  # listeners now, not at the next poll
+         return True
+ 
