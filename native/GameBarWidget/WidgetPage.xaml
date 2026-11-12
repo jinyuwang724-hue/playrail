@@ -150,10 +150,10 @@
         <!-- Magpie / 小黄鸭: header + one column of setting rows, built in WidgetPage.cpp (ScalingRows). -->
         <Grid x:Name="ScalingPanel" Grid.ColumnSpan="2" Visibility="Collapsed">
             <Grid.RowDefinitions>
-                <RowDefinition Height="{StaticResource ScalingHeaderHeight}" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <Grid ColumnSpacing="{StaticResource SpaceS}">
+            <Grid Height="{StaticResource ScalingHeaderHeight}" ColumnSpacing="{StaticResource SpaceS}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
