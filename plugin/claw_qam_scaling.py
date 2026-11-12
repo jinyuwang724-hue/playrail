@@ -6,6 +6,24 @@ import math
 import os
 import time
 
+# Profile fields the Game Bar page edits, with the choices it offers. Number fields get fixed steps.
+LOSSLESS_PICKS = ("ScalingType", "ScalingFitMode", "LS1Type", "FSRType", "Anime4kType", "FrameGeneration", "LSFG3Mode1",
+                  "LSFG2Mode", "LSFGSize", "CaptureApi", "SyncMode")
+LOSSLESS_STEPS = {
+    "Sharpness": [(n, str(n)) for n in range(11)],
+    "LS1Sharpness": [(n, str(n)) for n in range(5)],
+    "LSFG3Multiplier": [(n, f"×{n}") for n in (1.5, 2, 2.5, 3, 4)],
+    "LSFG3Target": [(n, f"{n} FPS" if n else "跟随屏幕") for n in (0, 40, 48, 60, 72, 90, 120, 144, 165, 240)],
+    "LSFGFlowScale": [(n, f"{n}%") for n in (25, 50, 75, 100)],
+    "MaxFrameLatency": [(n, str(n)) for n in (1, 2, 3, 4, 5, 6, 8, 10)],
+}
+LOSSLESS_TOGGLES = ("HdrSupport", "DrawFps", "ClipCursor", "WindowedMode")
+# Windows that are never the game: Game Bar itself, our own windows, the original apps.
+NOT_GAMES = {"gamebar.exe", "gamebarftserver.exe", "xboxgamebarwidgets.exe", "clawwidget.exe", "clawlibrary.exe",
+             "losslessscaling.exe", "clawshell.exe", "explorer.exe", "shellexperiencehost.exe", "startmenuexperiencehost.exe",
+             "searchhost.exe", "textinputhost.exe"}
+WAIT_FOR_GAME = 60
+
 
 class Scaling:
     def __init__(self, magpie, lossless, editor, call, start_app, parse_hotkey, compile_command):
@@ -50,7 +68,8 @@ class Scaling:
             magpie = self.magpie.view()
             return {**magpie, **result, "error": result["error"] or magpie.get("error", ""),
                     "preferences": magpie["preferences"] if magpie["enabled"] else self.magpie.prefs,
-                    "targetTitle": magpie.get("targetTitle", "") if magpie["enabled"] else ""}
+                    "targetTitle": magpie.get("targetTitle", "") if magpie["enabled"] else "",
+                    **self.magpie.qam_view(game_path)}
         exe = await asyncio.to_thread(self.lossless.exe)
         runtime = await self.lossless_state(exe)
         if not runtime.get("active") or self.output_key(runtime) != self.lossless_output:
@@ -76,11 +95,9 @@ class Scaling:
                 for pattern in p.get("path", "").split(";") if pattern.strip())), profile)
         hotkey = editor.get("globalValues", {}).get("Hotkey", "Ctrl+Alt+S")
         choices = {field["key"]: field["choices"] for group in editor.get("profileSchema", [])
-                   for field in group["fields"] if field["key"] in (
-                       "ScalingType", "FrameGeneration", "LSFG3Mode1", "LSFG2Mode", "LSFGSize")}
-        choices["LSFG3Multiplier"] = [{"value": n, "label": f"×{n}"} for n in (1.5, 2, 2.5, 3, 4)]
-        choices["LSFG3Target"] = [{"value": n, "label": f"{n} FPS" if n else "跟随屏幕"}
-                                   for n in (0, 40, 48, 60, 72, 90, 120, 144, 165, 240)]
+                   for field in group["fields"] if field["key"] in LOSSLESS_PICKS}
+        choices.update({key: [{"value": v, "label": label} for v, label in steps] for key, steps in LOSSLESS_STEPS.items()})
+        choices.update({key: [{"value": False, "label": "关"}, {"value": True, "label": "开"}] for key in LOSSLESS_TOGGLES})
         return {**result, **runtime, "available": bool(exe), "hotkey": hotkey,
                 "targetTitle": source["title"] if source else "",
                 "profileName": profile.get("values", {}).get("Title") if profile and not profile["default"] else "默认档案",
@@ -100,7 +117,7 @@ class Scaling:
             raise RuntimeError("正在处理缩放，请稍候")
         self.error.pop(engine, None)
         self.pending = engine
-        self.deadline = time.monotonic() + 5 if action == "start" else 0
+        self.deadline = time.monotonic() + WAIT_FOR_GAME if action == "start" else 0
         self.task = asyncio.create_task(self._run(engine, action))
         return {"ok": True}
 
@@ -140,14 +157,14 @@ class Scaling:
                         return
                     if not runtime.get("running"):
                         await asyncio.to_thread(self.start_app, exe)
-                await asyncio.sleep(max(0, self.deadline - time.monotonic()))
+                # Starts as soon as Game Bar is closed and the game is back in front.
+                source = await self._wait_for_game()
             if engine == "magpie":
                 if (await self.lossless_state(exe)).get("active"):
                     raise RuntimeError("小黄鸭正在缩放，请先停止")
-                source = self._foreground()
                 await self.magpie.apply({**self.magpie.game_prefs(source["path"]), "target": source["hwnd"]}, persist=False)
                 return
-            await self._lossless_scale(exe, action)
+            await self._lossless_scale(exe, action, source if action == "start" else None)
         except (OSError, ValueError, RuntimeError, KeyError) as error:
             self.error[engine] = str(error)
             logging.info("Game Bar %s %s: %s", engine, action, error)
@@ -156,14 +173,20 @@ class Scaling:
 
     def _foreground(self):
         source = self.magpie.windows.describe(self.magpie.foreground())
-        if not source or os.path.basename(source["path"]).casefold() in {
-            "gamebar.exe", "gamebarftserver.exe", "xboxgamebarwidgets.exe",
-            "clawwidget.exe", "clawlibrary.exe", "losslessscaling.exe"
-        }:
-            raise RuntimeError("倒数结束时没有可缩放的前台窗口，请关闭 Game Bar 并切回游戏")
+        if not source or os.path.basename(source["path"]).casefold() in NOT_GAMES:
+            raise RuntimeError("没有回到游戏，缩放已取消")
         return source
 
-    async def _lossless_scale(self, exe, action):
+    async def _wait_for_game(self):
+        while True:
+            try:
+                return self._foreground()
+            except RuntimeError:
+                if time.monotonic() >= self.deadline:
+                    raise
+                await asyncio.sleep(.25)
+
+    async def _lossless_scale(self, exe, action, source=None):
         if not exe:
             return
         for attempt in range(4):
@@ -183,7 +206,8 @@ class Scaling:
             raise RuntimeError("小黄鸭尚未准备好，请打开原版确认后重试")
         if start and self.magpie.view()["enabled"]:
             raise RuntimeError("Magpie 正在缩放，请先停止")
-        source = self._foreground() if start else None
+        if start and not source:
+            source = self._foreground()
         if source:
             mapping["foreground"] = source["hwnd"]
         await self.call("mapped_input", mapping=mapping)

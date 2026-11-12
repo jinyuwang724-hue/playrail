@@ -176,7 +176,27 @@ static bool Start(const rapidjson::Document& d, ScalingService& service) {
     // Fill by covering the screen at output time, so "view" can switch to the whole
     // frame (Steam side menus) and back without restarting capture.
     if (d.HasMember("cover") && d["cover"].IsBool()) options.clawCover = d["cover"].GetBool();
-    return service.ClawStart(reinterpret_cast<HWND>(d["target"].GetUint64()), std::move(options));
+    // The original profile's remaining options (Game Bar Magpie page). All optional;
+    // anything absent keeps Magpie's default.
+    auto flag = [&](const char* key) { return d.HasMember(key) && d[key].IsBool() ? std::optional<bool>(d[key].GetBool()) : std::nullopt; };
+    if (auto v = flag("captureTitleBar")) options.IsCaptureTitleBar(*v);
+    if (auto v = flag("disableDirectFlip")) options.IsDirectFlipDisabled(*v);
+    if (auto v = flag("simulateExclusiveFullscreen")) options.IsSimulateExclusiveFullscreen(*v);
+    // 0 (or less) = the source window's own scale, as the original "Source" choice.
+    if (d.HasMember("cursorScaling") && d["cursorScaling"].IsNumber() && std::isfinite(d["cursorScaling"].GetDouble()) &&
+        d["cursorScaling"].GetDouble() <= 10) options.cursorScaling = d["cursorScaling"].GetFloat();
+    if (d.HasMember("cursorInterpolation") && d["cursorInterpolation"].IsInt() && d["cursorInterpolation"].GetInt() >= 0 &&
+        d["cursorInterpolation"].GetInt() <= 1) options.cursorInterpolationMode = (CursorInterpolationMode)d["cursorInterpolation"].GetInt();
+    if (d.HasMember("autoHideCursorDelay") && d["autoHideCursorDelay"].IsNumber() && d["autoHideCursorDelay"].GetDouble() >= .1 &&
+        d["autoHideCursorDelay"].GetDouble() <= 5) options.autoHideCursorDelay = d["autoHideCursorDelay"].GetFloat();
+    if (d.HasMember("duplicateFrameDetection") && d["duplicateFrameDetection"].IsInt() && d["duplicateFrameDetection"].GetInt() >= 0 &&
+        d["duplicateFrameDetection"].GetInt() <= 2) options.duplicateFrameDetectionMode = (DuplicateFrameDetectionMode)d["duplicateFrameDetection"].GetInt();
+    if (d.HasMember("multiMonitorUsage") && d["multiMonitorUsage"].IsInt() && d["multiMonitorUsage"].GetInt() >= 0 &&
+        d["multiMonitorUsage"].GetInt() <= 2) options.multiMonitorUsage = (MultiMonitorUsage)d["multiMonitorUsage"].GetInt();
+    std::optional<ToolbarState> toolbar;
+    if (d.HasMember("toolbar") && d["toolbar"].IsInt() && d["toolbar"].GetInt() >= 0 && d["toolbar"].GetInt() <= 2)
+        toolbar = (ToolbarState)d["toolbar"].GetInt();
+    return service.ClawStart(reinterpret_cast<HWND>(d["target"].GetUint64()), std::move(options), toolbar);
 }
 
 void Dispatch() {

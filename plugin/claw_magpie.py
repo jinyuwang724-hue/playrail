@@ -18,7 +18,16 @@ VERSION = "0.12.1-claw"
 SCALING_CLASS = "Window_Magpie_967EB565-6F73-4E94-AE53-00CC42592A22"
 CAPTURES = {"graphics": 0, "desktop": 1, "gdi": 2, "dwm": 3}
 DEFAULTS = {"fill": True, "sharpen": True, "strength": .5, "capture": "graphics", "cropX": 0, "cropY": 0,
-            "pipeline": [], "maxFrameRate": 60, "game3D": False, "adjustCursor": True}
+            "pipeline": [], "maxFrameRate": 60, "game3D": False, "adjustCursor": True,
+            # The original profile's remaining options (Game Bar Magpie page)
+            "captureTitleBar": False, "disableDirectFlip": False, "simulateExclusiveFullscreen": False,
+            "cursorScaling": 1.0, "cursorInterpolation": 0, "autoHideCursorDelay": 0, "toolbar": 0,
+            "duplicateFrameDetection": 1, "multiMonitorUsage": 0}
+BOOLS = ("fill", "sharpen", "game3D", "adjustCursor", "captureTitleBar", "disableDirectFlip", "simulateExclusiveFullscreen")
+# Settings a game's own entry may change from the Game Bar page; everything else stays as the library set it.
+QAM_KEYS = ("capture", "maxFrameRate", "game3D", "adjustCursor", "cropX", "cropY", "captureTitleBar", "disableDirectFlip",
+            "simulateExclusiveFullscreen", "cursorScaling", "cursorInterpolation", "autoHideCursorDelay", "toolbar",
+            "duplicateFrameDetection", "multiMonitorUsage")
 try: PLUGIN_VERSION = json.loads((Path(__file__).parent / "plugin.json").read_text(encoding="utf-8"))["version"]
 except (OSError, ValueError, KeyError): PLUGIN_VERSION = "0"
 CATALOG = json.loads((Path(__file__).parent / "bin/magpie/claw-catalog.json").read_text(encoding="utf-8"))
@@ -54,10 +63,20 @@ def validate_pipeline(pipeline):
 
 
 def validate(value):
+    # Settings saved before an option existed take its default.
+    if isinstance(value, dict) and set(value) <= set(DEFAULTS) | {"target"} and "target" in value:
+        value = {**{k: v for k, v in DEFAULTS.items() if k not in value}, **value}
     if not isinstance(value, dict) or set(value) != set(DEFAULTS) | {"target"}:
         raise ValueError("画面设置格式错误")
-    if any(type(value[k]) is not bool for k in ("fill", "sharpen", "game3D", "adjustCursor")):
+    if any(type(value[k]) is not bool for k in BOOLS):
         raise ValueError("画面开关格式错误")
+    if type(value["cursorScaling"]) not in (int, float) or not 0 <= value["cursorScaling"] <= 10:
+        raise ValueError("光标缩放需在 0–10 倍之间")
+    if type(value["autoHideCursorDelay"]) not in (int, float) or not (value["autoHideCursorDelay"] == 0 or .1 <= value["autoHideCursorDelay"] <= 5):
+        raise ValueError("隐藏光标延迟需为关闭或 0.1–5 秒")
+    for key, high in (("cursorInterpolation", 1), ("toolbar", 2), ("duplicateFrameDetection", 2), ("multiMonitorUsage", 2)):
+        if type(value[key]) is not int or not 0 <= value[key] <= high:
+            raise ValueError("画面设置格式错误")
     if type(value["capture"]) is not str or value["capture"] not in CAPTURES:
         raise ValueError("请选择有效的捕获方式")
     if type(value["strength"]) not in (int, float) or not math.isfinite(value["strength"]) or not 0 <= value["strength"] <= 1:
@@ -444,6 +463,43 @@ class Magpie:
         temp.write_text(json.dumps(self.games, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         os.replace(temp, self.games_path)
 
+    def qam_view(self, path):
+        """The Game Bar page: the running game's own settings (or the defaults when no game is known)."""
+        key = self.match_key(path) if path else None
+        prefs = {**DEFAULTS, **(self.games.get(key) or self.prefs)} if key else {**DEFAULTS, **self.prefs}
+        meta = (self.meta.get(key) or {}) if key else {}
+        return {"game": key or "", "values": {k: prefs[k] for k in QAM_KEYS}, "presets": self.presets(),
+                "preset": meta.get("preset", "无"), "auto": bool(key and self.auto_for(path))}
+
+    async def qam_set(self, path, patch):
+        """One change from the Game Bar page, saved to the running game's own entry at once; a running
+        scaling of that game picks it up (Magpie restarts its output when the game is back in front)."""
+        if not path: raise ValueError("没有正在运行的游戏")
+        if not isinstance(patch, dict) or len(patch) != 1: raise ValueError("画面设置格式错误")
+        (name, value), = patch.items()
+        key = self.match_key(path) or self.game_key(path)
+        meta = dict(self.meta.get(key) or {"auto": False, "preset": "无"})
+        prefs = {**DEFAULTS, **(self.games.get(key) or self.prefs)}
+        if name == "auto":
+            if type(value) is not bool: raise ValueError("自动缩放格式错误")
+            meta["auto"] = value
+        elif name == "preset":
+            if value not in self.presets(): raise ValueError("没有这个超分预设")
+            chain = next((p["effects"] for p in self.preset_catalog() if p["name"] == value), [])
+            prefs["pipeline"] = validate_pipeline([{k: e[k] for k in ("name", "parameters", "scalingType", "scale") if k in e} for e in chain])
+            meta["preset"] = value
+        elif name in QAM_KEYS:
+            prefs = {k: v for k, v in validate({**prefs, name: value, "target": 0}).items() if k in DEFAULTS}
+        else:
+            raise ValueError("画面设置格式错误")
+        self.games[key] = {k: prefs[k] for k in DEFAULTS}
+        self.meta[key] = meta
+        self._save_games()
+        source = self.source or {}
+        if self.state["enabled"] and source and self.match_key(source.get("path")) == key and name != "auto":
+            await self.apply({**self.games[key], "target": source["hwnd"]}, persist=False)
+        return self.qam_view(path)
+
     def game_prefs(self, path):
         """This game's saved settings, or the last used ones."""
         return dict(self.games.get(self.match_key(path) or "") or self.prefs)
@@ -713,6 +769,12 @@ class Magpie:
             reply = await self.command("start", target=hwnd, capture=CAPTURES[self.current["capture"]],
                 effects=effects, fitOutput=bool(self.current["pipeline"]), cover=cover, maxFrameRate=self.current["maxFrameRate"],
                 game3D=self.current["game3D"], adjustCursor=self.current["adjustCursor"],
+                captureTitleBar=self.current["captureTitleBar"], disableDirectFlip=self.current["disableDirectFlip"],
+                simulateExclusiveFullscreen=self.current["simulateExclusiveFullscreen"],
+                cursorScaling=self.current["cursorScaling"], cursorInterpolation=self.current["cursorInterpolation"],
+                **({"autoHideCursorDelay": self.current["autoHideCursorDelay"]} if self.current["autoHideCursorDelay"] else {}),
+                toolbar=self.current["toolbar"], duplicateFrameDetection=self.current["duplicateFrameDetection"],
+                multiMonitorUsage=self.current["multiMonitorUsage"],
                 crop=[crop[k] for k in ("left", "top", "right", "bottom")])
             if not reply["ok"]:
                 if "pid" not in reply: raise RuntimeError("Magpie 启动失败：" + reply.get("error", "权限启动失败"))

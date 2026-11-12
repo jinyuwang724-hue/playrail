@@ -27,7 +27,7 @@ public:
 
 	void ClawMode(bool value) { _clawMode = value; }
 	bool ClawStart(HWND target, int capture, bool sharpen, float strength, Cropping crop);
-	bool ClawStart(HWND target, ScalingOptions&& options);
+	bool ClawStart(HWND target, ScalingOptions&& options, std::optional<ToolbarState> toolbar = std::nullopt);
 	void ClawStop() { if (_scalingRuntime) _scalingRuntime->Stop(); }
 	void ClawSetCover(bool cover) { if (_scalingRuntime) _scalingRuntime->ClawSetCover(cover); }
 	void ClawSetPlainRects(std::vector<std::array<float, 4>> rects) { if (_scalingRuntime) _scalingRuntime->ClawSetPlainRects(std::move(rects)); }

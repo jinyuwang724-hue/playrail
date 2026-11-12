@@ -338,12 +338,12 @@ bool ScalingService::ClawStart(HWND target, int capture, bool sharpen, float str
 	return ClawStart(target, std::move(options));
 }
 
-bool ScalingService::ClawStart(HWND target, ScalingOptions&& options) {
+bool ScalingService::ClawStart(HWND target, ScalingOptions&& options, std::optional<ToolbarState> toolbar) {
 	if (!_scalingRuntime || !IsWindow(target) || GetForegroundWindow() != target || options.effects.empty()) return false;
 	_scalingRuntime->Stop();
 	_clawError = 0;
 	options.IsAllowScalingMaximized(true);
-	options.fullscreenInitialToolbarState = ToolbarState::Off;
+	options.fullscreenInitialToolbarState = toolbar.value_or(ToolbarState::Off);
 	options.screenshotsDir = L".";
 	options.showToast = [](HWND, std::wstring_view) noexcept {};
 	options.showError = [](HWND, ScalingError error) noexcept { Get()._clawError = (int)error; };

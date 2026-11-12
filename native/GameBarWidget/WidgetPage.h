@@ -48,17 +48,26 @@ namespace winrt::ClawWidget::implementation
         void UpdatePowerControl(bool usable);
         void BuildQuickShortcuts();
         winrt::fire_and_forget OpenQuickLink(hstring uri);
+        // Magpie / 小黄鸭 pages: one column of rows; left/right change a choice, A toggles or lists choices.
+        struct ScalingChoice { IJsonValue value{ nullptr }; hstring label; };
+        struct ScalingRow {
+            std::wstring kind;   // hero, pick, toggle, group, action
+            std::wstring key;    // setting key (Magpie value / Lossless profile field) or group id
+            hstring label, icon, detail;
+            std::vector<ScalingChoice> choices;
+            int index = -1;      // current choice
+            bool sub = false, off = false, on = false;
+        };
         void OpenScaling(std::wstring engine);
         void RefreshScaling();
         void UpdateScaling();
-        void ScaleAction();
-        void SetMagpieOption(std::wstring const& key);
-        void ShowLosslessOptions(Windows::UI::Xaml::Controls::Button const& anchor, std::wstring const& key);
-        void ShowLosslessProfiles();
+        std::vector<ScalingRow> ScalingRows();
+        void BuildScalingRow(ScalingRow const& row);
+        void ScalingPress(std::wstring const& key);
+        void ScalingStep(std::wstring const& key, int step);
+        void ScalingChoose(std::wstring const& key, int index);
+        void ScalingFlyout(std::wstring const& key);
         JsonObject LosslessProfile();
-        std::wstring LosslessRateKey();
-        IJsonValue LosslessValue(std::wstring const& key);
-        void ApplyLosslessEdits();
         void SendScaling(std::wstring const& method, JsonArray const& args = JsonArray());
         void BuildTiles();
         void AddOsdOptions(Windows::UI::Xaml::Controls::Button const& button);
@@ -108,9 +117,12 @@ namespace winrt::ClawWidget::implementation
         std::wstring m_scalingPage;
         hstring m_scalingError;
         JsonObject m_scalingData{ nullptr };
-        JsonObject m_losslessEdits;
         double m_losslessProfile = -1;
-        hstring m_losslessRevision;
+        bool m_losslessActive = false, m_losslessPolling = false;
+        Clock::time_point m_losslessPolled{};
+        std::vector<ScalingRow> m_scalingRows;
+        std::map<std::wstring, bool> m_scalingOpenGroups;
+        hstring m_scalingSignature;
         bool m_scalingReading = false, m_scalingSending = false;
         bool m_saving = false, m_updatingSliders = false, m_editing = false, m_offline = false, m_narrow = false, m_layoutDone = false, m_shutdown = false;
         bool m_modeSwitching = false;

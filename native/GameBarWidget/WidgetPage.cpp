@@ -125,52 +125,7 @@ namespace
 
     GridLength Star() { return GridLengthHelper::FromValueAndType(1, GridUnitType::Star); }
 
-    void SetScalingTile(Button const& button, hstring const& title, hstring const& value, bool opensMenu = true)
-    {
-        auto content = button.Content().try_as<Grid>();
-        if (!content) {
-            content = Grid();
-            content.ColumnSpacing(8);
-            ColumnDefinition textColumn;
-            textColumn.Width(Star());
-            content.ColumnDefinitions().Append(textColumn);
-
-            StackPanel labels;
-            labels.VerticalAlignment(VerticalAlignment::Center);
-            labels.Spacing(2);
-            TextBlock name, detail;
-            name.FontSize(12);
-            name.Foreground(Resource(L"TextFillColorSecondaryBrush"));
-            name.TextTrimming(TextTrimming::CharacterEllipsis);
-            detail.FontSize(15);
-            detail.FontWeight(Text::FontWeights::SemiBold());
-            detail.TextTrimming(TextTrimming::CharacterEllipsis);
-            labels.Children().Append(name);
-            labels.Children().Append(detail);
-            content.Children().Append(labels);
-            if (opensMenu) {
-                ColumnDefinition iconColumn;
-                iconColumn.Width(GridLengthHelper::Auto());
-                content.ColumnDefinitions().Append(iconColumn);
-                TextBlock chevron;
-                chevron.Text(L"›");
-                chevron.FontSize(19);
-                chevron.VerticalAlignment(VerticalAlignment::Center);
-                chevron.Foreground(Resource(L"TextFillColorSecondaryBrush"));
-                Grid::SetColumn(chevron, 1);
-                content.Children().Append(chevron);
-            }
-            button.Content(content);
-        }
-        auto labels = content.Children().GetAt(0).as<StackPanel>();
-        auto name = labels.Children().GetAt(0).as<TextBlock>();
-        auto detail = labels.Children().GetAt(1).as<TextBlock>();
-        if (name.Text() != title || detail.Text() != value) {
-            name.Text(title);
-            detail.Text(value);
-            Automation::AutomationProperties::SetName(button, title + L" " + value);
-        }
-    }
+    double Tok(wchar_t const* name) { return unbox_value<double>(Application::Current().Resources().Lookup(box_value(name))); }
 }
 
 namespace winrt::ClawWidget::implementation
@@ -224,6 +179,20 @@ namespace winrt::ClawWidget::implementation
         m_pollTimer.Tick([this](auto&&, auto&&) {
             PublishPowerVisibility();
             if (!m_scalingPage.empty() && (!m_widget || m_widget.Visible())) RefreshScaling();
+            // The 小黄鸭 tile shows whether it is scaling; its state is not part of the main reading.
+            else if (m_scalingPage.empty() && m_agent->Ready() && (!m_widget || m_widget.Visible()) && !m_losslessPolling
+                && Clock::now() - m_losslessPolled > std::chrono::seconds(3)) {
+                m_losslessPolling = true;
+                m_losslessPolled = Clock::now();
+                m_agent->Call(L"qam_scaling_state", Args({ S(L"lossless") }), [this](auto const& value, hstring const&) {
+                    m_losslessPolling = false;
+                    if (m_shutdown || !value || value.ValueType() != JsonValueType::Object) return;
+                    bool active = Bool(value.GetObject(), L"active");
+                    if (active == m_losslessActive) return;
+                    m_losslessActive = active;
+                    if (auto tile = m_views.find(L"lossless"); tile != m_views.end()) UpdateTile(tile->first, tile->second);
+                });
+            }
             if (m_agent->Ready()) { if (!m_saveTimer.IsEnabled()) Refresh(); }
             else m_agent->Connect();
             Update();
@@ -235,19 +204,8 @@ namespace winrt::ClawWidget::implementation
 
         EditButton().Click([this](auto&&, auto&&) { SetEditing(!m_editing); });
         DoneButton().Click([this](auto&&, auto&&) { SetEditing(false); });
+        ScalingBack().Content(Icon(L"chevronLeft", 18));
         ScalingBack().Click([this](auto&&, auto&&) { OpenScaling({}); });
-        ScalingAction().Click([this](auto&&, auto&&) { ScaleAction(); });
-        ScalingFill().Click([this](auto&&, auto&&) { SetMagpieOption(L"fill"); });
-        ScalingSharpen().Click([this](auto&&, auto&&) { SetMagpieOption(L"sharpen"); });
-        ScalingAlgorithm().Click([this](auto&&, auto&&) { ShowLosslessOptions(ScalingAlgorithm(), L"ScalingType"); });
-        ScalingFrameGen().Click([this](auto&&, auto&&) { ShowLosslessOptions(ScalingFrameGen(), L"FrameGeneration"); });
-        ScalingProfile().Click([this](auto&&, auto&&) { ShowLosslessProfiles(); });
-        ScalingFrameMode().Click([this](auto&&, auto&&) { ShowLosslessOptions(ScalingFrameMode(), L"LSFG3Mode1"); });
-        ScalingFrameRate().Click([this](auto&&, auto&&) { ShowLosslessOptions(ScalingFrameRate(), LosslessRateKey()); });
-        ScalingPerformance().Click([this](auto&&, auto&&) { ShowLosslessOptions(ScalingPerformance(), L"LSFGSize"); });
-        ScalingApply().Click([this](auto&&, auto&&) { ApplyLosslessEdits(); });
-        ScalingDiscard().Click([this](auto&&, auto&&) { m_losslessEdits.Clear(); UpdateScaling(); ScalingProfile().Focus(FocusState::Programmatic); });
-        ScalingNative().Click([this](auto&&, auto&&) { SendScaling(L"open_lossless"); });
         ReconnectButton().Click([this](auto&&, auto&&) { m_failedSince = {}; m_agent->Connect(); Update(); });
         MuteButton().Click([this](auto&&, auto&&) {
             if (!m_data) return;
@@ -591,11 +549,6 @@ namespace winrt::ClawWidget::implementation
 
     void WidgetPage::OpenScaling(std::wstring engine)
     {
-        if (engine.empty() && m_losslessEdits.Size()) {
-            m_scalingError = L"请先应用或放弃档案修改";
-            UpdateScaling();
-            return;
-        }
         auto previous = m_scalingPage;
         m_scalingPage = std::move(engine);
         bool open = !m_scalingPage.empty();
@@ -603,19 +556,14 @@ namespace winrt::ClawWidget::implementation
         MainPanel().Visibility(open ? Visibility::Collapsed : Visibility::Visible);
         Rail().Visibility(open ? Visibility::Collapsed : Visibility::Visible);
         m_scalingData = nullptr;
-        m_losslessEdits.Clear();
         m_losslessProfile = -1;
         m_scalingError.clear();
         m_scalingAt = {};
+        m_scalingSignature = {};
+        m_scalingRows.clear();
+        ScalingList().Children().Clear();
         if (open) {
-            bool duck = m_scalingPage == L"lossless";
-            ScalingTitle().Text(duck ? L"小黄鸭" : L"Magpie");
-            ScalingSubtitle().Text(duck ? L"缩放与帧生成" : L"画面缩放");
-            auto emblem = ScalingEmblem();
-            emblem.Background(SolidColorBrush(duck ? ColorHelper::FromArgb(38, 255, 207, 98) : ColorHelper::FromArgb(23, 244, 244, 245)));
-            emblem.Child(Icon(duck ? L"qamDuck" : L"magpie", 23,
-                duck ? SolidColorBrush(ColorHelper::FromArgb(255, 255, 211, 109)) : Resource(L"TextFillColorPrimaryBrush")));
-            ScalingBack().Focus(FocusState::Programmatic);
+            ScalingTitle().Text(m_scalingPage == L"lossless" ? L"小黄鸭" : L"Magpie");
             RefreshScaling();
             UpdateScaling();
         } else if (auto tile = m_views.find(previous); tile != m_views.end()) {
@@ -637,25 +585,10 @@ namespace winrt::ClawWidget::implementation
             else if (value && value.ValueType() == JsonValueType::Object) {
                 m_scalingData = value.GetObject();
                 m_scalingError.clear();
+                if (page == L"lossless") m_losslessActive = Bool(m_scalingData, L"active");
             }
             UpdateScaling();
         });
-    }
-
-    void WidgetPage::ScaleAction()
-    {
-        if (!ScalingAction().IsEnabled() || m_scalingSending) return;
-        auto action = Bool(m_scalingData, L"pending") ? L"cancel" :
-            Bool(m_scalingData, m_scalingPage == L"lossless" ? L"active" : L"enabled") ? L"stop" : L"start";
-        SendScaling(L"qam_scaling_action", Args({ S(m_scalingPage), S(action) }));
-    }
-
-    void WidgetPage::SetMagpieOption(std::wstring const& key)
-    {
-        if (m_scalingSending || !m_scalingData) return;
-        JsonObject patch;
-        patch.SetNamedValue(key, B(!Bool(m_scalingData, L"preferences." + key)));
-        SendScaling(L"set_magpie_prefs", Args({ patch }));
     }
 
     WidgetPage::JsonObject WidgetPage::LosslessProfile()
@@ -668,76 +601,375 @@ namespace winrt::ClawWidget::implementation
         return nullptr;
     }
 
-    WidgetPage::IJsonValue WidgetPage::LosslessValue(std::wstring const& key)
+    // The rows of the open page, from the last reading. Choices carry the exact JSON value the agent takes.
+    std::vector<WidgetPage::ScalingRow> WidgetPage::ScalingRows()
     {
-        auto draft = Get(m_losslessEdits, key);
-        return draft ? draft : Get(LosslessProfile(), L"values." + key);
-    }
+        std::vector<ScalingRow> rows;
+        auto const& d = m_scalingData;
+        bool duck = m_scalingPage == L"lossless";
+        bool online = m_agent->Ready() && d && Bool(d, L"available");
+        bool active = Bool(d, duck ? L"active" : L"enabled"), pending = Bool(d, L"pending");
+        auto error = m_scalingError.empty() ? Str(d, L"error") : m_scalingError;
 
-    std::wstring WidgetPage::LosslessRateKey()
-    {
-        auto version = LosslessValue(L"FrameGeneration");
-        if (version && version.GetString() == L"LSFG2") return L"LSFG2Mode";
-        auto mode = LosslessValue(L"LSFG3Mode1");
-        return mode && mode.GetString() == L"ADAPTIVE" ? L"LSFG3Target" : L"LSFG3Multiplier";
-    }
+        ScalingRow hero{ L"hero", L"scale", L"缩放", duck ? L"qamDuck" : L"magpie" };
+        hero.on = active || pending;
+        hero.off = !online || Bool(d, L"blocked");
+        if (!d) hero.detail = m_scalingError.empty() ? L"" : m_scalingError;
+        else if (!Bool(d, L"available")) hero.detail = duck ? L"没有找到小黄鸭" : L"Magpie 不可用";
+        else if (pending) hero.detail = L"返回游戏后开始";
+        else if (!error.empty()) hero.detail = error;
+        else if (active && duck) hero.detail = Str(d, L"targetTitle", L"缩放中");
+        else if (active) hero.detail = Bool(d, L"active") ? Str(d, L"targetTitle", L"缩放中") : L"返回游戏后生效";
+        else hero.detail = L"关";
+        rows.push_back(hero);
 
-    void WidgetPage::ShowLosslessProfiles()
-    {
-        MenuFlyout menu;
-        auto selected = Num(LosslessProfile(), L"index", -1);
-        for (auto const& entry : Arr(m_scalingData, L"profiles")) {
-            auto profile = entry.GetObject();
-            auto index = Num(profile, L"index", -1);
-            auto label = Str(profile, L"label");
-            MenuFlyoutItem item;
-            item.Text(index == selected ? L"✓ " + label : label);
-            item.Click([this, index](auto&&, auto&&) { m_losslessProfile = index; UpdateScaling(); });
-            menu.Items().Append(item);
-        }
-        if (menu.Items().Size()) menu.ShowAt(ScalingProfile());
-    }
+        auto add = [&](std::wstring kind, std::wstring key, hstring label, hstring icon, bool sub, bool off) -> ScalingRow& {
+            ScalingRow row{ std::move(kind), std::move(key), label, icon };
+            row.sub = sub; row.off = off || !online;
+            rows.push_back(row);
+            return rows.back();
+        };
+        auto group = [&](std::wstring key, hstring label, hstring icon) {
+            auto& row = add(L"group", key, label, icon, false, false);
+            row.off = !d;
+            row.on = m_scalingOpenGroups[key];
+            return row.on;
+        };
 
-    void WidgetPage::ShowLosslessOptions(Button const& anchor, std::wstring const& key)
-    {
-        if (m_scalingSending || !Has(m_scalingData, L"profileIndex")) return;
-        MenuFlyout menu;
-        auto current = LosslessValue(key);
-        auto index = Num(LosslessProfile(), L"index", -1);
-        auto revision = Str(m_scalingData, L"revision");
-        for (auto const& choice : Arr(m_scalingData, L"choices." + key)) {
-            auto data = choice.GetObject();
-            auto value = Get(data, L"value");
-            auto label = Str(data, L"label");
-            MenuFlyoutItem item;
-            item.Text(current && value.Stringify() == current.Stringify() ? L"✓ " + label : label);
-            item.Click([this, key, value, index, revision](auto&&, auto&&) {
-                if (m_scalingPage != L"lossless" || Bool(m_scalingData, L"active") || Bool(m_scalingData, L"pending")
-                    || index < 0 || index != Num(LosslessProfile(), L"index", -1) || revision != Str(m_scalingData, L"revision")) return;
-                if (!m_losslessEdits.Size()) { m_losslessProfile = index; m_losslessRevision = revision; }
-                auto original = Get(LosslessProfile(), L"values." + key);
-                if (original && original.Stringify() == value.Stringify()) {
-                    if (m_losslessEdits.HasKey(key)) m_losslessEdits.Remove(key);
+        if (!duck) {
+            auto values = Obj(d, L"values");
+            bool game = !Str(d, L"game").empty();
+            auto pick = [&](std::wstring key, hstring label, hstring icon, bool sub, std::vector<std::pair<IJsonValue, hstring>> const& choices) {
+                auto& row = add(L"pick", key, label, icon, sub, !game);
+                auto current = Get(values, key);
+                for (auto const& [value, text] : choices) {
+                    if (current && value.Stringify() == current.Stringify()) row.index = static_cast<int>(row.choices.size());
+                    row.choices.push_back({ value, text });
                 }
-                else m_losslessEdits.SetNamedValue(key, value);
-                UpdateScaling();
-            });
-            menu.Items().Append(item);
+            };
+            auto toggle = [&](std::wstring key, hstring label, hstring icon, bool sub, bool invert = false) {
+                auto& row = add(L"toggle", key, label, icon, sub, !game);
+                row.on = Bool(values, key) != invert;  // shown state
+                if (invert) row.detail = L"invert";
+            };
+            auto numbers = [](std::vector<std::pair<double, hstring>> const& list) {
+                std::vector<std::pair<IJsonValue, hstring>> out;
+                for (auto const& [v, t] : list) out.push_back({ N(v), t });
+                return out;
+            };
+            {
+                auto& row = add(L"pick", L"preset", L"缩放模式", L"qamMode", false, !game);
+                auto preset = Str(d, L"preset");
+                for (auto const& name : Arr(d, L"presets")) {
+                    if (name.GetString() == preset) row.index = static_cast<int>(row.choices.size());
+                    row.choices.push_back({ name, name.GetString() });
+                }
+            }
+            pick(L"capture", L"捕获方式", L"qamCapture", false, { { S(L"graphics"), L"Graphics Capture" }, { S(L"desktop"), L"Desktop Duplication" },
+                { S(L"gdi"), L"GDI" }, { S(L"dwm"), L"DwmSharedSurface" } });
+            {
+                auto& row = add(L"toggle", L"auto", L"进游戏自动缩放", L"qamAuto", false, !game);
+                row.on = Bool(d, L"auto");
+            }
+            pick(L"maxFrameRate", L"帧率限制", L"fps", false, numbers({ { 0, L"不限" }, { 30, L"30" }, { 40, L"40" }, { 45, L"45" }, { 60, L"60" },
+                { 72, L"72" }, { 90, L"90" }, { 120, L"120" }, { 144, L"144" } }));
+            toggle(L"game3D", L"3D 游戏模式", L"qamCube", false);
+            if (group(L"cursor", L"光标", L"qamCursor")) {
+                pick(L"cursorScaling", L"光标缩放", L"", true, numbers({ { .5, L"0.5×" }, { .75, L"0.75×" }, { 1, L"不缩放" }, { 1.25, L"1.25×" },
+                    { 1.5, L"1.5×" }, { 2, L"2×" }, { 0, L"和源窗口相同" } }));
+                pick(L"cursorInterpolation", L"插值算法", L"", true, numbers({ { 0, L"最近邻" }, { 1, L"双线性" } }));
+                toggle(L"adjustCursor", L"缩放时调整光标速度", L"", true);
+                pick(L"autoHideCursorDelay", L"自动隐藏光标", L"", true, numbers({ { 0, L"关" }, { 1, L"1 秒" }, { 2, L"2 秒" }, { 3, L"3 秒" }, { 5, L"5 秒" } }));
+            }
+            if (group(L"advanced", L"高级", L"qamAdvanced")) {
+                auto crop = numbers({ { 0, L"0" }, { 4, L"4 像素" }, { 8, L"8 像素" }, { 16, L"16 像素" }, { 32, L"32 像素" }, { 64, L"64 像素" } });
+                pick(L"cropX", L"左右裁剪", L"", true, crop);
+                pick(L"cropY", L"上下裁剪", L"", true, crop);
+                toggle(L"captureTitleBar", L"捕获标题栏", L"", true);
+                toggle(L"disableDirectFlip", L"DirectFlip", L"", true, true);
+                toggle(L"simulateExclusiveFullscreen", L"模拟独占全屏", L"", true);
+                pick(L"toolbar", L"叠加层工具栏", L"", true, numbers({ { 0, L"关" }, { 1, L"始终显示" }, { 2, L"自动隐藏" } }));
+                pick(L"duplicateFrameDetection", L"重复帧检测", L"", true, numbers({ { 0, L"总是" }, { 1, L"动态" }, { 2, L"从不" } }));
+                pick(L"multiMonitorUsage", L"多显示器", L"", true, numbers({ { 0, L"最近的显示器" }, { 1, L"相交的显示器" }, { 2, L"所有显示器" } }));
+            }
+            return rows;
         }
-        if (menu.Items().Size()) menu.ShowAt(anchor);
+
+        auto profile = LosslessProfile();
+        bool locked = active || pending || !profile;
+        auto value = [&](std::wstring const& key) { return Get(profile, L"values." + key); };
+        auto text = [&](std::wstring const& key) { auto v = value(key); return v && v.ValueType() == JsonValueType::String ? v.GetString() : hstring(); };
+        auto pick = [&](std::wstring key, hstring label, hstring icon, bool sub, bool off = false) {
+            auto choices = Arr(d, L"choices." + key);
+            bool flag = choices.Size() == 2 && Get(choices.GetObjectAt(0), L"value").ValueType() == JsonValueType::Boolean;
+            auto& row = add(flag ? L"toggle" : L"pick", key, label, icon, sub, locked || off);
+            auto current = value(key);
+            for (auto const& entry : choices) {
+                auto choice = entry.GetObject();
+                auto v = Get(choice, L"value");
+                if (current && v.Stringify() == current.Stringify()) row.index = static_cast<int>(row.choices.size());
+                row.choices.push_back({ v, Str(choice, L"label") });
+            }
+            if (flag) row.on = current && current.ValueType() == JsonValueType::Boolean && current.GetBoolean();
+        };
+        {
+            auto& row = add(L"pick", L"profile", L"档案", L"qamProfile", false, active || pending);
+            auto selected = Num(profile, L"index", -1);
+            for (auto const& entry : Arr(d, L"profiles")) {
+                auto p = entry.GetObject();
+                if (Num(p, L"index", -1) == selected) row.index = static_cast<int>(row.choices.size());
+                row.choices.push_back({ N(Num(p, L"index", -1)), Str(p, L"label") });
+            }
+        }
+        pick(L"ScalingType", L"缩放算法", L"qamAlgorithm", false);
+        auto type = text(L"ScalingType");
+        if (type == L"LS1") pick(L"LS1Sharpness", L"锐化强度", L"", true);
+        else if (type == L"FSR" || type == L"NIS" || type == L"BicubicCAS") pick(L"Sharpness", L"锐化强度", L"", true);
+        pick(L"FrameGeneration", L"帧生成", L"qamFrames", false);
+        auto fg = text(L"FrameGeneration");
+        bool lsfg3 = fg == L"LSFG3", frames = lsfg3 || fg == L"LSFG2";
+        pick(L"LSFG3Mode1", L"模式", L"", true, !lsfg3);
+        if (fg == L"LSFG2") pick(L"LSFG2Mode", L"倍率", L"", true);
+        else if (lsfg3 && text(L"LSFG3Mode1") == L"ADAPTIVE") pick(L"LSFG3Target", L"目标帧率", L"", true);
+        else pick(L"LSFG3Multiplier", L"倍率", L"", true, !lsfg3);
+        pick(L"LSFGSize", L"性能模式", L"", true, !frames);
+        if (group(L"output", L"捕获与输出", L"qamOutput")) {
+            pick(L"ScalingFitMode", L"画面适配", L"", true);
+            pick(L"LSFGFlowScale", L"光流比例", L"", true, !frames);
+            pick(L"CaptureApi", L"捕获 API", L"", true);
+            pick(L"SyncMode", L"同步模式", L"", true);
+            pick(L"MaxFrameLatency", L"最大帧延迟", L"", true);
+            pick(L"HdrSupport", L"HDR 支持", L"", true);
+            pick(L"DrawFps", L"显示帧率", L"", true);
+            pick(L"ClipCursor", L"限制光标在画面内", L"", true);
+            pick(L"WindowedMode", L"窗口化输出", L"", true);
+        }
+        auto& open = add(L"action", L"open", L"打开小黄鸭", L"qamOpen", false, pending);
+        open.off = !online || pending;
+        return rows;
     }
 
-    void WidgetPage::ApplyLosslessEdits()
+    // One row: [icon] label [detail] … value / switch / count. The focus mark is a short bar on the left.
+    void WidgetPage::BuildScalingRow(ScalingRow const& row)
     {
-        if (!m_losslessEdits.Size() || !ScalingApply().IsEnabled()) return;
-        JsonObject profile, request;
-        profile.SetNamedValue(L"index", N(m_losslessProfile));
-        profile.SetNamedValue(L"values", Clone(m_losslessEdits));
-        request.SetNamedValue(L"profiles", Args({ profile }));
-        request.SetNamedValue(L"revision", JsonValue::CreateStringValue(m_losslessRevision));
-        request.SetNamedValue(L"globalValues", JsonObject());
-        request.SetNamedValue(L"remove", JsonArray());
-        SendScaling(L"save_lossless_settings", Args({ request }));
+        Button button;
+        button.Style(Resources().Lookup(box_value(L"ScalingRow")).as<Windows::UI::Xaml::Style>());
+        button.Tag(box_value(hstring(row.key)));
+        bool hero = row.kind == L"hero";
+        button.MinHeight(Tok(hero ? L"ScalingHeroHeight" : row.sub ? L"ScalingSubRowHeight" : L"ScalingRowHeight"));
+        if (row.sub) {
+            button.Padding(Application::Current().Resources().Lookup(box_value(L"ScalingSubRowInset")).as<Thickness>());
+            button.Background(SolidColorBrush(ColorHelper::FromArgb(9, 255, 255, 255)));
+        }
+        button.IsEnabled(!row.off);
+        Automation::AutomationProperties::SetName(button, row.label);
+
+        Grid content;
+        content.ColumnSpacing(Tok(L"SpaceM"));
+        for (auto width : { GridLengthHelper::Auto(), Star(), GridLengthHelper::Auto() }) {
+            ColumnDefinition column; column.Width(width); content.ColumnDefinitions().Append(column);
+        }
+        Shapes::Rectangle mark;
+        mark.Width(Tok(L"FocusBarWidth")); mark.Height(Tok(L"FocusBarHeight") * .67);
+        mark.RadiusX(Tok(L"RadiusBar")); mark.RadiusY(Tok(L"RadiusBar"));
+        mark.Fill(Resource(L"AccentFillColorDefaultBrush"));
+        mark.HorizontalAlignment(HorizontalAlignment::Left);
+        mark.Margin(Thickness{ -(row.sub ? Tok(L"ScalingSubMarkOffset") : Tok(L"ScalingMarkOffset")), 0, 0, 0 });
+        mark.Opacity(0);
+        content.Children().Append(mark);
+
+        if (hero) {
+            Border box;
+            box.Width(Tok(L"HeroIconBox")); box.Height(Tok(L"HeroIconBox"));
+            box.CornerRadius(CornerRadiusHelper::FromUniformRadius(Tok(L"RadiusTile")));
+            box.Background(row.on ? Resource(L"AccentFillColorDefaultBrush") : Resource(L"ButtonBackground"));
+            box.Child(Icon(row.icon.c_str(), Tok(L"IconContent"), row.on ? SolidColorBrush(Colors::Black()) : nullptr));
+            content.Children().Append(box);
+        } else if (!row.icon.empty()) {
+            auto icon = Icon(row.icon.c_str(), Tok(L"IconContent"), Resource(L"TextFillColorSecondaryBrush"));
+            content.Children().Append(icon);
+        }
+
+        StackPanel text;
+        text.VerticalAlignment(VerticalAlignment::Center);
+        TextBlock label;
+        label.Text(row.label);
+        label.TextTrimming(TextTrimming::CharacterEllipsis);
+        if (hero) { label.FontSize(Tok(L"TypeSubtitleSize")); label.FontWeight(Text::FontWeights::SemiBold()); }
+        text.Children().Append(label);
+        if (hero && !row.detail.empty()) {
+            TextBlock detail;
+            detail.Text(row.detail);
+            detail.FontSize(Tok(L"TypeLabelSize"));
+            detail.TextTrimming(TextTrimming::CharacterEllipsis);
+            detail.Foreground(Resource(L"TextFillColorSecondaryBrush"));
+            text.Children().Append(detail);
+        }
+        Grid::SetColumn(text, 1);
+        content.Children().Append(text);
+
+        StackPanel tail;
+        tail.Orientation(Orientation::Horizontal);
+        tail.Spacing(Tok(L"SpaceS"));
+        tail.VerticalAlignment(VerticalAlignment::Center);
+        auto secondary = Resource(L"TextFillColorSecondaryBrush");
+        if (row.kind == L"pick") {
+            tail.Spacing(0);
+            tail.Children().Append(Icon(L"chevronLeft", Tok(L"IconMark"), secondary));
+            TextBlock value;
+            value.Text(row.index >= 0 ? row.choices[row.index].label : hstring(L"—"));
+            value.Width(Tok(L"ScalingValueWidth"));
+            value.TextAlignment(TextAlignment::Center);
+            value.TextTrimming(TextTrimming::CharacterEllipsis);
+            value.VerticalAlignment(VerticalAlignment::Center);
+            tail.Children().Append(value);
+            tail.Children().Append(Icon(L"chevronRight", Tok(L"IconMark"), secondary));
+        } else if (row.kind == L"toggle" || hero) {
+            bool on = row.on;
+            if (!hero) {
+                TextBlock state; state.Text(on ? L"开" : L"关"); state.Foreground(secondary);
+                state.VerticalAlignment(VerticalAlignment::Center);
+                tail.Children().Append(state);
+            }
+            Border track;
+            track.Width(Tok(L"SwitchWidth")); track.Height(Tok(L"SwitchHeight"));
+            track.CornerRadius(CornerRadiusHelper::FromUniformRadius(Tok(L"SwitchHeight") / 2));
+            track.BorderThickness(Thickness{ 1, 1, 1, 1 });
+            track.BorderBrush(on ? Resource(L"AccentFillColorDefaultBrush") : SolidColorBrush(ColorHelper::FromArgb(153, 255, 255, 255)));
+            track.Background(on ? Resource(L"AccentFillColorDefaultBrush") : SolidColorBrush(Colors::Transparent()));
+            Shapes::Ellipse knob;
+            knob.Width(Tok(L"SwitchKnob")); knob.Height(Tok(L"SwitchKnob"));
+            knob.Fill(on ? SolidColorBrush(Colors::Black()) : SolidColorBrush(ColorHelper::FromArgb(200, 255, 255, 255)));
+            knob.HorizontalAlignment(on ? HorizontalAlignment::Right : HorizontalAlignment::Left);
+            knob.Margin(Thickness{ Tok(L"SpaceXS") - 1, 0, Tok(L"SpaceXS") - 1, 0 });
+            track.Child(knob);
+            tail.Children().Append(track);
+        } else if (row.kind == L"group") {
+            tail.Children().Append(Icon(row.on ? L"chevronUp" : L"chevronDown", Tok(L"IconMark"), secondary));
+        } else if (row.kind == L"action") {
+            tail.Children().Append(Icon(L"openOut", Tok(L"IconMark"), secondary));
+        }
+        Grid::SetColumn(tail, 2);
+        content.Children().Append(tail);
+        button.Content(content);
+
+        auto key = row.key;
+        button.GotFocus([mark](auto&&, auto&&) { mark.Opacity(1); });
+        button.LostFocus([mark](auto&&, auto&&) { mark.Opacity(0); });
+        button.Click([this, key](auto&&, auto&&) { ScalingPress(key); });
+        ScalingList().Children().Append(button);
+    }
+
+    void WidgetPage::UpdateScaling()
+    {
+        if (m_scalingPage.empty()) return;
+        ScalingGame().Text(Str(m_scalingData, m_scalingPage == L"lossless" ? L"targetTitle" : L"game"));
+        if (m_scalingPage == L"magpie") {
+            std::wstring game = Str(m_scalingData, L"game").c_str();
+            auto slash = game.find_last_of(L"\\/");
+            ScalingGame().Text(slash == std::wstring::npos ? game : game.substr(slash + 1));
+        }
+        auto rows = ScalingRows();
+        std::wstring signature;
+        for (auto const& row : rows)
+            signature += row.kind + L"|" + row.key + L"|" + to_hstring(row.index).c_str() + L"|" + (row.on ? L"1" : L"0")
+                + (row.off ? L"x" : L"") + row.detail.c_str() + L";";
+        if (signature == m_scalingSignature.c_str()) return;
+        m_scalingSignature = signature;
+        // Rebuild, keeping focus on the same row (or the first usable one when the page opens).
+        std::wstring focused;
+        if (auto element = FocusManager::GetFocusedElement().try_as<Button>(); element && element.Tag())
+            if (auto tag = element.Tag().try_as<hstring>()) focused = tag->c_str();
+        bool inside = false;
+        for (auto const& child : ScalingList().Children()) if (child == FocusManager::GetFocusedElement()) inside = true;
+        bool first = m_scalingRows.empty();
+        m_scalingRows = rows;
+        ScalingList().Children().Clear();
+        for (auto const& row : m_scalingRows) BuildScalingRow(row);
+        if (inside || first) {
+            Button target{ nullptr };
+            for (auto const& child : ScalingList().Children()) {
+                auto button = child.as<Button>();
+                if (!button.IsEnabled()) continue;
+                if (!target) target = button;
+                if (inside && unbox_value<hstring>(button.Tag()) == hstring(focused)) { target = button; break; }
+            }
+            if (target) target.Focus(FocusState::Keyboard);
+            else ScalingBack().Focus(FocusState::Programmatic);
+        }
+    }
+
+    // A on a row: the scaling switch starts / stops (it begins once Game Bar closes and the game is in front),
+    // a switch flips, a choice row lists its choices, a group opens or closes.
+    void WidgetPage::ScalingPress(std::wstring const& key)
+    {
+        auto at = std::find_if(m_scalingRows.begin(), m_scalingRows.end(), [&](auto const& r) { return r.key == key; });
+        if (at == m_scalingRows.end() || at->off || m_scalingSending) return;
+        auto const& row = *at;
+        if (row.kind == L"hero") {
+            bool duck = m_scalingPage == L"lossless";
+            auto action = Bool(m_scalingData, L"pending") ? L"cancel" : Bool(m_scalingData, duck ? L"active" : L"enabled") ? L"stop" : L"start";
+            SendScaling(L"qam_scaling_action", Args({ S(m_scalingPage), S(action) }));
+        }
+        else if (row.kind == L"group") { m_scalingOpenGroups[key] = !m_scalingOpenGroups[key]; UpdateScaling(); }
+        else if (row.kind == L"action") SendScaling(L"open_lossless");
+        else if (row.kind == L"toggle") {
+            if (key == L"auto") { JsonObject patch; patch.SetNamedValue(L"auto", B(!row.on)); SendScaling(L"qam_magpie_set", Args({ patch })); }
+            else if (row.choices.size() == 2) ScalingChoose(key, row.on ? 0 : 1);
+            else { JsonObject patch; patch.SetNamedValue(key, B(row.detail == L"invert" ? row.on : !row.on)); SendScaling(L"qam_magpie_set", Args({ patch })); }
+        }
+        else if (row.kind == L"pick") ScalingFlyout(key);
+    }
+
+    void WidgetPage::ScalingStep(std::wstring const& key, int step)
+    {
+        auto at = std::find_if(m_scalingRows.begin(), m_scalingRows.end(), [&](auto const& r) { return r.key == key; });
+        if (at == m_scalingRows.end() || at->off || at->kind != L"pick" || at->choices.empty()) return;
+        int next = std::clamp(std::max(at->index, 0) + step, 0, static_cast<int>(at->choices.size()) - 1);
+        if (next != at->index) ScalingChoose(key, next);
+    }
+
+    void WidgetPage::ScalingChoose(std::wstring const& key, int index)
+    {
+        auto at = std::find_if(m_scalingRows.begin(), m_scalingRows.end(), [&](auto const& r) { return r.key == key; });
+        if (at == m_scalingRows.end() || index < 0 || index >= static_cast<int>(at->choices.size()) || m_scalingSending) return;
+        auto value = at->choices[index].value;
+        if (key == L"profile") { m_losslessProfile = value.GetNumber(); UpdateScaling(); return; }
+        // Show the new value at once; the reply brings the saved state.
+        at->index = index;
+        if (m_scalingPage == L"lossless") {
+            auto profile = LosslessProfile();
+            if (!profile) return;
+            if (auto values = Obj(profile, L"values")) values.SetNamedValue(key, value);
+            SendScaling(L"qam_lossless_set", Args({ N(Num(profile, L"index")), S(key), value }));
+        } else {
+            JsonObject patch;
+            patch.SetNamedValue(key, value);
+            if (key == L"preset") m_scalingData.SetNamedValue(L"preset", value);
+            else if (auto values = Obj(m_scalingData, L"values")) values.SetNamedValue(key, value);
+            SendScaling(L"qam_magpie_set", Args({ patch }));
+        }
+        UpdateScaling();
+    }
+
+    void WidgetPage::ScalingFlyout(std::wstring const& key)
+    {
+        auto at = std::find_if(m_scalingRows.begin(), m_scalingRows.end(), [&](auto const& r) { return r.key == key; });
+        if (at == m_scalingRows.end()) return;
+        Button anchor{ nullptr };
+        for (auto const& child : ScalingList().Children())
+            if (auto button = child.as<Button>(); unbox_value<hstring>(button.Tag()) == hstring(key)) anchor = button;
+        if (!anchor) return;
+        MenuFlyout menu;
+        menu.Placement(Primitives::FlyoutPlacementMode::Bottom);
+        for (int i = 0; i < static_cast<int>(at->choices.size()); ++i) {
+            ToggleMenuFlyoutItem item;
+            item.Text(at->choices[i].label);
+            item.IsChecked(i == at->index);
+            item.Click([this, key, i](auto&&, auto&&) { ScalingChoose(key, i); });
+            menu.Items().Append(item);
+        }
+        menu.ShowAt(anchor);
     }
 
     void WidgetPage::SendScaling(std::wstring const& method, JsonArray const& args)
@@ -746,121 +978,16 @@ namespace winrt::ClawWidget::implementation
         m_scalingSending = true;
         m_scalingError.clear();
         auto page = m_scalingPage;
-        m_agent->Call(method, args, [this, page, method](auto const&, hstring const& error) {
+        m_agent->Call(method, args, [this, page](auto const& value, hstring const& error) {
             m_scalingSending = false;
             if (m_shutdown || page != m_scalingPage) return;
-            if (!error.empty()) { m_scalingError = error; UpdateScaling(); return; }
-            if (method == L"save_lossless_settings") m_losslessEdits.Clear();
+            if (!error.empty()) m_scalingError = error;
+            else if (value && value.ValueType() == JsonValueType::Object && value.GetObject().HasKey(L"available"))
+                m_scalingData = value.GetObject();
             m_scalingAt = {};
             RefreshScaling();
+            UpdateScaling();
         });
-        UpdateScaling();
-    }
-
-    void WidgetPage::UpdateScaling()
-    {
-        if (m_scalingPage.empty()) return;
-        bool duck = m_scalingPage == L"lossless";
-        auto const& data = m_scalingData;
-        bool online = m_agent->Ready(), available = Bool(data, L"available");
-        bool active = Bool(data, L"active"), enabled = duck ? active : Bool(data, L"enabled");
-        bool pending = Bool(data, L"pending"), blocked = Bool(data, L"blocked");
-        bool dirty = m_losslessEdits.Size() != 0;
-        int seconds = static_cast<int>(Num(data, L"seconds"));
-        auto error = m_scalingError.empty() ? Str(data, L"error") : m_scalingError;
-        hstring status;
-        if (!online) status = L"未连接";
-        else if (pending && seconds > 0) status = to_hstring(seconds) + L" 秒后缩放";
-        else if (pending || m_scalingSending) status = L"处理中";
-        else if (!data && !error.empty()) status = L"读取失败";
-        else if (!data) status = L"读取中";
-        else if (!available) status = duck ? L"未配置" : L"不可用";
-        else if (active) status = L"正在缩放";
-        else if (enabled) status = L"等待返回游戏";
-        else status = L"未缩放";
-        auto statusLabel = ScalingStatus();
-        if (statusLabel.Text() != status) statusLabel.Text(status);
-        auto badge = ScalingStatusBadge();
-        int tone = !online || !error.empty() ? 3 : pending || m_scalingSending || (enabled && !active) ? 2 : active ? 1 : 0;
-        if (!badge.Tag() || unbox_value<int>(badge.Tag()) != tone) {
-            badge.Tag(box_value(tone));
-            Color color = tone == 3 ? ColorHelper::FromArgb(255, 255, 164, 166)
-                : tone == 2 ? ColorHelper::FromArgb(255, 255, 211, 109)
-                : tone == 1 ? ColorHelper::FromArgb(255, 142, 232, 174)
-                : ColorHelper::FromArgb(255, 205, 208, 215);
-            statusLabel.Foreground(SolidColorBrush(color));
-            badge.Background(SolidColorBrush(ColorHelper::FromArgb(27, color.R, color.G, color.B)));
-        }
-
-        auto target = Str(data, L"targetTitle");
-        ScalingTarget().Text(!target.empty() ? target : active ? hstring(L"原版未提供窗口名称") : hstring(L"启动后显示"));
-        hstring hint = L"按下后收起 Game Bar，5 秒内切回目标窗口。";
-        if (pending && seconds > 0) hint = L"请切回要缩放的窗口。";
-        else if (dirty) hint = L"应用后保存到当前所选档案。";
-        else if (active) hint = L"";
-        else if (enabled) hint = Str(data, L"phase", L"等待返回游戏");
-        if (!error.empty()) hint = error;
-        if (duck && dirty && m_losslessRevision != Str(data, L"revision"))
-            hint = L"原版档案已变更，请放弃修改后重新选择。";
-        ScalingHint().Text(hint);
-        ScalingHint().Visibility(hint.empty() ? Visibility::Collapsed : Visibility::Visible);
-        ScalingAction().Content(box_value(hstring(pending && seconds > 0 ? L"取消倒数" : enabled ? L"停止缩放" : L"手动缩放 · 5 秒")));
-        ScalingAction().IsEnabled(online && available && !m_scalingSending && !blocked && (!pending || seconds > 0) && (!dirty || enabled));
-        ScalingFooter().Visibility(duck ? Visibility::Visible : Visibility::Collapsed);
-        ScalingNative().IsEnabled(online && available && !pending && !m_scalingSending);
-        MagpieOptions().Visibility(duck ? Visibility::Collapsed : Visibility::Visible);
-        LosslessOptions().Visibility(duck ? Visibility::Visible : Visibility::Collapsed);
-        bool edit = online && available && !enabled && !pending && !blocked && !m_scalingSending;
-        auto profile = duck ? LosslessProfile() : nullptr;
-        bool profileEdit = edit && profile;
-        auto frameGen = duck ? LosslessValue(L"FrameGeneration") : nullptr;
-        bool lsfg3 = frameGen && frameGen.GetString() == L"LSFG3";
-        bool fg = lsfg3 || (frameGen && frameGen.GetString() == L"LSFG2");
-        ScalingProfile().IsEnabled(edit && !dirty && Arr(data, L"profiles").Size() > 0);
-        ScalingAlgorithm().IsEnabled(profileEdit);
-        ScalingFrameGen().IsEnabled(profileEdit);
-        int frameColumns = lsfg3 ? 1 : 2;
-        if (Grid::GetColumnSpan(ScalingFrameGen()) != frameColumns)
-            Grid::SetColumnSpan(ScalingFrameGen(), frameColumns);
-        ScalingFrameMode().Visibility(lsfg3 ? Visibility::Visible : Visibility::Collapsed);
-        ScalingFrameMode().IsEnabled(profileEdit);
-        ScalingFrameDetails().Visibility(fg ? Visibility::Visible : Visibility::Collapsed);
-        ScalingFrameRate().IsEnabled(profileEdit);
-        ScalingPerformance().IsEnabled(profileEdit);
-        ScalingSaveActions().Visibility(dirty ? Visibility::Visible : Visibility::Collapsed);
-        bool sameRevision = m_losslessRevision == Str(data, L"revision");
-        ScalingApply().IsEnabled(profileEdit && dirty && sameRevision);
-        ScalingDiscard().IsEnabled(!m_scalingSending);
-        ScalingFill().IsEnabled(edit);
-        ScalingSharpen().IsEnabled(edit);
-        if (duck) {
-            auto label = [&](std::wstring const& key) -> hstring {
-                auto value = LosslessValue(key);
-                if (!value) return L"—";
-                for (auto const& entry : Arr(data, L"choices." + key)) {
-                    auto item = entry.GetObject();
-                    if (Get(item, L"value").Stringify() == value.Stringify()) return Str(item, L"label");
-                }
-                return value.ValueType() == JsonValueType::String ? value.GetString() : value.Stringify();
-            };
-            SetScalingTile(ScalingProfile(), L"游戏档案", Str(profile, L"label", L"—"));
-            SetScalingTile(ScalingAlgorithm(), L"缩放算法", label(L"ScalingType"));
-            SetScalingTile(ScalingFrameGen(), L"补帧算法", label(L"FrameGeneration"));
-            SetScalingTile(ScalingFrameMode(), L"帧生成模式", label(L"LSFG3Mode1"));
-            auto rateKey = LosslessRateKey();
-            SetScalingTile(ScalingFrameRate(), rateKey == L"LSFG3Target" ? L"目标帧率" : L"帧生成倍率", label(rateKey));
-            SetScalingTile(ScalingPerformance(), L"性能模式", label(L"LSFGSize"));
-        } else {
-            SetScalingTile(ScalingFill(), L"铺满屏幕", Bool(data, L"preferences.fill") ? L"开启" : L"关闭", false);
-            SetScalingTile(ScalingSharpen(), L"锐化", Bool(data, L"preferences.sharpen") ? L"开启" : L"关闭", false);
-            auto capture = Str(data, L"preferences.capture", L"graphics");
-            if (capture == L"graphics") capture = L"Graphics Capture";
-            else if (capture == L"desktop") capture = L"桌面复制";
-            else if (capture == L"gdi") capture = L"GDI";
-            else if (capture == L"dwm") capture = L"DwmSharedSurface";
-            auto fps = Num(data, L"preferences.maxFrameRate");
-            ScalingSettings().Text(available ? L"捕获 " + capture + L" · " + (fps > 0 ? Fmt(fps, 0) + L" FPS 上限" : hstring(L"不限帧")) : hstring(L"—"));
-        }
     }
 
     void WidgetPage::BuildTiles()
@@ -1204,8 +1331,8 @@ namespace winrt::ClawWidget::implementation
             level.count = 5; level.index = value;
             level.value = value ? to_hstring(value) + L" 档" : hstring(L"关");
         }
-        else if (id == L"magpie") level.value = Bool(m_data, L"magpie.active") ? L"缩放中" : L"打开";
-        else if (id == L"lossless") level.value = L"打开";
+        else if (id == L"magpie") level.value = Bool(m_data, L"magpie.active") ? L"缩放中" : Bool(m_data, L"magpie.enabled") ? L"返回游戏后生效" : L"关";
+        else if (id == L"lossless") level.value = m_losslessActive ? L"缩放中" : L"关";
         else if (id == L"fse")
         {
             level.value = Bool(m_data, L"xboxFse") ? L"退出全屏体验" : L"大屏幕主页";
@@ -1562,7 +1689,14 @@ namespace winrt::ClawWidget::implementation
         auto key = e.Key();
         bool back = key == VirtualKey::GamepadB || key == VirtualKey::Escape;
         if (!m_scalingPage.empty()) {
-            if (back) { OpenScaling({}); e.Handled(true); }
+            if (back) { OpenScaling({}); e.Handled(true); return; }
+            // One column: left / right never move focus here, they step the focused choice.
+            int step = key == VirtualKey::GamepadDPadLeft || key == VirtualKey::Left || key == VirtualKey::GamepadLeftThumbstickLeft ? -1
+                : key == VirtualKey::GamepadDPadRight || key == VirtualKey::Right || key == VirtualKey::GamepadLeftThumbstickRight ? 1 : 0;
+            if (!step) return;
+            if (auto row = FocusManager::GetFocusedElement().try_as<Button>(); row && row.Tag())
+                if (auto tag = row.Tag().try_as<hstring>()) ScalingStep(tag->c_str(), step);
+            e.Handled(true);
             return;
         }
         if (back && m_railAdjustment) { SetRailAdjustment(nullptr); e.Handled(true); return; }

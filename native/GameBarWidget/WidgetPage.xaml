@@ -38,15 +38,18 @@
                 </Setter.Value>
             </Setter>
         </Style>
-        <Style x:Key="ScalingTile" TargetType="Button">
+        <!-- Magpie / 小黄鸭 pages: one settings card per row (WinUI SettingsCard look). -->
+        <Style x:Key="ScalingRow" TargetType="Button">
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-            <Setter Property="MinHeight" Value="50" />
-            <Setter Property="Padding" Value="12,5" />
-            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="MinHeight" Value="{StaticResource ScalingRowHeight}" />
+            <Setter Property="Padding" Value="{StaticResource ScalingRowInset}" />
+            <Setter Property="CornerRadius" Value="{StaticResource RadiusOuter}" />
             <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
             <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
             <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="UseSystemFocusVisuals" Value="False" />
         </Style>
     </Page.Resources>
     <!-- Native layout of the approved design ("UI design", WinUI Fluent dark): side rail, header with
@@ -144,96 +147,29 @@
             <Grid x:Name="Tiles" Grid.Row="3" RowSpacing="8" ColumnSpacing="8" XYFocusKeyboardNavigation="Enabled" />
         </Grid>
 
-        <Grid x:Name="ScalingPanel" Grid.ColumnSpan="2" Visibility="Collapsed" RowSpacing="10"
-              VerticalAlignment="Top" XYFocusKeyboardNavigation="Enabled" Padding="2,2,2,0">
+        <!-- Magpie / 小黄鸭: header + one column of setting rows, built in WidgetPage.cpp (ScalingRows). -->
+        <Grid x:Name="ScalingPanel" Grid.ColumnSpan="2" Visibility="Collapsed">
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
+                <RowDefinition Height="{StaticResource ScalingHeaderHeight}" />
                 <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
-            <Grid ColumnSpacing="10">
+            <Grid ColumnSpacing="{StaticResource SpaceS}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <Button x:Name="ScalingBack" Width="40" Height="40" Padding="0" AutomationProperties.Name="返回快捷面板" ToolTipService.ToolTip="返回">
-                    <SymbolIcon Symbol="Back" />
-                </Button>
-                <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                    <TextBlock x:Name="ScalingTitle" FontSize="22" FontWeight="SemiBold" />
-                    <TextBlock x:Name="ScalingSubtitle" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                </StackPanel>
-                <Border x:Name="ScalingEmblem" Grid.Column="2" Width="38" Height="38" VerticalAlignment="Center" CornerRadius="7" />
+                <Button x:Name="ScalingBack" Width="{StaticResource ScalingBackSize}" Height="{StaticResource ScalingBackSize}" Padding="0"
+                        Background="Transparent" BorderThickness="0" VerticalAlignment="Center" AutomationProperties.Name="返回快捷面板" />
+                <TextBlock x:Name="ScalingTitle" Grid.Column="1" VerticalAlignment="Center" FontSize="{StaticResource TypeTitleSize}" FontWeight="SemiBold" />
+                <TextBlock x:Name="ScalingGame" Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"
+                           FontSize="{StaticResource TypeLabelSize}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </Grid>
-            <ScrollViewer Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled"
-                          HorizontalContentAlignment="Stretch" VerticalScrollBarVisibility="Auto" ZoomMode="Disabled" IsTabStop="False">
-                <StackPanel Spacing="10" Padding="0,0,0,2">
-                    <Border Padding="12,8" CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                        <StackPanel Spacing="6">
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <StackPanel VerticalAlignment="Center" Spacing="2">
-                                    <TextBlock Text="缩放窗口" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                    <TextBlock x:Name="ScalingTarget" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                                <Border x:Name="ScalingStatusBadge" Grid.Column="1" CornerRadius="5" Padding="8,4" VerticalAlignment="Center">
-                                    <TextBlock x:Name="ScalingStatus" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="120" />
-                                </Border>
-                            </Grid>
-                            <Grid ColumnSpacing="12">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock x:Name="ScalingHint" FontSize="12" TextWrapping="Wrap"
-                                           VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <Button x:Name="ScalingAction" Grid.Column="1" MinHeight="38" MinWidth="132"
-                                        VerticalAlignment="Center" Style="{ThemeResource AccentButtonStyle}" />
-                            </Grid>
-                        </StackPanel>
-                    </Border>
-                    <Grid>
-                        <StackPanel x:Name="MagpieOptions" Spacing="8">
-                            <TextBlock Text="画面设置" Margin="2,0,0,0" FontWeight="SemiBold" />
-                            <Grid ColumnSpacing="8">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <Button x:Name="ScalingFill" Style="{StaticResource ScalingTile}" />
-                                <Button x:Name="ScalingSharpen" Grid.Column="1" Style="{StaticResource ScalingTile}" />
-                            </Grid>
-                            <TextBlock x:Name="ScalingSettings" Margin="2,0,0,0" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                        </StackPanel>
-                        <StackPanel x:Name="LosslessOptions" Spacing="8">
-                            <TextBlock Text="档案与画面" Margin="2,0,0,0" FontWeight="SemiBold" />
-                            <Grid ColumnSpacing="8">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <Button x:Name="ScalingProfile" Style="{StaticResource ScalingTile}" />
-                                <Button x:Name="ScalingAlgorithm" Grid.Column="1" Style="{StaticResource ScalingTile}" />
-                            </Grid>
-                            <TextBlock Text="帧生成" Margin="2,4,0,0" FontWeight="SemiBold" />
-                            <Grid ColumnSpacing="8">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <Button x:Name="ScalingFrameGen" Style="{StaticResource ScalingTile}" />
-                                <Button x:Name="ScalingFrameMode" Grid.Column="1" Style="{StaticResource ScalingTile}" />
-                            </Grid>
-                            <Grid x:Name="ScalingFrameDetails" ColumnSpacing="8">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <Button x:Name="ScalingFrameRate" Style="{StaticResource ScalingTile}" />
-                                <Button x:Name="ScalingPerformance" Grid.Column="1" Style="{StaticResource ScalingTile}" />
-                            </Grid>
-                        </StackPanel>
-                    </Grid>
-                </StackPanel>
+            <ScrollViewer x:Name="ScalingScroll" Grid.Row="1" HorizontalScrollMode="Disabled" HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Hidden" ZoomMode="Disabled" IsTabStop="False" XYFocusKeyboardNavigation="Enabled">
+                <StackPanel x:Name="ScalingList" Spacing="{StaticResource SpaceXS}" XYFocusKeyboardNavigation="Enabled" />
             </ScrollViewer>
-            <Grid x:Name="ScalingFooter" Grid.Row="2" ColumnSpacing="8">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                <Button x:Name="ScalingNative" Content="打开原版" MinHeight="38" AutomationProperties.Name="打开小黄鸭原版" />
-                <StackPanel x:Name="ScalingSaveActions" Grid.Column="1" Orientation="Horizontal" Spacing="8"
-                            HorizontalAlignment="Right" Visibility="Collapsed">
-                    <Button x:Name="ScalingDiscard" Content="放弃修改" MinHeight="38" />
-                    <Button x:Name="ScalingApply" Content="应用到档案" MinHeight="38" Style="{ThemeResource AccentButtonStyle}" />
-                </StackPanel>
-            </Grid>
         </Grid>
-
         <!-- Tile editing -->
         <ScrollViewer x:Name="EditPanel" Grid.Column="1" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
             <StackPanel Spacing="12" Padding="0,0,10,0">

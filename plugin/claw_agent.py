@@ -55,7 +55,7 @@ METHODS = {
     # Game Bar widget
     "widget_state", "set_brightness", "set_volume", "set_mute", "set_refresh_rate", "set_fps_limit",
     "close_game", "power_action", "preview_power_animation", "toggle_keyboard", "screenshot", "show_desktop", "freeze_game", "resume_frozen_game",
-    "open_task_manager", "open_gaming_home", "leave_xbox_fse", "qam_scaling_state", "qam_scaling_action",
+    "open_task_manager", "open_gaming_home", "leave_xbox_fse", "qam_scaling_state", "qam_scaling_action", "qam_magpie_set", "qam_lossless_set",
     # ClawLibrary 显示与声音
     "get_display_state", "set_resolution", "set_vrr", "set_hdr", "set_audio_output", "set_mic_mute",
     "set_display_scale", "set_auto_brightness", "set_gpu_option",

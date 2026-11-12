@@ -752,6 +752,29 @@ class Service:
             raise RuntimeError("工具箱后台正在退出，请稍候")
         return await self._qam_scaling.action(engine, action)
 
+    async def qam_magpie_set(self, patch):
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        session = getattr(self._power, "sessions", None)
+        game = (getattr(session, "current", None) or (self._power.sys_cache or {}).get("game") or {})
+        await self._magpie.qam_set(game.get("path", ""), patch)
+        return await self.qam_scaling_state("magpie")
+
+    async def qam_lossless_set(self, index, key, value):
+        """One profile field from the Game Bar page, written at once (the original app restarts to read it)."""
+        if self._stopping:
+            raise RuntimeError("工具箱后台正在退出，请稍候")
+        if type(index) not in (int, float) or not isinstance(key, str):
+            raise ValueError("档案设置格式错误")
+        state = await self.qam_scaling_state("lossless")
+        if state.get("active") or state.get("pending"):
+            raise RuntimeError("正在缩放，先关闭缩放再修改档案")
+        async with self._lossless_lock:
+            editor = await asyncio.to_thread(self._lossless_editor.read)
+            await self._save_lossless_settings({"revision": editor.get("revision"), "globalValues": {}, "remove": [],
+                                                "profiles": [{"index": int(index), "values": {key: value}}]})
+        return await self.qam_scaling_state("lossless")
+
     async def power_action(self, action):
         if action not in ("sleep", "shutdown", "restart", "lock"):
             raise ValueError("不支持的电源操作")
