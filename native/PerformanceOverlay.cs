@@ -387,7 +387,7 @@ sealed class PerformanceOverlay : Form {
         if(timer==IntPtr.Zero)return;
         pacer=new Thread(delegate(){
             try{
-                long next=Stopwatch.GetTimestamp();long interval=Stopwatch.Frequency/60;
+                long next=Stopwatch.GetTimestamp();long interval=Stopwatch.Frequency/30; // 30 Hz: the scrolling frame-time graph cost ~14 % of a core at 60 Hz
                 while(!closing){
                     if(!animate){
                         animationChanged.WaitOne();
@@ -404,7 +404,7 @@ sealed class PerformanceOverlay : Form {
     }
     public PerformanceOverlay(){
         Text="Claw 性能显示";FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;TopMost=true;StartPosition=FormStartPosition.Manual;
-        repaint.Interval=16;repaint.Tick+=delegate{RefreshFrame();};
+        repaint.Interval=33;repaint.Tick+=delegate{RefreshFrame();};
         numberWake.Tick+=delegate{numberWake.Stop();RefreshFrame();};
         maintenance.Interval=1000;
         long diagnosticsAt=0;

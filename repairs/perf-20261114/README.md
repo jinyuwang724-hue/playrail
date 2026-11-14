@@ -14,3 +14,15 @@ Library 0.1.269 (`WallStage.Services.cs`): pause the banner drift clock when the
 (hidden library 22.6 % → 5.5 % of a core). Desktop quick-settings route reuses one agent connection.
 
 ClawShell 1.0.19: cache the explorer check and `state.json` read in the 100 ms watch loop (5.7 % → 0.2 %).
+
+ClawPerformanceOverlay (`native/PerformanceOverlay.cs`): pace the scrolling frame-time graph at 30 Hz instead
+of 60 Hz (it cost ~14 % of a core in game). Installed over `app\bin\ClawPerformanceOverlay.exe`.
+
+Input engine `ClawInput-0.17.58-linger.exe` (source here in `InputLayer/`: the deployed overlay-r2 source from
+`artifacts/overlay-focus-fix-191/src/native/InputLayer` + `docs/notice-r3-Osd.cs.txt`, plus the linger change):
+when the agent disappears without sending `stop` (crash, kill, restart) the elevated engine keeps the virtual
+pad and current layout running for 30 s and waits on `\.\pipe\claw-input-resume-<user SID>`; the next agent's
+bridge resumes it instead of starting a new engine, so games no longer show "controller disconnected" on an
+agent restart. A graceful disable still sends `stop` and tears down at once; a different build is told to stop.
+`claw_input_layer.py` prefers the `-linger` exe. Verified: agent killed, Decky restarted it in 4 s, same
+engine pid, virtual pad never left its XInput slot.
