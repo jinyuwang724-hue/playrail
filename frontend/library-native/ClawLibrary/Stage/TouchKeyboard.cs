@@ -21,14 +21,26 @@ internal static class TouchKeyboard
     /// <summary>InputPaneInterop 在这个窗口上会抛「Specified cast is not valid」（每次约 50 ms，拖慢快设唤出）：抛过一次就不再用它。</summary>
     private static bool _paneBroken;
 
+    /// <summary>TabTip 是我们用 Toggle 打开的、还没收回去。InputPane 坏了时看不出键盘在不在，只能记着自己开过。</summary>
+    public static bool OpenedByUs;
+
+    /// <summary>收回我们用 Toggle 打开的 TabTip（输入框失焦时）。用户自己先点了键盘上的 × 的话这里会再开一次，目前分不出来。</summary>
+    public static void CloseOurs()
+    {
+        if (!OpenedByUs) return;
+        OpenedByUs = false;
+        Toggle();
+    }
+
     public static void Hide(nint hwnd)
     {
         bool hidden = false;
         if (!_paneBroken)
             try { hidden = Windows.UI.ViewManagement.InputPaneInterop.GetForWindow(hwnd)?.TryHide() == true; }
             catch (Exception ex) { _paneBroken = true; Log.Warn($"touch keyboard hide: {ex.Message} (InputPane skipped from now on)"); }
-        if (_paneBroken) return;
+        if (_paneBroken) { CloseOurs(); return; }
         if (!hidden && Visible(hwnd)) Toggle();
+        OpenedByUs = false;
     }
 
     /// <summary>

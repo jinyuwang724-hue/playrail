@@ -372,7 +372,8 @@ public sealed partial class WallStage
         After(600, () =>
         {
             _kbPending = false;
-            if (!TextInputFocused() || TouchKeyboard.Visible(hwnd)) return;
+            // TabTip 是开关：上次是我们打开的、还没收（InputPane 坏了时看不出它在不在），再按一次反而把它关了
+            if (!TextInputFocused() || TouchKeyboard.Visible(hwnd) || TouchKeyboard.OpenedByUs) return;
             // 游戏模式没有 explorer，系统触摸键盘（TextInputHost）不在：用经典屏幕键盘 osk
             if (ShellMode.Available && !ShellMode.ExplorerRunning())
             {
@@ -381,7 +382,7 @@ public sealed partial class WallStage
                 return;
             }
             Log.Info($"touch keyboard: system pane {(asked ? "did not show" : "refused")}, opening TabTip");
-            TouchKeyboard.Toggle();
+            if (TouchKeyboard.Toggle()) TouchKeyboard.OpenedByUs = true;
         });
     }
 

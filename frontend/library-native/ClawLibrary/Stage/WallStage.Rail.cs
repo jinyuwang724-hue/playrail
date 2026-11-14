@@ -83,7 +83,7 @@ public sealed partial class WallStage
                 try
                 {
                     var bmp = await CanvasBitmap.LoadAsync(G.Device, path);
-                    _dq.TryEnqueue(() => { _railModel.Avatar = bmp; RepaintRail(); });
+                    _dq.TryEnqueue(() => { _railModel.Avatar = bmp; RepaintRail(); CsPaintTools(); });
                 }
                 catch (Exception ex) { Log.Warn($"avatar load: {ex.Message}"); }
             });

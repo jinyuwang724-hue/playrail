@@ -141,7 +141,9 @@ public sealed partial class WallStage
 
     // ---------------- 数据 ----------------
 
-    private static readonly string[] CsTabNames = { "首页", "全部", "Steam", "本地" };
+    private static readonly string[] CsTabNames = { "首页", "全部", "Steam", "本地", "搜索" };
+    /// <summary>tab 4 是搜索结果，标签写搜索词。</summary>
+    private string CsTabLabel(int tab) => tab == 4 ? _csQuery ?? CsTabNames[4] : CsTabNames[tab];
 
     /// <summary>tab 0 首页 / 1 全部：所有游戏按最近游玩；2 Steam；3 本地（非 Steam、非 Xbox）。</summary>
     private List<LibraryItem> CsList(int tab)
@@ -152,11 +154,12 @@ public sealed partial class WallStage
         {
             2 => all.Where(g => g.Platform == "steam").ToList(),
             3 => all.Where(g => g.Platform is not ("steam" or "xbox")).ToList(),
+            4 => _csQuery == null ? new List<LibraryItem>() : SearchItems(_csQuery).Where(g => g.Kind == ItemKind.Game).ToList(),
             _ => all.ToList(),
         };
     }
 
-    private List<int> CsTabsShown() => Enumerable.Range(0, 4).Where(t => t <= 1 || CsList(t).Count > 0).ToList();
+    private List<int> CsTabsShown() => Enumerable.Range(0, _csQuery != null ? 5 : 4).Where(t => t <= 1 || CsList(t).Count > 0).ToList();
 
     private LibraryItem? CsSpotItem()
     {
@@ -273,7 +276,7 @@ public sealed partial class WallStage
         float x = CsEdge;
         foreach (int tab in CsTabsShown())
         {
-            string label = CsTabNames[tab], count = tab == 0 ? "" : CsList(tab).Count.ToString();
+            string label = CsTabLabel(tab), count = tab == 0 ? "" : CsList(tab).Count.ToString();
             float lw, cw = 0;
             using (var l = TextKit.Layout(G.Device, label, TextKit.Ui(600), HdFont, 600, CanvasHorizontalAlignment.Left)) lw = (float)l.LayoutBounds.Width;
             if (count.Length > 0) using (var c = TextKit.Layout(G.Device, count, TextKit.Num(400), HdCount, 200, CanvasHorizontalAlignment.Left)) cw = (float)c.LayoutBounds.Width;
@@ -378,6 +381,7 @@ public sealed partial class WallStage
             _cs.Status.Offset = new Vector3(CsW - CsEdge - w, HdTop, 0);
         }
         finally { foreach (var l in layouts) l.Dispose(); }
+        CsPaintTools();
     }
 
     // ---------------- 页面切换 ----------------
@@ -392,6 +396,7 @@ public sealed partial class WallStage
         var old = _cs.Page;
         string? spot = _csSpotForce ?? CsSpotItem()?.Id ?? _csSpot;
         _csSpotForce = null;
+        if (_csHd >= 0) { _csHd = -1; CsPaintTools(); }   // 换页时顶栏焦点让给新页面
         _cs.Tab = tab;
         CsPaintTabs(animate: old != null);
         var page = tab == 0 && _prefs.Home == HomeStyle.Wall ? CsBuildWallPage()
@@ -500,6 +505,8 @@ public sealed partial class WallStage
     private void CsSwitchTab(int delta)
     {
         if (_cs == null || _csInsert != null) { Cue(Sfx.None); return; }
+        if (_csSearchOpen) CsCloseSearch();
+        if (CsHeaderFocused && _cs.Page is { } hp) CsLeaveHeader(hp, quiet: true);
         var tabs = CsTabsShown();
         int at = Math.Max(0, tabs.IndexOf(_cs.Tab));
         int next = at + delta;
@@ -1058,7 +1065,7 @@ public sealed partial class WallStage
         bool running = RunningGame(g.Id) != null;
         int count = CsActCount(g);
         bool fav = _csFav.Contains(g.Id);
-        int focus = p.Acts ? p.Act : -1;
+        int focus = p.Acts && !CsHeaderFocused ? p.Act : -1;
         const float pad = 8, r = ActH / 2;
         CsRepaint(p.ActsV, w + pad * 2, ActH + pad * 2, ds =>
         {
@@ -1131,7 +1138,7 @@ public sealed partial class WallStage
         page.Bg = CsBuildBg(page, HomeStyle.Shelf, cat: true);
         root.Children.InsertAtTop(page.Bg);
         root.Children.InsertAtTop(content);
-        page.Recent = items.Where(g => g.LastPlayedDays is int d && d < 30).Take(8).ToList();
+        page.Recent = tab == 4 ? new List<LibraryItem>() : items.Where(g => g.LastPlayedDays is int d && d < 30).Take(8).ToList();
         var scroll = G.Container(relative: false);
         scroll.Size = new Vector2(CsW, CsH);
         content.Children.InsertAtTop(scroll);
@@ -1290,6 +1297,7 @@ public sealed partial class WallStage
     private void CsMove(Direction dir)
     {
         if (_cs?.Page is not { } p || _csInsert != null) { Cue(Sfx.None); return; }
+        if (CsHeaderMove(p, dir)) return;
         if (p.Tab == 0) CsHomeMove(p, dir); else CsCatMove(p, dir);
     }
 
@@ -1453,6 +1461,8 @@ public sealed partial class WallStage
     {
         if (_cs?.Page is not { } p) return;
         if (_csInsert != null) { Cue(Sfx.None); return; }
+        if (_csSearchOpen) { if (_csSearchBox?.Text.Trim().Length > 0) CsSubmitSearch(); else CsFocusSearchBox(); return; }
+        if (CsHeaderFocused) { CsToolActivate(CsToolOrder[_csHd]); return; }
         if (p.Tab == 0)
         {
             if (p.Sel >= p.Items.Count) { CsGoTab(1); return; }
@@ -1495,7 +1505,15 @@ public sealed partial class WallStage
     {
         if (_cs?.Page is not { } p) return false;
         if (_csInsert != null) { CsInsertBack(); return true; }
-        if (p.Tab != 0) { Cue(Sfx.Tab); CsShowTab(0, -1, entry: true); return true; }
+        if (_csSearchOpen) { CsCloseSearch(); return true; }
+        if (CsHeaderFocused) { CsLeaveHeader(p); return true; }
+        if (p.Tab != 0)
+        {
+            Cue(Sfx.Tab);
+            _csQuery = null;   // 回首页时搜索结果页签收掉（CsShowTab 里重画页签）
+            CsShowTab(0, -1, entry: true);
+            return true;
+        }
         if (p.Acts && p.Style == HomeStyle.Stack) { CsStackBackToPile(p, p.Sel < p.Items.Count ? p.Items[p.Sel] : null); return true; }
         if (p.Acts) { CsHomeMove(p, Direction.Down); return true; }
         return false;
@@ -1569,8 +1587,10 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return false;
         if (_csInsert != null) { if (_csInsert.Done) { } return true; }
         var (x, y) = CsLocal(sx, sy);
+        if (_csSearchOpen && y >= CatTop) { CsCloseSearch(); return true; }
         if (y < CatTop)
         {
+            if (CsToolsClick(x, y)) return true;
             foreach (var t in _cs.Tabs)
                 if (x >= t.X - 12 && x <= t.X + t.V.Size.X + 12) { CsGoTab(t.Tab); return true; }
             return true;
