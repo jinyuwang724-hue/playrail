@@ -229,6 +229,8 @@ public sealed partial class WallStage
         _cc.IsVisible = true;
         CcBackStart();
         CcStagger(120);   // 其余几张卡依次出现
+        CcBandsApply();
+        if (_ccBands && _ccBandsRoot != null && !Reduced) _ccBandsRoot.StartAnimation("Opacity", G.Scalar(0, 1, 240, EaseOutCss, 60));
         _ = PerfRefresh(true);
         CcChromeOpen();
         _ccTimer ??= CcMakeTimer();
@@ -249,7 +251,7 @@ public sealed partial class WallStage
             int v = _ccVersion;
             After(ms + 10, () => { if (v == _ccVersion && _ccOpen) { _root.IsVisible = false; _root.StopAnimation("Opacity"); _root.Opacity = 1; } });
         }
-        else if (Reduced || !MorphExit())
+        else if (Reduced || _ccBands || !MorphExit())
         {
             // 没有能飞的 hero（或降低动态效果）：墙按原来的 0.28 s 淡出
             double ms = Reduced ? 1 : CcCloseMs;
@@ -294,7 +296,7 @@ public sealed partial class WallStage
             Log.Info("control center close (fade)");
             return;
         }
-        if (_ccFocus == 0 && _ccZone == CcZone.Row && !Reduced && !instant && !fade && MorphEnter()) { Log.Info("control center close (morph)"); return; }
+        if (_ccFocus == 0 && _ccZone == CcZone.Row && !Reduced && !instant && !fade && !_ccBands && MorphEnter()) { Log.Info("control center close (morph)"); return; }
         double ms = Reduced || instant ? 1 : CcCloseMs;
         _root.Opacity = 0;
         _root.StartAnimation("Opacity", G.Scalar(0, 1, ms, CcCloseEase));   // 不再写 Opacity：动画进行中写这个属性会把动画停掉
@@ -357,6 +359,7 @@ public sealed partial class WallStage
         CcOrder();
         CcPaintLabels();
         CcScrollTo(i * CcPitch);
+        CcBandsLayout(animate: true);
     }
 
     private void CcActivate()
@@ -370,6 +373,8 @@ public sealed partial class WallStage
         if (_shOpen) { ShActivate(); return; }
         if (_wsOpen) { WsActivate(); return; }
         if (CcChromeActivate()) return;
+        // 色带：焦点那条先铺满全屏，再交给子页面（游戏库那条照常直接回游戏库）
+        if (_ccBands && _ccFocus > 0 && !_ccBandsGoing && CcBandsActivate(() => { _ccBandsGoing = true; try { CcActivate(); } finally { _ccBandsGoing = false; } })) return;
         var b = _ccBlocks[_ccFocus];
         if (_ccFocus > 0) Cue(Sfx.ModalShow);   // 进性能 / 手柄 / 显示与声音 / 系统 / 设置 / 截图页
         switch (_ccFocus)
@@ -413,7 +418,7 @@ public sealed partial class WallStage
         if (_ccOpen && _wsOpen) return;
         if (_ccOpen && _shOpen) { ShY(); return; }
         if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
-        if (_ccOpen) { SetCcCardStyle(!_ccCards); Toast(_ccCards ? "卡片样式：卡片" : "卡片样式：拍立得"); }
+        if (_ccOpen) CcCycleStyle();   // 拍立得 → 卡片 → 色带
         else if (CsActive) CsGameSettings();
         else OpenGameSettingsForFocus();
     }
@@ -469,6 +474,7 @@ public sealed partial class WallStage
         if (_stOpen && StCategoryClick(sx, sy)) return;
         if (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen) { SettingsClick(sx, sy); return; }
         if (CcChromeClick(sx, sy)) return;
+        if (CcBandsClick(sx, sy)) return;
         float h = _ccH * _ccK;
         float top = CcTop;
         if (sy < top - h * 0.1f || sy > top + h * 1.1f) return;
@@ -1581,6 +1587,7 @@ public sealed partial class WallStage
                 var before = _ccBlocks[_ccFocus].Summary;
                 CcReadData();
                 foreach (var b in _ccBlocks) CcPaintCard(b);
+                CcBandsPaint();
                 if (_ccBlocks[_ccFocus].Summary != before) CcPaintLabels();
                 CcBackRun();
                 if (!_perfOpen) _ = PerfRefresh(true);   // 控制中心开着就记功耗，进性能页时曲线已经有一段

@@ -145,6 +145,7 @@ public sealed partial class WallStage
         if (_ccRow != null) yield return _ccRow;
         if (_ccTitle != null) yield return _ccTitle;
         if (_ccLabel != null) yield return _ccLabel;
+        if (_ccBandsRoot != null) yield return _ccBandsRoot;
         foreach (var b in _ccDock) yield return b.El;
         if (_ccChrome != null) yield return _ccPowerLayer;
     }
