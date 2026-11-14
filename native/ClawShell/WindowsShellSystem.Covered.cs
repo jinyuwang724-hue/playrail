@@ -22,10 +22,20 @@ namespace ClawShell
             Log("keep explorer " + (on ? "on" : "off"));
         }
 
+        private DateTime _stateStamp;
+        private bool _stateGame;
+
         public bool CoveredActive()
         {
             if (!ExplorerRunning()) return false;
-            try { return File.ReadAllText(StatePath).Contains("\"mode\":\"game\""); } catch { return false; }
+            // 每 0.1 秒一次：state.json 没改过就用上次读到的
+            try
+            {
+                DateTime stamp = File.GetLastWriteTimeUtc(StatePath);
+                if (stamp != _stateStamp) { _stateGame = File.ReadAllText(StatePath).Contains("\"mode\":\"game\""); _stateStamp = stamp; }
+                return _stateGame;
+            }
+            catch { _stateStamp = default(DateTime); return false; }
         }
 
         /// <summary>

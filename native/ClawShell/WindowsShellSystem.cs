@@ -63,16 +63,27 @@ namespace ClawShell
 
         // ---------- explorer ----------
 
+        // 监视循环每 0.1 秒问一次：同一个外壳窗口、同一个进程已经确认过是本会话的 explorer，就不再取进程快照
+        // （GetProcessById 每次都枚举全部进程，桌面模式下 ClawShell 常驻约 5 % 的核就花在这里）
+        private IntPtr _explorerShell;
+        private uint _explorerPid;
+
         public bool ExplorerRunning()
         {
             IntPtr shell = GetShellWindow();
-            if (shell == IntPtr.Zero) return false;
+            if (shell == IntPtr.Zero) { _explorerShell = IntPtr.Zero; return false; }
             uint pid;
             GetWindowThreadProcessId(shell, out pid);
+            if (pid != 0 && shell == _explorerShell && pid == _explorerPid) return true;
+            _explorerShell = IntPtr.Zero;
             try
             {
                 using (Process p = Process.GetProcessById((int)pid))
-                    return p.SessionId == _session && p.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase);
+                {
+                    bool ok = p.SessionId == _session && p.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase);
+                    if (ok) { _explorerShell = shell; _explorerPid = pid; }
+                    return ok;
+                }
             }
             catch { return false; }
         }

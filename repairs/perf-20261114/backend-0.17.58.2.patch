@@ -1,0 +1,66 @@
+--- a/claw_agent.py
++++ b/claw_agent.py
+@@ -446,6 +446,17 @@
+     try:
+         if updating():
+             return 0
++        # The scheduled task starts us BELOW_NORMAL (task priority 7) and every helper inherits it, so a
++        # full-load game starves power control (save_power took 80-300 s). Run at NORMAL before any child starts.
++        try:
++            import ctypes
++            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
++            kernel32.GetCurrentProcess.restype = ctypes.c_void_p
++            kernel32.SetPriorityClass.argtypes = (ctypes.c_void_p, ctypes.c_uint32)
++            if not kernel32.SetPriorityClass(kernel32.GetCurrentProcess(), 0x20):
++                logging.warning("SetPriorityClass failed: %d", ctypes.get_last_error())
++        except Exception:
++            logging.exception("Could not raise agent priority")
+         if migrate():
+             logging.info("Copied settings from %s", LEGACY_DATA)
+         asyncio.run(run())
+--- a/claw_power.py
++++ b/claw_power.py
+@@ -694,6 +694,8 @@
+         self.osd_text = ""
+         self.osd_data = {}
+         self.policy_lock = asyncio.Lock()
++        # A user save waiting for the policy lock makes the control loop skip its own policy work.
++        self.save_waiting = 0
+         self.screensaver_supported = _supports_screensaver_tdp()
+         self.screensaver_until = 0.0
+         self.screensaver_backup = self.data / "screensaver-power.txt"
+@@ -1290,7 +1292,10 @@
+                     await self._osd_off()
+                 if not osd_on and not (self.settings["enabled"] and self._mode() == "autotdp") and self.presentmon_fallback.process:
+                     await self.presentmon_fallback.close()
+-                async with self.policy_lock:
++                if self.save_waiting:
++                    pass
++                else:
++                  async with self.policy_lock:
+                     screensaver = await self._sync_screensaver_power()
+                     if not screensaver and self.settings["enabled"]:
+                         await self._call("read")
+@@ -2211,7 +2216,12 @@
+         next_settings = validate(value)
+         if self.fan_test_session and next_settings["fan"] != self.settings["fan"]:
+             raise RuntimeError("风扇测试期间请先结束测试，再修改风扇设置")
+-        async with self.policy_lock:
++        self.save_waiting += 1
++        try:
++            await self.policy_lock.acquire()
++        finally:
++            self.save_waiting -= 1
++        try:
+             async with self.fan_lock:
+                 previous = json.loads(json.dumps(self.settings))
+                 # Older frontends only cycle mode/full. Those explicit actions resume
+@@ -2254,6 +2264,8 @@
+                     except Exception:
+                         logging.exception("Power/fan settings rollback incomplete")
+                     raise
++        finally:
++            self.policy_lock.release()
+         await self._sync_osd_display(previous["osd"], next_settings["osd"])
+         await self.publish()
+         return self.view()

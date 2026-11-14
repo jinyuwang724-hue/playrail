@@ -24,6 +24,7 @@ public sealed partial class MainWindow
     private bool _switchInFlight;
     internal bool WindowSwitchInFlight => _switchInFlight;
     private long _lastSpecialRouteAt = -10_000;
+    private AgentClient? _gamebarAgent;
 
     private async Task ActivateOverlayRoute(string route, nint returnWindow)
     {
@@ -50,7 +51,8 @@ public sealed partial class MainWindow
             { _stage?.CloseSpecialSurfaces(); CompleteShortcutHide(returnToPrevious: false); return; }
             if (special && !game)
             {
-                if (quick) { using var agent = new AgentClient(); await agent.Call("open_gamebar"); }
+                // 桌面模式的快设就是 Game Bar：复用一条后台连接，不必每次按键都重新握手
+                if (quick) { _gamebarAgent ??= new AgentClient(); await _gamebarAgent.Call("open_gamebar"); }
                 return;
             }
             if (quick && _stage?.QuickPanelOpen == true) { ActivateRouteCore(route, returnWindow); return; }

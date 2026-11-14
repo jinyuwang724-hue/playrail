@@ -17,12 +17,24 @@ public sealed partial class WallStage
             if (timer?.IsRunning == true) { timer.Stop(); _trayTimers.Add(timer); }
         _windowActive = false;
         UpdateBackdropRunning();
+        // 托盘里没人看：无限循环的合成动画（横幅慢推、1 px 节拍点）会让合成线程照样按刷新率出帧，
+        // 隐藏的游戏库因此常驻吃掉约 14 % 的核。收起时一起暂停，出来时接着走
+        SetForeverAnimationsPaused(true);
     }
 
     public void ResumeFromTray()
     {
         foreach (var timer in _trayTimers) timer.Start();
         _trayTimers.Clear();
+        SetForeverAnimationsPaused(false);
+    }
+
+    private void SetForeverAnimationsPaused(bool paused)
+    {
+        var drift = _bnClock?.TryGetAnimationController("t");
+        if (drift != null) { if (paused) drift.Pause(); else drift.Resume(); }
+        // 节拍点只跟着动态背景跑（UpdateBackdropRunning 负责恢复），这里只管停
+        if (paused) _pacer?.TryGetAnimationController("Opacity")?.Pause();
     }
 
     private void BuildStServices()
