@@ -83,7 +83,7 @@ public sealed partial class WallStage
                 try
                 {
                     var bmp = await CanvasBitmap.LoadAsync(G.Device, path);
-                    _dq.TryEnqueue(() => { _railModel.Avatar = bmp; RepaintRail(); CsPaintTools(); });
+                    _dq.TryEnqueue(() => { _railModel.Avatar = bmp; RepaintRail(); });
                 }
                 catch (Exception ex) { Log.Warn($"avatar load: {ex.Message}"); }
             });
@@ -261,9 +261,10 @@ public sealed partial class WallStage
                 SystemInfo.Open("ms-settings:yourinfo");
                 break;
             case RailKind.Steam:
-                string uri = _prefs.SteamShortcut == SteamShortcutTarget.BigPicture ? "steam://open/bigpicture" : "steam://open/games";
-                try { PlatformClients.Open(uri); Log.Info($"rail Steam shortcut: {uri}"); }
-                catch (Exception ex) { Log.Warn($"rail Steam shortcut: {ex.Message}"); Toast("无法打开 Steam，请确认已安装 Steam"); }
+                OpenSteamShortcut();
+                break;
+            case RailKind.Shots:
+                OpenShotsFromLibrary();
                 break;
             case RailKind.Search:
                 OpenSearch();

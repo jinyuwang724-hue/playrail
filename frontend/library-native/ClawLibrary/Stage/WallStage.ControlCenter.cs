@@ -274,6 +274,7 @@ public sealed partial class WallStage
         CloseShots(instant: true);
         if (!_wsStandalone) CloseSwitcher(instant: true);
         _stFromLibrary = false;
+        _shFromLibrary = false;
         _ccOpen = false;
         int v = ++_ccVersion;
         _ccTimer?.Stop();

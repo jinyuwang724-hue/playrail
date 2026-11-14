@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>卡盒版顶栏入口摆放</title>
+<style>
+  :root { --bg:#141213; --panel:#1c1a1b; --ink:#f2f2f2; --soft:rgba(242,242,242,.6); --mute:rgba(242,242,242,.38); --line:rgba(242,242,242,.14); --rec:#e8b15a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.6 "PingFang SC","Noto Sans SC","Microsoft YaHei",system-ui,sans-serif; }
+  main { max-width: 1080px; margin: 0 auto; padding: 48px 28px 80px; }
+  h1 { font-size: 28px; margin: 0 0 6px; font-weight: 600; }
+  h2 { font-size: 20px; margin: 48px 0 12px; font-weight: 600; }
+  p, li { color: var(--soft); }
+  p.lead { color: var(--ink); font-size: 17px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 28px; margin-top: 20px; }
+  .opt { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .opt.rec { border-color: var(--rec); }
+  .opt h3 { margin: 0 0 4px; font-size: 17px; font-weight: 600; }
+  .tag { font-size: 12px; color: var(--rec); margin-left: 8px; }
+  .ref { font-size: 13px; color: var(--mute); margin: 0 0 12px; }
+  /* 1920×1200 的屏幕缩成 480×300（÷4） */
+  .screen { position: relative; width: 100%; aspect-ratio: 1920/1200; background: linear-gradient(120deg,#2a2320,#16131a 60%,#0f0f10); border-radius: 8px; overflow: hidden; }
+  .scr { position:absolute; inset:0; }
+  .tabs { position:absolute; left:3.1%; top:4%; display:flex; gap:2.6%; width:60%; font-size: clamp(9px,1.6vw,15px); font-weight:600; }
+  .tabs span { opacity:.6; white-space:nowrap; } .tabs span:first-child { opacity:1; border-bottom: 2px solid var(--ink); }
+  .status { position:absolute; right:3.1%; top:4.4%; font-size: clamp(8px,1.4vw,13px); opacity:.9; white-space:nowrap; }
+  .tools { position:absolute; top:3.6%; display:flex; align-items:center; gap: 1.2%; font-size: clamp(9px,1.5vw,14px); }
+  .ic { width: clamp(16px,2.6vw,24px); height: clamp(16px,2.6vw,24px); border-radius: 30%; display:grid; place-items:center; color: var(--ink); opacity:.9; }
+  .ic.f { outline: 2px solid var(--ink); outline-offset: 1px; background: rgba(242,242,242,.16); }
+  .av { width: clamp(14px,2.2vw,20px); height: clamp(14px,2.2vw,20px); border-radius:50%; background: linear-gradient(135deg,#b6c3f5,#e2a7c9); }
+  .div { width:1px; height: clamp(12px,2vw,18px); background: var(--line); margin: 0 .6%; }
+  .big { position:absolute; left:3.1%; bottom:5%; width:20.8%; height:50%; border-radius:4px; background: linear-gradient(160deg,#d9c7a6,#8d6c9a); box-shadow: 0 0 0 2px var(--ink); }
+  .row { position:absolute; left:26.8%; bottom:5%; display:flex; gap:1.2%; width:73%; }
+  .row i { flex: 0 0 10.4%; aspect-ratio: 2/3; border-radius:3px; background: linear-gradient(160deg,#4b5a76,#2b2433); display:block; }
+  .title { position:absolute; left:26.8%; top:45%; font-size: clamp(10px,2vw,20px); font-weight:700; }
+  .btns { position:absolute; left:26.8%; top:58%; display:flex; gap: 1.2%; }
+  .btns b { background: var(--ink); color:#111; border-radius: 999px; padding: .2em 1.1em; font-size: clamp(8px,1.2vw,12px); }
+  .btns em { width: clamp(14px,2.6vw,24px); height: clamp(14px,2.6vw,24px); border-radius:50%; background: rgba(255,255,255,.14); }
+  .dock { position:absolute; left:50%; transform: translateX(-50%); bottom: 2.5%; display:flex; gap: 2.2%; }
+  .dock .ic { border-radius: 50%; background: rgba(255,255,255,.1); }
+  .field { position:absolute; top:3%; height: 5.4%; border: 1.5px solid rgba(242,242,242,.6); border-radius: 999px; background: rgba(242,242,242,.08); }
+  ul { padding-left: 1.2em; } li { margin: 4px 0; }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--ink); font-weight: 600; } td { color: var(--soft); }
+  .anim { display:flex; gap: 18px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  .anim .screen { width: 300px; }
+  .arrow { color: var(--mute); }
+  code { background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 4px; color: var(--ink); }
+</style>
+</head>
+<body>
+<main>
+  <h1>卡盒版顶栏入口摆放</h1>
+  <p class="lead">建议：五个入口仍然连成一组放在右上，但按「工具 | 身份 | 系统状态」分三段；搜索从放大镜原地向左展开成输入框。</p>
+  <p>入口：搜索、添加游戏、Steam、设置、头像。下面四个方案按 1920×1200 的展台首页缩小画，白框是手柄焦点。</p>
+
+  <h2>参考：主机和掌机前端怎么放</h2>
+  <table>
+    <tr><th>前端</th><th>做法</th></tr>
+    <tr><td>PS5 主页</td><td>左上是「游戏 / 媒体」页签；右上一组：搜索、设置、头像、时间，连在一起。手柄从内容区往上按就进这一排。</td></tr>
+    <tr><td>Steam 大屏幕 / Steam Deck</td><td>顶栏右侧：搜索、通知、好友头像、电量、时间连成一组；系统菜单收在 Steam 键里。</td></tr>
+    <tr><td>Xbox 主页</td><td>左上头像；右上时间和电量；搜索、设置做成内容区里的磁贴，或者收进指南键菜单。</td></tr>
+    <tr><td>Switch 主页</td><td>左上用户头像，右上时间、网络、电量；系统入口是游戏行下面一排圆形图标。</td></tr>
+  </table>
+  <p>共同点：页签留在左边；系统类入口靠右，紧挨时间电量；头像放在入口和状态之间，或者单独放在左边。只有 Switch 把入口放在底部，因为它的游戏行在屏幕中间。</p>
+
+  <h2>四个方案</h2>
+  <div class="grid">
+    <div class="opt rec">
+      <h3>A 右上一组，分三段<span class="tag">建议</span></h3>
+      <p class="ref">参考 PS5、Steam 大屏幕</p>
+      <div class="screen"><div class="scr">
+        <div class="tabs"><span>首页</span><span>全部</span><span>Steam</span><span>本地</span></div>
+        <div class="tools" style="right:27%">
+          <div class="ic f">⌕</div><div class="ic">＋</div><div class="ic">◉</div><div class="ic">⚙</div>
+          <div class="div"></div><div class="av"></div>
+        </div>
+        <div class="status">◠ ▭ 99%　19:03</div>
+        <div class="big"></div><div class="title">LimeLight Lemonade Jam</div>
+        <div class="btns"><b>▶ 开始游戏</b><em></em><em></em></div>
+        <div class="row"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div></div>
+      <ul>
+        <li>和现在一样连成一组，手柄从内容最上一行按 ↑ 就能进，← / → 一排走完。</li>
+        <li>工具和头像之间加一道细竖线；头像去掉名字（掌机只有一个账户，名字不带新信息），整组更窄，和页签离得更远。</li>
+        <li>顺序按常用程度：搜索离焦点最近，设置最右。</li>
+        <li>搜索框从放大镜原地向左展开（见下方动画），不用把焦点从右边跳到左边。</li>
+      </ul>
+    </div>
+
+    <div class="opt">
+      <h3>B 搜索单独放在页签前</h3>
+      <p class="ref">参考 Playnite 全屏、Xbox「我的游戏」</p>
+      <div class="screen"><div class="scr">
+        <div class="tools" style="left:3.1%"><div class="ic f">⌕</div></div>
+        <div class="tabs" style="left:9%"><span>首页</span><span>全部</span><span>Steam</span><span>本地</span></div>
+        <div class="tools" style="right:27%"><div class="ic">＋</div><div class="ic">◉</div><div class="ic">⚙</div><div class="div"></div><div class="av"></div></div>
+        <div class="status">◠ ▭ 99%　19:03</div>
+        <div class="big"></div><div class="title">LimeLight Lemonade Jam</div>
+        <div class="btns"><b>▶ 开始游戏</b><em></em><em></em></div>
+        <div class="row"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div></div>
+      <ul>
+        <li>搜索和页签都在「找游戏」这一边，语义最顺；搜索框向右展开，正好盖住页签。</li>
+        <li>缺点：顶栏有两处可聚焦的地方，↑ 进顶栏后要决定落在左边还是右边；LB / RB 换页签时搜索不在页签里，容易误以为它是第一个页签。</li>
+      </ul>
+    </div>
+
+    <div class="opt">
+      <h3>C 底部一排圆形入口</h3>
+      <p class="ref">参考 Switch 主页</p>
+      <div class="screen"><div class="scr">
+        <div class="tabs"><span>首页</span><span>全部</span><span>Steam</span><span>本地</span></div>
+        <div class="status">◠ ▭ 99%　19:03</div>
+        <div class="big" style="bottom:16%;height:44%"></div><div class="title" style="top:38%">LimeLight Lemonade Jam</div>
+        <div class="btns" style="top:50%"><b>▶ 开始游戏</b><em></em><em></em></div>
+        <div class="row" style="bottom:16%"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="dock"><div class="ic">⌕</div><div class="ic">＋</div><div class="ic">◉</div><div class="ic">⚙</div><div class="av"></div></div>
+      </div></div>
+      <ul>
+        <li>Switch 的游戏行在屏幕中间，底部才空得出来；展架、展台的卡盒排已经贴着底边，要整体上移约 140 px，卡盒变小。</li>
+        <li>叠放的牌堆和插卡动画都要让位，改动最大，不建议。</li>
+      </ul>
+    </div>
+
+    <div class="opt">
+      <h3>D 只留搜索，其余收进 ≡ 控制中心</h3>
+      <p class="ref">参考 Xbox 指南键、Steam Deck 的 Steam 键</p>
+      <div class="screen"><div class="scr">
+        <div class="tabs"><span>首页</span><span>全部</span><span>Steam</span><span>本地</span></div>
+        <div class="tools" style="right:27%"><div class="ic f">⌕</div></div>
+        <div class="status">◠ ▭ 99%　19:03</div>
+        <div class="big"></div><div class="title">LimeLight Lemonade Jam</div>
+        <div class="btns"><b>▶ 开始游戏</b><em></em><em></em></div>
+        <div class="row"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      </div></div>
+      <ul>
+        <li>最干净：控制中心里已经有「软件设置」，再加「添加游戏」「Steam」磁贴就行。</li>
+        <li>缺点：触屏时没有 ≡ 键可按；你这次正是因为卡盒页找不到这些入口才提出来的，藏回菜单等于退回去。</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>搜索栏动画（A 方案）</h2>
+  <div class="anim">
+    <div class="screen"><div class="scr">
+      <div class="tabs" style="font-size:9px"><span>首页</span><span>全部</span><span>Steam</span><span>本地</span></div>
+      <div class="tools" style="right:27%"><div class="ic f" style="width:16px;height:16px">⌕</div><div class="ic" style="width:16px;height:16px">＋</div></div>
+    </div></div>
+    <span class="arrow">→</span>
+    <div class="screen"><div class="scr">
+      <div class="tabs" style="font-size:9px;opacity:.35"><span>首页</span><span>全部</span><span>Steam</span><span>本地</span></div>
+      <div class="field" style="right:27%;width:24%"></div>
+    </div></div>
+    <span class="arrow">→</span>
+    <div class="screen"><div class="scr">
+      <div class="field" style="right:27%;width:40%"></div>
+    </div></div>
+  </div>
+  <ul>
+    <li>放大镜的方块就是输入框的起点：右边沿不动，向左伸到 640 宽，圆角从 16 变成整圆；用弹簧（约 380 ms、轻微回弹），中途按 B 会从当前宽度原路收回，不跳。</li>
+    <li>页签同时向左滑 24 px 并淡出；放大镜图标移到框的左端；光标和屏幕键盘在框伸到位后才出来，不会裁到半个字。</li>
+    <li>收起是同一条弹簧反着走：框缩回放大镜，页签淡回。</li>
+  </ul>
+  <p>样式切换的问题已经找到：在设置里从海报墙切到别的样式后，退出设置时切换动画被跳过了，所以设置里记的是新样式，屏幕上还是海报墙。这个修复不受方案选择影响，会和动画一起装上。</p>
+</main>
+</body>
+</html>

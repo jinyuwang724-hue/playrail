@@ -1,14 +1,10 @@
-// 卡盒版顶栏右侧的入口（时间电量左边）：搜索、添加游戏、Steam、设置、头像 + 名字。
-// 海报墙的竖条上原来就有这几项；卡盒版的页面不显示竖条，所以在顶栏里再放一份，动作和竖条完全一样。
-// 手柄：页面最上面一行按 ↑ 进顶栏，← / → 在入口间走，↓ 或 B 回到原来的焦点，A 执行。触屏 / 鼠标直接点。
-// 搜索：顶栏左边的页签让开，原地展开输入框（XAML TextBox，支持输入法），回车提交，结果作为一个页签铺成卡盒网格，B 回首页。
+// 游戏库里留下的入口（11-14 jinyu）：搜索、Steam、截图，和「开始游戏 / 游戏设置」放在同一排按钮里（收藏的位置让给 Steam）。
+// 添加游戏、设置在控制中心左下功能坞，头像在控制中心右下；海报墙的竖条同样只留搜索、Steam、截图。
+// 搜索：框从按钮排里那颗搜索圆钮长出来，弹到顶栏左边（页签让开），这样屏幕键盘挡不住；收起时原路缩回圆钮。
 using System.Numerics;
 using ClawLibrary.Data;
 using ClawLibrary.Engine;
-using Microsoft.Graphics.Canvas;
-using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.Graphics.Canvas.Svg;
-using Microsoft.Graphics.Canvas.Text;
 using Microsoft.UI.Composition;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -18,210 +14,237 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private enum CsTool { Search, AddGame, Steam, Settings, Account }
-    private static readonly CsTool[] CsToolOrder = { CsTool.Search, CsTool.AddGame, CsTool.Steam, CsTool.Settings, CsTool.Account };
+    private const float FieldW = 640, FieldH = 60, FieldIconBox = 72;
 
-    // 尺寸按 1920 坐标：竖条工具格 40 → 54（与顶栏行高一样），图标 18 → 26，头像 44 → 40（和状态栏图标同一视觉高度）
-    private const float TlBox = 54, TlGap = 10, TlIcon = 26, TlAvatar = 40, TlPad = 8, FieldW = 640, FieldH = 60;
-
-    private SpriteVisual? _csToolsV, _csFieldV;
-    private float _csToolsX;
-    private readonly List<(float X, float Y, float W, float H, CsTool T)> _csToolRects = new();
-    /// <summary>手柄焦点在顶栏入口上（CsToolOrder 的序号），-1 = 不在顶栏。</summary>
-    private int _csHd = -1;
     private CanvasSvgDocument? _csSteamSvg;
     private bool _csSearchOpen;
     private TextBox? _csSearchBox;
     /// <summary>搜索结果页签（tab 4）的搜索词；null = 没有这个页签。</summary>
     private string? _csQuery;
 
-    private bool CsHeaderFocused => _csHd >= 0;
+    private SpriteVisual? _csFieldIcon;
+    private ShapeVisual? _csFieldShape;
+    private CompositionRoundedRectangleGeometry? _csFieldGeo;
+    private CompositionColorBrush? _csFieldStroke;
+    /// <summary>搜索框在外面（展开中、展开着或正在收回）：按钮排里的搜索圆钮交给框自己画。</summary>
+    private bool _csFieldOut;
+    private int _csFieldVer;
+    /// <summary>截图页是从游戏库按钮直接进的：B 退出截图页时一起收起控制中心，回到游戏库。</summary>
+    private bool _shFromLibrary;
 
-    // ---------------- 画 ----------------
+    // ---------------- 入口动作（卡盒按钮排、海报墙竖条共用） ----------------
 
-    private void CsPaintTools()
+    private void OpenSteamShortcut()
+    {
+        string uri = _prefs.SteamShortcut == SteamShortcutTarget.BigPicture ? "steam://open/bigpicture" : "steam://open/games";
+        try { PlatformClients.Open(uri); Log.Info($"library Steam shortcut: {uri}"); }
+        catch (Exception ex) { Log.Warn($"library Steam shortcut: {ex.Message}"); Toast("无法打开 Steam，请确认已安装 Steam"); }
+    }
+
+    private void OpenShotsFromLibrary()
+    {
+        if (_ccOpen) { OpenShots(); return; }
+        OpenControlCenter(quiet: true);
+        OpenShots();
+        _shFromLibrary = true;
+    }
+
+    // ---------------- 搜索框 ----------------
+    // 起点是按钮排里的搜索圆钮（72 × 72，整圆），终点是顶栏左边 640 × 60 的胶囊；位置、大小、圆角都用合成层弹簧，
+    // 展开途中按 B / 收回途中再按 A 都从此刻的值和速度接着走、原路折返。页签向左让 24 px 并淡出；输入框等框到位才放上去，
+    // 收回时第一帧就拿掉。
+    private static readonly Spring FieldSpring = new(320, 28, 1);   // ζ ≈ 0.78，约 380 ms 落定，带一点点回弹
+    private const double FieldTextDelay = 300;
+    private const double FieldFadeMs = 120;
+
+    /// <summary>搜索圆钮（框的收起状态），卡盒层坐标。按钮排不在（分类页 / 没有游戏）时用顶栏左边的一个点。</summary>
+    private (float X, float Y, float W, float H) CsFieldClosed()
+    {
+        if (_cs?.Page is { Tab: 0 } p && p.Sel < p.Items.Count)
+        {
+            bool running = RunningGame(p.Items[p.Sel].Id) != null;
+            foreach (var r in p.ActRects)
+                if (r.Act > 0 && CsActionAt(r.Act, running) == CsAction.Search)
+                {
+                    var o = p.Content.Offset;
+                    return (r.X + o.X, r.Y + o.Y, r.W, r.H);
+                }
+        }
+        var f = CsFieldOpen();
+        return (f.X, f.Y, FieldH, FieldH);
+    }
+
+    /// <summary>展开后的框：顶栏左边，页签让出来的位置，和页签同一条中线。</summary>
+    private (float X, float Y, float W, float H) CsFieldOpen() => (CsEdge, HdTop + HdMid - FieldH / 2, FieldW, FieldH);
+
+    private void CsEnsureField()
+    {
+        if (_cs == null || _csFieldShape != null) return;
+        _csFieldGeo = G.C.CreateRoundedRectangleGeometry();
+        var shape = G.C.CreateSpriteShape(_csFieldGeo);
+        // 和按钮排的圆钮同一个底（14 % 白），收起到圆钮时看不出换手；描边只在展开时淡进来
+        shape.FillBrush = G.C.CreateColorBrush(Gfx.WithAlpha(CcText, 0.14));
+        _csFieldStroke = G.C.CreateColorBrush(Gfx.WithAlpha(CcText, 0));
+        shape.StrokeBrush = _csFieldStroke;
+        shape.StrokeThickness = 2;
+        _csFieldShape = G.C.CreateShapeVisual();
+        _csFieldShape.Size = new Vector2(CsW, CsH);
+        _csFieldShape.Shapes.Add(shape);
+        _csFieldShape.Opacity = 0;
+        _cs.Root.Children.InsertAtTop(_csFieldShape);
+        _csFieldIcon = CsSprite(FieldIconBox, FieldIconBox, ds => LineIcons.Draw(ds, "", FieldIconBox / 2, FieldIconBox / 2, 27, Gfx.Rgba(242, 242, 242)));
+        _csFieldIcon.Opacity = 0;
+        _cs.Root.Children.InsertAtTop(_csFieldIcon);
+    }
+
+    private SpringVector2NaturalMotionAnimation CsSpringV2(Vector2 to)
+    {
+        var a = G.C.CreateSpringVector2Animation();
+        a.FinalValue = to;
+        a.DampingRatio = FieldSpring.Zeta;
+        a.Period = FieldSpring.Period;
+        return a;
+    }
+
+    /// <summary>框和放大镜一起走到 open / closed。</summary>
+    private void CsMorphField(bool open)
+    {
+        if (_csFieldGeo == null || _csFieldShape == null || _csFieldIcon == null) return;
+        var r = open ? CsFieldOpen() : CsFieldClosed();
+        var off = new Vector2(r.X, r.Y);
+        var size = new Vector2(r.W, r.H);
+        var radius = new Vector2(r.H / 2);   // 两头都是整圆
+        var iconOff = new Vector3(open ? r.X + 2 : r.X + r.W / 2 - FieldIconBox / 2, r.Y + r.H / 2 - FieldIconBox / 2, 0);
+        if (Reduced)
+        {
+            _csFieldGeo.StopAnimation("Offset"); _csFieldGeo.StopAnimation("Size"); _csFieldGeo.StopAnimation("CornerRadius");
+            _csFieldGeo.Offset = off; _csFieldGeo.Size = size; _csFieldGeo.CornerRadius = radius;
+            _csFieldIcon.StopAnimation("Offset"); _csFieldIcon.Offset = iconOff;
+        }
+        else
+        {
+            _csFieldGeo.StartAnimation("Offset", CsSpringV2(off));
+            _csFieldGeo.StartAnimation("Size", CsSpringV2(size));
+            _csFieldGeo.StartAnimation("CornerRadius", CsSpringV2(radius));
+            _csFieldIcon.StartAnimation("Offset", G.SpringV3(iconOff, FieldSpring));
+        }
+        CsFieldStrokeTo(open ? 0.36f : 0, open ? 220 : 160);
+    }
+
+    private void CsFieldStrokeTo(float alpha, double ms)
+    {
+        if (_csFieldStroke == null) return;
+        var a = G.C.CreateColorKeyFrameAnimation();
+        a.InsertKeyFrame(1, Gfx.WithAlpha(CcText, alpha), G.Ease(CsQuart));
+        a.Duration = Gfx.Ms(Math.Max(1, CsMs(ms)));
+        _csFieldStroke.StartAnimation("Color", a);
+    }
+
+    /// <summary>页签让位：展开时向左 24 px 并淡出，收回时回原位（透明度回到 1 / 0.6）。</summary>
+    private void CsTabsMakeWay(bool away)
     {
         if (_cs == null) return;
-        if (_csToolsV == null)
+        foreach (var t in _cs.Tabs)
         {
-            _csToolsV = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
-            _cs.Header.Children.InsertAtTop(_csToolsV);
+            var to = new Vector3(t.X - (away ? 24 : 0), HdTop, 0);
+            if (Reduced) { t.V.StopAnimation("Offset"); t.V.Offset = to; }
+            else t.V.StartAnimation("Offset", G.SpringV3(to, FieldSpring));
+            t.V.StartAnimation("Opacity", CsS(away ? 0 : t.Tab == _cs.Tab ? 1 : 0.6f, CsMs(away ? 160 : 260), CsQuart, away ? 0 : 80));
         }
-        string user = _railModel.User ?? "";
-        float nameW;
-        using (var l = TextKit.Layout(G.Device, user, TextKit.Ui(400), HdCount, 400, CanvasHorizontalAlignment.Left)) nameW = Math.Min(260, (float)l.LayoutBounds.Width);
-        float accW = TlAvatar + 14 + nameW + 16;   // 头像、名字，右边留一点给焦点框
-        float toolsW = 4 * TlBox + 3 * TlGap;
-        float w = toolsW + 32 + accW;
-        float right = _cs.Status.Offset.X - HdGap + 8;
-        float x0 = right - w;
-        _csToolsX = x0;
-        int focus = _csSearchOpen ? -1 : _csHd;   // 搜索框开着时焦点在框里，入口上不再画
-        var avatar = _railModel.Avatar;
-        float mid = HdMid;
-        _csToolRects.Clear();
-        for (int i = 0; i < 4; i++) _csToolRects.Add((x0 + i * (TlBox + TlGap), HdTop + mid - TlBox / 2, TlBox, TlBox, CsToolOrder[i]));
-        _csToolRects.Add((x0 + toolsW + 32 - 8, HdTop + mid - TlBox / 2, accW, TlBox, CsTool.Account));
-        CsRepaint(_csToolsV, w + TlPad * 2, HdLine + TlPad * 2 + 20, ds =>
-        {
-            var ink = Gfx.WithAlpha(CcText, 0.9);
-            float cy = TlPad + mid;
-            for (int i = 0; i < 4; i++)
-            {
-                float bx = TlPad + i * (TlBox + TlGap), by = cy - TlBox / 2;
-                bool on = focus == i;
-                // 竖条工具格的做法：静止无底无框，焦点时才有 16 % 底 + 26 % 描边，外面 2 px 焦点环
-                if (on)
-                {
-                    ds.FillRoundedRectangle(bx, by, TlBox, TlBox, 16, 16, Gfx.WithAlpha(CcText, 0.16));
-                    ds.DrawRoundedRectangle(bx + 0.5f, by + 0.5f, TlBox - 1, TlBox - 1, 15.5f, 15.5f, Gfx.WithAlpha(CcText, 0.26), 1);
-                    ds.DrawRoundedRectangle(bx - 3, by - 3, TlBox + 6, TlBox + 6, 18, 18, CcText, 2);
-                }
-                var c = on ? CcText : ink;
-                var tool = CsToolOrder[i];
-                if (tool == CsTool.Steam)
-                {
-                    _csSteamSvg ??= CanvasSvgDocument.LoadFromXml(G.Device, File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "Steam.svg")));
-                    _csSteamSvg.Root.SetColorAttribute("fill", c);
-                    ds.DrawSvg(_csSteamSvg, new Windows.Foundation.Size(TlIcon + 2, TlIcon + 2), bx + TlBox / 2 - (TlIcon + 2) / 2, cy - (TlIcon + 2) / 2);
-                }
-                else
-                {
-                    string glyph = tool switch { CsTool.Search => "", CsTool.AddGame => "", _ => "" };
-                    LineIcons.Draw(ds, glyph, bx + TlBox / 2, cy, TlIcon, c);
-                }
-            }
-            // 头像 + 名字
-            float ax = TlPad + toolsW + 32;
-            using (var geo = CanvasGeometry.CreateEllipse(ds, ax + TlAvatar / 2, cy, TlAvatar / 2, TlAvatar / 2))
-            {
-                if (avatar != null)
-                    using (ds.CreateLayer(1, geo))
-                        ds.DrawImage(avatar, new Windows.Foundation.Rect(ax, cy - TlAvatar / 2, TlAvatar, TlAvatar), avatar.Bounds, 1, CanvasImageInterpolation.HighQualityCubic);
-                else
-                {
-                    ds.FillGeometry(geo, Gfx.WithAlpha(CcText, 0.14));
-                    using var ch = TextKit.Layout(ds, user.Length > 0 ? user[..1] : "?", TextKit.Ui(600), 18, TlAvatar, CanvasHorizontalAlignment.Center);
-                    ds.DrawTextLayout(ch, ax, cy - (float)ch.LayoutBounds.Height / 2 - (float)ch.LayoutBounds.Y, CcText);
-                }
-                ds.DrawGeometry(geo, Gfx.WithAlpha(CcText, 0.18), 1);
-            }
-            if (user.Length > 0)
-            {
-                using var nl = TextKit.Layout(ds, user, TextKit.Ui(400), HdCount, nameW, CanvasHorizontalAlignment.Left);
-                nl.WordWrapping = CanvasWordWrapping.NoWrap;
-                nl.TrimmingGranularity = CanvasTextTrimmingGranularity.Character;
-                nl.TrimmingSign = CanvasTrimmingSign.Ellipsis;
-                var ib = nl.DrawBounds;
-                ds.DrawTextLayout(nl, ax + TlAvatar + 14, cy - (float)(ib.Y + ib.Height / 2), focus == 4 ? CcText : ink);
-            }
-            if (focus == 4)
-                ds.DrawRoundedRectangle(ax - 8, cy - TlBox / 2 - 3, accW + 2, TlBox + 6, 18, 18, CcText, 2);
-        });
-        _csToolsV.Offset = new Vector3(x0 - TlPad, HdTop - TlPad, 0);
+        _cs.Underline.StartAnimation("Opacity", CsS(away ? 0 : 1, CsMs(away ? 160 : 260), CsQuart, away ? 0 : 80));
     }
 
-    // ---------------- 手柄 ----------------
-
-    /// <summary>页面最上面一行按 ↑：进顶栏，落在搜索上。返回 true = 这次按键已经处理。</summary>
-    private bool CsHeaderMove(CsPage p, Direction dir)
+    /// <summary>打字时描边亮一点。</summary>
+    private void CsPaintField()
     {
-        if (_csSearchOpen) { Cue(Sfx.None); return true; }
-        if (CsHeaderFocused)
+        if (!_csSearchOpen) return;
+        bool typing = _csSearchBox?.FocusState is FocusState.Keyboard or FocusState.Programmatic or FocusState.Pointer;
+        CsFieldStrokeTo(typing ? 0.6f : 0.36f, 160);
+    }
+
+    private void CsRepaintActs()
+    {
+        if (_cs?.Page is { Tab: 0 } p && p.ActsV != null)
         {
-            if (dir is Direction.Left or Direction.Right)
-            {
-                int j = _csHd + (dir == Direction.Left ? -1 : 1);
-                if (j < 0 || j >= CsToolOrder.Length) { Cue(Sfx.Bump, pan: dir == Direction.Left ? -0.6f : 0.6f); return true; }
-                _csHd = j;
-                CuePan(dir == Direction.Left ? -0.3f : 0.3f);
-                CsPaintTools();
-                return true;
-            }
-            if (dir == Direction.Down) { CsLeaveHeader(p); return true; }
-            Cue(Sfx.Bump);
-            return true;
+            var g = p.Sel < p.Items.Count ? p.Items[p.Sel] : null;
+            CsPaintActs(p, g, CsActsWidth(g));
         }
-        if (dir != Direction.Up) return false;
-        bool top = p.Tab == 0
-            ? (p.Style == HomeStyle.Stack ? !p.Acts : p.Acts || p.Sel >= p.Items.Count)
-            : p.InRecent || (p.Recent.Count == 0 && p.Ai < GridCols);
-        if (!top) return false;
-        // 原来的焦点让开（一屏一个焦点）
-        if (p.Tab == 0)
+    }
+
+    private void CsOpenSearch()
+    {
+        if (_cs == null || _csSearchOpen) return;
+        CsEnsureSearchBox();
+        CsEnsureField();
+        int ver = ++_csFieldVer;
+        bool wasOut = _csFieldOut;
+        _csSearchOpen = true;
+        _csFieldOut = true;
+        if (!wasOut)
         {
-            if (!p.Acts) CsHomeRing(p, false);
-            else { var g = p.Sel < p.Items.Count ? p.Items[p.Sel] : null; _csHd = 0; CsPaintActs(p, g, CsActsWidth(g)); }
+            // 从收起状态出发：框先叠在搜索圆钮上（不动画），再弹出去
+            var c = CsFieldClosed();
+            _csFieldGeo!.StopAnimation("Offset"); _csFieldGeo.StopAnimation("Size"); _csFieldGeo.StopAnimation("CornerRadius");
+            _csFieldGeo.Offset = new Vector2(c.X, c.Y); _csFieldGeo.Size = new Vector2(c.W, c.H); _csFieldGeo.CornerRadius = new Vector2(c.H / 2);
+            _csFieldIcon!.StopAnimation("Offset"); _csFieldIcon.Offset = new Vector3(c.X + c.W / 2 - FieldIconBox / 2, c.Y + c.H / 2 - FieldIconBox / 2, 0);
+            _csFieldShape!.StopAnimation("Opacity"); _csFieldShape.Opacity = 1;
         }
-        else if (p.InRecent) { if (p.Carts.TryGetValue(p.Ai, out var cart)) CsFocusCart(cart, false); }
-        else if (p.Grid.TryGetValue(p.Ai, out var cell)) CsGridFocus(cell.Case, false, false);
-        _csHd = 0;
-        CsPaintTools();
+        else _csFieldShape!.StartAnimation("Opacity", CsS(1, CsMs(FieldFadeMs), CsQuart));
+        _csFieldIcon!.StopAnimation("Opacity"); _csFieldIcon.Opacity = 1;
+        CsRepaintActs();   // 圆钮和焦点环交给框（同一帧）
+        CsMorphField(open: true);
+        CsTabsMakeWay(away: true);
+        _csSearchBox!.Text = "";
+        Cue(Sfx.ModalShow);
+        After(Reduced ? 1 : FieldTextDelay, () =>
+        {
+            if (ver != _csFieldVer || !_csSearchOpen) return;
+            CsPlaceSearchBox();
+            CsFocusSearchBox();
+        });
+    }
+
+    /// <summary>收起。back = true：原路缩回搜索圆钮；false（提交后换到结果页）：原地淡掉。</summary>
+    private void CsCloseSearch(bool back = true)
+    {
+        if (!_csSearchOpen || _cs == null) return;
+        _csSearchOpen = false;
+        int ver = ++_csFieldVer;
+        if (_csSearchBox != null) _csSearchBox.Visibility = Visibility.Collapsed;   // 第一帧就拿掉文字
+        _rootEl.Focus(FocusState.Programmatic);
+        CsTabsMakeWay(away: false);
+        double settle;
+        if (back)
+        {
+            CsMorphField(open: false);
+            settle = Reduced ? 1 : 300;
+            _csFieldShape?.StartAnimation("Opacity", CsS(0, CsMs(FieldFadeMs), CsQuart, settle));
+        }
+        else
+        {
+            CsFieldStrokeTo(0, 160);
+            settle = Reduced ? 1 : 200;
+            _csFieldShape?.StartAnimation("Opacity", CsS(0, CsMs(200), CsQuart));
+            _csFieldIcon?.StartAnimation("Opacity", CsS(0, CsMs(200), CsQuart));
+        }
+        After(settle + (Reduced ? 0 : FieldFadeMs * 0.5), () =>
+        {
+            if (ver != _csFieldVer || _csSearchOpen) return;
+            _csFieldOut = false;
+            if (_csFieldIcon != null) { _csFieldIcon.StopAnimation("Opacity"); _csFieldIcon.Opacity = 0; }
+            CsRepaintActs();   // 圆钮接回来（位置、大小、底色和框落定时一样）
+        });
+    }
+
+    /// <summary>搜索框开着时点屏幕：点在框上 = 打字，点在别处 = 收起。返回 true = 这次点按已处理。</summary>
+    private bool CsSearchFieldClick(float x, float y)
+    {
+        if (!_csSearchOpen) return false;
+        var f = CsFieldOpen();
+        if (x >= f.X && x <= f.X + f.W && y >= f.Y - 16 && y <= f.Y + f.H + 16) { CsFocusSearchBox(); return true; }
+        CsCloseSearch();
         return true;
     }
-
-    /// <summary>↓ / B：焦点回到进顶栏之前的地方。</summary>
-    private void CsLeaveHeader(CsPage p, bool quiet = false)
-    {
-        if (!CsHeaderFocused) return;
-        _csHd = -1;
-        CsPaintTools();
-        if (quiet) return;
-        if (p.Tab == 0)
-        {
-            if (!p.Acts) CsHomeRing(p, true);
-            else { var g = p.Sel < p.Items.Count ? p.Items[p.Sel] : null; CsPaintActs(p, g, CsActsWidth(g)); }
-        }
-        else CsCatFocus(p, instant: false);
-    }
-
-    /// <summary>首页卡盒上的焦点环（展台画在展台上的大卡盒，其余画在选中的卡盒）。</summary>
-    private void CsHomeRing(CsPage p, bool on)
-    {
-        var anim = CsS(on ? 1 : 0, CsMs(on ? 300 : 250), CsQuart);
-        if (p.Style == HomeStyle.Stand) { p.StandCase?.Ring.StartAnimation("Opacity", anim); return; }
-        if (p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", anim);
-    }
-
-    private void CsToolActivate(CsTool t)
-    {
-        switch (t)
-        {
-            case CsTool.Search: CsOpenSearch(); break;
-            case CsTool.AddGame: _ = AddGameFromLibrary(); break;
-            case CsTool.Steam:
-                string uri = _prefs.SteamShortcut == SteamShortcutTarget.BigPicture ? "steam://open/bigpicture" : "steam://open/games";
-                try { PlatformClients.Open(uri); Log.Info($"cases Steam shortcut: {uri}"); }
-                catch (Exception ex) { Log.Warn($"cases Steam shortcut: {ex.Message}"); Toast("无法打开 Steam，请确认已安装 Steam"); }
-                break;
-            case CsTool.Settings:
-                _backgroundSettingsOpen = false;
-                OpenSettingsFromLibrary();
-                break;
-            case CsTool.Account: SystemInfo.Open("ms-settings:yourinfo"); break;
-        }
-    }
-
-    /// <summary>点在顶栏右边的入口 / 搜索框上。点中了返回 true。</summary>
-    private bool CsToolsClick(float x, float y)
-    {
-        if (_csSearchOpen)
-        {
-            if (x >= CsEdge && x <= CsEdge + FieldW && y >= HdTop - 16 && y <= HdTop + HdLine + 16) { CsFocusSearchBox(); return true; }
-            CsCloseSearch();
-            return x >= _csToolsX;   // 点在入口区以外：只收起搜索框
-        }
-        foreach (var r in _csToolRects)
-            if (x >= r.X - 4 && x <= r.X + r.W + 4 && y >= r.Y - 10 && y <= r.Y + r.H + 10)
-            {
-                if (_cs?.Page is { } p) CsLeaveHeader(p, quiet: false);
-                WithCue(Sfx.Activate, () => CsToolActivate(r.T));
-                return true;
-            }
-        return false;
-    }
-
-    // ---------------- 搜索 ----------------
 
     private void CsEnsureSearchBox()
     {
@@ -263,56 +286,18 @@ public sealed partial class WallStage
         _rootEl.Overlay.Children.Add(_csSearchBox);
     }
 
-    private void CsPaintField()
-    {
-        if (_cs == null) return;
-        if (_csFieldV == null)
-        {
-            _csFieldV = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
-            _csFieldV.Opacity = 0;
-            _cs.Header.Children.InsertAtTop(_csFieldV);
-        }
-        bool typing = _csSearchBox?.FocusState is FocusState.Keyboard or FocusState.Programmatic or FocusState.Pointer;
-        CsRepaint(_csFieldV, FieldW, FieldH, ds =>
-        {
-            float r = FieldH / 2;
-            ds.FillRoundedRectangle(0, 0, FieldW, FieldH, r, r, Gfx.WithAlpha(CcText, 0.08));
-            ds.DrawRoundedRectangle(1, 1, FieldW - 2, FieldH - 2, r - 1, r - 1, Gfx.WithAlpha(CcText, typing ? 0.6 : 0.26), 2);
-            LineIcons.Draw(ds, "", 22 + 13, FieldH / 2, TlIcon, Gfx.WithAlpha(CcText, 0.7));
-        });
-        _csFieldV.Offset = new Vector3(CsEdge, HdTop + HdMid - FieldH / 2, 0);
-    }
-
-    private void CsOpenSearch()
-    {
-        if (_cs == null || _csSearchOpen) return;
-        if (_cs.Page is { } p) CsLeaveHeader(p, quiet: true);
-        _csHd = 0;   // 搜索打开时焦点算在放大镜上（关掉后还停在这）
-        CsPaintTools();
-        CsEnsureSearchBox();
-        _csSearchOpen = true;
-        CsPaintTools();
-        _csSearchBox!.Text = "";
-        foreach (var t in _cs.Tabs) t.V.StartAnimation("Opacity", CsS(0, CsMs(160), CsQuart));
-        _cs.Underline.StartAnimation("Opacity", CsS(0, CsMs(160), CsQuart));
-        CsPaintField();
-        _csFieldV!.StartAnimation("Opacity", CsS(1, CsMs(220), CsQuart));
-        CsPlaceSearchBox();
-        Cue(Sfx.ModalShow);
-        CsFocusSearchBox();
-    }
-
     private void CsPlaceSearchBox()
     {
         if (_cs == null || _csSearchBox == null) return;
         var o = _cs.Root.Offset;
         float k = _cs.K;
-        float left = CsEdge + 22 + 26 + 18, width = FieldW - (left - CsEdge) - 28;
+        var f = CsFieldOpen();
+        float left = f.X + FieldIconBox + 2, width = f.X + f.W - left - 28;
         _csSearchBox.FontSize = Math.Max(12, 26 * k);
         _csSearchBox.Width = width * k;
         _csSearchBox.Height = FieldH * k * 0.8;
         Canvas.SetLeft(_csSearchBox, o.X + left * k);
-        Canvas.SetTop(_csSearchBox, o.Y + (HdTop + HdMid - FieldH * 0.4f + 4) * k);
+        Canvas.SetTop(_csSearchBox, o.Y + (f.Y + FieldH * 0.1f + 4) * k);
         _csSearchBox.Visibility = Visibility.Visible;
     }
 
@@ -320,19 +305,6 @@ public sealed partial class WallStage
     {
         if (_csSearchBox == null || !_csSearchOpen) return;
         FocusTextBox(_csSearchBox, () => _csSearchOpen);
-    }
-
-    private void CsCloseSearch()
-    {
-        if (!_csSearchOpen || _cs == null) return;
-        _csSearchOpen = false;
-        if (_csSearchBox != null) _csSearchBox.Visibility = Visibility.Collapsed;
-        _rootEl.Focus(FocusState.Programmatic);
-        _csFieldV?.StartAnimation("Opacity", CsS(0, CsMs(160), CsQuart));
-        CsPlaceUnderline(animate: false);   // 页签透明度也在这里回到 1 / 0.6
-        _cs.Underline.Opacity = 0;
-        _cs.Underline.StartAnimation("Opacity", CsS(1, CsMs(220), CsQuart));
-        CsPaintTools();
     }
 
     private void CsSubmitSearch()
@@ -344,8 +316,7 @@ public sealed partial class WallStage
         Log.Info($"cases search \"{q}\": {items.Count}");
         if (items.Count == 0) { Toast($"没有找到「{q}」"); CsFocusSearchBox(); return; }
         _csQuery = q;
-        _csHd = -1;
-        CsCloseSearch();
+        CsCloseSearch(back: false);
         Cue(Sfx.DetailIn);
         _csSpotForce = items[0].Id;
         CsShowTab(4, 1, entry: true);

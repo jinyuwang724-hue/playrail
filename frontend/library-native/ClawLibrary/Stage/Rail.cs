@@ -19,7 +19,7 @@ using Colors = Microsoft.UI.Colors;
 
 namespace ClawLibrary.Stage;
 
-public enum RailKind { Tab, Shortcut, Account, Search, AddGame, Settings, Steam, Setting, Back }
+public enum RailKind { Tab, Shortcut, Account, Search, AddGame, Settings, Steam, Setting, Back, Shots }
 
 public sealed class RailItem
 {
@@ -138,15 +138,12 @@ public sealed class Rail
         }
         float statusH = timeH + (battRowH > 0 ? 5 + battRowH : 0);
         float statusY = H - PadBottom - statusH;
-        // 账户：头像在上、名字在下
-        const float av = 44;
-        var name = this.H(m.User, TextKit.Ui(600), 12);
-        float nameH = (float)name.LayoutBounds.Height;
-        float accH = av + 8 + nameH;
-        float accY = statusY - groupGap - accH;
-        // 工具：竖着一列（搜索、添加游戏、设置、Steam），照 folia 缝里的工具格：40 × 40 方格、圆角 12、静止时无底无框，间隔 8
+        // 账户不在竖条上了（11-14：头像在控制中心右下），工具列直接压在时间电量上面
+        float accH = 0;
+        float accY = statusY;
+        // 工具：竖着一列（搜索、Steam、截图；添加游戏和设置在控制中心左下），照 folia 缝里的工具格：40 × 40 方格、圆角 12、静止时无底无框，间隔 8
         const float toolW = 40, toolH = 40, toolGap = 8;
-        var tools = new[] { (RailKind.Search, ""), (RailKind.AddGame, ""), (RailKind.Settings, ""), (RailKind.Steam, "") };
+        var tools = new[] { (RailKind.Search, ""), (RailKind.Steam, ""), (RailKind.Shots, "") };
         float toolsH = tools.Length * toolH + (tools.Length - 1) * toolGap;
         float ruleY = accY - groupGap / 2 - 0.5f;   // 工具与账户之间一道短分隔线
         float toolsY = accY - groupGap - toolsH;
@@ -186,15 +183,6 @@ public sealed class Rail
         }
         ds.FillRectangle(cx - 12, ruleY, 24, 1, Gfx.WithAlpha(Theme.Ink, 0.16));
 
-        // ---- 账户：头像在上，名字在下 ----
-        {
-            var avRect = new Rect(cx - av / 2, accY, av, av);
-            DrawAvatar(ds, m, avRect);
-            float nameW = Math.Min((float)name.LayoutBounds.Width, inner);
-            using (ds.CreateLayer(1, new Rect(cx - nameW / 2, accY + av + 8 - 2, nameW, nameH + 4)))
-                ds.DrawTextLayout(name, cx - nameW / 2 - (float)name.LayoutBounds.X, accY + av + 8 - (float)name.LayoutBounds.Y, Gfx.WithAlpha(Theme.Ink, 0.85));
-            Add(RailKind.Account, 0, new Rect(PadX, accY - 6, inner, accH + 12));
-        }
 
         // ---- 最底下：时间一行，电池一行 ----
         ds.DrawTextLayout(time, cx - (float)tb.Width / 2 - (float)tb.X, statusY - (float)tb.Y, Gfx.WithAlpha(Theme.Ink, 0.92));
@@ -215,7 +203,7 @@ public sealed class Rail
         if (focus >= 0 && focus < Items.Count)
         {
             var it = Items[focus];
-            if (it.Kind is RailKind.Search or RailKind.AddGame or RailKind.Settings or RailKind.Steam)
+            if (it.Kind is RailKind.Search or RailKind.AddGame or RailKind.Settings or RailKind.Steam or RailKind.Shots)
             {
                 // 工具格：方形焦点环（folia focus-visible：2 px 描边，离按钮 2 px），底色上面已经画了
                 var b = it.Bounds;

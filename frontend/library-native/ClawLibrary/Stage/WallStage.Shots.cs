@@ -411,6 +411,7 @@ public sealed partial class WallStage
     {
         if (_shFilterOpen) { ShCloseFilter(); return; }
         if (_shViewer) { ShCloseViewer(); return; }
+        if (_shFromLibrary) { _shFromLibrary = false; CloseShots(instant: true); CloseControlCenter(); return; }   // 从游戏库按钮进来的：直接回游戏库
         CloseShots();
     }
 

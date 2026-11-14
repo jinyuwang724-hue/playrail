@@ -381,7 +381,6 @@ public sealed partial class WallStage
             _cs.Status.Offset = new Vector3(CsW - CsEdge - w, HdTop, 0);
         }
         finally { foreach (var l in layouts) l.Dispose(); }
-        CsPaintTools();
     }
 
     // ---------------- 页面切换 ----------------
@@ -396,7 +395,6 @@ public sealed partial class WallStage
         var old = _cs.Page;
         string? spot = _csSpotForce ?? CsSpotItem()?.Id ?? _csSpot;
         _csSpotForce = null;
-        if (_csHd >= 0) { _csHd = -1; CsPaintTools(); }   // 换页时顶栏焦点让给新页面
         _cs.Tab = tab;
         CsPaintTabs(animate: old != null);
         var page = tab == 0 && _prefs.Home == HomeStyle.Wall ? CsBuildWallPage()
@@ -506,7 +504,6 @@ public sealed partial class WallStage
     {
         if (_cs == null || _csInsert != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) CsCloseSearch();
-        if (CsHeaderFocused && _cs.Page is { } hp) CsLeaveHeader(hp, quiet: true);
         var tabs = CsTabsShown();
         int at = Math.Max(0, tabs.IndexOf(_cs.Tab));
         int next = at + delta;
@@ -534,7 +531,7 @@ public sealed partial class WallStage
         Toast($"首页样式：{CsStyleName(style)}");
         if (_cs == null) return;
         if (_ccOpen) { _cs.StylePending = true; return; }
-        CsMorphStyle();
+        if (!CsStyleShown()) CsMorphStyle();
     }
 
     /// <summary>控制中心收起时：有待播的样式切换就在墙淡进来之后播。</summary>
@@ -542,8 +539,19 @@ public sealed partial class WallStage
     {
         if (_cs is not { StylePending: true }) return;
         _cs.StylePending = false;
-        After(CcCloseMs + 40, () => { if (CsActive) CsMorphStyle(); });
+        // 以前这里要求 CsActive：停在海报墙首页时 CsActive 是 false（输入归墙），从海报墙换到别的样式就永远不播，
+        // 设置里记的是新样式、屏幕上还是墙（11-14 jinyu 在设置里来回切几次就出现）
+        After(CcCloseMs + 40, () =>
+        {
+            if (_cs == null) return;
+            if (_ccOpen) { _cs.StylePending = true; return; }   // 又开了控制中心：等下次收起
+            if (CsStyleShown()) return;
+            CsMorphStyle();
+        });
     }
+
+    /// <summary>首页上显示的正是设置里选的样式（不在首页时算没对上，回首页时会重建）。</summary>
+    private bool CsStyleShown() => _cs?.Page is { Tab: 0 } p && p.Style == _prefs.Home;
 
     /// <summary>切换首页样式：两种布局交叉淡入淡出，当前游戏的卡盒补间到新位置（规格 7）。</summary>
     private void CsMorphStyle()
@@ -968,7 +976,9 @@ public sealed partial class WallStage
 
     // ---------------- 信息区 ----------------
 
-    private enum CsAction { Play, End, Settings, Favorite }
+    // 11-14 jinyu：游戏库里只留搜索、Steam、截图，和游戏设置放一排；收藏没有真正的功能，位置让给 Steam。
+    // 添加游戏、设置、头像去控制中心（左下功能坞 / 右下头像）。
+    private enum CsAction { Play, End, Settings, Steam, Search, Shots }
     private static CsAction CsActionAt(int index, bool running) => (CsAction)(index == 0 || running ? index : index + 1);
     // 按钮和控制中心底坞一样高（48 → 72），字号跟设置页正文（17 → 26）；meta 同字号。触控目标都 ≥ 72（= 48 epx）
     private const float ActH = 72, ActGap = 16, ActFont = 26, MetaFont = 26, TitleFont = 64, TitleLh = 76, InfoRowGap = 28;
@@ -1051,9 +1061,7 @@ public sealed partial class WallStage
         return MathF.Ceiling((float)l.LayoutBounds.Width) + 40 + 26 + 14 + 40;
     }
 
-    private int CsActCount(LibraryItem g) => (CsCanFavorite(g) ? 3 : 2) + (RunningGame(g.Id) != null ? 1 : 0);
-
-    private static bool CsCanFavorite(LibraryItem g) => g.Platform is "steam" or "local" or "other" && uint.TryParse(g.Id, out _);
+    private int CsActCount(LibraryItem g) => 5 + (RunningGame(g.Id) != null ? 1 : 0);
 
     private void CsPaintActs(CsPage p, LibraryItem? g, float w)
     {
@@ -1064,8 +1072,7 @@ public sealed partial class WallStage
         float pill = CsPillWidth();
         bool running = RunningGame(g.Id) != null;
         int count = CsActCount(g);
-        bool fav = _csFav.Contains(g.Id);
-        int focus = p.Acts && !CsHeaderFocused ? p.Act : -1;
+        int focus = p.Acts && !_csFieldOut ? p.Act : -1;   // 搜索框弹出去时焦点在框里
         const float pad = 8, r = ActH / 2;
         CsRepaint(p.ActsV, w + pad * 2, ActH + pad * 2, ds =>
         {
@@ -1082,14 +1089,22 @@ public sealed partial class WallStage
             for (int a = 1; a < count; a++)
             {
                 var action = CsActionAt(a, running);
-                bool on = action == CsAction.Favorite && fav;
-                ds.FillCircle(bx + r, y + r, r, on ? Gfx.Rgba(242, 242, 242) : Gfx.Rgba(255, 255, 255, 0.14));
-                var ink = on ? Gfx.Rgba(17, 17, 17) : Gfx.Rgba(242, 242, 242);
+                // 搜索按钮的圆在搜索框弹出去时由框接走（框从这个圆长出来），这里先不画
+                if (action == CsAction.Search && _csFieldOut) { bx += ActH + ActGap; continue; }
+                ds.FillCircle(bx + r, y + r, r, Gfx.Rgba(255, 255, 255, 0.14));
+                var ink = Gfx.Rgba(242, 242, 242);
                 var t0 = ds.Transform;
                 ds.Transform = Matrix3x2.CreateScale(1.5f, 1.5f, new Vector2(12, 12)) * Matrix3x2.CreateTranslation(bx + r - 12, y + r - 12) * t0;
                 if (action == CsAction.End) LineIcons.Draw(ds, "qam.quit", 12, 12, 24, ink);
                 else if (action == CsAction.Settings) CsIconSliders(ds, 0, 0, ink);
-                else CsIconStar(ds, 0, 0, ink, on);
+                else if (action == CsAction.Search) LineIcons.Draw(ds, "", 12, 12, 18, ink);
+                else if (action == CsAction.Shots) LineIcons.Draw(ds, "", 12, 12, 18, ink);
+                else
+                {
+                    _csSteamSvg ??= Microsoft.Graphics.Canvas.Svg.CanvasSvgDocument.LoadFromXml(G.Device, File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "Steam.svg")));
+                    _csSteamSvg.Root.SetColorAttribute("fill", ink);
+                    ds.DrawSvg(_csSteamSvg, new Windows.Foundation.Size(19, 19), 12 - 9.5f, 12 - 9.5f);
+                }
                 ds.Transform = t0;
                 if (focus == a) ds.DrawCircle(bx + r, y + r, r + 5, Colors.White, 3.5f);
                 bx += ActH + ActGap;
@@ -1297,7 +1312,7 @@ public sealed partial class WallStage
     private void CsMove(Direction dir)
     {
         if (_cs?.Page is not { } p || _csInsert != null) { Cue(Sfx.None); return; }
-        if (CsHeaderMove(p, dir)) return;
+        if (_csSearchOpen) { Cue(Sfx.None); return; }
         if (p.Tab == 0) CsHomeMove(p, dir); else CsCatMove(p, dir);
     }
 
@@ -1462,7 +1477,6 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return;
         if (_csInsert != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) { if (_csSearchBox?.Text.Trim().Length > 0) CsSubmitSearch(); else CsFocusSearchBox(); return; }
-        if (CsHeaderFocused) { CsToolActivate(CsToolOrder[_csHd]); return; }
         if (p.Tab == 0)
         {
             if (p.Sel >= p.Items.Count) { CsGoTab(1); return; }
@@ -1472,7 +1486,9 @@ public sealed partial class WallStage
             {
                 case CsAction.End: if (running != null) _ = ForceQuitAsync(running); return;
                 case CsAction.Settings: CsOpenGameSettings(g); return;
-                case CsAction.Favorite: CsToggleFavorite(p, g); return;
+                case CsAction.Steam: OpenSteamShortcut(); return;
+                case CsAction.Search: CsOpenSearch(); return;
+                case CsAction.Shots: OpenShotsFromLibrary(); return;
             }
             if (running != null) { ResumeGame(running); return; }
             if (p.Style == HomeStyle.Stand && p.StandCase is { } sc) CsLaunch(g, sc.Root, (StdX, StdY, StdW, StdH));
@@ -1506,7 +1522,6 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return false;
         if (_csInsert != null) { CsInsertBack(); return true; }
         if (_csSearchOpen) { CsCloseSearch(); return true; }
-        if (CsHeaderFocused) { CsLeaveHeader(p); return true; }
         if (p.Tab != 0)
         {
             Cue(Sfx.Tab);
@@ -1590,7 +1605,7 @@ public sealed partial class WallStage
         if (_csSearchOpen && y >= CatTop) { CsCloseSearch(); return true; }
         if (y < CatTop)
         {
-            if (CsToolsClick(x, y)) return true;
+            if (CsSearchFieldClick(x, y)) return true;
             foreach (var t in _cs.Tabs)
                 if (x >= t.X - 12 && x <= t.X + t.V.Size.X + 12) { CsGoTab(t.Tab); return true; }
             return true;

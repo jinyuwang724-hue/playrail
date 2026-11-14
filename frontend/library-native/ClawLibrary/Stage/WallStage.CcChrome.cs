@@ -1,4 +1,4 @@
-// 控制中心的外围：右上状态栏（Wi-Fi、蓝牙、电量、日期、时间），左下功能坞（电源 · 文件管理器 · 浏览器 · 截图），
+// 控制中心的外围：右上状态栏（Wi-Fi、蓝牙、电量、日期、时间），左下功能坞（电源 · 文件管理器 · 浏览器 · 窗口 · 添加游戏 · 设置；截图回到游戏库里），
 // 右下头像胶囊（folia 网格模式右下角账户按钮的样子，点了打开 Windows 设置）。电源按一下，上方滑出睡眠 / 休眠 / 重启 / 关机。
 // 手柄：滑条上按 ↓ 进功能坞，← → 在五个按钮之间走，↑ 回滑条；电源菜单里 ↑ ↓ 选，B 收起。
 using System.Numerics;
@@ -62,7 +62,7 @@ public sealed partial class WallStage
         foreach (var (id, glyph, label) in new[]
         {
             ("power", "", "电源"), ("files", "", "文件管理器"), ("browser", "", "浏览器"),
-            ("windows", "", "窗口"), ("shots", "", "截图"), ("avatar", "", ""),
+            ("windows", "", "窗口"), ("addgame", "", "添加游戏"), ("settings", "", "设置"), ("avatar", "", ""),
         })
             _ccDock.Add(CcMakeButton(id, glyph, label, _ccChrome));
         _ccPowerLayer = G.Container();
@@ -82,7 +82,7 @@ public sealed partial class WallStage
     private static readonly Dictionary<string, string> CcChromeDesc = new()
     {
         ["power"] = "睡眠、休眠、重启、关机", ["files"] = "打开资源管理器", ["browser"] = "打开默认浏览器",
-        ["windows"] = "切换和关闭打开的窗口", ["shots"] = "截图管理", ["avatar"] = "打开 Windows 设置",
+        ["windows"] = "切换和关闭打开的窗口", ["addgame"] = "把本地游戏加进游戏库", ["settings"] = "游戏库和工具箱的设置", ["avatar"] = "打开 Windows 设置",
         ["sleep"] = "关屏，进入低电量待机", ["hibernate"] = "保存现场后断电，下次开机原样恢复",
         ["restart"] = "立即重启", ["shutdown"] = "立即关机",
     };
@@ -595,6 +595,12 @@ public sealed partial class WallStage
                 break;
             case "windows":
                 OpenSwitcher();
+                break;
+            case "addgame":
+                _ = AddGameFromLibrary();
+                break;
+            case "settings":
+                OpenSettingsPage();
                 break;
             case "shots":
                 OpenShots();
