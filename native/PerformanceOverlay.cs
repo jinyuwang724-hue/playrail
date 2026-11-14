@@ -47,6 +47,8 @@ sealed class PerformanceOverlay : Form {
         public int key; public IntPtr blend; public int flags; public IntPtr dirty;
     }
     [StructLayout(LayoutKind.Sequential)] struct DirtyRect { public int left,top,right,bottom; }
+    [StructLayout(LayoutKind.Sequential)] struct BitmapInfoHeader { public int size,width,height; public short planes,bitCount; public int compression,sizeImage,xPels,yPels,clrUsed,clrImportant; }
+    [DllImport("gdi32.dll")] static extern IntPtr CreateDIBSection(IntPtr dc,ref BitmapInfoHeader info,uint usage,out IntPtr bits,IntPtr section,uint offset);
     static Color Hex(string s){return ColorTranslator.FromHtml(s);}
     static readonly Color Cpu=Hex("#2E97CB"),Gpu=Hex("#2E9762"),Vram=Hex("#AD64C1"),Ram=Hex("#C26693"),Battery=Hex("#FF9078"),Engine=Hex("#EB5B5B"),White=Color.White,Background=Hex("#020202"),Curve=Color.Lime;
     static readonly Dictionary<string,PrivateFontCollection> Fonts=new Dictionary<string,PrivateFontCollection>();
@@ -70,6 +72,35 @@ sealed class PerformanceOverlay : Form {
     readonly AutoResetEvent animationChanged=new AutoResetEvent(false);
     WindowEvent foregroundChanged;IntPtr foregroundHook,windowHandle;
     Bitmap uploaded;double[] numberFrameTimes;
+    // One DIB section kept selected in a memory DC for the life of the window. Every frame used to convert the
+    // whole full-width bar into a new HBITMAP (GetHbitmap) just to upload a 140 px graph; now only the changed
+    // rows/columns are copied into this buffer and uploaded with a dirty rect.
+    IntPtr dibDC,dibBitmap,dibOld,dibBits;Size dibSize;bool dibStale=true;
+    bool EnsureDib(IntPtr screen,Size size){
+        if(dibDC!=IntPtr.Zero&&size==dibSize)return false;
+        FreeDib();
+        var header=new BitmapInfoHeader{size=Marshal.SizeOf(typeof(BitmapInfoHeader)),width=size.Width,height=-size.Height,planes=1,bitCount=32};
+        IntPtr bits;var dib=CreateDIBSection(screen,ref header,0,out bits,IntPtr.Zero,0);
+        if(dib==IntPtr.Zero)return true;
+        dibDC=CreateCompatibleDC(screen);dibBitmap=dib;dibBits=bits;dibOld=SelectObject(dibDC,dib);dibSize=size;
+        return true;
+    }
+    void FreeDib(){
+        if(dibDC!=IntPtr.Zero){SelectObject(dibDC,dibOld);DeleteDC(dibDC);dibDC=IntPtr.Zero;}
+        if(dibBitmap!=IntPtr.Zero){DeleteObject(dibBitmap);dibBitmap=IntPtr.Zero;}
+        dibBits=IntPtr.Zero;dibSize=Size.Empty;dibStale=true;
+    }
+    unsafe void CopyToDib(Bitmap bitmap,Rectangle area){
+        var data=bitmap.LockBits(new Rectangle(Point.Empty,bitmap.Size),ImageLockMode.ReadOnly,PixelFormat.Format32bppPArgb);
+        try{
+            int stride=dibSize.Width*4;
+            for(int y=area.Top;y<area.Bottom;y++){
+                byte* from=(byte*)data.Scan0+y*data.Stride+area.Left*4;
+                byte* to=(byte*)dibBits+y*stride+area.Left*4;
+                Buffer.MemoryCopy(from,to,(long)(dibSize.Width-area.Left)*4,(long)area.Width*4);
+            }
+        }finally{bitmap.UnlockBits(data);}
+    }
     long partialUploads,zOrderChanges;bool diagnosticsDirty;
     readonly object incomingGate=new object();Dictionary<string,object> incoming;long packetAt;
     static Bitmap textLayer;static string textLayerKey="";
@@ -387,7 +418,7 @@ sealed class PerformanceOverlay : Form {
         if(timer==IntPtr.Zero)return;
         pacer=new Thread(delegate(){
             try{
-                long next=Stopwatch.GetTimestamp();long interval=Stopwatch.Frequency/30; // 30 Hz: the scrolling frame-time graph cost ~14 % of a core at 60 Hz
+                long next=Stopwatch.GetTimestamp();long interval=Stopwatch.Frequency/60;
                 while(!closing){
                     if(!animate){
                         animationChanged.WaitOne();
@@ -404,7 +435,7 @@ sealed class PerformanceOverlay : Form {
     }
     public PerformanceOverlay(){
         Text="Claw 性能显示";FormBorderStyle=FormBorderStyle.None;ShowInTaskbar=false;TopMost=true;StartPosition=FormStartPosition.Manual;
-        repaint.Interval=33;repaint.Tick+=delegate{RefreshFrame();};
+        repaint.Interval=16;repaint.Tick+=delegate{RefreshFrame();};
         numberWake.Tick+=delegate{numberWake.Stop();RefreshFrame();};
         maintenance.Interval=1000;
         long diagnosticsAt=0;
@@ -469,9 +500,19 @@ sealed class PerformanceOverlay : Form {
             var placed=new Rectangle(dest,size);
             Rectangle? damage=uploaded!=null&&placed==lastBounds&&layerError==0?(Rectangle?)ChangedPixels(uploaded,bitmap):null;
             if(damage.HasValue&&damage.Value.IsEmpty)return;
-            var screen=GetDC(IntPtr.Zero);var source=CreateCompatibleDC(screen);var image=bitmap.GetHbitmap(Color.FromArgb(0));var previous=SelectObject(source,image);
+            var screen=GetDC(IntPtr.Zero);
+            IntPtr source=IntPtr.Zero,image=IntPtr.Zero,previous=IntPtr.Zero;
             try{
+                bool fresh=EnsureDib(screen,size)||dibStale;
+                if(dibDC!=IntPtr.Zero){
+                    // Whatever the DIB missed (new size, a failed upload) is copied whole; otherwise just the damage.
+                    CopyToDib(bitmap,fresh||!damage.HasValue?new Rectangle(Point.Empty,size):damage.Value);
+                    source=dibDC;if(fresh)damage=null;
+                }else{
+                    source=CreateCompatibleDC(screen);image=bitmap.GetHbitmap(Color.FromArgb(0));previous=SelectObject(source,image);
+                }
                 bool ok=Upload(screen,source,dest,size,damage);
+                dibStale=!ok;
                 layerError=ok?0:Marshal.GetLastWin32Error();
                 if(ok){
                     if(uploaded!=null)uploaded.Dispose();
@@ -479,7 +520,7 @@ sealed class PerformanceOverlay : Form {
                     paintCount++;
                 }
                 diagnosticsDirty=true;
-            }finally{SelectObject(source,previous);DeleteObject(image);DeleteDC(source);ReleaseDC(IntPtr.Zero,screen);uploadCost=(Stopwatch.GetTimestamp()-rendered)*1000.0/Stopwatch.Frequency;}
+            }finally{if(image!=IntPtr.Zero){SelectObject(source,previous);DeleteObject(image);DeleteDC(source);}ReleaseDC(IntPtr.Zero,screen);uploadCost=(Stopwatch.GetTimestamp()-rendered)*1000.0/Stopwatch.Frequency;}
         }finally{if(bitmap!=null)bitmap.Dispose();}
         paintCost=(Stopwatch.GetTimestamp()-began)*1000.0/Stopwatch.Frequency;
     }
