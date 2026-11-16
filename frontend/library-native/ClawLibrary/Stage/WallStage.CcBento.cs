@@ -212,7 +212,8 @@ public sealed partial class WallStage
         Vector4 c = _ccGameCover != null || _ccBentoColors.Length == 0 ? new Vector4(t.R / 255f, t.G / 255f, t.B / 255f, 1) : _ccBentoColors[0];
         var (h, sat, _) = BtHsl(c);
         sat = Math.Min(sat, 0.40);
-        return (Gfx.Hsl(h, sat * 80, 15), Gfx.Hsl(h, sat * 100, 36), Gfx.Hsl(h, sat * 90, 25), Gfx.Hsl(h, sat * 70, 60));
+        // 11-16 jinyu：暗黄发脏。主题色只留一点点色相（饱和度压到一成左右），卡面是接近中性的深色玻璃，半透明透出后面的流体背景
+        return (Gfx.Hsl(h, sat * 22, 9), Gfx.Hsl(h, sat * 30, 21), Gfx.Hsl(h, sat * 22, 14), Gfx.Hsl(h, sat * 20, 46));
     }
 
     private void CcBentoFetchColors()
@@ -257,6 +258,7 @@ public sealed partial class WallStage
             using (var shape = BtShape(G.Device, 0, 0, w, h, BtRadius)) t.ClipGeo.Path = new CompositionPath(shape);
             var col = i == 0 ? (Gfx.Rgba(0x27, 0x25, 0x24), Gfx.Rgba(0x4a, 0x44, 0x40), Gfx.Rgba(0x3a, 0x38, 0x3a), Gfx.Rgba(0x8a, 0x84, 0x80)) : CcTileColors(i);
             t.Tone = i == 0 ? Gfx.Mix(b.Accent, 0.5, Gfx.Rgba(0x60, 0x5a, 0x56)) : col.Item2;
+            t.Face.Opacity = 0.8f;
             int idx = i;
             CcSet(t.Face, CcDraw(w, h, raster, ds => { if (cover == null) CcPaintTileFace(ds, col, w, h, idx); }));
             CcSet(t.Over, CcDraw(w, h, raster, ds => CcPaintTileOver(ds, b, w, h, idx, cover != null, title)));
@@ -274,7 +276,7 @@ public sealed partial class WallStage
             // 底光：卡下面一团同色的光
             t.Glow.Size = new Vector2(w * 1.3f, h * 1.3f);
             t.Glow.Offset = new Vector3(-w * 0.15f, -h * 0.15f + 18, 0);
-            t.GlowBrush.ColorStops[0].Color = Gfx.WithAlpha(Gfx.Mix(t.Tone, 0.25, Colors.White), 0.5);
+            t.GlowBrush.ColorStops[0].Color = Gfx.WithAlpha(Colors.White, 0.16);
             t.GlowBrush.ColorStops[1].Color = Gfx.WithAlpha(t.Tone, 0);
             if (cover != t.CoverPath)
             {
