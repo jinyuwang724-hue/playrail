@@ -287,14 +287,17 @@ public sealed partial class WallStage
         }
         bool dark = BtDark;
         Log.Info($"bento colors: {(dark ? "dark" : "light")} cover={_ccGameCover}");
-        To((CompositionColorBrush)_ccWallBase!.Brush, "Color", Gfx.Hsl(th, Math.Min(ts, 0.5) * 55, dark ? 13 : 34));
-        double[] light = dark ? new double[] { 30, 25, 21, 16, 34 } : new double[] { 52, 46, 40, 30, 58 };
+        var (bh, _) = BtPick(dark ? 0.2 : 0.7);
+        var (_, bc0) = BtPick(0.9);
+        To((CompositionColorBrush)_ccWallBase!.Brush, "Color", dark ? Ok(0.2, Math.Min(bc0, 0.03), bh) : Ok(0.7, Math.Min(bc0 * 1.4, 0.05), bh));
+        double[] light = dark ? new double[] { 0.36, 0.32, 0.28, 0.24, 0.40 } : new double[] { 0.80, 0.76, 0.72, 0.66, 0.84 };
         for (int i = 0; i < _ccWallBlobs.Count; i++)
         {
             var p = _ccBentoColors;
-            double h = th, sat = ts;
-            if (p.Length > 0) (h, sat, _) = BtHsl(p[i % p.Length]);
-            var c = Gfx.Hsl(h, Math.Min(sat, 0.55) * 80, light[i]);
+            var (_, pc, ph) = p.Length > 0 ? ToOklch(p[i % p.Length]) : (0.5, 0.0, bh);
+            double L = light[i];
+            // 暗处的黄棕不要：换成主色相的近中性；其余颜色保留色相，彩度封顶 0.09
+            var c = BtMuddy(ph, L) ? Ok(L, 0.012, bh) : Ok(L, Math.Min(pc * 0.8, 0.09), ph);
             var stops = _ccWallBlobs[i].B.ColorStops;
             To(stops[0], "Color", Gfx.WithAlpha(c, 0.95));
             To(stops[1], "Color", Gfx.WithAlpha(c, 0.5));
@@ -325,10 +328,82 @@ public sealed partial class WallStage
         }
     }
 
-    /// <summary>卡上字和图标的颜色：浅色卡用带一点主题色的深墨色，深色卡用带一点主题色的暖白。</summary>
-    private Color BtInk => BtDark
-        ? Gfx.Mix(Gfx.Rgba(0xf6, 0xf3, 0xee), 0.9, _ccBlocks[0].Accent)
-        : Gfx.Mix(InkColor, 0.6, Gfx.Mix(_ccBlocks[0].Accent, 0.35, Colors.Black));
+    /// <summary>卡上字和图标的颜色：浅色卡用同色相的深墨色，深色卡用同色相的暖白。</summary>
+    private Color BtInk
+    {
+        get { var (h, _) = BtPick(0.5); return BtDark ? Ok(0.96, 0.012, h) : Ok(0.27, 0.035, h); }
+    }
+
+    // ---------------- 取色：OKLCH ----------------
+    // 11-17 jinyu 嫌艾尔登法环的「屎黄色」。依据：
+    // - 色彩偏好研究（Palmer & Schloss 2010，生态效价理论）：人对颜色的好恶来自联想到的东西，蓝 / 青（天空、水）最受欢迎，
+    //   暗黄、橄榄、土棕（粪便、腐烂食物）最不受欢迎；澳洲控烟研究挑出的「最丑颜色」Pantone 448C 也是一种暗橄榄棕。
+    // - 黄色只在高亮度下才是「黄」：同一个色相一压暗就变成橄榄 / 土棕（亮度一低黄色的彩度上限就塌下来）。
+    //   所以「同色相压暗」对红、蓝、紫、青没问题，对橙黄绿黄这一段一定出脏色。
+    // - HSL 的亮度不是人眼的亮度（黄 50% 比蓝 50% 亮得多），压暗后黄色还会发灰发闷。换成 OKLCH：L 是感知亮度，C 是彩度，h 是色相。
+    // 规则：
+    // 1. 在封面 6 个代表色里挑色相：面积越大越优先，彩度太低（接近灰）的分数低；
+    // 2. 目标亮度低（深色一套、动态背景）时，OKLCH 色相 50°–115°（橙黄 → 黄 → 橄榄）的颜色大幅降分，
+    //    优先用封面里的蓝、青、紫、红；封面里实在只有黄棕，就把彩度压到接近 0，做成带一点暖意的中性深灰，而不是棕。
+    // 3. 彩度封顶：卡面 0.04 以内（干净，不抢封面），动态背景 0.09 以内。
+
+    private static double SrgbToLin(double v) => v <= 0.04045 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
+    private static double LinToSrgb(double v) => v <= 0.0031308 ? 12.92 * v : 1.055 * Math.Pow(v, 1 / 2.4) - 0.055;
+
+    private static (double L, double C, double h) ToOklch(Vector4 c)
+    {
+        double r = SrgbToLin(c.X), g = SrgbToLin(c.Y), b = SrgbToLin(c.Z);
+        double l = Math.Cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+        double m = Math.Cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+        double s = Math.Cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+        double L = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s;
+        double A = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+        double B = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+        double h = Math.Atan2(B, A) * 180 / Math.PI;
+        return (L, Math.Sqrt(A * A + B * B), h < 0 ? h + 360 : h);
+    }
+
+    /// <summary>OKLCH → sRGB；超出色域就降彩度直到能显示（不裁通道，免得色相跑偏）。</summary>
+    private static Color Ok(double L, double C, double h)
+    {
+        double hr = h * Math.PI / 180;
+        for (int i = 0; i < 24; i++, C *= 0.85)
+        {
+            double a = C * Math.Cos(hr), b = C * Math.Sin(hr);
+            double l = Math.Pow(L + 0.3963377774 * a + 0.2158037573 * b, 3);
+            double m = Math.Pow(L - 0.1055613458 * a - 0.0638541728 * b, 3);
+            double s = Math.Pow(L - 0.0894841775 * a - 1.2914855480 * b, 3);
+            double r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+            double g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+            double bl = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+            if (r < -1e-4 || g < -1e-4 || bl < -1e-4 || r > 1.0001 || g > 1.0001 || bl > 1.0001) continue;
+            int R(double v) => (int)Math.Round(Math.Clamp(LinToSrgb(Math.Clamp(v, 0, 1)), 0, 1) * 255);
+            return Gfx.Rgba(R(r), R(g), R(bl));
+        }
+        int n = (int)Math.Round(Math.Clamp(LinToSrgb(L * L * L), 0, 1) * 255);
+        return Gfx.Rgba(n, n, n);
+    }
+
+    /// <summary>暗的时候会变脏的色相段（OKLCH）：橙黄 → 黄 → 橄榄。</summary>
+    private static bool BtMuddy(double h, double targetL) => targetL < 0.7 && h >= 50 && h <= 115;
+
+    /// <summary>为目标亮度挑一个色相和彩度（彩度是这个色相能用的上限，调用方再按需缩）。</summary>
+    private (double h, double c) BtPick(double targetL)
+    {
+        var src = new List<Vector4>(_ccBentoColors);
+        var acc = _ccBlocks[0].Accent;
+        if (src.Count == 0) src.Add(new Vector4(acc.R / 255f, acc.G / 255f, acc.B / 255f, 1));
+        double best = -1, bh = 0, bc = 0;
+        for (int i = 0; i < src.Count; i++)
+        {
+            var (_, c, h) = ToOklch(src[i]);
+            double score = (src.Count - i) * (0.25 + Math.Min(c / 0.10, 1)) * (BtMuddy(h, targetL) ? 0.12 : 1);
+            if (score > best) { best = score; bh = h; bc = c; }
+        }
+        double cap = targetL < 0.7 ? 0.04 : 0.035;
+        if (BtMuddy(bh, targetL) || bc < 0.02) return (bh, 0.008);   // 只剩黄棕 / 本来就灰：近中性
+        return (bh, Math.Min(bc * 0.6, cap));
+    }
 
     private static (double h, double s, double l) BtHsl(Vector4 c)
     {
@@ -342,18 +417,12 @@ public sealed partial class WallStage
     /// <summary>第 i 张功能卡的四个颜色：底、左上亮团、右下第二色、底边一点高光。都取自封面代表色，压低饱和度和亮度。</summary>
     private (Color Base, Color A, Color B, Color Hi) CcTileColors(int i)
     {
-        // 五张功能卡同一个主题色：当前游戏的主题色（没有就用封面最多的那个颜色），压低饱和度和亮度
-        var t = _ccBlocks[0].Accent;
-        Vector4 c = _ccGameCover != null || _ccBentoColors.Length == 0 ? new Vector4(t.R / 255f, t.G / 255f, t.B / 255f, 1) : _ccBentoColors[0];
-        var (h, sat, _) = BtHsl(c);
-        sat = Math.Min(sat, 0.40);
-        // 11-16 jinyu：暗黄发脏。主题色只留一点点色相（饱和度压到一成左右），卡面是接近中性的深色玻璃，半透明透出后面的流体背景
-        // 11-16 jinyu：暗底和背景不搭，改亮底。拍立得相纸那种暖白，只带一点点主题色相
-        // 11-16 jinyu：要的是「取色往浅色做」，不是白底。主题色的色相保留，饱和度留五六成，亮度提到八九成：一块浅色调的卡面
-        double ps = Math.Clamp(sat, 0.35, 0.8);
-        // 11-17 jinyu：深色封面出同一色相的深色调（亮度一成五到两成五），浅色封面照旧
-        if (BtDark) return (Gfx.Hsl(h, ps * 42, 16), Gfx.Hsl(h, ps * 50, 26), Gfx.Hsl(h, ps * 46, 11), Gfx.Hsl(h, ps * 36, 42));
-        return (Gfx.Hsl(h, ps * 58, 85), Gfx.Hsl(h, ps * 62, 92), Gfx.Hsl(h, ps * 66, 76), Gfx.Hsl(h, ps * 40, 97));
+        // 11-17 jinyu：艾尔登法环取出一片屎黄。原因：拿主题色（金棕 #96703e）在 HSL 里直接压暗，黄色一压暗就是橄榄 / 土棕，
+        // 正好落在色彩偏好研究里最不受欢迎的那一带（Pantone 448C、暗黄、橄榄、土棕）。改成在 OKLCH 里挑色相、控彩度，见 BtPick。
+        bool dark = BtDark;
+        var (h, c) = BtPick(dark ? 0.26 : 0.92);
+        if (dark) return (Ok(0.25, c * 0.9, h), Ok(0.32, c, h), Ok(0.19, c * 0.8, h), Ok(0.52, c * 0.7, h));
+        return (Ok(0.915, c * 0.9, h), Ok(0.965, c * 0.7, h), Ok(0.855, c, h), Ok(0.985, c * 0.4, h));
     }
 
     private void CcBentoFetchColors()
