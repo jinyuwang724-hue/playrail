@@ -322,8 +322,7 @@ public sealed partial class WallStage
     {
         var ink = Gfx.Rgba(255, 255, 255);
         const float pad = 22;
-        using (var clip = BtShape(ds, 0, 0, w, h, BtRadius))
-        using (ds.CreateLayer(1, clip))
+        // 压暗不在这里裁圆角（外面的 Box 已经按同一个形状裁了）：两层各裁一次，边缘那一圈像素会漏出没压暗的封面
         {
             using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0), Gfx.Rgba(0, 0, 0, cover ? 0.86 : 0.36)) { StartPoint = new Vector2(0, h * (cover ? 0.46f : 0.4f)), EndPoint = new Vector2(0, h) })
                 ds.FillRectangle(0, 0, w, h, g);
