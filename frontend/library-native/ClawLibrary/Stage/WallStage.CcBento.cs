@@ -22,7 +22,7 @@ public sealed partial class WallStage
     {
         public required ContainerVisual El, Box;
         public required SpriteVisual Glow, Face, Cover, Over, Glare, Ring;
-        public required CompositionRoundedRectangleGeometry ClipGeo;
+        public required CompositionPathGeometry ClipGeo;
         public required CompositionRadialGradientBrush GlowBrush;
         public string Drawn = "";
         public Vector2 Size;
@@ -41,7 +41,7 @@ public sealed partial class WallStage
     private int _ccBentoShown = -1, _ccBentoRight = 1;
 
     // 设计 px（× _ccK 到 DIP）
-    private const float BtEdge = 40, BtTop = 104, BtBottomGap = 112, BtGap = 16, BtRadius = 14, BtLibShare = 430f / 1200f;
+    private const float BtEdge = 40, BtTop = 104, BtBottomGap = 112, BtGap = 16, BtRadius = 24, BtLibShare = 430f / 1200f;
     private static readonly Spring BtSpring = new(320, 28, 1);
 
     private static bool LoadCcBento()
@@ -84,8 +84,7 @@ public sealed partial class WallStage
             glow.Opacity = 0;
             var face = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
             var box = G.C.CreateContainerVisual();
-            var geo = G.C.CreateRoundedRectangleGeometry();
-            geo.CornerRadius = new Vector2(BtRadius);
+            var geo = G.C.CreatePathGeometry();
             box.Clip = G.C.CreateGeometricClip(geo);
             var cover = G.Sprite(null, relative: false);
             var over = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
@@ -208,13 +207,12 @@ public sealed partial class WallStage
     /// <summary>第 i 张功能卡的四个颜色：底、左上亮团、右下第二色、底边一点高光。都取自封面代表色，压低饱和度和亮度。</summary>
     private (Color Base, Color A, Color B, Color Hi) CcTileColors(int i)
     {
-        var p = _ccBentoColors;
-        Vector4 c1 = p.Length > 0 ? p[(i - 1) % p.Length] : new Vector4(0.36f, 0.33f, 0.31f, 1);
-        Vector4 c2 = p.Length > 0 ? p[i % p.Length] : new Vector4(0.30f, 0.31f, 0.34f, 1);
-        var (h1, s1, _) = BtHsl(c1);
-        var (h2, s2, _) = BtHsl(c2);
-        s1 = Math.Min(s1, 0.42) * 0.9; s2 = Math.Min(s2, 0.42) * 0.9;
-        return (Gfx.Hsl(h1, s1 * 90, 17), Gfx.Hsl(h1, s1 * 100, 40), Gfx.Hsl(h2, s2 * 100, 29), Gfx.Hsl(h1, s1 * 70, 62));
+        // 五张功能卡同一个主题色：当前游戏的主题色（没有就用封面最多的那个颜色），压低饱和度和亮度
+        var t = _ccBlocks[0].Accent;
+        Vector4 c = _ccGameCover != null || _ccBentoColors.Length == 0 ? new Vector4(t.R / 255f, t.G / 255f, t.B / 255f, 1) : _ccBentoColors[0];
+        var (h, sat, _) = BtHsl(c);
+        sat = Math.Min(sat, 0.40);
+        return (Gfx.Hsl(h, sat * 80, 15), Gfx.Hsl(h, sat * 100, 36), Gfx.Hsl(h, sat * 90, 25), Gfx.Hsl(h, sat * 70, 60));
     }
 
     private void CcBentoFetchColors()
@@ -242,7 +240,7 @@ public sealed partial class WallStage
         if (_ccBentoRoot == null || !_ccBento) return;
         CcBentoFetchColors();
         float raster = _ccK * Chrome.Dpi * 1.06f;
-        string pal = string.Join(",", _ccBentoColors.Select(c => $"{c.X:0.00}{c.Y:0.00}{c.Z:0.00}"));
+        string pal = _ccBlocks[0].Accent + string.Join(",", _ccBentoColors.Select(c => $"{c.X:0.00}{c.Y:0.00}{c.Z:0.00}"));
         for (int i = 0; i < _ccTiles.Count; i++)
         {
             var b = _ccBlocks[i];
@@ -255,11 +253,12 @@ public sealed partial class WallStage
             if (key == t.Drawn) continue;
             t.Drawn = key;
             t.Size = new Vector2(w, h);
-            t.Face.Size = t.Over.Size = t.Cover.Size = t.Box.Size = t.ClipGeo.Size = t.Size;
+            t.Face.Size = t.Over.Size = t.Cover.Size = t.Box.Size = t.Size;
+            using (var shape = BtShape(G.Device, 0, 0, w, h, BtRadius)) t.ClipGeo.Path = new CompositionPath(shape);
             var col = i == 0 ? (Gfx.Rgba(0x27, 0x25, 0x24), Gfx.Rgba(0x4a, 0x44, 0x40), Gfx.Rgba(0x3a, 0x38, 0x3a), Gfx.Rgba(0x8a, 0x84, 0x80)) : CcTileColors(i);
             t.Tone = i == 0 ? Gfx.Mix(b.Accent, 0.5, Gfx.Rgba(0x60, 0x5a, 0x56)) : col.Item2;
             int idx = i;
-            CcSet(t.Face, CcDraw(w, h, raster, ds => CcPaintTileFace(ds, col, w, h, idx)));
+            CcSet(t.Face, CcDraw(w, h, raster, ds => { if (cover == null) CcPaintTileFace(ds, col, w, h, idx); }));
             CcSet(t.Over, CcDraw(w, h, raster, ds => CcPaintTileOver(ds, b, w, h, idx, cover != null, title)));
             // 焦点白边：比卡大一圈
             const float m = 6;
@@ -267,8 +266,10 @@ public sealed partial class WallStage
             t.Ring.Offset = new Vector3(-m, -m, 0);
             CcSet(t.Ring, CcDraw(w + 2 * m, h + 2 * m, raster, ds =>
             {
-                ds.DrawRoundedRectangle(m - 3, m - 3, w + 6, h + 6, BtRadius + 3, BtRadius + 3, Gfx.Rgba(255, 255, 255, 0.16), 4);
-                ds.DrawRoundedRectangle(m - 1, m - 1, w + 2, h + 2, BtRadius + 1, BtRadius + 1, Gfx.Rgba(255, 255, 255, 0.92), 2);
+                using var halo = BtShape(ds, m - 3, m - 3, w + 6, h + 6, BtRadius + 3);
+                ds.DrawGeometry(halo, Gfx.Rgba(255, 255, 255, 0.16), 4);
+                using var line = BtShape(ds, m - 1, m - 1, w + 2, h + 2, BtRadius + 1);
+                ds.DrawGeometry(line, Gfx.Rgba(255, 255, 255, 0.92), 2);
             }));
             // 底光：卡下面一团同色的光
             t.Glow.Size = new Vector2(w * 1.3f, h * 1.3f);
@@ -298,7 +299,7 @@ public sealed partial class WallStage
     /// <summary>卡面：暗底上两团颜色（左上亮、右下第二色）、底边一点高光、细颗粒。</summary>
     private static void CcPaintTileFace(CanvasDrawingSession ds, (Color Base, Color A, Color B, Color Hi) c, float w, float h, int seed)
     {
-        using var clip = CanvasGeometry.CreateRoundedRectangle(ds, 0, 0, w, h, BtRadius, BtRadius);
+        using var clip = BtShape(ds, 0, 0, w, h, BtRadius);
         using var layer = ds.CreateLayer(1, clip);
         ds.FillRectangle(0, 0, w, h, c.Base);
         float m = MathF.Max(w, h);
@@ -321,7 +322,7 @@ public sealed partial class WallStage
     {
         var ink = Gfx.Rgba(255, 255, 255);
         const float pad = 22;
-        using (var clip = CanvasGeometry.CreateRoundedRectangle(ds, 0, 0, w, h, BtRadius, BtRadius))
+        using (var clip = BtShape(ds, 0, 0, w, h, BtRadius))
         using (ds.CreateLayer(1, clip))
         {
             using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0), Gfx.Rgba(0, 0, 0, cover ? 0.86 : 0.36)) { StartPoint = new Vector2(0, h * (cover ? 0.46f : 0.4f)), EndPoint = new Vector2(0, h) })
@@ -333,10 +334,11 @@ public sealed partial class WallStage
                 using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0.34), Gfx.Rgba(0, 0, 0, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, h * 0.22f) })
                     ds.FillRectangle(0, 0, w, h, g);
         }
-        // 内沿：一圈很淡的边，上沿亮一点
-        ds.DrawRoundedRectangle(0.5f, 0.5f, w - 1, h - 1, BtRadius, BtRadius, Gfx.Rgba(255, 255, 255, 0.12), 1);
-        using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(255, 255, 255, 0.34), Gfx.Rgba(255, 255, 255, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, MathF.Min(h * 0.3f, 60)) })
-            ds.DrawRoundedRectangle(0.5f, 0.5f, w - 1, h - 1, BtRadius, BtRadius, g, 1);
+        // 内沿：一圈很淡的边，上沿亮一点。封面卡不画：亮色封面上这圈会变成一道白边
+        using var rim = BtShape(ds, 0.5f, 0.5f, w - 1, h - 1, BtRadius);
+        if (!cover) ds.DrawGeometry(rim, Gfx.Rgba(255, 255, 255, 0.12), 1);
+        if (!cover) using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(255, 255, 255, 0.34), Gfx.Rgba(255, 255, 255, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, MathF.Min(h * 0.3f, 60)) })
+            ds.DrawGeometry(rim, g, 1);
 
         LineIcons.Draw(ds, b.Icon, pad + 15, pad + 15, 30, Gfx.WithAlpha(ink, 0.95f));
         if (b.HasReading && b.Reading.Length > 0 && b.Reading != "—")
@@ -360,6 +362,26 @@ public sealed partial class WallStage
         using var name = TextKit.Layout(ds, b.Name, TextKit.Ui(700), i == 0 ? 30 : 22, w - pad * 2, CanvasHorizontalAlignment.Left);
         bottom -= (float)name.LayoutBounds.Height;
         ds.DrawTextLayout(name, pad, bottom - (float)name.LayoutBounds.Y, ink);
+    }
+
+    /// <summary>连续曲率圆角（苹果那种）：四个角是超椭圆弧（n = 4.6），占的边长比同半径的圆角长一截，和直边之间没有突变。</summary>
+    private static CanvasGeometry BtShape(ICanvasResourceCreator rc, float x, float y, float w, float h, float r)
+    {
+        float a = MathF.Min(r * 1.52f, MathF.Min(w, h) / 2);
+        const float n = 4.6f; const int steps = 18;
+        using var pb = new CanvasPathBuilder(rc);
+        // 一个角：k = 0 在 (a, 0)，k = steps 在 (0, a)（相对角点，朝里为正）
+        Vector2 P(int k) { float t = k / (float)steps * MathF.PI / 2; return new Vector2(a * (1 - MathF.Pow(MathF.Max(0, MathF.Sin(t)), 2 / n)), a * (1 - MathF.Pow(MathF.Max(0, MathF.Cos(t)), 2 / n))); }
+        pb.BeginFigure(x, y + a);
+        for (int k = steps - 1; k >= 0; k--) { var p = P(k); pb.AddLine(x + p.X, y + p.Y); }                       // 左上
+        pb.AddLine(x + w - a, y);
+        for (int k = 1; k <= steps; k++) { var p = P(k); pb.AddLine(x + w - p.X, y + p.Y); }               // 右上
+        pb.AddLine(x + w, y + h - a);
+        for (int k = steps - 1; k >= 0; k--) { var p = P(k); pb.AddLine(x + w - p.X, y + h - p.Y); }               // 右下
+        pb.AddLine(x + a, y + h);
+        for (int k = 1; k <= steps; k++) { var p = P(k); pb.AddLine(x + p.X, y + h - p.Y); }               // 左下
+        pb.EndFigure(CanvasFigureLoop.Closed);
+        return CanvasGeometry.CreatePath(pb);
     }
 
     // ---------------- 输入 ----------------
