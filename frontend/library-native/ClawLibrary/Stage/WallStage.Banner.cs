@@ -30,6 +30,10 @@ public sealed partial class WallStage
         public HomeStyle Style;
         /// <summary>第一张图已经铺上（之后换图走 400 ms 交叉淡入）。</summary>
         public bool Shown;
+        /// <summary>压暗层和底色：颜色跟着当前游戏换（BnTint），透明度不变。</summary>
+        public readonly List<CompositionColorGradientStop> Shade = new();
+        public readonly List<double> ShadeA = new();
+        public CompositionColorBrush? Floor;
     }
 
     private bool BannerOn => _backgroundSettings.GameBanner;
@@ -46,7 +50,8 @@ public sealed partial class WallStage
         bg.Size = new Vector2(CsW, CsH);
         var layer = new BnLayer { Root = bg, Img = Array.Empty<SpriteVisual>(), Cat = cat, Style = style };
         if (!BannerOn) return layer;
-        var floor = G.Sprite(G.Solid(Gfx.Rgba(0x0f, 0x0f, 0x10)), relative: false);
+        layer.Floor = G.Solid(Gfx.Rgba(0x0f, 0x0f, 0x10));
+        var floor = G.Sprite(layer.Floor, relative: false);
         floor.Size = new Vector2(CsW, CsH);
         bg.Children.InsertAtTop(floor);
         var imgs = new SpriteVisual[2];
@@ -68,28 +73,32 @@ public sealed partial class WallStage
         Color ink = Gfx.Rgba(0x0f, 0x0f, 0x10);
         if (cat)
         {
-            var fade = G.Sprite(G.LinearGradient(180, CsW + 120, 900, (0, Gfx.WithAlpha(ink, 0.15)), (0.92, ink)), relative: false);
+            var fadeBrush = G.LinearGradient(180, CsW + 120, 900, (0, Gfx.WithAlpha(ink, 0.15)), (0.92, ink));
+            foreach (var (st, a) in fadeBrush.ColorStops.Zip(new[] { 0.15, 1.0 })) { layer.Shade.Add(st); layer.ShadeA.Add(a); }
+            var fade = G.Sprite(fadeBrush, relative: false);
             fade.Offset = new Vector3(-60, -60, 0); fade.Size = new Vector2(CsW + 120, 900);
             bg.Children.InsertAtTop(fade);
         }
         else if (style is HomeStyle.Shelf or HomeStyle.Stand)
         {
             // 比原型深一些：背景在动，标题和 meta 要始终清楚
-            bg.Children.InsertAtTop(BnShade(90, (0, 0.9), (0.45, 0.55), (0.75, 0.18), (1, 0.12)));
-            bg.Children.InsertAtTop(BnShade(180, (0, 0.6), (0.18, 0.12), (0.4, 0.2), (0.8, 0.94), (1, 1)));
+            bg.Children.InsertAtTop(BnShade(layer, 90, (0, 0.9), (0.45, 0.55), (0.75, 0.18), (1, 0.12)));
+            bg.Children.InsertAtTop(BnShade(layer, 180, (0, 0.6), (0.18, 0.12), (0.4, 0.2), (0.8, 0.94), (1, 1)));
         }
         else
         {
-            bg.Children.InsertAtTop(BnShade(90, (0, 0.92), (0.38, 0.62), (0.7, 0.25), (1, 0.42)));
-            bg.Children.InsertAtTop(BnShade(180, (0, 0.6), (0.18, 0.1), (0.6, 0.12), (1, 0.88)));
+            bg.Children.InsertAtTop(BnShade(layer, 90, (0, 0.92), (0.38, 0.62), (0.7, 0.25), (1, 0.42)));
+            bg.Children.InsertAtTop(BnShade(layer, 180, (0, 0.6), (0.18, 0.1), (0.6, 0.12), (1, 0.88)));
         }
         return layer;
     }
 
-    private SpriteVisual BnShade(double deg, params (double At, double A)[] stops)
+    private SpriteVisual BnShade(BnLayer layer, double deg, params (double At, double A)[] stops)
     {
         Color ink = Gfx.Rgba(0x0f, 0x0f, 0x10);
-        var s = G.Sprite(G.LinearGradient(deg, CsW, CsH, stops.Select(x => (x.At, Gfx.WithAlpha(ink, x.A))).ToArray()), relative: false);
+        var brush = G.LinearGradient(deg, CsW, CsH, stops.Select(x => (x.At, Gfx.WithAlpha(ink, x.A))).ToArray());
+        for (int i = 0; i < stops.Length; i++) { layer.Shade.Add(brush.ColorStops[i]); layer.ShadeA.Add(stops[i].A); }
+        var s = G.Sprite(brush, relative: false);
         s.Size = new Vector2(CsW, CsH);
         return s;
     }
@@ -114,6 +123,7 @@ public sealed partial class WallStage
         if (path == null) return false;
         if (path == l.Path && !force) return true;
         l.Path = path;
+        BnTint(l, g);
         int next = 1 - l.Front;
         var sprite = l.Img[next];
         var brush = (CompositionSurfaceBrush)sprite.Brush;
@@ -150,6 +160,29 @@ public sealed partial class WallStage
         l.Surf[next] = surf;
         Images.WhenLoaded(surf, () => { if (l.Surf[next] == surf) Show(surf); });
         return true;
+    }
+
+    /// <summary>
+    /// 11-17 jinyu：游戏库的背景跟封面取色走。横幅上的压暗和底色原来是固定的近黑 #0f0f10，
+    /// 现在换成这款游戏颜色的深色调（OKLCH 亮度 0.16，彩度很低；暗黄 / 橄榄 / 土棕那段色相换成近中性，规则同控制中心拼盘）。
+    /// 只换颜色不换透明度：页面上的白字、按钮照旧清楚。
+    /// </summary>
+    private void BnTint(BnLayer l, LibraryItem g)
+    {
+        var a = Gfx.Hex(g.Art?.C ?? g.SeedColor, Gfx.Rgba(0x40, 0x40, 0x44));
+        var (_, c, h) = ToOklch(new Vector4(a.R / 255f, a.G / 255f, a.B / 255f, 1));
+        var ink = BtMuddy(h, 0.16) || c < 0.02 ? Ok(0.16, 0.006, h) : Ok(0.16, Math.Min(c * 0.45, 0.032), h);
+        bool first = !l.Shown;
+        void To(CompositionObject o, Color col)
+        {
+            if (first || Reduced) { o.StopAnimation("Color"); if (o is CompositionColorBrush cb) cb.Color = col; else ((CompositionColorGradientStop)o).Color = col; return; }
+            var an = G.C.CreateColorKeyFrameAnimation();
+            an.InsertKeyFrame(1, col, G.Ease(Bezier.EaseOut));
+            an.Duration = Gfx.Ms(CsMs(400));
+            o.StartAnimation("Color", an);
+        }
+        if (l.Floor != null) To(l.Floor, ink);
+        for (int i = 0; i < l.Shade.Count; i++) To(l.Shade[i], Gfx.WithAlpha(ink, l.ShadeA[i]));
     }
 
     /// <summary>

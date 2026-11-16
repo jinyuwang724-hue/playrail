@@ -158,7 +158,7 @@ public sealed partial class WallStage
         shadow.Mask = _csSoft;
         _csShadowBrush = shadow;
 
-        _csShineBrush = G.LinearGradient(105, 2.6, 1, (0.38, Gfx.Rgba(255, 255, 255, 0)), (0.5, Gfx.Rgba(255, 255, 255, 0.5)), (0.62, Gfx.Rgba(255, 255, 255, 0)));
+        _csShineBrush = G.LinearGradient(114, 2.6, 1, (0.40, Gfx.Rgba(255, 255, 255, 0)), (0.5, Gfx.Rgba(255, 255, 255, 0.42)), (0.60, Gfx.Rgba(255, 255, 255, 0)));   // 斜向光带，和控制中心焦点卡同一个角度
 
         // 卡带（11-05 换成用户 demo 里的「蓝钢插槽卡」，外形参考 TIC-80 的卡带模板 build/cart.png，MIT）：
         // 400×255（1.57 : 1），圆角 6.8；外壳按每款游戏的主色上色（155° 浅 → 主色 72 % → 深），底下露 6 px 深色厚度；
@@ -233,7 +233,7 @@ public sealed partial class WallStage
     }
 
     private const float CartW = 400, CartH = 255, CartDepth = 6, LabX = 48, LabY = 17.85f, LabW = 304, LabH = 142.1f;
-    private CompositionSurfaceBrush? _csCartShape, _csCartRecess, _csCartTri;
+    private CompositionSurfaceBrush? _csCartShape, _csCartRecess, _csCartTri, _csCardRing;
 
     private static CanvasGeometry CartShape(ICanvasResourceCreator rc) => CanvasGeometry.CreateRoundedRectangle(rc, 0, 0, CartW, CartH, 6.8f, 6.8f);
 
@@ -421,12 +421,17 @@ public sealed partial class WallStage
         glow.Offset = new Vector3(-CsSoftPad + 10, -CsSoftPad + 10 + 18, 0);
         glow.Opacity = 0;
         var face = G.Container();
-        var clipGeo = G.C.CreateRoundedRectangleGeometry();
-        clipGeo.CornerRadius = new Vector2(CsRadius, CsRadius);
-        var sizeExpr = G.C.CreateExpressionAnimation("v.Size");
-        sizeExpr.SetReferenceParameter("v", root);
-        clipGeo.StartAnimation("Size", sizeExpr);
-        face.Clip = G.C.CreateGeometricClip(clipGeo);
+        // 11-17 jinyu：卡盒不再是复古卡盒，改成和控制中心同一种连续曲率圆角的纯封面（半径 ≈ 宽 × 0.105，大封面 ≈ 28）。
+        // 路径按建卡时的尺寸画一次，卡片尺寸动画时整条裁切按比例缩放（卡片始终是 2:3，圆角不会变形）。
+        float w0 = Math.Max(size.X, 1), h0 = Math.Max(size.Y, 1), r0 = w0 * 0.105f;
+        using (var sq = BtShape(G.Device, 0, 0, w0, h0, r0))
+        {
+            var clip = G.C.CreateGeometricClip(G.C.CreatePathGeometry(new CompositionPath(sq)));
+            var scaleExpr = G.C.CreateExpressionAnimation($"Vector2(v.Size.X / {w0.ToString(System.Globalization.CultureInfo.InvariantCulture)}, v.Size.Y / {h0.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+            scaleExpr.SetReferenceParameter("v", root);
+            clip.StartAnimation("Scale", scaleExpr);
+            face.Clip = clip;
+        }
         var back = G.Sprite(g != null ? tint.B : G.Solid(Gfx.Rgba(0x23, 0x23, 0x26)));
         var artBrush = G.C.CreateSurfaceBrush();
         artBrush.Stretch = CompositionStretch.UniformToFill;
@@ -441,11 +446,6 @@ public sealed partial class WallStage
         };
         if (g != null)
         {
-            var band = G.Sprite(tint.A);
-            band.RelativeSizeAdjustment = new Vector2(1, 0.046f);
-            face.Children.InsertAtTop(band);
-            var over = G.Sprite(_csOverlay);
-            face.Children.InsertAtTop(over);
             string? path = g.Art is { } k ? (hiRes && k.Has('q') ? k.File('q') : k.Has('p') ? k.File('p') : k.Has('v') ? k.File('v') : null) : null;
             if (path != null)
             {
@@ -469,16 +469,22 @@ public sealed partial class WallStage
         c.Ring.RelativeSizeAdjustment = Vector2.One;
         c.Ring.Size = new Vector2(12, 12);
         c.Ring.Offset = new Vector3(-6, -6, 0);
-        var ringGeo = G.C.CreateRoundedRectangleGeometry();
-        ringGeo.CornerRadius = new Vector2(CsRadius + 1.5f, CsRadius + 1.5f);
-        ringGeo.Offset = new Vector2(4.5f, 4.5f);
-        var ringExpr = G.C.CreateExpressionAnimation("Vector2(v.Size.X + 3, v.Size.Y + 3)");
-        ringExpr.SetReferenceParameter("v", root);
-        ringGeo.StartAnimation("Size", ringExpr);
-        var ring = G.C.CreateSpriteShape(ringGeo);
-        ring.StrokeBrush = G.Solid(Colors.White);
-        ring.StrokeThickness = 3;
-        c.Ring.Shapes.Add(ring);
+        // 焦点框（和控制中心同一套）：同一个形状外扩一圈，3 px 间隙 + 2.5 px 白线，外面再一圈 6 px 白 28 % 的晕
+        var ringBox = G.C.CreateContainerShape();
+        using (var halo = BtShape(G.Device, 1, 1, w0 + 10, h0 + 10, r0 + 5))
+        using (var line = BtShape(G.Device, 3, 3, w0 + 6, h0 + 6, r0 + 3))
+        {
+            var hs = G.C.CreateSpriteShape(G.C.CreatePathGeometry(new CompositionPath(halo)));
+            hs.StrokeBrush = G.Solid(Gfx.Rgba(255, 255, 255, 0.28)); hs.StrokeThickness = 6; hs.IsStrokeNonScaling = true;
+            var ls = G.C.CreateSpriteShape(G.C.CreatePathGeometry(new CompositionPath(line)));
+            ls.StrokeBrush = G.Solid(Colors.White); ls.StrokeThickness = 2.5f; ls.IsStrokeNonScaling = true;
+            ringBox.Shapes.Add(hs);
+            ringBox.Shapes.Add(ls);
+        }
+        var ringScale = G.C.CreateExpressionAnimation($"Vector2((v.Size.X + 12) / {(w0 + 12).ToString(System.Globalization.CultureInfo.InvariantCulture)}, (v.Size.Y + 12) / {(h0 + 12).ToString(System.Globalization.CultureInfo.InvariantCulture)})");
+        ringScale.SetReferenceParameter("v", root);
+        ringBox.StartAnimation("Scale", ringScale);
+        c.Ring.Shapes.Add(ringBox);
         c.Ring.Opacity = 0;
         root.Children.InsertAtTop(shadow);
         root.Children.InsertAtTop(glow);
@@ -619,7 +625,26 @@ public sealed partial class WallStage
         shineHost.Children.InsertAtTop(shine);
         var ring = G.Sprite(_csCartRing);
         ring.Opacity = 0;
-        foreach (var v in new Visual[] { shadow, glow, depth, shell, shellFx, recess, recessFx, tri, labelRim, labelBack, label, over, edge, shineHost, ring }) body.Children.InsertAtTop(v);
+        // 11-17 jinyu：卡带也不要复古样式了：去掉外壳、凹框、触点，整张卡就是游戏横幅，连续曲率圆角（半径 22），焦点同卡盒
+        const float CardR = 22;
+        using (var cardGeo = BtShape(G.Device, 0, 0, CartW, CartH, CardR))
+        {
+            CompositionGeometricClip CardClip() => G.C.CreateGeometricClip(G.C.CreatePathGeometry(new CompositionPath(cardGeo)));
+            labelBack.Offset = Vector3.Zero; labelBack.Size = new Vector2(CartW, CartH); labelBack.Clip = CardClip();
+            label.Offset = Vector3.Zero; label.Size = new Vector2(CartW, CartH); label.Clip = CardClip();
+            shineHost.Clip = CardClip();
+        }
+        ring.Brush = _csCardRing ??= G.C.CreateSurfaceBrush(CcDraw(CartW + 20, CartH + 20, 1.5f, ds =>
+        {
+            using var halo = BtShape(ds, 7, 7, CartW + 6, CartH + 6, CardR + 3);
+            ds.DrawGeometry(halo, Gfx.Rgba(255, 255, 255, 0.28), 6);
+            using var line = BtShape(ds, 7, 7, CartW + 6, CartH + 6, CardR + 3);
+            ds.DrawGeometry(line, Colors.White, 2.5f);
+        }));
+        ring.RelativeSizeAdjustment = Vector2.Zero;
+        ring.Size = new Vector2(CartW + 20, CartH + 20);
+        ring.Offset = new Vector3(-10, -10, 0);
+        foreach (var v in new Visual[] { shadow, glow, labelBack, label, shineHost, ring }) body.Children.InsertAtTop(v);
         root.Children.InsertAtTop(body);
         var cart = new CsCart { Root = root, Body = body, Glow = glow, Ring = ring, Label = label, Stripe = shell, Shine = shine, Item = g, Index = index, Caption = CsCaption(g, 400, true) };
         cart.Caption.Offset = new Vector3(0, CartH + 12, 0);
