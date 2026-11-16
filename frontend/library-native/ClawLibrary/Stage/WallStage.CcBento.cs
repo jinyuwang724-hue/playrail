@@ -88,7 +88,7 @@ public sealed partial class WallStage
             box.Clip = G.C.CreateGeometricClip(geo);
             var cover = G.Sprite(null, relative: false);
             var over = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
-            var glare = G.Sprite(G.LinearGradient(115, 200, 600, (0, Gfx.Rgba(255, 255, 255, 0)), (0.5, Gfx.Rgba(255, 255, 255, 0.22)), (1, Gfx.Rgba(255, 255, 255, 0))), relative: false);
+            var glare = G.Sprite(G.LinearGradient(90, 200, 600, (0, Gfx.Rgba(255, 255, 255, 0)), (0.5, Gfx.Rgba(255, 255, 255, 0.5)), (1, Gfx.Rgba(255, 255, 255, 0))), relative: false);
             glare.Opacity = 0;
             box.Children.InsertAtTop(cover);
             box.Children.InsertAtTop(over);
@@ -173,10 +173,14 @@ public sealed partial class WallStage
                 if (on && changed)
                 {
                     // 高光从左扫到右
-                    t.Glare.Size = new Vector2(r.W * 0.5f, r.H);
+                    // 一条斜着的光带（向右倾 24°）从左下外面扫到右上外面
+                    float band = MathF.Max(r.W, r.H) * 0.32f, tall = (r.W + r.H) * 1.4f, gy = (r.H - tall) / 2;
+                    t.Glare.Size = new Vector2(band, tall);
+                    t.Glare.CenterPoint = new Vector3(band / 2, tall / 2, 0);
+                    t.Glare.RotationAngleInDegrees = 24;
                     var a = G.C.CreateVector3KeyFrameAnimation();
-                    a.InsertKeyFrame(0, new Vector3(-r.W * 0.5f, 0, 0), G.Linear);
-                    a.InsertKeyFrame(1, new Vector3(r.W, 0, 0), G.Ease(EaseOutCss));
+                    a.InsertKeyFrame(0, new Vector3(-band - r.H * 0.5f, gy, 0), G.Linear);
+                    a.InsertKeyFrame(1, new Vector3(r.W + r.H * 0.5f, gy, 0), G.Ease(EaseOutCss));
                     a.Duration = Gfx.Ms(620);
                     t.Glare.StartAnimation("Offset", a);
                     var o = G.C.CreateScalarKeyFrameAnimation();
@@ -429,18 +433,18 @@ public sealed partial class WallStage
     /// <summary>盖在卡面（或封面）上的一层：上下压暗、内沿细边、图标、读数、名称、状态。</summary>
     private void CcPaintTileOver(CanvasDrawingSession ds, CcBlock b, float w, float h, int i, bool cover, string title)
     {
-        var ink = cover ? Gfx.Rgba(255, 255, 255) : Gfx.Mix(InkColor, 0.6, Gfx.Mix(_ccBlocks[0].Accent, 0.35, Colors.Black));
+        var ink = Gfx.Mix(InkColor, 0.6, Gfx.Mix(_ccBlocks[0].Accent, 0.35, Colors.Black));
+        var paper = CcTileColors(1).Base;
         const float pad = 22;
-        // 压暗不在这里裁圆角（外面的 Box 已经按同一个形状裁了）：两层各裁一次，边缘那一圈像素会漏出没压暗的封面
+        // 封面卡：底部渐变到和功能卡同一个浅色（字写在这块浅色上，深墨色），左上角图标后面一小片浅色。
+        // 11-16 jinyu：之前是按深色页面做的压黑 + 白字，页面改成浅色调后不搭。
+        // 不在这里裁圆角（外面的 Box 已经按同一个形状裁了），并且画出边界一圈，边缘不漏没盖住的封面。
+        if (cover)
         {
-            using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0), Gfx.Rgba(0, 0, 0, cover ? 0.86 : 0.05)) { StartPoint = new Vector2(0, h * (cover ? 0.46f : 0.4f)), EndPoint = new Vector2(0, h) })
+            using (var g = new CanvasLinearGradientBrush(ds, Gfx.WithAlpha(paper, 0), Gfx.WithAlpha(paper, 0.97)) { StartPoint = new Vector2(0, h * 0.56f), EndPoint = new Vector2(0, h * 0.84f) })
                 ds.FillRectangle(-2, -2, w + 4, h + 4, g);
-            if (cover)
-                using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0), Gfx.Rgba(0, 0, 0, 0.7)) { StartPoint = new Vector2(0, h * 0.72f), EndPoint = new Vector2(0, h) })
-                    ds.FillRectangle(-2, -2, w + 4, h + 4, g);
-            if (cover)
-                using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0.34), Gfx.Rgba(0, 0, 0, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, h * 0.22f) })
-                    ds.FillRectangle(-2, -2, w + 4, h + 4, g);
+            using (var g = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(paper, 0.85), Gfx.WithAlpha(paper, 0)) { Center = new Vector2(pad + 15, pad + 15), RadiusX = 70, RadiusY = 70 })
+                ds.FillRectangle(-2, -2, w + 4, h + 4, g);
         }
         // 内沿：一圈很淡的边，上沿亮一点。封面卡不画：亮色封面上这圈会变成一道白边
         using var rim = BtShape(ds, 0.5f, 0.5f, w - 1, h - 1, BtRadius);
@@ -464,7 +468,7 @@ public sealed partial class WallStage
             s.TrimmingGranularity = CanvasTextTrimmingGranularity.Character;
             s.TrimmingSign = CanvasTrimmingSign.Ellipsis;
             bottom -= (float)s.LayoutBounds.Height;
-            ds.DrawTextLayout(s, pad, bottom - (float)s.LayoutBounds.Y, Gfx.WithAlpha(ink, cover ? 0.78f : 0.74f));
+            ds.DrawTextLayout(s, pad, bottom - (float)s.LayoutBounds.Y, Gfx.WithAlpha(ink, 0.74f));
             bottom -= 6;
         }
         using var name = TextKit.Layout(ds, b.Name, TextKit.Ui(700), i == 0 ? 30 : 22, w - pad * 2, CanvasHorizontalAlignment.Left);
