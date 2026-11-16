@@ -325,7 +325,7 @@ public sealed partial class WallStage
     /// <summary>盖在卡面（或封面）上的一层：上下压暗、内沿细边、图标、读数、名称、状态。</summary>
     private void CcPaintTileOver(CanvasDrawingSession ds, CcBlock b, float w, float h, int i, bool cover, string title)
     {
-        var ink = cover ? Gfx.Rgba(255, 255, 255) : Gfx.Mix(InkColor, 0.25, Gfx.Mix(_ccBlocks[0].Accent, 0.75, Colors.Black));
+        var ink = cover ? Gfx.Rgba(255, 255, 255) : Gfx.Mix(InkColor, 0.6, Gfx.Mix(_ccBlocks[0].Accent, 0.35, Colors.Black));
         const float pad = 22;
         // 压暗不在这里裁圆角（外面的 Box 已经按同一个形状裁了）：两层各裁一次，边缘那一圈像素会漏出没压暗的封面
         {
@@ -360,7 +360,7 @@ public sealed partial class WallStage
             s.TrimmingGranularity = CanvasTextTrimmingGranularity.Character;
             s.TrimmingSign = CanvasTrimmingSign.Ellipsis;
             bottom -= (float)s.LayoutBounds.Height;
-            ds.DrawTextLayout(s, pad, bottom - (float)s.LayoutBounds.Y, Gfx.WithAlpha(ink, cover ? 0.78f : 0.6f));
+            ds.DrawTextLayout(s, pad, bottom - (float)s.LayoutBounds.Y, Gfx.WithAlpha(ink, cover ? 0.78f : 0.74f));
             bottom -= 6;
         }
         using var name = TextKit.Layout(ds, b.Name, TextKit.Ui(700), i == 0 ? 30 : 22, w - pad * 2, CanvasHorizontalAlignment.Left);
