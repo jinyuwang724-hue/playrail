@@ -380,6 +380,7 @@ public sealed partial class WallStage
         for (int i = 0; i < _ccPower.Count; i++)
             CcFocusVisual(_ccPower[i], _ccZone == CcZone.Power && i == _ccPowerFocus, instant);
         if (_ccBlocks.Count > 0 && _ccLabel != null) CcPaintLabels();
+        CcBentoLayout(animate: !instant);
     }
 
     private float _ccAway;

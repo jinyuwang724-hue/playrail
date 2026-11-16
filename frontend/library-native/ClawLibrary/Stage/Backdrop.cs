@@ -435,6 +435,15 @@ public sealed partial class Backdrop : IDisposable
 
     // ---------------- 取色（folia utils/colorPalette：加权中位切分） ----------------
 
+    /// <summary>封面的 6 个代表色（按像素数从多到少），和背景取色共用一份缓存。控制中心「拼盘」的卡片配色用。</summary>
+    public static async Task<Vector4[]> CoverColors(string path)
+    {
+        lock (ColorCache) if (ColorCache.TryGetValue(path, out var known)) return known;
+        var colors = await RepresentativeColors(path, 6);
+        lock (ColorCache) ColorCache[path] = colors;
+        return colors;
+    }
+
     private static async Task<Vector4[]> RepresentativeColors(string path, int count)
     {
         var file = await StorageFile.GetFileFromPathAsync(path);
