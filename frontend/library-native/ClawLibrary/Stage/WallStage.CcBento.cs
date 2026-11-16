@@ -214,7 +214,9 @@ public sealed partial class WallStage
         sat = Math.Min(sat, 0.40);
         // 11-16 jinyu：暗黄发脏。主题色只留一点点色相（饱和度压到一成左右），卡面是接近中性的深色玻璃，半透明透出后面的流体背景
         // 11-16 jinyu：暗底和背景不搭，改亮底。拍立得相纸那种暖白，只带一点点主题色相
-        return (Gfx.Hsl(h, 10 + sat * 14, 89), Gfx.Hsl(h, 10 + sat * 16, 95), Gfx.Hsl(h, 10 + sat * 18, 83), Gfx.Hsl(h, 8, 98));
+        // 11-16 jinyu：要的是「取色往浅色做」，不是白底。主题色的色相保留，饱和度留五六成，亮度提到八九成：一块浅色调的卡面
+        double ps = Math.Clamp(sat, 0.35, 0.8);
+        return (Gfx.Hsl(h, ps * 58, 85), Gfx.Hsl(h, ps * 62, 92), Gfx.Hsl(h, ps * 66, 76), Gfx.Hsl(h, ps * 40, 97));
     }
 
     private void CcBentoFetchColors()
@@ -323,18 +325,18 @@ public sealed partial class WallStage
     /// <summary>盖在卡面（或封面）上的一层：上下压暗、内沿细边、图标、读数、名称、状态。</summary>
     private void CcPaintTileOver(CanvasDrawingSession ds, CcBlock b, float w, float h, int i, bool cover, string title)
     {
-        var ink = cover ? Gfx.Rgba(255, 255, 255) : InkColor;
+        var ink = cover ? Gfx.Rgba(255, 255, 255) : Gfx.Mix(InkColor, 0.25, Gfx.Mix(_ccBlocks[0].Accent, 0.75, Colors.Black));
         const float pad = 22;
         // 压暗不在这里裁圆角（外面的 Box 已经按同一个形状裁了）：两层各裁一次，边缘那一圈像素会漏出没压暗的封面
         {
             using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0), Gfx.Rgba(0, 0, 0, cover ? 0.86 : 0.05)) { StartPoint = new Vector2(0, h * (cover ? 0.46f : 0.4f)), EndPoint = new Vector2(0, h) })
-                ds.FillRectangle(0, 0, w, h, g);
+                ds.FillRectangle(-2, -2, w + 4, h + 4, g);
             if (cover)
                 using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0), Gfx.Rgba(0, 0, 0, 0.7)) { StartPoint = new Vector2(0, h * 0.72f), EndPoint = new Vector2(0, h) })
-                    ds.FillRectangle(0, 0, w, h, g);
+                    ds.FillRectangle(-2, -2, w + 4, h + 4, g);
             if (cover)
                 using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0.34), Gfx.Rgba(0, 0, 0, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, h * 0.22f) })
-                    ds.FillRectangle(0, 0, w, h, g);
+                    ds.FillRectangle(-2, -2, w + 4, h + 4, g);
         }
         // 内沿：一圈很淡的边，上沿亮一点。封面卡不画：亮色封面上这圈会变成一道白边
         using var rim = BtShape(ds, 0.5f, 0.5f, w - 1, h - 1, BtRadius);
