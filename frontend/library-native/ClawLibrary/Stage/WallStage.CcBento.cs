@@ -285,8 +285,10 @@ public sealed partial class WallStage
             a.Duration = Gfx.Ms(700);
             o.StartAnimation(prop, a);
         }
-        To((CompositionColorBrush)_ccWallBase!.Brush, "Color", Gfx.Hsl(th, Math.Min(ts, 0.5) * 55, 34));
-        double[] light = { 52, 46, 40, 30, 58 };
+        bool dark = BtDark;
+        Log.Info($"bento colors: {(dark ? "dark" : "light")} cover={_ccGameCover}");
+        To((CompositionColorBrush)_ccWallBase!.Brush, "Color", Gfx.Hsl(th, Math.Min(ts, 0.5) * 55, dark ? 13 : 34));
+        double[] light = dark ? new double[] { 30, 25, 21, 16, 34 } : new double[] { 52, 46, 40, 30, 58 };
         for (int i = 0; i < _ccWallBlobs.Count; i++)
         {
             var p = _ccBentoColors;
@@ -301,6 +303,32 @@ public sealed partial class WallStage
     }
 
     // ---------------- 配色 ----------------
+
+    /// <summary>
+    /// 11-17 jinyu：浅色卡只适合浅色封面，深色封面要出深色的一套。按封面代表色的亮度自动选：
+    /// 6 个代表色按像素多少排好，越靠前权重越大，算加权相对亮度；低于 0.40 = 深色封面。没取到色时看主题色。
+    /// </summary>
+    private bool BtDark
+    {
+        get
+        {
+            static double Lum(Vector4 c)
+            {
+                static double Lin(double v) => v <= 0.04045 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
+                return 0.2126 * Lin(c.X) + 0.7152 * Lin(c.Y) + 0.0722 * Lin(c.Z);
+            }
+            var p = _ccBentoColors;
+            if (p.Length == 0) { var a = _ccBlocks[0].Accent; return Lum(new Vector4(a.R / 255f, a.G / 255f, a.B / 255f, 1)) < 0.18; }
+            double sum = 0, wsum = 0;
+            for (int i = 0; i < p.Length; i++) { double w = p.Length - i; sum += Math.Sqrt(Lum(p[i])) * w; wsum += w; }   // √ 让中间调不被压得太暗
+            return sum / wsum < 0.40;
+        }
+    }
+
+    /// <summary>卡上字和图标的颜色：浅色卡用带一点主题色的深墨色，深色卡用带一点主题色的暖白。</summary>
+    private Color BtInk => BtDark
+        ? Gfx.Mix(Gfx.Rgba(0xf6, 0xf3, 0xee), 0.9, _ccBlocks[0].Accent)
+        : Gfx.Mix(InkColor, 0.6, Gfx.Mix(_ccBlocks[0].Accent, 0.35, Colors.Black));
 
     private static (double h, double s, double l) BtHsl(Vector4 c)
     {
@@ -323,6 +351,8 @@ public sealed partial class WallStage
         // 11-16 jinyu：暗底和背景不搭，改亮底。拍立得相纸那种暖白，只带一点点主题色相
         // 11-16 jinyu：要的是「取色往浅色做」，不是白底。主题色的色相保留，饱和度留五六成，亮度提到八九成：一块浅色调的卡面
         double ps = Math.Clamp(sat, 0.35, 0.8);
+        // 11-17 jinyu：深色封面出同一色相的深色调（亮度一成五到两成五），浅色封面照旧
+        if (BtDark) return (Gfx.Hsl(h, ps * 42, 16), Gfx.Hsl(h, ps * 50, 26), Gfx.Hsl(h, ps * 46, 11), Gfx.Hsl(h, ps * 36, 42));
         return (Gfx.Hsl(h, ps * 58, 85), Gfx.Hsl(h, ps * 62, 92), Gfx.Hsl(h, ps * 66, 76), Gfx.Hsl(h, ps * 40, 97));
     }
 
@@ -433,7 +463,8 @@ public sealed partial class WallStage
     /// <summary>盖在卡面（或封面）上的一层：上下压暗、内沿细边、图标、读数、名称、状态。</summary>
     private void CcPaintTileOver(CanvasDrawingSession ds, CcBlock b, float w, float h, int i, bool cover, string title)
     {
-        var ink = Gfx.Mix(InkColor, 0.6, Gfx.Mix(_ccBlocks[0].Accent, 0.35, Colors.Black));
+        bool dark = BtDark;
+        var ink = BtInk;
         var paper = CcTileColors(1).Base;
         const float pad = 22;
         // 封面卡：底部渐变到和功能卡同一个浅色（字写在这块浅色上，深墨色），左上角图标后面一小片浅色。
@@ -448,8 +479,8 @@ public sealed partial class WallStage
         }
         // 内沿：一圈很淡的边，上沿亮一点。封面卡不画：亮色封面上这圈会变成一道白边
         using var rim = BtShape(ds, 0.5f, 0.5f, w - 1, h - 1, BtRadius);
-        if (!cover) ds.DrawGeometry(rim, Gfx.Rgba(0, 0, 0, 0.08), 1);
-        if (!cover) using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(255, 255, 255, 0.9), Gfx.Rgba(255, 255, 255, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, MathF.Min(h * 0.3f, 60)) })
+        if (!cover) ds.DrawGeometry(rim, dark ? Gfx.Rgba(255, 255, 255, 0.10) : Gfx.Rgba(0, 0, 0, 0.08), 1);
+        if (!cover) using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(255, 255, 255, dark ? 0.28 : 0.9), Gfx.Rgba(255, 255, 255, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, MathF.Min(h * 0.3f, 60)) })
             ds.DrawGeometry(rim, g, 1);
 
         LineIcons.Draw(ds, b.Icon, pad + 15, pad + 15, 30, Gfx.WithAlpha(ink, 0.95f));
