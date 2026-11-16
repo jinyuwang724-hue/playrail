@@ -385,7 +385,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>暗的时候会变脏的色相段（OKLCH）：橙黄 → 黄 → 橄榄。</summary>
-    private static bool BtMuddy(double h, double targetL) => targetL < 0.7 && h >= 50 && h <= 115;
+    private static bool BtMuddy(double h, double targetL) => targetL < 0.86 && h >= 50 && h <= 115;   // 0.86 以下的黄已经发芥末 / 卡其；卡面浅色是 0.915，不受影响
 
     /// <summary>为目标亮度挑一个色相和彩度（彩度是这个色相能用的上限，调用方再按需缩）。</summary>
     private (double h, double c) BtPick(double targetL)
