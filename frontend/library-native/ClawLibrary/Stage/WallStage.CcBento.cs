@@ -213,7 +213,8 @@ public sealed partial class WallStage
         var (h, sat, _) = BtHsl(c);
         sat = Math.Min(sat, 0.40);
         // 11-16 jinyu：暗黄发脏。主题色只留一点点色相（饱和度压到一成左右），卡面是接近中性的深色玻璃，半透明透出后面的流体背景
-        return (Gfx.Hsl(h, sat * 22, 9), Gfx.Hsl(h, sat * 30, 21), Gfx.Hsl(h, sat * 22, 14), Gfx.Hsl(h, sat * 20, 46));
+        // 11-16 jinyu：暗底和背景不搭，改亮底。拍立得相纸那种暖白，只带一点点主题色相
+        return (Gfx.Hsl(h, 10 + sat * 14, 89), Gfx.Hsl(h, 10 + sat * 16, 95), Gfx.Hsl(h, 10 + sat * 18, 83), Gfx.Hsl(h, 8, 98));
     }
 
     private void CcBentoFetchColors()
@@ -258,7 +259,7 @@ public sealed partial class WallStage
             using (var shape = BtShape(G.Device, 0, 0, w, h, BtRadius)) t.ClipGeo.Path = new CompositionPath(shape);
             var col = i == 0 ? (Gfx.Rgba(0x27, 0x25, 0x24), Gfx.Rgba(0x4a, 0x44, 0x40), Gfx.Rgba(0x3a, 0x38, 0x3a), Gfx.Rgba(0x8a, 0x84, 0x80)) : CcTileColors(i);
             t.Tone = i == 0 ? Gfx.Mix(b.Accent, 0.5, Gfx.Rgba(0x60, 0x5a, 0x56)) : col.Item2;
-            t.Face.Opacity = 0.8f;
+            t.Face.Opacity = 0.94f;
             int idx = i;
             CcSet(t.Face, CcDraw(w, h, raster, ds => { if (cover == null) CcPaintTileFace(ds, col, w, h, idx); }));
             CcSet(t.Over, CcDraw(w, h, raster, ds => CcPaintTileOver(ds, b, w, h, idx, cover != null, title)));
@@ -322,11 +323,11 @@ public sealed partial class WallStage
     /// <summary>盖在卡面（或封面）上的一层：上下压暗、内沿细边、图标、读数、名称、状态。</summary>
     private void CcPaintTileOver(CanvasDrawingSession ds, CcBlock b, float w, float h, int i, bool cover, string title)
     {
-        var ink = Gfx.Rgba(255, 255, 255);
+        var ink = cover ? Gfx.Rgba(255, 255, 255) : InkColor;
         const float pad = 22;
         // 压暗不在这里裁圆角（外面的 Box 已经按同一个形状裁了）：两层各裁一次，边缘那一圈像素会漏出没压暗的封面
         {
-            using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0), Gfx.Rgba(0, 0, 0, cover ? 0.86 : 0.36)) { StartPoint = new Vector2(0, h * (cover ? 0.46f : 0.4f)), EndPoint = new Vector2(0, h) })
+            using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0), Gfx.Rgba(0, 0, 0, cover ? 0.86 : 0.05)) { StartPoint = new Vector2(0, h * (cover ? 0.46f : 0.4f)), EndPoint = new Vector2(0, h) })
                 ds.FillRectangle(0, 0, w, h, g);
             if (cover)
                 using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(0, 0, 0, 0), Gfx.Rgba(0, 0, 0, 0.7)) { StartPoint = new Vector2(0, h * 0.72f), EndPoint = new Vector2(0, h) })
@@ -337,8 +338,8 @@ public sealed partial class WallStage
         }
         // 内沿：一圈很淡的边，上沿亮一点。封面卡不画：亮色封面上这圈会变成一道白边
         using var rim = BtShape(ds, 0.5f, 0.5f, w - 1, h - 1, BtRadius);
-        if (!cover) ds.DrawGeometry(rim, Gfx.Rgba(255, 255, 255, 0.12), 1);
-        if (!cover) using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(255, 255, 255, 0.34), Gfx.Rgba(255, 255, 255, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, MathF.Min(h * 0.3f, 60)) })
+        if (!cover) ds.DrawGeometry(rim, Gfx.Rgba(0, 0, 0, 0.08), 1);
+        if (!cover) using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(255, 255, 255, 0.9), Gfx.Rgba(255, 255, 255, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, MathF.Min(h * 0.3f, 60)) })
             ds.DrawGeometry(rim, g, 1);
 
         LineIcons.Draw(ds, b.Icon, pad + 15, pad + 15, 30, Gfx.WithAlpha(ink, 0.95f));
@@ -357,7 +358,7 @@ public sealed partial class WallStage
             s.TrimmingGranularity = CanvasTextTrimmingGranularity.Character;
             s.TrimmingSign = CanvasTrimmingSign.Ellipsis;
             bottom -= (float)s.LayoutBounds.Height;
-            ds.DrawTextLayout(s, pad, bottom - (float)s.LayoutBounds.Y, Gfx.WithAlpha(ink, 0.78f));
+            ds.DrawTextLayout(s, pad, bottom - (float)s.LayoutBounds.Y, Gfx.WithAlpha(ink, cover ? 0.78f : 0.6f));
             bottom -= 6;
         }
         using var name = TextKit.Layout(ds, b.Name, TextKit.Ui(700), i == 0 ? 30 : 22, w - pad * 2, CanvasHorizontalAlignment.Left);
