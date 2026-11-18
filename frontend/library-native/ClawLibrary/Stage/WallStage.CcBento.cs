@@ -287,6 +287,9 @@ public sealed partial class WallStage
         }
         bool dark = BtDark;
         Log.Info($"bento colors: {(dark ? "dark" : "light")} cover={_ccGameCover}");
+        // 11-18 jinyu：游戏库主页的横幅是压暗的，控制中心却是提亮的，两边矛盾。统一成：背景永远压暗（封面色相的深色调，和主页 BnTint 同一个思路），
+        // 浅色 / 深色只决定前景卡片。
+        dark = true;
         var (bh, _) = BtPick(dark ? 0.2 : 0.7);
         var (_, bc0) = BtPick(0.9);
         To((CompositionColorBrush)_ccWallBase!.Brush, "Color", dark ? Ok(0.2, Math.Min(bc0, 0.03), bh) : Ok(0.7, Math.Min(bc0 * 1.4, 0.05), bh));
