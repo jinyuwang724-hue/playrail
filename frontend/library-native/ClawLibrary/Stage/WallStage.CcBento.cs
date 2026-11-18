@@ -112,6 +112,7 @@ public sealed partial class WallStage
         if (_ccBento) CcEnsureBento();
         if (_ccRow != null) _ccRow.IsVisible = !_ccBento;
         if (_ccLabel != null) _ccLabel.IsVisible = !_ccBento;
+        if (_ccWall != null) _ccWall.IsVisible = _ccBento;
         if (_ccBentoRoot == null) return;
         _ccBentoRoot.IsVisible = _ccBento;
         if (!_ccBento) return;
@@ -199,86 +200,131 @@ public sealed partial class WallStage
         }
     }
 
-    // ---------------- 这一页自己的动态背景 ----------------
-    // 11-16 jinyu：做一张配这页的动态壁纸，颜色还是跟封面取。
-    // 一层中间调的底色（主题色相，压到四成亮）上面浮着五团封面代表色的光，各自沿很慢的闭合路线漂（24–40 s 一圈，合成线程动画，不占 UI 线程）。
-    // 明暗卡在中间：浅色卡片和封面浮得起来，左上标题、右上状态、左下功能坞的白字白图标也还看得清。
+    // ---------------- 控制中心的动态壁纸（拼盘首页 + 所有功能页共用） ----------------
+    // 11-16 起：配拼盘的动态壁纸，颜色跟封面（场景色 SceneOf，和游戏库同一个颜色）。
+    // 11-19 jinyu：①功能页（性能 / 手柄 / 显示与声音 / 系统 / 设置 / 截图……）也用它，统一样式 → 壁纸挂在控制中心根上，进页面不淡掉；
+    // ②原来那版不好看 → 重做成「极光」：深色底 + 六团大小、形状不同的光（场景色相 + 两侧邻近色相，彩度更足），
+    //   各自沿闭合路线漂并缓慢呼吸缩放，上面一层很淡的顶光、四周暗角、底部压暗（给功能坞和按钮行留对比），最上面一层细颗粒。
     private ContainerVisual? _ccWall;
-    private SpriteVisual? _ccWallBase;
+    private SpriteVisual? _ccWallBase, _ccWallGrain;
     private readonly List<(SpriteVisual V, CompositionRadialGradientBrush B)> _ccWallBlobs = new();
+    private readonly List<SpriteVisual> _ccWallFx = new();
     private string _ccWallFor = "";
     private (float W, float H) _ccWallSize;
 
     private void CcBentoWallEnsure()
     {
-        if (_ccBentoRoot == null || _ccWall != null) return;
+        if (_cc == null || _ccWall != null) return;
         _ccWall = G.C.CreateContainerVisual();
-        _ccWallBase = G.Sprite(G.Solid(Gfx.Rgba(0x4a, 0x44, 0x40)), relative: false);
+        _ccWallBase = G.Sprite(G.Solid(Gfx.Rgba(0x20, 0x20, 0x24)), relative: false);
         _ccWall.Children.InsertAtTop(_ccWallBase);
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < 6; i++)
         {
             var b = G.C.CreateRadialGradientBrush();
-            b.ColorStops.Add(G.C.CreateColorGradientStop(0, Gfx.Rgba(0x60, 0x5a, 0x56, 0.95)));
-            b.ColorStops.Add(G.C.CreateColorGradientStop(0.55f, Gfx.Rgba(0x60, 0x5a, 0x56, 0.5)));
-            b.ColorStops.Add(G.C.CreateColorGradientStop(1, Gfx.Rgba(0x60, 0x5a, 0x56, 0)));
+            b.ColorStops.Add(G.C.CreateColorGradientStop(0, Gfx.Rgba(0x60, 0x60, 0x66, 0.9)));
+            b.ColorStops.Add(G.C.CreateColorGradientStop(0.45f, Gfx.Rgba(0x60, 0x60, 0x66, 0.45)));
+            b.ColorStops.Add(G.C.CreateColorGradientStop(1, Gfx.Rgba(0x60, 0x60, 0x66, 0)));
             var v = G.Sprite(b, relative: false);
             _ccWall.Children.InsertAtTop(v);
             _ccWallBlobs.Add((v, b));
         }
-        _ccBentoRoot.Children.InsertAtBottom(_ccWall);
+        // 顶光（左上很淡的白）、暗角、底部压暗
+        var top = G.C.CreateRadialGradientBrush();
+        top.EllipseCenter = new Vector2(0.28f, 0f); top.EllipseRadius = new Vector2(0.7f, 0.6f);
+        top.ColorStops.Add(G.C.CreateColorGradientStop(0, Gfx.Rgba(255, 255, 255, 0.07)));
+        top.ColorStops.Add(G.C.CreateColorGradientStop(1, Gfx.Rgba(255, 255, 255, 0)));
+        var vig = G.C.CreateRadialGradientBrush();
+        vig.EllipseCenter = new Vector2(0.5f, 0.45f); vig.EllipseRadius = new Vector2(0.85f, 0.85f);
+        vig.ColorStops.Add(G.C.CreateColorGradientStop(0.55f, Gfx.Rgba(0, 0, 0, 0)));
+        vig.ColorStops.Add(G.C.CreateColorGradientStop(1, Gfx.Rgba(0, 0, 0, 0.42)));
+        var bottom = G.LinearGradient(180, 1, 1, (0.62, Gfx.Rgba(0, 0, 0, 0)), (1, Gfx.Rgba(0, 0, 0, 0.38)));
+        foreach (var br in new CompositionBrush[] { top, vig, bottom })
+        {
+            var sv = G.Sprite(br, relative: false);
+            _ccWall.Children.InsertAtTop(sv);
+            _ccWallFx.Add(sv);
+        }
+        // 细颗粒：画一张 640 × 400 的噪点，拉满全屏（放大一倍正好是柔和的颗粒）
+        var grain = G.C.CreateSurfaceBrush(CcDraw(640, 400, 1, ds =>
+        {
+            var rnd = new Random(42);
+            for (int i = 0; i < 26000; i++)
+                ds.FillRectangle(rnd.Next(640), rnd.Next(400), 1, 1, rnd.Next(2) == 0 ? Gfx.Rgba(255, 255, 255, 0.10) : Gfx.Rgba(0, 0, 0, 0.14));
+        }));
+        grain.Stretch = CompositionStretch.Fill;
+        _ccWallGrain = G.Sprite(grain, relative: false);
+        _ccWallGrain.Opacity = 0.55f;
+        _ccWall.Children.InsertAtTop(_ccWallGrain);
+        // 挂在控制中心根上（压暗层之上、拼盘卡片和功能页之下）：进功能页时不跟着淡掉
+        _cc.Children.InsertAbove(_ccWall, _ccDim);
     }
 
-    /// <summary>铺满窗口，五团光各就各位并开始漂。窗口尺寸变了才重排。</summary>
+    /// <summary>铺满窗口，光团各就各位并开始漂、呼吸。窗口尺寸变了才重排。</summary>
     private void CcBentoWallLayout()
     {
         CcBentoWallEnsure();
         if (_ccWall == null) return;
+        _ccWall.IsVisible = _ccBento;
+        _ccWall.Scale = new Vector3(_ccK, _ccK, 1);
         float w = BtW, h = BtH;
         if (_ccWallSize == (w, h)) return;
         _ccWallSize = (w, h);
         _ccWallBase!.Size = new Vector2(w, h);
-        // 位置（中心，占窗口的比例）、直径（占宽）、漂移幅度、周期（秒）
-        (float X, float Y, float D, float Dx, float Dy, double T)[] spec =
+        foreach (var fx in _ccWallFx) fx.Size = new Vector2(w, h);
+        _ccWallGrain!.Size = new Vector2(w, h);
+        // 位置（中心，占窗口比例）、宽高（占宽）、漂移幅度、周期（秒）、呼吸幅度
+        (float X, float Y, float W, float H, float Dx, float Dy, double T, float S)[] spec =
         {
-            (0.16f, 0.22f, 0.95f, 0.10f, 0.12f, 34),
-            (0.88f, 0.12f, 0.80f, -0.12f, 0.10f, 28),
-            (0.70f, 0.92f, 1.00f, -0.10f, -0.12f, 40),
-            (0.08f, 0.95f, 0.70f, 0.12f, -0.08f, 24),
-            (0.50f, 0.48f, 0.62f, 0.14f, 0.06f, 31),
+            (0.18f, 0.20f, 1.05f, 0.80f, 0.10f, 0.10f, 38, 0.10f),
+            (0.86f, 0.14f, 0.90f, 0.70f, -0.12f, 0.08f, 31, 0.12f),
+            (0.70f, 0.88f, 1.20f, 0.75f, -0.10f, -0.10f, 46, 0.08f),
+            (0.06f, 0.92f, 0.80f, 0.65f, 0.12f, -0.08f, 27, 0.14f),
+            (0.48f, 0.46f, 0.70f, 0.55f, 0.14f, 0.07f, 34, 0.12f),
+            (0.98f, 0.62f, 0.60f, 0.55f, -0.10f, 0.12f, 29, 0.10f),
         };
+        var smooth = new Bezier(0.37f, 0f, 0.63f, 1f);
         for (int i = 0; i < _ccWallBlobs.Count; i++)
         {
             var (v, _) = _ccWallBlobs[i];
             var p = spec[i];
-            float d = w * p.D;
-            v.Size = new Vector2(d, d);
-            var home = new Vector3(w * p.X - d / 2, h * p.Y - d / 2, 0);
-            v.StopAnimation("Offset");
+            float bw = w * p.W, bh = w * p.H;
+            v.Size = new Vector2(bw, bh);
+            v.CenterPoint = new Vector3(bw / 2, bh / 2, 0);
+            var home = new Vector3(w * p.X - bw / 2, h * p.Y - bh / 2, 0);
+            v.StopAnimation("Offset"); v.StopAnimation("Scale");
             v.Offset = home;
             if (Reduced) continue;
             var a = G.C.CreateVector3KeyFrameAnimation();
             a.InsertKeyFrame(0, home, G.Linear);
-            a.InsertKeyFrame(0.25f, home + new Vector3(w * p.Dx, 0, 0), G.Ease(new Bezier(0.37f, 0f, 0.63f, 1f)));
-            a.InsertKeyFrame(0.5f, home + new Vector3(w * p.Dx, h * p.Dy, 0), G.Ease(new Bezier(0.37f, 0f, 0.63f, 1f)));
-            a.InsertKeyFrame(0.75f, home + new Vector3(0, h * p.Dy, 0), G.Ease(new Bezier(0.37f, 0f, 0.63f, 1f)));
-            a.InsertKeyFrame(1, home, G.Ease(new Bezier(0.37f, 0f, 0.63f, 1f)));
+            a.InsertKeyFrame(0.25f, home + new Vector3(w * p.Dx, 0, 0), G.Ease(smooth));
+            a.InsertKeyFrame(0.5f, home + new Vector3(w * p.Dx, h * p.Dy, 0), G.Ease(smooth));
+            a.InsertKeyFrame(0.75f, home + new Vector3(0, h * p.Dy, 0), G.Ease(smooth));
+            a.InsertKeyFrame(1, home, G.Ease(smooth));
             a.Duration = TimeSpan.FromSeconds(p.T);
             a.IterationBehavior = AnimationIterationBehavior.Forever;
             v.StartAnimation("Offset", a);
+            var sc = G.C.CreateVector3KeyFrameAnimation();
+            sc.InsertKeyFrame(0, Vector3.One, G.Linear);
+            sc.InsertKeyFrame(0.5f, new Vector3(1 + p.S, 1 + p.S * 0.6f, 1), G.Ease(smooth));
+            sc.InsertKeyFrame(1, Vector3.One, G.Ease(smooth));
+            sc.Duration = TimeSpan.FromSeconds(p.T * 0.62);
+            sc.IterationBehavior = AnimationIterationBehavior.Forever;
+            v.StartAnimation("Scale", sc);
         }
     }
 
-    /// <summary>封面换了：底色和五团光在 0.7 s 里渐变到新封面的颜色。</summary>
+    /// <summary>暗处会发脏的色相（橙黄 → 橄榄）推到两边干净的地方。</summary>
+    private static double WallHue(double h) => BtMuddy(h, 0.3) ? (h < 82 ? 40 : 125) : h;
+
+    /// <summary>换游戏：底色和六团光在 0.7 s 里渐变到新的场景色。</summary>
     private void CcBentoWallColors()
     {
         if (_ccWall == null) return;
-        var acc = _ccBlocks[0].Accent;
         var sg = SelectedGame();
         string key = (sg?.Id ?? "") + "|" + (sg != null && _scene.TryGetValue(sg.Id, out var sv) ? sv.ToString() : "?");
         if (key == _ccWallFor) return;
         bool first = _ccWallFor.Length == 0;
         _ccWallFor = key;
-        var (th, ts, _) = BtHsl(new Vector4(acc.R / 255f, acc.G / 255f, acc.B / 255f, 1));
         void To(CompositionObject o, string prop, Color c)
         {
             if (first || Reduced) { o.StopAnimation(prop); if (o is CompositionColorBrush cb) cb.Color = c; else ((CompositionColorGradientStop)o).Color = c; return; }
@@ -287,20 +333,21 @@ public sealed partial class WallStage
             a.Duration = Gfx.Ms(700);
             o.StartAnimation(prop, a);
         }
-        bool dark = BtDark;
-        Log.Info($"bento colors: {(dark ? "dark" : "light")} cover={_ccGameCover}");
-        // 11-18 jinyu：背景和游戏库主页的横幅压暗是同一个颜色（场景色），深色调；五团光是同一个色相稍微错开一点，不再各取一种封面色。
-        var (bh, sc) = SceneOf(SelectedGame(), () => { _ccWallFor = ""; CcBentoWallColors(); });
-        To((CompositionColorBrush)_ccWallBase!.Brush, "Color", Ok(0.2, Math.Min(sc * 0.6, 0.045), bh));
-        double[] light = { 0.36, 0.31, 0.27, 0.23, 0.41 };
-        double[] shift = { 0, 14, -14, 24, -8 };
+        var (hh, sc) = SceneOf(sg, () => { _ccWallFor = ""; CcBentoWallColors(); });
+        // 近中性的封面（只剩黄棕 / 本来就灰）：保留一点点色相，做成有层次的深灰极光
+        double cbase = Math.Clamp(sc * 1.4, 0.018, 0.115);
+        To((CompositionColorBrush)_ccWallBase!.Brush, "Color", Ok(0.17, cbase * 0.45, WallHue(hh)));
+        (double L, double C, double dh)[] look =
+        {
+            (0.44, 1.0, 0), (0.38, 0.9, 32), (0.33, 1.0, -26), (0.27, 0.8, 0), (0.50, 0.75, 14), (0.36, 0.85, -40),
+        };
         for (int i = 0; i < _ccWallBlobs.Count; i++)
         {
-            double L = light[i];
-            var c = Ok(L, Math.Min(sc * 1.1, 0.085), bh + shift[i]);
+            var (L, C, dh) = look[i];
+            var c = Ok(L, cbase * C, WallHue(hh + dh));
             var stops = _ccWallBlobs[i].B.ColorStops;
-            To(stops[0], "Color", Gfx.WithAlpha(c, 0.95));
-            To(stops[1], "Color", Gfx.WithAlpha(c, 0.5));
+            To(stops[0], "Color", Gfx.WithAlpha(c, 0.9));
+            To(stops[1], "Color", Gfx.WithAlpha(c, 0.45));
             To(stops[2], "Color", Gfx.WithAlpha(c, 0));
         }
     }
