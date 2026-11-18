@@ -1135,8 +1135,8 @@ public sealed partial class WallStage
         {
             if (action == CsAction.End) LineIcons.Draw(ds, "qam.quit", 12 + dx, 12, 24, fg);
             else if (action == CsAction.Settings) CsIconSliders(ds, dx, 0, fg);
-            else if (action == CsAction.Search) LineIcons.Draw(ds, "", 12 + dx, 12, 18, fg);
-            else if (action == CsAction.Shots) LineIcons.Draw(ds, "", 12 + dx, 12, 18, fg);
+            else if (action == CsAction.Search) CsIconSearch(ds, dx, 0, fg);
+            else if (action == CsAction.Shots) CsIconShot(ds, dx, 0, fg);
             else
             {
                 _csSteamSvg ??= Microsoft.Graphics.Canvas.Svg.CanvasSvgDocument.LoadFromXml(G.Device, File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "Steam.svg")));
@@ -1182,6 +1182,26 @@ public sealed partial class WallStage
         ds.DrawLine(x + 4 * s, y + 7, x + 14, y + 7, c, 1.8f); ds.DrawLine(x + 18, y + 7, x + 20, y + 7, c, 1.8f);
         ds.DrawLine(x + 4, y + 17, x + 6, y + 17, c, 1.8f); ds.DrawLine(x + 10, y + 17, x + 20, y + 17, c, 1.8f);
         ds.DrawCircle(x + 16, y + 7, 2.2f, c, 1.8f); ds.DrawCircle(x + 8, y + 17, 2.2f, c, 1.8f);
+    }
+
+    // 搜索、截图：直接用线条画（11-19 jinyu：这两颗按 LineIcons 画出来是空的），和设置图标同一套 24 格、1.8 线宽
+    private static void CsIconSearch(CanvasDrawingSession ds, float x, float y, Color c)
+    {
+        using var st = new CanvasStrokeStyle { StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round };
+        ds.DrawCircle(x + 10.5f, y + 10.5f, 6, c, 1.8f);
+        ds.DrawLine(x + 15, y + 15, x + 19.5f, y + 19.5f, c, 1.8f, st);
+    }
+
+    private static void CsIconShot(CanvasDrawingSession ds, float x, float y, Color c)
+    {
+        using var st = new CanvasStrokeStyle { StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round, LineJoin = CanvasLineJoin.Round };
+        // 四个角的取景框 + 中间一个圆
+        foreach (var (cx, cy, sx, sy) in new[] { (4.5f, 4.5f, 1, 1), (19.5f, 4.5f, -1, 1), (19.5f, 19.5f, -1, -1), (4.5f, 19.5f, 1, -1) })
+        {
+            ds.DrawLine(x + cx, y + cy + sy * 4, x + cx, y + cy, c, 1.8f, st);
+            ds.DrawLine(x + cx, y + cy, x + cx + sx * 4, y + cy, c, 1.8f, st);
+        }
+        ds.DrawCircle(x + 12, y + 12, 3.2f, c, 1.8f);
     }
 
     private static void CsIconStar(CanvasDrawingSession ds, float x, float y, Color c, bool fill)

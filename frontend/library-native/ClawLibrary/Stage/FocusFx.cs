@@ -31,6 +31,9 @@ public sealed class FocusFx
     private float _unit = 1;
     private readonly List<(CompositionSpriteShape Shape, float Width)> _strokes = new();
     private readonly ExpressionAnimation _sizeExpr;
+    private const double LapSeconds = 5.5;
+    private static readonly System.Diagnostics.Stopwatch Clock = System.Diagnostics.Stopwatch.StartNew();
+    private Vector2 _walkSize;
 
     private sealed class Slot
     {
@@ -101,23 +104,8 @@ public sealed class FocusFx
         _tint.ColorStops.Add(g.C.CreateColorGradientStop(0.45f, Gfx.Rgba(0xe6, 0xd6, 0xff, 0.8)));
         _tint.ColorStops.Add(g.C.CreateColorGradientStop(0.75f, Gfx.Rgba(0xff, 0xcf, 0xe8, 0.55)));
         _tint.ColorStops.Add(g.C.CreateColorGradientStop(1, Gfx.Rgba(0xff, 0xcf, 0xe8, 0)));
-        var walk = g.C.CreatePropertySet();
-        walk.InsertScalar("T", 0);
-        var lap = g.C.CreateScalarKeyFrameAnimation();
-        lap.InsertKeyFrame(0, 0, g.Linear);
-        lap.InsertKeyFrame(1, 1, g.Linear);
-        lap.Duration = TimeSpan.FromSeconds(7);
-        lap.IterationBehavior = AnimationIterationBehavior.Forever;
-        walk.StartAnimation("T", lap);
-        // 周长上的点：上边 → 右边 → 下边 → 左边
-        const string P = "(s.T * 2 * (r.Size.X + r.Size.Y))", W = "r.Size.X", H = "r.Size.Y";
-        string ex = $"Vector2({P} < {W} ? {P} : ({P} < {W} + {H} ? {W} : ({P} < 2 * {W} + {H} ? {W} - ({P} - {W} - {H}) : 0)), "
-                  + $"{P} < {W} ? 0 : ({P} < {W} + {H} ? {P} - {W} : ({P} < 2 * {W} + {H} ? {H} : {H} - ({P} - 2 * {W} - {H}))))";
-        var center = g.C.CreateExpressionAnimation(ex);
-        center.SetReferenceParameter("r", _ring);
-        center.SetReferenceParameter("s", walk);
-        _tint.StartAnimation("EllipseCenter", center);
-        _lines.Children.InsertAtTop(Stroke(_tint, 0.62f));
+        // 中心沿框的周长匀速走（Walk：按框的目标尺寸重排关键帧，从当前走到的位置接着走，不回起点）
+        _lines.Children.InsertAtTop(Stroke(_tint, 0.8f));
 
         var mid = g.C.CreateExpressionAnimation("Vector3(r.Size.X / 2, r.Size.Y / 2, 0)");
         mid.SetReferenceParameter("r", _ring);
@@ -136,7 +124,7 @@ public sealed class FocusFx
         _ringGeo.Offset = new Vector2(Line / 2 * unit, Line / 2 * unit);
         _sizeExpr.SetScalarParameter("l", Line * unit);
         _ringGeo.StartAnimation("Size", _sizeExpr);
-        _tint.EllipseRadius = new Vector2(80 * unit, 80 * unit);
+        _walkSize = Vector2.Zero;
     }
 
     /// <summary>
@@ -188,6 +176,7 @@ public sealed class FocusFx
         var ro = new Vector3(x - gap, y - gap, 0);
         var rs = new Vector2(w + 2 * gap, h + 2 * gap);
         _ringGeo.CornerRadius = new Vector2(r + gap);
+        Walk(rs);
         if (first)
         {
             _ring.StopAnimation("Offset"); _ring.StopAnimation("Size");
@@ -203,6 +192,34 @@ public sealed class FocusFx
         _ring.StopAnimation("Opacity");
         _ring.Opacity = 1;
         Hoop();
+    }
+
+    /// <summary>
+    /// 流光：一小团蓝粉色沿框的周长走一圈 LapSeconds 秒。大小按周长定（小按钮上是一小段，大卡上也只占一截），
+    /// 关键帧按框的尺寸在周长上均匀取点，起点是按时钟算出来的当前位置，所以换目标时颜色接着往前走，不跳回起点。
+    /// </summary>
+    private void Walk(Vector2 size)
+    {
+        if (Vector2.Distance(size, _walkSize) < 1) return;
+        _walkSize = size;
+        float w = size.X, h = size.Y, per = 2 * (w + h);
+        float rad = Math.Clamp(per * 0.085f, 26 * _unit, 110 * _unit);
+        _tint.EllipseRadius = new Vector2(rad, rad);
+        Vector2 At(float t)
+        {
+            float d = ((t % 1) + 1) % 1 * per;
+            if (d < w) return new(d, 0);
+            d -= w; if (d < h) return new(w, d);
+            d -= h; if (d < w) return new(w - d, h);
+            d -= w; return new(0, h - d);
+        }
+        float phase = (float)(Clock.Elapsed.TotalSeconds / LapSeconds % 1);
+        var a = G.C.CreateVector2KeyFrameAnimation();
+        const int n = 64;
+        for (int i = 0; i <= n; i++) a.InsertKeyFrame(i / (float)n, At(phase + i / (float)n), G.Linear);
+        a.Duration = TimeSpan.FromSeconds(LapSeconds);
+        a.IterationBehavior = AnimationIterationBehavior.Forever;
+        _tint.StartAnimation("EllipseCenter", a);
     }
 
     /// <summary>套圈：先大一圈、淡一些，再收紧到位（稍微收过一点再回来）。</summary>

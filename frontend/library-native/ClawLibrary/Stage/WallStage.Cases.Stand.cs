@@ -142,7 +142,7 @@ public sealed partial class WallStage
             foreach (var prop in new[] { "Offset", "Scale" }) stand.Root.StopAnimation(prop);
             stand.Root.Offset = new Vector3(StdX, StdY, 0);
             stand.Root.Scale = Vector3.One;
-            if (p.StandCase == stand && !p.Acts) { var sfx = FxFor(p.Content); CsFocusFx(p, stand.Item, -1, false); sfx.Hoop(); }
+            if (p.StandCase == stand && !p.Acts) CsFocusFx(p, stand.Item, -1, false);
             if (p.StandLeaving == old) p.StandLeaving = null;
             p.Content.Children.Remove(old.Root);
             CsDisposeCase(old);

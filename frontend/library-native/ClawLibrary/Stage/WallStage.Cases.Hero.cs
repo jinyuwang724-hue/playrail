@@ -212,7 +212,7 @@ public sealed partial class WallStage
         After(ms + 20, () =>
         {
             if (p.HeroLeaving.Remove(old)) { p.Content.Children.Remove(old.Root); CsDisposeCase(old); }
-            if (p.StandCase == wide && NowMs - p.HeroLast >= ms && !p.Acts) FxFor(p.Content).Hoop();   // 新大卡落定：焦点框再套一次
+            // 换游戏时焦点框不动、不再套一次（11-19 jinyu：落定时跳一下）
         });
         p.Prev = s;
     }
