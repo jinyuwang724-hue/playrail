@@ -133,7 +133,7 @@ public sealed partial class WallStage
             else
             {
                 c.Root.StartAnimation("Offset", CsV3(off, ms, CsQuart));
-                if (i != s && i == p.Prev) { c.Root.StopAnimation("Opacity"); c.Root.Opacity = 0; c.Root.StartAnimation("Opacity", CsS(1, 1, CsQuart, ms)); }   // 旧大卡收回到这一格时再接手
+                if (i != s && i == p.Prev) { c.Root.StopAnimation("Opacity"); c.Root.Opacity = 0; c.Root.StartAnimation("Opacity", CsS(1, ms * 0.35, Bezier.EaseOut, ms * 0.45)); }   // 旧大卡收回途中和这一格交叉淡化接手（不在最后一刻硬切）
             }
         }
         if (p.Cases.TryGetValue(s, out var selRow)) { selRow.Root.StopAnimation("Opacity"); selRow.Root.Opacity = 0; }
@@ -178,6 +178,14 @@ public sealed partial class WallStage
         // 往前翻时滑到左边淡掉，往回翻时落回排里自己的那一格。所有属性都从当前值出发，连按可打断。
         bool fwd = s > p.Prev;
         var ease = new Bezier(0.25f, 0.8f, 0.25f, 1f);   // 前快后慢、尾巴很长，像控制中心的弹簧
+        // 连按时上一轮还在收回的旧卡：目标已经过时（排又挪了一格），按现在的排重新瞄准自己的格子并尽快淡掉，
+        // 否则往左连按时几张旧卡会飞向同一个过时的位置挤成一团（往右连按时旧卡本来就往左边淡掉，不会挤）
+        foreach (var lv in p.HeroLeaving)
+        {
+            var to = lv.Index > s ? HeroSlot(lv.Index, s, rx) : new Vector3(HeX - HeW0 - HeGap - 40, HeY, 0);
+            lv.Root.StartAnimation("Offset", CsV3(to, ms * 0.5, Bezier.EaseOut));
+            lv.Root.StartAnimation("Opacity", CsS(0, ms * 0.3, Bezier.EaseOut));
+        }
         // 往回翻：新大卡不从屏幕外飞进来（会和收回的旧卡交叉穿过），而是在大卡位置从一张竖卡宽向右展开，
         // 盖在旧卡上把它推回排里——旧卡的左边缘和新卡的右边缘一起往右走
         var from = fwd ? HeroSlot(s, p.Prev, prx) : new Vector3(HeX, HeY, 0);
@@ -197,7 +205,8 @@ public sealed partial class WallStage
         old.Root.StartAnimation("Size", CsV2(new Vector2(HeW0, HeH), ms, ease));
         old.Root.Properties.StartAnimation("tilt", CsS(HeTilt, ms, ease));
         old.Alt?.StartAnimation("Opacity", CsS(1, ms * (fwd ? 0.5 : 0.35), ease));
-        if (fwd) old.Root.StartAnimation("Opacity", CsS(0, ms * 0.7, ease, ms * 0.2));
+        // 往前：滑到左边淡掉；往回：落到格子里的同时和那一格的竖卡交叉淡化
+        old.Root.StartAnimation("Opacity", fwd ? CsS(0, ms * 0.7, ease, ms * 0.2) : CsS(0, ms * 0.35, Bezier.EaseOut, ms * 0.5));
         // 旧大卡各自走完自己的动画再拆（连按时不提前删，免得半路消失）；焦点框等最后一张落定再亮
         p.HeroLeaving.Add(old);
         After(ms + 20, () =>
