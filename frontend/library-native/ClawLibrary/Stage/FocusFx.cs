@@ -24,6 +24,9 @@ public sealed class FocusFx
     private readonly ContainerVisual _ring, _lines;
     private readonly CompositionRoundedRectangleGeometry _ringGeo;
     private readonly CompositionRadialGradientBrush _tint;
+    private readonly SpriteVisual _spot;
+    private readonly ContainerVisual _band;
+    private readonly CompositionPathGeometry _bandGeo;
     private readonly Slot[] _slots = new Slot[2];
     private int _slot;
     private (float X, float Y, float W, float H)? _last, _from;
@@ -98,14 +101,21 @@ public sealed class FocusFx
 
         // 沿线走的颜色：一个径向渐变（中心浅蓝、往外浅粉、再往外透明），中心沿框的周长匀速走一圈
         _tint = g.C.CreateRadialGradientBrush();
-        _tint.MappingMode = CompositionMappingMode.Absolute;
-        _tint.EllipseRadius = new Vector2(80, 80);
         _tint.ColorStops.Add(g.C.CreateColorGradientStop(0, Gfx.Rgba(0xc6, 0xdc, 0xff, 0.95)));
         _tint.ColorStops.Add(g.C.CreateColorGradientStop(0.45f, Gfx.Rgba(0xe6, 0xd6, 0xff, 0.8)));
         _tint.ColorStops.Add(g.C.CreateColorGradientStop(0.75f, Gfx.Rgba(0xff, 0xcf, 0xe8, 0.55)));
         _tint.ColorStops.Add(g.C.CreateColorGradientStop(1, Gfx.Rgba(0xff, 0xcf, 0xe8, 0)));
         // 中心沿框的周长匀速走（Walk：按框的目标尺寸重排关键帧，从当前走到的位置接着走，不回起点）
-        _lines.Children.InsertAtTop(Stroke(_tint, 0.8f));
+        // 11-19：渐变笔描在形状上、动画它的中心不生效（实机看是一条不动的白线）。改成一团真正的光点（精灵）沿周长走，
+        // 用和线一样宽的环形裁切框住，只在线上露出来。
+        _spot = g.Sprite(_tint, relative: false);
+        var band = _band = g.C.CreateContainerVisual();
+        band.RelativeSizeAdjustment = Vector2.One;
+        _bandGeo = g.C.CreatePathGeometry();
+        band.Clip = g.C.CreateGeometricClip(_bandGeo);
+        band.Children.InsertAtTop(_spot);
+        band.Opacity = 0.85f;
+        _lines.Children.InsertAtTop(band);
 
         var mid = g.C.CreateExpressionAnimation("Vector3(r.Size.X / 2, r.Size.Y / 2, 0)");
         mid.SetReferenceParameter("r", _ring);
@@ -185,6 +195,11 @@ public sealed class FocusFx
         else
         {
             _ring.StartAnimation("Offset", G.SpringV3(ro, Move));
+            // 移动途中光点的环形裁切还是新尺寸，先藏起来，落定后再亮
+            var bo = G.C.CreateScalarKeyFrameAnimation();
+            bo.InsertKeyFrame(0, 0, G.Linear); bo.InsertKeyFrame(0.55f, 0, G.Linear); bo.InsertKeyFrame(1, 0.85f, G.Linear);
+            bo.Duration = Gfx.Ms(600);
+            _band.StartAnimation("Opacity", bo);
             var sz = G.C.CreateSpringVector2Animation();
             sz.FinalValue = rs; sz.DampingRatio = Move.Zeta; sz.Period = Move.Period;
             _ring.StartAnimation("Size", sz);
@@ -204,7 +219,13 @@ public sealed class FocusFx
         _walkSize = size;
         float w = size.X, h = size.Y, per = 2 * (w + h);
         float rad = Math.Clamp(per * 0.085f, 26 * _unit, 110 * _unit);
-        _tint.EllipseRadius = new Vector2(rad, rad);
+        _spot.Size = new Vector2(rad * 2, rad * 2);
+        // 环形裁切：外圈 = 线的外沿，内圈 = 线的内沿
+        float lw = Line * _unit, cr = _ringGeo.CornerRadius.X;
+        using (var outer = Microsoft.Graphics.Canvas.Geometry.CanvasGeometry.CreateRoundedRectangle(G.Device, 0, 0, w, h, cr + lw / 2, cr + lw / 2))
+        using (var inner = Microsoft.Graphics.Canvas.Geometry.CanvasGeometry.CreateRoundedRectangle(G.Device, lw, lw, Math.Max(1, w - 2 * lw), Math.Max(1, h - 2 * lw), Math.Max(0, cr - lw / 2), Math.Max(0, cr - lw / 2)))
+        using (var ring = outer.CombineWith(inner, Matrix3x2.Identity, Microsoft.Graphics.Canvas.Geometry.CanvasGeometryCombine.Exclude))
+            _bandGeo.Path = new CompositionPath(ring);
         Vector2 At(float t)
         {
             float d = ((t % 1) + 1) % 1 * per;
@@ -214,12 +235,13 @@ public sealed class FocusFx
             d -= w; return new(0, h - d);
         }
         float phase = (float)(Clock.Elapsed.TotalSeconds / LapSeconds % 1);
-        var a = G.C.CreateVector2KeyFrameAnimation();
         const int n = 64;
-        for (int i = 0; i <= n; i++) a.InsertKeyFrame(i / (float)n, At(phase + i / (float)n), G.Linear);
-        a.Duration = TimeSpan.FromSeconds(LapSeconds);
-        a.IterationBehavior = AnimationIterationBehavior.Forever;
-        _tint.StartAnimation("EllipseCenter", a);
+        var half = new Vector2(rad, rad);
+        var a3 = G.C.CreateVector3KeyFrameAnimation();
+        for (int i = 0; i <= n; i++) { var v = At(phase + i / (float)n) - half; a3.InsertKeyFrame(i / (float)n, new Vector3(v, 0), G.Linear); }
+        a3.Duration = TimeSpan.FromSeconds(LapSeconds);
+        a3.IterationBehavior = AnimationIterationBehavior.Forever;
+        _spot.StartAnimation("Offset", a3);
     }
 
     /// <summary>套圈：先大一圈、淡一些，再收紧到位（稍微收过一点再回来）。</summary>
