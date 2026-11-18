@@ -406,7 +406,7 @@ public sealed partial class WallStage
 
     // ---------------- 卡盒 ----------------
 
-    private CsCase CsNewCase(LibraryItem? g, int index, Vector2 size, bool hiRes = false)
+    private CsCase CsNewCase(LibraryItem? g, int index, Vector2 size, bool hiRes = false, bool wide = false)
     {
         CsEnsureShared();
         var tint = CsTint(g);
@@ -423,7 +423,7 @@ public sealed partial class WallStage
         var face = G.Container();
         // 11-17 jinyu：卡盒不再是复古卡盒，改成和控制中心同一种连续曲率圆角的纯封面（半径 ≈ 宽 × 0.105，大封面 ≈ 28）。
         // 路径按建卡时的尺寸画一次，卡片尺寸动画时整条裁切按比例缩放（卡片始终是 2:3，圆角不会变形）。
-        float w0 = Math.Max(size.X, 1), h0 = Math.Max(size.Y, 1), r0 = w0 * 0.105f;
+        float w0 = Math.Max(size.X, 1), h0 = Math.Max(size.Y, 1), r0 = Math.Min(w0, h0 * 0.6667f) * 0.105f;   // 横版大卡按高度算，和竖卡同一个圆角
         using (var sq = BtShape(G.Device, 0, 0, w0, h0, r0))
         {
             var clip = G.C.CreateGeometricClip(G.C.CreatePathGeometry(new CompositionPath(sq)));
@@ -446,11 +446,13 @@ public sealed partial class WallStage
         };
         if (g != null)
         {
-            string? path = g.Art is { } k ? (hiRes && k.Has('q') ? k.File('q') : k.Has('p') ? k.File('p') : k.Has('v') ? k.File('v') : null) : null;
+            string? path = g.Art is { } k ? (wide ? (k.Has('g') ? k.File('g') : k.Has('h') ? k.File('h') : k.Has('x') ? k.File('x') : k.Has('q') ? k.File('q') : null)
+                : hiRes && k.Has('q') ? k.File('q') : k.Has('p') ? k.File('p') : k.Has('v') ? k.File('v') : null) : null;
+            if (wide) { artBrush.HorizontalAlignmentRatio = (float)CsLookOf(g).Fx; artBrush.VerticalAlignmentRatio = 0.3f; }
             if (path != null)
             {
                 int px = (int)Math.Ceiling(size.X * CsRaster * (hiRes ? 1 : 1.36f));
-                c.Surface = Images.AcquireReuse(path, px, px * 3 / 2);
+                c.Surface = wide ? Images.AcquireReuse(path, (int)Math.Ceiling(size.X * CsRaster * 1.2f), (int)Math.Ceiling(size.X * CsRaster * 0.6f)) : Images.AcquireReuse(path, px, px * 3 / 2);
                 artBrush.Surface = c.Surface;
             }
         }

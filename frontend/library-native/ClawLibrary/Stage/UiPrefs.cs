@@ -9,7 +9,7 @@ public enum AfterLaunch { Keep, Hide }
 public enum NowPlayingStyle { Panel, Bar }
 public enum SteamShortcutTarget { Library, BigPicture }
 /// <summary>首页的样式：展架（底部一排卡盒）/ 叠放（一摞卡盒）/ 海报墙（原来的墙）/ 展台（左边一个大卡盒，排里留空槽）。</summary>
-public enum HomeStyle { Shelf, Stack, Wall, Stand }
+public enum HomeStyle { Shelf, Stack, Wall, Stand, Hero }
 
 public sealed record UiPrefs
 {

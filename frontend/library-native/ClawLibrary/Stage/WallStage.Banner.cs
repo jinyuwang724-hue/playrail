@@ -79,6 +79,12 @@ public sealed partial class WallStage
             fade.Offset = new Vector3(-60, -60, 0); fade.Size = new Vector2(CsW + 120, 900);
             bg.Children.InsertAtTop(fade);
         }
+        else if (style == HomeStyle.Hero)
+        {
+            // 大图：画面是主角，只压顶部一条（状态栏）、左下（标题和按钮）、底部（卡片和倒影）
+            bg.Children.InsertAtTop(BnShade(layer, 180, (0, 0.5), (0.14, 0), (0.42, 0), (0.62, 0.42), (0.8, 0.8), (1, 0.95)));
+            bg.Children.InsertAtTop(BnShade(layer, 90, (0, 0.42), (0.5, 0.08), (1, 0)));
+        }
         else if (style is HomeStyle.Shelf or HomeStyle.Stand)
         {
             // 比原型深一些：背景在动，标题和 meta 要始终清楚
