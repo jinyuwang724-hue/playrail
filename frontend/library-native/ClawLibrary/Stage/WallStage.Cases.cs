@@ -54,6 +54,9 @@ public sealed partial class WallStage
         public CsCase? StandCase, StandLeaving;
         /// <summary>「大图」：左右相邻两款的横版封面提前解码（切换时横卡一出来就有图）。</summary>
         public readonly Dictionary<int, LoadedImageSurface?> HeroPre = new();
+        /// <summary>「大图」：正在收回的旧大卡（连按时可能同时有好几张，各自动画走完再拆）。</summary>
+        public readonly List<CsCase> HeroLeaving = new();
+        public long HeroLast;
         public float RailX;
         public Action? StandFinish;
         public long Built;

@@ -81,11 +81,16 @@ public sealed partial class WallStage
 
     private void CsLayoutHero(CsPage p, bool animate, bool entry = false)
     {
-        p.StandFinish?.Invoke();
         int n = CsCount(p), s = p.Sel;
+        // 连按（上一次切换的动画还没走完）：不重放扫光，往按的方向多预读两款横封面
+        long now = NowMs;
+        bool rapid = animate && now - p.HeroLast < 520;
+        p.HeroLast = now;
+        int dir = s >= p.Prev ? 1 : -1;
         // 左右相邻两款的横版封面先解码好
-        foreach (var k0 in p.HeroPre.Keys.Where(k => Math.Abs(k - s) > 1).ToList()) { Images.Release(p.HeroPre[k0]); p.HeroPre.Remove(k0); }
-        foreach (int j in new[] { s - 1, s + 1 })
+        var want = new[] { s - 1, s + 1, s + 2 * dir, s + 3 * dir };
+        foreach (var k0 in p.HeroPre.Keys.Where(k => !want.Contains(k)).ToList()) { Images.Release(p.HeroPre[k0]); p.HeroPre.Remove(k0); }
+        foreach (int j in want)
             if (j >= 0 && j < p.Items.Count && !p.HeroPre.ContainsKey(j) && CsWideArt(p.Items[j]) is { } wp)
                 p.HeroPre[j] = Images.AcquireReuse(wp, (int)Math.Ceiling(HeW * CsRaster * 1.2f), (int)Math.Ceiling(HeW * CsRaster * 0.6f));
         float rx = HeroRailX(s, n), prx = HeroRailX(p.Prev, n);
@@ -145,7 +150,7 @@ public sealed partial class WallStage
         var wide = CsNewCase(g, s, new Vector2(HeW, HeH), wide: true);
         CsAddReflection(wide, new Vector2(HeW, HeH), follow: true);
         HeTiltSetup(wide, HeW, HeH, 0);
-        CsSelect(wide, true, shine: animate, delay: 80, dimOthers: false);
+        CsSelect(wide, true, shine: animate && !rapid, delay: 80, dimOthers: false);
         wide.Dim.Opacity = 0;
         wide.Ring.Opacity = p.Acts ? 0 : 1;
         wide.Offset = new Vector3(HeX, HeY, 0);
@@ -191,21 +196,13 @@ public sealed partial class WallStage
         old.Root.Properties.StartAnimation("tilt", CsS(HeTilt, ms, ease));
         old.Alt?.StartAnimation("Opacity", CsS(1, ms * 0.5, ease));
         if (fwd) old.Root.StartAnimation("Opacity", CsS(0, ms * 0.7, ease, ms * 0.2));
-        p.StandLeaving = old;
-        bool done = false;
-        void Finish()
+        // 旧大卡各自走完自己的动画再拆（连按时不提前删，免得半路消失）；焦点框等最后一张落定再亮
+        p.HeroLeaving.Add(old);
+        After(ms + 20, () =>
         {
-            // 只收尾旧大卡；新大卡的动画不打断（下一次切换会从它的当前值接着动）
-            if (done) return;
-            done = true;
-            p.StandFinish = null;
-            if (p.StandCase == wide) wide.Ring.StartAnimation("Opacity", CsS(p.Acts ? 0 : 1, CsMs(200), CsQuart));
-            if (p.StandLeaving == old) p.StandLeaving = null;
-            p.Content.Children.Remove(old.Root);
-            CsDisposeCase(old);
-        }
-        p.StandFinish = Finish;
-        After(ms + 20, () => { if (!done) Finish(); });
+            if (p.HeroLeaving.Remove(old)) { p.Content.Children.Remove(old.Root); CsDisposeCase(old); }
+            if (p.StandCase == wide && NowMs - p.HeroLast >= ms) wide.Ring.StartAnimation("Opacity", CsS(p.Acts ? 0 : 1, CsMs(200), CsQuart));
+        });
         p.Prev = s;
     }
 }
