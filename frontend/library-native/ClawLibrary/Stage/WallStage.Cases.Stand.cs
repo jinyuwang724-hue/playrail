@@ -156,6 +156,8 @@ public sealed partial class WallStage
     private void CsStandDispose(CsPage p)
     {
         p.StandFinish = null;
+        foreach (var sf in p.HeroPre.Values) Images.Release(sf);
+        p.HeroPre.Clear();
         if (p.StandCase != null) { CsDisposeCase(p.StandCase); p.StandCase = null; }
         if (p.StandLeaving != null) { CsDisposeCase(p.StandLeaving); p.StandLeaving = null; }
 

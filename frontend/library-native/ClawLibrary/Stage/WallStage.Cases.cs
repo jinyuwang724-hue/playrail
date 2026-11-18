@@ -52,6 +52,8 @@ public sealed partial class WallStage
         public float GridTop;
         // 展台
         public CsCase? StandCase, StandLeaving;
+        /// <summary>「大图」：左右相邻两款的横版封面提前解码（切换时横卡一出来就有图）。</summary>
+        public readonly Dictionary<int, LoadedImageSurface?> HeroPre = new();
         public float RailX;
         public Action? StandFinish;
         public long Built;

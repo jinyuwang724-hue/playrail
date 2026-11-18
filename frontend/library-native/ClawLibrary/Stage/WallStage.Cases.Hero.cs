@@ -25,7 +25,7 @@ public sealed partial class WallStage
     private static Vector3 HeroSlot(int i, int s, float railX) => new(HeRowX + railX + (i < s ? i : i - 1) * (HeW0 + HeGap), HeY, 0);
 
     /// <summary>卡下面的倒影：同一张图上下翻转，从卡底往下 40 % 渐隐到透明；圆角裁切同卡面。</summary>
-    private void CsAddReflection(CsCase c, Vector2 size)
+    private void CsAddReflection(CsCase c, Vector2 size, bool follow = false)
     {
         if (c.Item == null || c.Art.Brush is not CompositionSurfaceBrush art || c.Surface == null) return;
         var src = G.C.CreateSurfaceBrush(c.Surface);
@@ -45,23 +45,37 @@ public sealed partial class WallStage
         r.Offset = new Vector3(0, size.Y + 10, 0);
         r.CenterPoint = new Vector3(size.X / 2, size.Y / 2, 0);
         r.Scale = new Vector3(1, -1, 1);
+        if (follow)
+        {
+            // 横卡会连续变宽：倒影跟着卡片尺寸走
+            void Bind(CompositionObject o, string prop, string expr) { var e = G.C.CreateExpressionAnimation(expr); e.SetReferenceParameter("v", c.Root); o.StartAnimation(prop, e); }
+            Bind(r, "Size", "v.Size");
+            Bind(r, "CenterPoint", "Vector3(v.Size.X / 2, v.Size.Y / 2, 0)");
+            var rr = G.C.CreateRoundedRectangleGeometry();
+            rr.CornerRadius = new Vector2(Math.Min(size.X, size.Y * 0.6667f) * 0.105f * 1.15f);
+            Bind(rr, "Size", "v.Size");
+            r.Clip = G.C.CreateGeometricClip(rr);
+            c.Root.Children.InsertAtBottom(r);
+            return;
+        }
         using (var sq = BtShape(G.Device, 0, 0, size.X, size.Y, Math.Min(size.X, size.Y * 0.6667f) * 0.105f))
             r.Clip = G.C.CreateGeometricClip(G.C.CreatePathGeometry(new CompositionPath(sq)));
         c.Root.Children.InsertAtBottom(r);
     }
 
     /// <summary>排里的竖卡斜着摆（绕竖轴转 RowTilt，带透视），焦点大卡正对屏幕。</summary>
-    private const float HeTilt = 0.30f;
+    private const float HeTilt = -0.56f;   // ≈ 32°，右边缘朝外（照片里每张竖卡右边比左边高、窄得像斜过来的书）
 
     /// <summary>卡片的透视倾斜：属性 tilt（弧度）驱动 TransformMatrix（绕卡片中心转，透视距离 ≈ 900）。</summary>
     private void HeTiltSetup(CsCase c, float w, float h, float tilt)
     {
         c.Root.Properties.InsertScalar("tilt", tilt);
         var inv = System.Globalization.CultureInfo.InvariantCulture;
-        string cx = (w / 2).ToString(inv), cy = (h / 2).ToString(inv);
+        // 绕卡片当前尺寸的中心转（横卡展开 / 收回时尺寸在变）
         var e = G.C.CreateExpressionAnimation(
-            $"Matrix4x4.CreateTranslation(Vector3(-{cx}, -{cy}, 0)) * Matrix4x4.CreateFromAxisAngle(Vector3(0, 1, 0), p.tilt) * Matrix4x4(1,0,0,0, 0,1,0,0, 0,0,1,-0.0011, 0,0,0,1) * Matrix4x4.CreateTranslation(Vector3({cx}, {cy}, 0))");
+            "Matrix4x4.CreateTranslation(Vector3(-r.Size.X / 2, -r.Size.Y / 2, 0)) * Matrix4x4.CreateFromAxisAngle(Vector3(0, 1, 0), p.tilt) * Matrix4x4(1,0,0,0, 0,1,0,0, 0,0,1,-0.0011, 0,0,0,1) * Matrix4x4.CreateTranslation(Vector3(r.Size.X / 2, r.Size.Y / 2, 0))");
         e.SetReferenceParameter("p", c.Root.Properties);
+        e.SetReferenceParameter("r", c.Root);
         c.Root.StartAnimation("TransformMatrix", e);
     }
 
@@ -69,6 +83,11 @@ public sealed partial class WallStage
     {
         p.StandFinish?.Invoke();
         int n = CsCount(p), s = p.Sel;
+        // 左右相邻两款的横版封面先解码好
+        foreach (var k0 in p.HeroPre.Keys.Where(k => Math.Abs(k - s) > 1).ToList()) { Images.Release(p.HeroPre[k0]); p.HeroPre.Remove(k0); }
+        foreach (int j in new[] { s - 1, s + 1 })
+            if (j >= 0 && j < p.Items.Count && !p.HeroPre.ContainsKey(j) && CsWideArt(p.Items[j]) is { } wp)
+                p.HeroPre[j] = Images.AcquireReuse(wp, (int)Math.Ceiling(HeW * CsRaster * 1.2f), (int)Math.Ceiling(HeW * CsRaster * 0.6f));
         float rx = HeroRailX(s, n), prx = HeroRailX(p.Prev, n);
         p.RailX = rx;
         // 往左翻过去的滑到大卡后面（排从大卡右边开始显示）
@@ -124,7 +143,7 @@ public sealed partial class WallStage
             return;
         }
         var wide = CsNewCase(g, s, new Vector2(HeW, HeH), wide: true);
-        CsAddReflection(wide, new Vector2(HeW, HeH));
+        CsAddReflection(wide, new Vector2(HeW, HeH), follow: true);
         HeTiltSetup(wide, HeW, HeH, 0);
         CsSelect(wide, true, shine: animate, delay: 80, dimOthers: false);
         wide.Dim.Opacity = 0;
@@ -149,39 +168,37 @@ public sealed partial class WallStage
             p.Prev = s;
             return;
         }
-        // 切换动画：新焦点的竖卡从它在排里的位置展开成横卡（宽度 1/3 → 1、倾斜 → 正对、飞到大卡位置），
-        // 旧大卡同时收成竖卡、斜过去，往前翻时滑到左边淡掉，往回翻时落回排里自己的那一格
+        // 切换动画（11-18 重做）：新焦点的竖卡从排里自己的位置连续变宽成横卡（不是拉伸），同时转正、飞到大卡位置；
+        // 卡面先是竖封面，途中淡成横版封面。旧大卡反过来：连续收窄成竖卡、斜过去，横封面淡回竖封面，
+        // 往前翻时滑到左边淡掉，往回翻时落回排里自己的那一格。所有属性都从当前值出发，连按可打断。
         bool fwd = s > p.Prev;
-        float sx = HeW0 / HeW;
+        var ease = new Bezier(0.25f, 0.8f, 0.25f, 1f);   // 前快后慢、尾巴很长，像控制中心的弹簧
         var from = fwd ? HeroSlot(s, p.Prev, prx) : new Vector3(HeX - HeW0 - HeGap, HeY, 0);
         wide.Root.StopAnimation("Offset");
-        wide.Root.CenterPoint = new Vector3(0, HeH / 2, 0);
         wide.Root.Offset = from;
-        wide.Root.Scale = new Vector3(sx, 1, 1);
+        wide.Root.Size = new Vector2(HeW0, HeH);
         wide.Root.Properties.InsertScalar("tilt", HeTilt);
-        wide.Root.StartAnimation("Offset", CsV3(new Vector3(HeX, HeY, 0), ms, CsQuart));
-        wide.Root.StartAnimation("Scale", CsV3(Vector3.One, ms, CsQuart));
-        wide.Root.Properties.StartAnimation("tilt", CsS(0, ms, CsQuart));
+        wide.Root.StartAnimation("Offset", CsV3(new Vector3(HeX, HeY, 0), ms, ease));
+        wide.Root.StartAnimation("Size", CsV2(new Vector2(HeW, HeH), ms, ease));
+        wide.Root.Properties.StartAnimation("tilt", CsS(0, ms, ease));
+        if (wide.Alt != null) { wide.Alt.Opacity = 1; wide.Alt.StartAnimation("Opacity", CsS(0, ms * 0.6, ease, ms * 0.15)); }
         wide.Root.Opacity = fwd ? 1 : 0;
-        if (!fwd) wide.Root.StartAnimation("Opacity", CsS(1, CsMs(200), CsQuart));
+        if (!fwd) wide.Root.StartAnimation("Opacity", CsS(1, ms * 0.4, ease));
         wide.Ring.StopAnimation("Opacity"); wide.Ring.Opacity = 0;
         old.Ring.StopAnimation("Opacity"); old.Ring.Opacity = 0;
-        old.Root.CenterPoint = new Vector3(0, HeH / 2, 0);
-        old.Root.StartAnimation("Offset", CsV3(fwd ? new Vector3(HeX - HeW0 - HeGap - 40, HeY, 0) : HeroSlot(p.Prev, s, rx), ms, CsQuart));
-        old.Root.StartAnimation("Scale", CsV3(new Vector3(sx, 1, 1), ms, CsQuart));
-        old.Root.Properties.StartAnimation("tilt", CsS(HeTilt, ms, CsQuart));
-        if (fwd) old.Root.StartAnimation("Opacity", CsS(0, ms * 0.8, CsQuart));
+        old.Root.StartAnimation("Offset", CsV3(fwd ? new Vector3(HeX - HeW0 - HeGap - 40, HeY, 0) : HeroSlot(p.Prev, s, rx), ms, ease));
+        old.Root.StartAnimation("Size", CsV2(new Vector2(HeW0, HeH), ms, ease));
+        old.Root.Properties.StartAnimation("tilt", CsS(HeTilt, ms, ease));
+        old.Alt?.StartAnimation("Opacity", CsS(1, ms * 0.5, ease));
+        if (fwd) old.Root.StartAnimation("Opacity", CsS(0, ms * 0.7, ease, ms * 0.2));
         p.StandLeaving = old;
         bool done = false;
         void Finish()
         {
+            // 只收尾旧大卡；新大卡的动画不打断（下一次切换会从它的当前值接着动）
             if (done) return;
             done = true;
             p.StandFinish = null;
-            wide.Root.StopAnimation("Opacity"); wide.Root.Opacity = 1;
-            wide.Root.StopAnimation("Scale"); wide.Root.Scale = Vector3.One;
-            wide.Root.StopAnimation("Offset"); wide.Root.Offset = new Vector3(HeX, HeY, 0);
-            wide.Root.Properties.StopAnimation("tilt"); wide.Root.Properties.InsertScalar("tilt", 0);
             if (p.StandCase == wide) wide.Ring.StartAnimation("Opacity", CsS(p.Acts ? 0 : 1, CsMs(200), CsQuart));
             if (p.StandLeaving == old) p.StandLeaving = null;
             p.Content.Children.Remove(old.Root);

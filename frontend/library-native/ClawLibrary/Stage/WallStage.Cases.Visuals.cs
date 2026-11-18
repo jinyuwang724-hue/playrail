@@ -64,6 +64,9 @@ public sealed partial class WallStage
         public Vector2 Size;
         public SpriteVisual? Label;   // 展架：分组标签
         public SpriteVisual? Caption;   // 网格：标题和上次游玩
+        /// <summary>「大图」横卡：盖在横版封面上的竖封面（展开 / 收回途中交叉淡化用）。</summary>
+        public SpriteVisual? Alt;
+        public LoadedImageSurface? AltSurface;
     }
 
     /// <summary>散放的卡带（分类页「最近」）。</summary>
@@ -433,7 +436,17 @@ public sealed partial class WallStage
         // 11-17 jinyu：卡盒不再是复古卡盒，改成和控制中心同一种连续曲率圆角的纯封面（半径 ≈ 宽 × 0.105，大封面 ≈ 28）。
         // 路径按建卡时的尺寸画一次，卡片尺寸动画时整条裁切按比例缩放（卡片始终是 2:3，圆角不会变形）。
         float w0 = Math.Max(size.X, 1), h0 = Math.Max(size.Y, 1), r0 = Math.Min(w0, h0 * 0.6667f) * 0.105f;   // 横版大卡按高度算，和竖卡同一个圆角
-        using (var sq = BtShape(G.Device, 0, 0, w0, h0, r0))
+        if (wide)
+        {
+            // 横卡要连续变宽（竖卡 ↔ 横卡的切换动画）：裁切用跟着尺寸走的圆角矩形，圆角不随宽度变形
+            var rr = G.C.CreateRoundedRectangleGeometry();
+            rr.CornerRadius = new Vector2(r0 * 1.15f);
+            var se = G.C.CreateExpressionAnimation("v.Size");
+            se.SetReferenceParameter("v", root);
+            rr.StartAnimation("Size", se);
+            face.Clip = G.C.CreateGeometricClip(rr);
+        }
+        else using (var sq = BtShape(G.Device, 0, 0, w0, h0, r0))
         {
             var clip = G.C.CreateGeometricClip(G.C.CreatePathGeometry(new CompositionPath(sq)));
             var scaleExpr = G.C.CreateExpressionAnimation($"Vector2(v.Size.X / {w0.ToString(System.Globalization.CultureInfo.InvariantCulture)}, v.Size.Y / {h0.ToString(System.Globalization.CultureInfo.InvariantCulture)})");
@@ -458,6 +471,16 @@ public sealed partial class WallStage
             string? path = wide && CsWideArt(g) is { } wa ? wa : g.Art is { } k ? (wide ? (k.Has('g') ? k.File('g') : k.Has('h') ? k.File('h') : k.Has('x') ? k.File('x') : k.Has('q') ? k.File('q') : null)
                 : hiRes && k.Has('q') ? k.File('q') : k.Has('p') ? k.File('p') : k.Has('v') ? k.File('v') : null) : null;
             if (wide && CsWideArt(g) == null) { artBrush.HorizontalAlignmentRatio = (float)CsLookOf(g).Fx; artBrush.VerticalAlignmentRatio = 0.3f; }
+            if (wide && g.Art is { } pk && (pk.Has('q') ? pk.File('q') : pk.Has('p') ? pk.File('p') : null) is { } pp)
+            {
+                var ab = G.C.CreateSurfaceBrush();
+                ab.Stretch = CompositionStretch.UniformToFill;
+                c.AltSurface = Images.AcquireReuse(pp, (int)Math.Ceiling(HeW0 * CsRaster * 1.36f), (int)Math.Ceiling(HeW0 * CsRaster * 2.04f));
+                ab.Surface = c.AltSurface;
+                c.Alt = G.Sprite(ab);
+                c.Alt.Opacity = 0;
+                face.Children.InsertAtTop(c.Alt);
+            }
             if (path != null)
             {
                 int px = (int)Math.Ceiling(size.X * CsRaster * (hiRes ? 1 : 1.36f));
@@ -482,6 +505,24 @@ public sealed partial class WallStage
         c.Ring.Offset = new Vector3(-6, -6, 0);
         // 焦点框（和控制中心同一套）：同一个形状外扩一圈，3 px 间隙 + 2.5 px 白线，外面再一圈 6 px 白 28 % 的晕
         var ringBox = G.C.CreateContainerShape();
+        if (wide)
+        {
+            foreach (var (pad, rad, col, th) in new[] { (5f, r0 * 1.15f + 5, Gfx.Rgba(255, 255, 255, 0.28), 6f), (3f, r0 * 1.15f + 3, Colors.White, 2.5f) })
+            {
+                var g2 = G.C.CreateRoundedRectangleGeometry();
+                g2.CornerRadius = new Vector2(rad);
+                g2.Offset = new Vector2(6 - pad, 6 - pad);
+                var e2 = G.C.CreateExpressionAnimation($"Vector2(v.Size.X + {pad * 2}, v.Size.Y + {pad * 2})");
+                e2.SetReferenceParameter("v", root);
+                g2.StartAnimation("Size", e2);
+                var sh = G.C.CreateSpriteShape(g2);
+                sh.StrokeBrush = G.Solid(col); sh.StrokeThickness = th;
+                ringBox.Shapes.Add(sh);
+            }
+            c.Ring.Shapes.Add(ringBox);
+        }
+        else
+        {
         using (var halo = BtShape(G.Device, 1, 1, w0 + 10, h0 + 10, r0 + 5))
         using (var line = BtShape(G.Device, 3, 3, w0 + 6, h0 + 6, r0 + 3))
         {
@@ -496,6 +537,7 @@ public sealed partial class WallStage
         ringScale.SetReferenceParameter("v", root);
         ringBox.StartAnimation("Scale", ringScale);
         c.Ring.Shapes.Add(ringBox);
+        }
         c.Ring.Opacity = 0;
         root.Children.InsertAtTop(shadow);
         root.Children.InsertAtTop(glow);
@@ -529,6 +571,8 @@ public sealed partial class WallStage
     {
         Images.Release(c.Surface);
         c.Surface = null;
+        Images.Release(c.AltSurface);
+        c.AltSurface = null;
         c.Root.Dispose();
         c.Label?.Dispose();
         c.Caption?.Dispose();
