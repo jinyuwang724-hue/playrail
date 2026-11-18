@@ -113,6 +113,7 @@ public sealed partial class WallStage
         if (_ccRow != null) _ccRow.IsVisible = !_ccBento;
         if (_ccLabel != null) _ccLabel.IsVisible = !_ccBento;
         if (_ccWall != null) _ccWall.IsVisible = _ccBento;
+        if (!_ccBento) CcBentoWallRestore();
         if (_ccBentoRoot == null) return;
         _ccBentoRoot.IsVisible = _ccBento;
         if (!_ccBento) return;
@@ -255,6 +256,10 @@ public sealed partial class WallStage
         _ccWallGrain = G.Sprite(grain, relative: false);
         _ccWallGrain.Opacity = 0.55f;
         _ccWall.Children.InsertAtTop(_ccWallGrain);
+        // 光团和底色交给 GPU 流体（_ccBack），这里只留顶光、暗角、底部压暗
+        _ccWallBase.IsVisible = false;
+        foreach (var (bv, _) in _ccWallBlobs) bv.IsVisible = false;
+        _ccWallGrain.IsVisible = false;
         // 挂在控制中心根上（压暗层之上、拼盘卡片和功能页之下）：进功能页时不跟着淡掉
         _cc.Children.InsertAbove(_ccWall, _ccDim);
     }
@@ -316,40 +321,50 @@ public sealed partial class WallStage
     /// <summary>暗处会发脏的色相（橙黄 → 橄榄）推到两边干净的地方。</summary>
     private static double WallHue(double h) => BtMuddy(h, 0.3) ? (h < 82 ? 40 : 125) : h;
 
-    /// <summary>换游戏：底色和六团光在 0.7 s 里渐变到新的场景色。</summary>
+    /// <summary>
+    /// 11-19 jinyu：「去找高质量的动态背景，看人家怎么做」。做得好的（Stripe 首页、Apple 的动态壁纸、Paper Shaders 的 MeshGradient、
+    /// React Bits 的 Grainient）共同点：GPU 着色器逐像素算——几团颜色点各自沿轨迹走、按距离的高次幂反比混合（边界极柔），
+    /// 整张画面再做一层有机扭曲 + 旋涡（色块会被拉成流动的丝带），最后叠很细的胶片颗粒。合成层的径向渐变团做不出这种「流动」，只会是几团糊光。
+    /// 我们的「隐现」背景（Backdrop / Shaders/Latent.hlsl）本来就是 Paper Shaders MeshGradient 的移植，所以拼盘直接用它：
+    /// - 颜色：不再用封面取色 + 固定的主题底色和强调红，改成场景色（和游戏库同一个）做出的六色——主色相、两侧邻近色相、一深一亮；
+    /// - 参数按 Paper Shaders 官方示例调：扭曲 0.9、旋涡 0.45、速度 0.22、颗粒 0.05（folia 默认是 0.8 / 0.1 / 0.3 / 0.01，偏平）。
+    /// 合成层只留顶光、暗角、底部压暗（给功能坞和页面底部的字留对比）；功能页也在这同一层背景上。
+    /// </summary>
     private void CcBentoWallColors()
     {
         if (_ccWall == null) return;
         var sg = SelectedGame();
         string key = (sg?.Id ?? "") + "|" + (sg != null && _scene.TryGetValue(sg.Id, out var sv) ? sv.ToString() : "?");
         if (key == _ccWallFor) return;
-        bool first = _ccWallFor.Length == 0;
         _ccWallFor = key;
-        void To(CompositionObject o, string prop, Color c)
-        {
-            if (first || Reduced) { o.StopAnimation(prop); if (o is CompositionColorBrush cb) cb.Color = c; else ((CompositionColorGradientStop)o).Color = c; return; }
-            var a = G.C.CreateColorKeyFrameAnimation();
-            a.InsertKeyFrame(1, c, G.Ease(EaseOutCss));
-            a.Duration = Gfx.Ms(700);
-            o.StartAnimation(prop, a);
-        }
         var (hh, sc) = SceneOf(sg, () => { _ccWallFor = ""; CcBentoWallColors(); });
-        // 近中性的封面（只剩黄棕 / 本来就灰）：保留一点点色相，做成有层次的深灰极光
-        double cbase = Math.Clamp(sc * 1.4, 0.018, 0.115);
-        To((CompositionColorBrush)_ccWallBase!.Brush, "Color", Ok(0.17, cbase * 0.45, WallHue(hh)));
-        (double L, double C, double dh)[] look =
+        double cb = Math.Clamp(sc * 1.5, 0.03, 0.13);
+        static Vector4 V(Color c) => new(c.R / 255f, c.G / 255f, c.B / 255f, 1);
+        var six = new[]
         {
-            (0.44, 1.0, 0), (0.38, 0.9, 32), (0.33, 1.0, -26), (0.27, 0.8, 0), (0.50, 0.75, 14), (0.36, 0.85, -40),
+            V(Ok(0.46, cb, WallHue(hh))),
+            V(Ok(0.32, cb * 0.95, WallHue(hh + 38))),
+            V(Ok(0.56, cb * 0.8, WallHue(hh - 30))),
+            V(Ok(0.22, cb * 0.75, WallHue(hh + 12))),
+            V(Ok(0.15, cb * 0.45, WallHue(hh))),
+            V(Ok(0.38, cb * 1.05, WallHue(hh + 75))),
         };
-        for (int i = 0; i < _ccWallBlobs.Count; i++)
+        if (_ccBack != null)
         {
-            var (L, C, dh) = look[i];
-            var c = Ok(L, cbase * C, WallHue(hh + dh));
-            var stops = _ccWallBlobs[i].B.ColorStops;
-            To(stops[0], "Color", Gfx.WithAlpha(c, 0.9));
-            To(stops[1], "Color", Gfx.WithAlpha(c, 0.45));
-            To(stops[2], "Color", Gfx.WithAlpha(c, 0));
+            _ccBack.Distortion = 0.9f; _ccBack.Swirl = 0.45f; _ccBack.Speed = 0.22f; _ccBack.Grain = 0.05f;
+            _ccBack.SetColors(six);
+            CcBackLoop();
         }
+        Log.Info($"cc wallpaper: scene h={hh:0} c={sc:0.000}");
+    }
+
+    /// <summary>离开拼盘样式：背景回到原来的取色和参数。</summary>
+    private void CcBentoWallRestore()
+    {
+        if (_ccBack == null) return;
+        _ccBack.Distortion = 0.8f; _ccBack.Swirl = 0.1f; _ccBack.Speed = 0.3f; _ccBack.Grain = 0.01f;
+        _ccBack.SetColors(null);
+        _ccWallFor = "";
     }
 
     // ---------------- 配色 ----------------

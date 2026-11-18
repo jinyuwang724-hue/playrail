@@ -209,8 +209,25 @@ public sealed partial class Backdrop : IDisposable
     /// <summary>true：换色不做 800 ms 渐变，直接换（看不见的时候用：渐变期间每帧都要重画整张着色器）。</summary>
     public bool InstantColors;
 
+    /// <summary>流体参数（默认 folia 的值）；控制中心拼盘按 Paper Shaders 官方示例调得更活：扭曲 / 旋涡更大、慢一点、颗粒多一点。</summary>
+    public float Distortion = MeshDistortion, Swirl = MeshSwirl, Grain = GrainOverlay, Speed = MeshSpeed;
+
+    private Vector4[]? _override;
+
+    /// <summary>
+    /// 指定六个流体颜色（控制中心拼盘：和游戏库同一个场景色做出来的一组），不再用封面取色 + 固定的主题底色 / 强调红。
+    /// null = 恢复按封面取色。
+    /// </summary>
+    public void SetColors(IReadOnlyList<Vector4>? six)
+    {
+        if (six == null) { if (_override == null) return; _override = null; var p = _coverPath; _coverPath = null; if (_postImage != null) SetCover(_requestedCover, _postImage); else _coverPath = p; return; }
+        _override = new[] { six[0], six[1], six[2], six[3], six[4], six[5], six[0] };
+        SetPalette(_override);
+    }
+
     private void SetPalette(Vector4[] next)
     {
+        if (_override != null) next = _override;
         lock (_gate)
         {
             _from = CurrentColors();
@@ -302,7 +319,7 @@ public sealed partial class Backdrop : IDisposable
         if (_running && Animated)
         {
             // folia：currentFrame += dt × speed，u_time = currentFrame / 1000
-            _meshTime += dtMs * MeshSpeed / 1000;
+            _meshTime += dtMs * Speed / 1000;
             _ditherTime += dtMs * DitherSpeed / 1000;
             _imageTime += dtMs / 1000;
         }
@@ -403,9 +420,9 @@ public sealed partial class Backdrop : IDisposable
             p["pixelRatio"] = _pixelRatio;
             p["meshTime"] = (float)_meshTime;
             p["ditherTime"] = (float)_ditherTime;
-            p["distortion"] = MeshDistortion;
-            p["swirl"] = MeshSwirl;
-            p["grainOverlay"] = GrainOverlay;
+            p["distortion"] = Distortion;
+            p["swirl"] = Swirl;
+            p["grainOverlay"] = Grain;
             p["pxSize"] = DitherSize;
             p["ditherScale"] = DitherScale;
             p["ditherOpacity"] = DitherOpacity;
