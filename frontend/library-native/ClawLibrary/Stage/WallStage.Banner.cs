@@ -169,9 +169,9 @@ public sealed partial class WallStage
     /// </summary>
     private void BnTint(BnLayer l, LibraryItem g)
     {
-        var a = Gfx.Hex(g.Art?.C ?? g.SeedColor, Gfx.Rgba(0x40, 0x40, 0x44));
-        var (_, c, h) = ToOklch(new Vector4(a.R / 255f, a.G / 255f, a.B / 255f, 1));
-        var ink = BtMuddy(h, 0.16) || c < 0.02 ? Ok(0.16, 0.006, h) : Ok(0.16, Math.Min(c * 0.45, 0.032), h);
+        // 11-18：和控制中心同一个场景色（SceneOf），取色好了再调一次
+        var (h, c) = SceneOf(g, () => { if (l.Path == BnPath(g, l.Cat)) BnTint(l, g); });
+        var ink = Ok(0.18, Math.Min(c * 0.6, 0.045), h);
         bool first = !l.Shown;
         void To(CompositionObject o, Color col)
         {

@@ -4,6 +4,7 @@
 // 每张卡：左上图标、右上实时读数、左下名称和一行状态。焦点卡放大一点、亮白边、底下一团同色的光，换焦点时一道高光扫过。
 // 上下左右四向移动；最下一排再按 ↓ 去左下功能坞。Y 在 拍立得 → 卡片 → 拼盘 之间轮换，存在 controlcenter.ini。
 using System.Numerics;
+using ClawLibrary.Data;
 using ClawLibrary.Engine;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Brushes;
@@ -272,7 +273,8 @@ public sealed partial class WallStage
     {
         if (_ccWall == null) return;
         var acc = _ccBlocks[0].Accent;
-        string key = acc + "|" + string.Join(",", _ccBentoColors.Select(c => $"{c.X:0.00}{c.Y:0.00}{c.Z:0.00}"));
+        var sg = SelectedGame();
+        string key = (sg?.Id ?? "") + "|" + (sg != null && _scene.TryGetValue(sg.Id, out var sv) ? sv.ToString() : "?");
         if (key == _ccWallFor) return;
         bool first = _ccWallFor.Length == 0;
         _ccWallFor = key;
@@ -287,20 +289,15 @@ public sealed partial class WallStage
         }
         bool dark = BtDark;
         Log.Info($"bento colors: {(dark ? "dark" : "light")} cover={_ccGameCover}");
-        // 11-18 jinyu：游戏库主页的横幅是压暗的，控制中心却是提亮的，两边矛盾。统一成：背景永远压暗（封面色相的深色调，和主页 BnTint 同一个思路），
-        // 浅色 / 深色只决定前景卡片。
-        dark = true;
-        var (bh, _) = BtPick(dark ? 0.2 : 0.7);
-        var (_, bc0) = BtPick(0.9);
-        To((CompositionColorBrush)_ccWallBase!.Brush, "Color", dark ? Ok(0.2, Math.Min(bc0, 0.03), bh) : Ok(0.7, Math.Min(bc0 * 1.4, 0.05), bh));
-        double[] light = dark ? new double[] { 0.36, 0.32, 0.28, 0.24, 0.40 } : new double[] { 0.80, 0.76, 0.72, 0.66, 0.84 };
+        // 11-18 jinyu：背景和游戏库主页的横幅压暗是同一个颜色（场景色），深色调；五团光是同一个色相稍微错开一点，不再各取一种封面色。
+        var (bh, sc) = SceneOf(SelectedGame(), () => { _ccWallFor = ""; CcBentoWallColors(); });
+        To((CompositionColorBrush)_ccWallBase!.Brush, "Color", Ok(0.2, Math.Min(sc * 0.6, 0.045), bh));
+        double[] light = { 0.36, 0.31, 0.27, 0.23, 0.41 };
+        double[] shift = { 0, 14, -14, 24, -8 };
         for (int i = 0; i < _ccWallBlobs.Count; i++)
         {
-            var p = _ccBentoColors;
-            var (_, pc, ph) = p.Length > 0 ? ToOklch(p[i % p.Length]) : (0.5, 0.0, bh);
             double L = light[i];
-            // 暗处的黄棕不要：换成主色相的近中性；其余颜色保留色相，彩度封顶 0.09
-            var c = BtMuddy(ph, L) ? Ok(L, 0.012, bh) : Ok(L, Math.Min(pc * 0.8, 0.09), ph);
+            var c = Ok(L, Math.Min(sc * 1.1, 0.085), bh + shift[i]);
             var stops = _ccWallBlobs[i].B.ColorStops;
             To(stops[0], "Color", Gfx.WithAlpha(c, 0.95));
             To(stops[1], "Color", Gfx.WithAlpha(c, 0.5));
@@ -391,21 +388,72 @@ public sealed partial class WallStage
     private static bool BtMuddy(double h, double targetL) => targetL < 0.86 && h >= 50 && h <= 115;   // 0.86 以下的黄已经发芥末 / 卡其；卡面浅色是 0.915，不受影响
 
     /// <summary>为目标亮度挑一个色相和彩度（彩度是这个色相能用的上限，调用方再按需缩）。</summary>
+    /// <summary>
+    /// 11-18 jinyu：游戏库和控制中心要「选同一种颜色」。每款游戏只算一个场景色（SceneOf，按竖封面取色、缓存），
+    /// 游戏库横幅的压暗和这里的背景、卡片、字都用它；targetL 只用来定彩度上限。
+    /// </summary>
     private (double h, double c) BtPick(double targetL)
     {
-        var src = new List<Vector4>(_ccBentoColors);
-        var acc = _ccBlocks[0].Accent;
-        if (src.Count == 0) src.Add(new Vector4(acc.R / 255f, acc.G / 255f, acc.B / 255f, 1));
-        double best = -1, bh = 0, bc = 0;
-        for (int i = 0; i < src.Count; i++)
+        var (h, c) = SceneOf(SelectedGame(), () => { _ccWallFor = ""; CcBentoWallColors(); foreach (var t in _ccTiles) t.Drawn = ""; CcBentoPaint(); });
+        double cap = targetL < 0.7 ? 0.04 : 0.035;
+        return (h, Math.Min(c * 0.6, cap));
+    }
+
+    // ---------------- 场景色：游戏库和控制中心共用 ----------------
+
+    private readonly Dictionary<string, (double h, double c)> _scene = new();
+    private readonly HashSet<string> _scenePending = new();
+
+    private static string? ScenePath(LibraryItem g)
+    {
+        if (g.Art is not { } k) return null;
+        foreach (var ch in "qpvxs") if (k.Has(ch)) return k.File(ch);
+        return null;
+    }
+
+    private static (double h, double c) SceneFallback(LibraryItem? g)
+    {
+        var a = Gfx.Hex(g?.Art?.C ?? g?.SeedColor, Gfx.Rgba(0x60, 0x60, 0x66));
+        var (_, c, h) = ToOklch(new Vector4(a.R / 255f, a.G / 255f, a.B / 255f, 1));
+        return BtMuddy(h, 0.3) || c < 0.02 ? (h, 0.008) : (h, Math.Min(c, 0.08));
+    }
+
+    /// <summary>
+    /// 这款游戏的场景色（OKLCH 色相 + 彩度）：封面 6 个代表色里，面积大、颜色干净的优先；暗下来会发脏的橙黄 → 橄榄一段大幅降分，
+    /// 只剩黄棕时给近中性。第一次要后台取色，先返回主题色的近似，取好后调 ready。
+    /// </summary>
+    private (double h, double c) SceneOf(LibraryItem? g, Action? ready)
+    {
+        if (g == null) return (250, 0.008);
+        if (_scene.TryGetValue(g.Id, out var v)) return v;
+        var path = ScenePath(g);
+        if (path == null) { v = SceneFallback(g); _scene[g.Id] = v; return v; }
+        if (_scenePending.Add(g.Id))
         {
-            var (_, c, h) = ToOklch(src[i]);
-            double score = (src.Count - i) * (0.25 + Math.Min(c / 0.10, 1)) * (BtMuddy(h, targetL) ? 0.12 : 1);
+            var id = g.Id;
+            _ = Task.Run(async () =>
+            {
+                (double, double) r;
+                try { r = ScenePick(await Backdrop.CoverColors(path)); }
+                catch (Exception ex) { Log.Warn($"scene colour {path}: {ex.Message}"); r = SceneFallback(g); }
+                _dq.TryEnqueue(() => { _scene[id] = r; _scenePending.Remove(id); ready?.Invoke(); });
+            });
+        }
+        return SceneFallback(g);
+    }
+
+    private static (double h, double c) ScenePick(Vector4[] p)
+    {
+        if (p.Length == 0) return (250, 0.008);
+        double best = -1, bh = 0, bc = 0;
+        for (int i = 0; i < p.Length; i++)
+        {
+            var (_, c, h) = ToOklch(p[i]);
+            double score = (p.Length - i) * (0.25 + Math.Min(c / 0.10, 1)) * (BtMuddy(h, 0.3) ? 0.12 : 1);
             if (score > best) { best = score; bh = h; bc = c; }
         }
-        double cap = targetL < 0.7 ? 0.04 : 0.035;
-        if (BtMuddy(bh, targetL) || bc < 0.02) return (bh, 0.008);   // 只剩黄棕 / 本来就灰：近中性
-        return (bh, Math.Min(bc * 0.6, cap));
+        if (BtMuddy(bh, 0.3) || bc < 0.02) return (bh, 0.008);
+        return (bh, Math.Min(bc, 0.09));
     }
 
     private static (double h, double s, double l) BtHsl(Vector4 c)
