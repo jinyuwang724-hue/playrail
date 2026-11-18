@@ -406,6 +406,15 @@ public sealed partial class WallStage
 
     // ---------------- 卡盒 ----------------
 
+    private readonly Dictionary<string, string?> _csWide = new();
+    private string? CsWideArt(LibraryItem g)
+    {
+        if (_csWide.TryGetValue(g.Id, out var p)) return p;
+        p = Steam.WideArt(_steamRoot, _steamUser, g.Id);
+        _csWide[g.Id] = p;
+        return p;
+    }
+
     private CsCase CsNewCase(LibraryItem? g, int index, Vector2 size, bool hiRes = false, bool wide = false)
     {
         CsEnsureShared();
@@ -446,9 +455,9 @@ public sealed partial class WallStage
         };
         if (g != null)
         {
-            string? path = g.Art is { } k ? (wide ? (k.Has('g') ? k.File('g') : k.Has('h') ? k.File('h') : k.Has('x') ? k.File('x') : k.Has('q') ? k.File('q') : null)
+            string? path = wide && CsWideArt(g) is { } wa ? wa : g.Art is { } k ? (wide ? (k.Has('g') ? k.File('g') : k.Has('h') ? k.File('h') : k.Has('x') ? k.File('x') : k.Has('q') ? k.File('q') : null)
                 : hiRes && k.Has('q') ? k.File('q') : k.Has('p') ? k.File('p') : k.Has('v') ? k.File('v') : null) : null;
-            if (wide) { artBrush.HorizontalAlignmentRatio = (float)CsLookOf(g).Fx; artBrush.VerticalAlignmentRatio = 0.3f; }
+            if (wide && CsWideArt(g) == null) { artBrush.HorizontalAlignmentRatio = (float)CsLookOf(g).Fx; artBrush.VerticalAlignmentRatio = 0.3f; }
             if (path != null)
             {
                 int px = (int)Math.Ceiling(size.X * CsRaster * (hiRes ? 1 : 1.36f));

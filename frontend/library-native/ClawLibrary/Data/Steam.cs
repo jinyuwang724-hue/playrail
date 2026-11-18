@@ -595,6 +595,25 @@ public static class Steam
         return (portrait, hero);
     }
 
+    /// <summary>
+    /// 横版封面（11-18「大图」首页的焦点大卡）：Steam 里自己设的横版网格图（grid/&lt;id&gt;.png|jpg）优先，
+    /// 其次「添加游戏」选的横图，再其次 librarycache 的 header.jpg（商店横版封面，带游戏 logo）。
+    /// </summary>
+    public static string? WideArt(string? root, string? userDir, string id)
+    {
+        try
+        {
+            if (userDir != null && FirstExisting(Path.Combine(userDir, "config", "grid"), id) is { } g) return g;
+            if (LocalGames.ArtFile(id, "") is { } l) return l;
+            if (root == null) return null;
+            var cache = Path.Combine(root, "appcache", "librarycache", id);
+            if (Directory.Exists(cache))
+                return Directory.GetFiles(cache, "header*.jpg", SearchOption.AllDirectories).OrderByDescending(f => new FileInfo(f).Length).FirstOrDefault();
+            return ExistingOrNull(Path.Combine(root, "appcache", "librarycache", $"{id}_header.jpg"));
+        }
+        catch { return null; }
+    }
+
     private static string? Pick(string[] files, string prefix) => files
         .Where(f => Path.GetFileName(f).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
         .OrderByDescending(f => new FileInfo(f).Length).FirstOrDefault();

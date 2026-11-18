@@ -13,7 +13,7 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private const float HeX = CsEdge, HeH = 330, HeW = 660, HeW0 = 220, HeGap = 24, HeY = CsH - 170 - HeH, HeRowX = HeX + HeW + HeGap;
+    private const float HeX = CsEdge, HeH = 330, HeW = 700, HeW0 = 220, HeGap = 24, HeY = CsH - 170 - HeH, HeRowX = HeX + HeW + HeGap;
 
     /// <summary>排的平移：焦点之后的那一款贴着大卡；到尾巴时夹住，不留右边的空。</summary>
     private static float HeroRailX(int s, int n)
@@ -50,6 +50,21 @@ public sealed partial class WallStage
         c.Root.Children.InsertAtBottom(r);
     }
 
+    /// <summary>排里的竖卡斜着摆（绕竖轴转 RowTilt，带透视），焦点大卡正对屏幕。</summary>
+    private const float HeTilt = 0.30f;
+
+    /// <summary>卡片的透视倾斜：属性 tilt（弧度）驱动 TransformMatrix（绕卡片中心转，透视距离 ≈ 900）。</summary>
+    private void HeTiltSetup(CsCase c, float w, float h, float tilt)
+    {
+        c.Root.Properties.InsertScalar("tilt", tilt);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        string cx = (w / 2).ToString(inv), cy = (h / 2).ToString(inv);
+        var e = G.C.CreateExpressionAnimation(
+            $"Matrix4x4.CreateTranslation(Vector3(-{cx}, -{cy}, 0)) * Matrix4x4.CreateFromAxisAngle(Vector3(0, 1, 0), p.tilt) * Matrix4x4(1,0,0,0, 0,1,0,0, 0,0,1,-0.0011, 0,0,0,1) * Matrix4x4.CreateTranslation(Vector3({cx}, {cy}, 0))");
+        e.SetReferenceParameter("p", c.Root.Properties);
+        c.Root.StartAnimation("TransformMatrix", e);
+    }
+
     private void CsLayoutHero(CsPage p, bool animate, bool entry = false)
     {
         p.StandFinish?.Invoke();
@@ -70,6 +85,7 @@ public sealed partial class WallStage
             {
                 c = CsNewCase(i < p.Items.Count ? p.Items[i] : null, i, new Vector2(HeW0, HeH));
                 CsAddReflection(c, new Vector2(HeW0, HeH));
+                HeTiltSetup(c, HeW0, HeH, HeTilt);
                 c.Root.Offset = HeroSlot(i, animate ? p.Prev : s, animate ? prx : rx);
                 c.Dim.Opacity = 0;
                 p.Cases[i] = c;
@@ -93,7 +109,7 @@ public sealed partial class WallStage
             else
             {
                 c.Root.StartAnimation("Offset", CsV3(off, ms, CsQuart));
-                if (i != s && i == p.Prev) { c.Root.StopAnimation("Opacity"); c.Root.Opacity = 0; c.Root.StartAnimation("Opacity", CsS(1, CsMs(260), CsQuart, CsMs(160))); }
+                if (i != s && i == p.Prev) { c.Root.StopAnimation("Opacity"); c.Root.Opacity = 0; c.Root.StartAnimation("Opacity", CsS(1, 1, CsQuart, ms)); }   // 旧大卡收回到这一格时再接手
             }
         }
         if (p.Cases.TryGetValue(s, out var selRow)) { selRow.Root.StopAnimation("Opacity"); selRow.Root.Opacity = 0; }
@@ -109,6 +125,7 @@ public sealed partial class WallStage
         }
         var wide = CsNewCase(g, s, new Vector2(HeW, HeH), wide: true);
         CsAddReflection(wide, new Vector2(HeW, HeH));
+        HeTiltSetup(wide, HeW, HeH, 0);
         CsSelect(wide, true, shine: animate, delay: 80, dimOthers: false);
         wide.Dim.Opacity = 0;
         wide.Ring.Opacity = p.Acts ? 0 : 1;
@@ -132,13 +149,28 @@ public sealed partial class WallStage
             p.Prev = s;
             return;
         }
-        // 新大卡从 96 % 放大淡入，旧的同时淡出；落定后拆旧的
-        wide.Root.Opacity = 0;
-        wide.Root.Scale = new Vector3(0.96f, 0.96f, 1);
-        wide.Root.StartAnimation("Opacity", CsS(1, CsMs(260), CsQuart));
-        wide.Root.StartAnimation("Scale", CsV3(Vector3.One, CsMs(420), CsQuart));
+        // 切换动画：新焦点的竖卡从它在排里的位置展开成横卡（宽度 1/3 → 1、倾斜 → 正对、飞到大卡位置），
+        // 旧大卡同时收成竖卡、斜过去，往前翻时滑到左边淡掉，往回翻时落回排里自己的那一格
+        bool fwd = s > p.Prev;
+        float sx = HeW0 / HeW;
+        var from = fwd ? HeroSlot(s, p.Prev, prx) : new Vector3(HeX - HeW0 - HeGap, HeY, 0);
+        wide.Root.StopAnimation("Offset");
+        wide.Root.CenterPoint = new Vector3(0, HeH / 2, 0);
+        wide.Root.Offset = from;
+        wide.Root.Scale = new Vector3(sx, 1, 1);
+        wide.Root.Properties.InsertScalar("tilt", HeTilt);
+        wide.Root.StartAnimation("Offset", CsV3(new Vector3(HeX, HeY, 0), ms, CsQuart));
+        wide.Root.StartAnimation("Scale", CsV3(Vector3.One, ms, CsQuart));
+        wide.Root.Properties.StartAnimation("tilt", CsS(0, ms, CsQuart));
+        wide.Root.Opacity = fwd ? 1 : 0;
+        if (!fwd) wide.Root.StartAnimation("Opacity", CsS(1, CsMs(200), CsQuart));
+        wide.Ring.StopAnimation("Opacity"); wide.Ring.Opacity = 0;
         old.Ring.StopAnimation("Opacity"); old.Ring.Opacity = 0;
-        old.Root.StartAnimation("Opacity", CsS(0, CsMs(200), CsQuart));
+        old.Root.CenterPoint = new Vector3(0, HeH / 2, 0);
+        old.Root.StartAnimation("Offset", CsV3(fwd ? new Vector3(HeX - HeW0 - HeGap - 40, HeY, 0) : HeroSlot(p.Prev, s, rx), ms, CsQuart));
+        old.Root.StartAnimation("Scale", CsV3(new Vector3(sx, 1, 1), ms, CsQuart));
+        old.Root.Properties.StartAnimation("tilt", CsS(HeTilt, ms, CsQuart));
+        if (fwd) old.Root.StartAnimation("Opacity", CsS(0, ms * 0.8, CsQuart));
         p.StandLeaving = old;
         bool done = false;
         void Finish()
@@ -148,12 +180,15 @@ public sealed partial class WallStage
             p.StandFinish = null;
             wide.Root.StopAnimation("Opacity"); wide.Root.Opacity = 1;
             wide.Root.StopAnimation("Scale"); wide.Root.Scale = Vector3.One;
+            wide.Root.StopAnimation("Offset"); wide.Root.Offset = new Vector3(HeX, HeY, 0);
+            wide.Root.Properties.StopAnimation("tilt"); wide.Root.Properties.InsertScalar("tilt", 0);
+            if (p.StandCase == wide) wide.Ring.StartAnimation("Opacity", CsS(p.Acts ? 0 : 1, CsMs(200), CsQuart));
             if (p.StandLeaving == old) p.StandLeaving = null;
             p.Content.Children.Remove(old.Root);
             CsDisposeCase(old);
         }
         p.StandFinish = Finish;
-        After(CsMs(440), () => { if (!done) Finish(); });
+        After(ms + 20, () => { if (!done) Finish(); });
         p.Prev = s;
     }
 }
