@@ -178,7 +178,9 @@ public sealed partial class WallStage
         // 往前翻时滑到左边淡掉，往回翻时落回排里自己的那一格。所有属性都从当前值出发，连按可打断。
         bool fwd = s > p.Prev;
         var ease = new Bezier(0.25f, 0.8f, 0.25f, 1f);   // 前快后慢、尾巴很长，像控制中心的弹簧
-        var from = fwd ? HeroSlot(s, p.Prev, prx) : new Vector3(HeX - HeW0 - HeGap, HeY, 0);
+        // 往回翻：新大卡不从屏幕外飞进来（会和收回的旧卡交叉穿过），而是在大卡位置从一张竖卡宽向右展开，
+        // 盖在旧卡上把它推回排里——旧卡的左边缘和新卡的右边缘一起往右走
+        var from = fwd ? HeroSlot(s, p.Prev, prx) : new Vector3(HeX, HeY, 0);
         wide.Root.StopAnimation("Offset");
         wide.Root.Offset = from;
         wide.Root.Size = new Vector2(HeW0, HeH);
@@ -188,13 +190,13 @@ public sealed partial class WallStage
         wide.Root.Properties.StartAnimation("tilt", CsS(0, ms, ease));
         if (wide.Alt != null) { wide.Alt.Opacity = 1; wide.Alt.StartAnimation("Opacity", CsS(0, ms * 0.6, ease, ms * 0.15)); }
         wide.Root.Opacity = fwd ? 1 : 0;
-        if (!fwd) wide.Root.StartAnimation("Opacity", CsS(1, ms * 0.4, ease));
+        if (!fwd) wide.Root.StartAnimation("Opacity", CsS(1, ms * 0.25, ease));
         wide.Ring.StopAnimation("Opacity"); wide.Ring.Opacity = 0;
         old.Ring.StopAnimation("Opacity"); old.Ring.Opacity = 0;
         old.Root.StartAnimation("Offset", CsV3(fwd ? new Vector3(HeX - HeW0 - HeGap - 40, HeY, 0) : HeroSlot(p.Prev, s, rx), ms, ease));
         old.Root.StartAnimation("Size", CsV2(new Vector2(HeW0, HeH), ms, ease));
         old.Root.Properties.StartAnimation("tilt", CsS(HeTilt, ms, ease));
-        old.Alt?.StartAnimation("Opacity", CsS(1, ms * 0.5, ease));
+        old.Alt?.StartAnimation("Opacity", CsS(1, ms * (fwd ? 0.5 : 0.35), ease));
         if (fwd) old.Root.StartAnimation("Opacity", CsS(0, ms * 0.7, ease, ms * 0.2));
         // 旧大卡各自走完自己的动画再拆（连按时不提前删，免得半路消失）；焦点框等最后一张落定再亮
         p.HeroLeaving.Add(old);
