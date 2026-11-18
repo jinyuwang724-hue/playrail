@@ -1087,40 +1087,17 @@ public sealed partial class WallStage
         int count = CsActCount(g);
         int focus = p.Acts && !_csFieldOut ? p.Act : -1;   // 搜索框弹出去时焦点在框里
         const float pad = 8, r = ActH / 2;
+        // 11-19 PS5 焦点：按钮平时一律毛玻璃 + 白色细体（开始游戏也不再常亮白底），焦点那颗由 FocusFx 铺白底 + 黑色粗体
         CsRepaint(p.ActsV, w + pad * 2, ActH + pad * 2, ds =>
         {
-            float x = pad, y = pad;
-            // 主按钮：白底黑字，三角 + 文字整体居中
-            ds.FillRoundedRectangle(x, y, pill, ActH, r, r, Gfx.Rgba(242, 242, 242));
-            float px = x + 40;
-            using (var play = CanvasGeometry.CreatePolygon(ds, new[] { new Vector2(px, y + r - 13), new Vector2(px, y + r + 13), new Vector2(px + 22, y + r) }))
-                ds.FillGeometry(play, Gfx.Rgba(17, 17, 17));
-            using (var l = TextKit.Layout(ds, running ? "继续游戏" : "开始游戏", TextKit.Ui(600), ActFont, pill, CanvasHorizontalAlignment.Left))
-                ds.DrawTextLayout(l, px + 26 + 14, y + r - (float)l.LayoutBounds.Height / 2 - (float)l.LayoutBounds.Y, Gfx.Rgba(17, 17, 17));
-            if (focus == 0) ds.DrawRoundedRectangle(x - 5, y - 5, pill + 10, ActH + 10, r + 5, r + 5, Colors.White, 3.5f);
-            float bx = x + pill + ActGap;
-            for (int a = 1; a < count; a++)
+            float bx = pad;
+            for (int a = 0; a < count; a++)
             {
                 var action = CsActionAt(a, running);
+                float bw = a == 0 ? pill : ActH;
                 // 搜索按钮的圆在搜索框弹出去时由框接走（框从这个圆长出来），这里先不画
-                if (action == CsAction.Search && _csFieldOut) { bx += ActH + ActGap; continue; }
-                ds.FillCircle(bx + r, y + r, r, Gfx.Rgba(255, 255, 255, 0.14));
-                var ink = Gfx.Rgba(242, 242, 242);
-                var t0 = ds.Transform;
-                ds.Transform = Matrix3x2.CreateScale(1.5f, 1.5f, new Vector2(12, 12)) * Matrix3x2.CreateTranslation(bx + r - 12, y + r - 12) * t0;
-                if (action == CsAction.End) LineIcons.Draw(ds, "qam.quit", 12, 12, 24, ink);
-                else if (action == CsAction.Settings) CsIconSliders(ds, 0, 0, ink);
-                else if (action == CsAction.Search) LineIcons.Draw(ds, "", 12, 12, 18, ink);
-                else if (action == CsAction.Shots) LineIcons.Draw(ds, "", 12, 12, 18, ink);
-                else
-                {
-                    _csSteamSvg ??= Microsoft.Graphics.Canvas.Svg.CanvasSvgDocument.LoadFromXml(G.Device, File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "Steam.svg")));
-                    _csSteamSvg.Root.SetColorAttribute("fill", ink);
-                    ds.DrawSvg(_csSteamSvg, new Windows.Foundation.Size(19, 19), 12 - 9.5f, 12 - 9.5f);
-                }
-                ds.Transform = t0;
-                if (focus == a) ds.DrawCircle(bx + r, y + r, r + 5, Colors.White, 3.5f);
-                bx += ActH + ActGap;
+                if (!(action == CsAction.Search && _csFieldOut)) CsDrawAct(ds, action, bx, pad, bw, running, false);
+                bx += bw + ActGap;
             }
         });
         // 位置只由 ActsAt 决定：焦点在按钮间移动只重画描边，不挪位置
@@ -1129,6 +1106,74 @@ public sealed partial class WallStage
         p.ActRects.Add((o.X, o.Y, pill, ActH, 0));
         float hx = o.X + pill + ActGap;
         for (int a = 1; a < count; a++) { p.ActRects.Add((hx, o.Y, ActH, ActH, a)); hx += ActH + ActGap; }
+        CsFocusFx(p, g, focus, running);
+    }
+
+    /// <summary>信息区的一颗按钮：开始游戏是胶囊（三角 + 字），其余是圆钮里一个图标。ink = 焦点白底上的黑色粗体版本。</summary>
+    private void CsDrawAct(CanvasDrawingSession ds, CsAction action, float x, float y, float bw, bool running, bool ink)
+    {
+        float r = ActH / 2;
+        var fg = ink ? FocusInk : Gfx.Rgba(242, 242, 242);
+        if (!ink)
+        {
+            ds.FillRoundedRectangle(x, y, bw, ActH, r, r, Gfx.Rgba(255, 255, 255, 0.14));
+            ds.DrawRoundedRectangle(x + 0.5f, y + 0.5f, bw - 1, ActH - 1, r - 0.5f, r - 0.5f, Gfx.Rgba(255, 255, 255, 0.16), 1);
+        }
+        if (action is CsAction.Play or CsAction.End && bw > ActH)
+        {
+            float px = x + 40;
+            using (var play = CanvasGeometry.CreatePolygon(ds, new[] { new Vector2(px, y + r - 13), new Vector2(px, y + r + 13), new Vector2(px + 22, y + r) }))
+                ds.FillGeometry(play, fg);
+            using var l = TextKit.Layout(ds, running ? "继续游戏" : "开始游戏", TextKit.Ui(ink ? (ushort)600 : (ushort)300), ActFont, bw, CanvasHorizontalAlignment.Left);
+            ds.DrawTextLayout(l, px + 26 + 14, y + r - (float)l.LayoutBounds.Height / 2 - (float)l.LayoutBounds.Y, fg);
+            return;
+        }
+        var t0 = ds.Transform;
+        ds.Transform = Matrix3x2.CreateScale(1.5f, 1.5f, new Vector2(12, 12)) * Matrix3x2.CreateTranslation(x + r - 12, y + r - 12) * t0;
+        // 选中时图标描两遍、错开半像素，线条粗一点（线稿图标没有粗体）
+        foreach (float dx in ink ? new[] { 0f, 0.35f } : new[] { 0f })
+        {
+            if (action == CsAction.End) LineIcons.Draw(ds, "qam.quit", 12 + dx, 12, 24, fg);
+            else if (action == CsAction.Settings) CsIconSliders(ds, dx, 0, fg);
+            else if (action == CsAction.Search) LineIcons.Draw(ds, "", 12 + dx, 12, 18, fg);
+            else if (action == CsAction.Shots) LineIcons.Draw(ds, "", 12 + dx, 12, 18, fg);
+            else
+            {
+                _csSteamSvg ??= Microsoft.Graphics.Canvas.Svg.CanvasSvgDocument.LoadFromXml(G.Device, File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "Steam.svg")));
+                _csSteamSvg.Root.SetColorAttribute("fill", fg);
+                ds.DrawSvg(_csSteamSvg, new Windows.Foundation.Size(19, 19), 12 - 9.5f + dx, 12 - 9.5f);
+            }
+        }
+        ds.Transform = t0;
+    }
+
+    /// <summary>
+    /// 游戏库首页的焦点框：在按钮上 = 白底 + 黑色粗体；回到大卡（「大图」/「展台」）= 只套框；其他样式的卡仍用卡自己的白框。
+    /// 焦点框挂在 p.Content 上，和按钮、大卡同一个坐标系。
+    /// </summary>
+    private void CsFocusFx(CsPage p, LibraryItem? g, int focus, bool running)
+    {
+        var fx = FxFor(p.Content);
+        fx.SetUnit(1 / CsK);
+        if (g != null && focus >= 0 && focus < p.ActRects.Count)
+        {
+            var rc = p.ActRects[focus];
+            var action = CsActionAt(focus, running);
+            var ink = FxInk(rc.X, rc.Y, rc.W, rc.H, CsRaster, ds => CsDrawAct(ds, action, rc.X, rc.Y, rc.W, running, true));
+            fx.To(rc.X, rc.Y, rc.W, rc.H, ActH / 2, 1, true, ink, (rc.X, rc.Y, rc.W, rc.H));
+            return;
+        }
+        if (p.Style == HomeStyle.Hero && !p.Acts && g != null)
+        {
+            fx.To(HeX, HeY, HeW, HeH, MathF.Min(HeW, HeH * 0.6667f) * 0.105f * 1.15f, 1, false);
+            return;
+        }
+        if (p.Style == HomeStyle.Stand && !p.Acts && g != null && p.StandCase is { } sc)
+        {
+            fx.To(sc.Offset.X, sc.Offset.Y, sc.Size.X, sc.Size.Y, MathF.Min(sc.Size.X, sc.Size.Y * 0.6667f) * 0.105f, 1, false);
+            return;
+        }
+        fx.Hide();
     }
 
     private static void CsIconSliders(CanvasDrawingSession ds, float x, float y, Color c)

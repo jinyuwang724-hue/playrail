@@ -365,6 +365,7 @@ public sealed partial class WallStage
         }
         _settingsTargets.Clear();
         CcSet(_dsRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _dsRows, _dsFocus, _settingsTargets)));
+        RowFocusFx(_dsRight, _dsRows, _dsFocus, PerfRightW, raster);
         _dsRight.Size = new Vector2(PerfRightW * k, h * k);
         _dsRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _dsRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);

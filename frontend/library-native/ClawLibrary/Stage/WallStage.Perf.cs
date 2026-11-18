@@ -515,6 +515,7 @@ public sealed partial class WallStage
         // 右栏：整张列表画在一张面上，放进固定高度的裁剪框里，按焦点滚动
         _settingsTargets.Clear();
         CcSet(_perfRight, CcDraw(PerfRightW, h, raster, ds => PaintRowList(ds, _perfRows, _perfFocus, _settingsTargets)));
+        RowFocusFx(_perfRight, _perfRows, _perfFocus, PerfRightW, raster);
         _perfRight.Size = new Vector2(PerfRightW * k, h * k);
         _perfRightView.Size = new Vector2(PerfRightW * k, vh * k);
         _perfRightView.Offset = new Vector3(PerfRightX * k, PerfTop * k, 0);
@@ -564,12 +565,15 @@ public sealed partial class WallStage
     }
 
     /// <summary>控制中心子页右栏的设置列表（性能、手柄共用）：分组标题、行号、焦点 ▸、几选一下划线、焦点数值 ‹ ›。</summary>
-    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus, List<SettingsPointerTarget>? targets = null, bool numbers = false, float listWidth = PerfRightW, bool leadingNotes = true)
+    private void PaintRowList(CanvasDrawingSession ds, List<PerfRow> rows, int focus, List<SettingsPointerTarget>? targets = null, bool numbers = false, float listWidth = PerfRightW, bool leadingNotes = true, bool ink = false)
     {
+        // ink：只画焦点那一行，黑色粗体，叠在焦点白底上（FocusFx）；平时整张表一律细体白字，焦点不再画 ▸
+        if (ink) targets = null;
         if (targets != null)
             _settingsEdit.Observe(focus >= 0 && focus < rows.Count && rows[focus] is { Numeric: true, Disabled: false, Skip: false } focused
                 ? SettingsEditKey(focused, focus) : null);
-        var ui = TextKit.Ui(400);
+        var ui = TextKit.Ui(ink ? (ushort)600 : (ushort)300);
+        var fg = ink ? FocusInk : CcText;
         var mono = TextKit.Num(400);
         float y = 0, W = listWidth;
         int n = 0;
@@ -578,42 +582,38 @@ public sealed partial class WallStage
             var r = rows[i];
             if (r.Section)
             {
-                PText(ds, r.Title, TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.42), 0, y + PerfSecH - 10, 400);
+                if (!ink) PText(ds, r.Title, TextKit.Ui(500), 13, Gfx.WithAlpha(fg, 0.42), 0, y + PerfSecH - 10, 400);
                 y += PerfSecH;
                 continue;
             }
             n++;
             if (!r.Skip) targets?.Add(new(i, SettingsTargetKind.Row, 0, y, W, PerfRowH));
             bool f = i == focus;
+            // 选中行粗体、其余细体（设置行没有图标，不铺白，只有焦点框）
+            var fui = f && !ink ? TextKit.Ui(600) : ui;
             float cy = y + PerfRowH / 2;
             float a = r.Disabled ? 0.32f : 1;
-            if (f)
-            {
-                using var pb = new CanvasPathBuilder(ds);
-                pb.BeginFigure(1, cy - 6); pb.AddLine(9, cy); pb.AddLine(1, cy + 6); pb.EndFigure(CanvasFigureLoop.Closed);
-                using var g = CanvasGeometry.CreatePath(pb);
-                ds.FillGeometry(g, Gfx.WithAlpha(CcText, a));
-            }
-            else if (numbers && r.Glyph == null) PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(CcText, 0.32f * a), 0, cy, 40);
-            if (r.Glyph is { Length: > 0 }) GpPaintGlyph(ds, r.Glyph, 14, cy, 26, Gfx.WithAlpha(CcText, (f ? 1f : 0.85f) * a), false);
+            if (ink && !f) { y += PerfRowH; continue; }
+            if (!f && numbers && r.Glyph == null) PText(ds, n.ToString("00"), mono, 13, Gfx.WithAlpha(fg, 0.32f * a), 0, cy, 40);
+            if (r.Glyph is { Length: > 0 }) GpPaintGlyph(ds, r.Glyph, 14, cy, 26, Gfx.WithAlpha(fg, (f ? 1f : 0.85f) * a), false);
             if (r.Changed) ds.FillCircle(27, cy, 3, PerfAccent);
-            PText(ds, r.Title, ui, 17, Gfx.WithAlpha(CcText, (f ? 1f : 0.88f) * a), (r.Glyph != null ? 50 : 36) + r.Indent, cy, 400);
+            PText(ds, r.Title, fui, 17, Gfx.WithAlpha(fg, (f ? 1f : 0.88f) * a), (r.Glyph != null ? 50 : 36) + r.Indent, cy, 400);
             bool editing = f && SettingsRowEditing(r, i);
-            if (targets != null && r.SetNumber != null && editing)
+            if ((targets != null || ink) && r.SetNumber != null && editing)
             {
                 const float sliderWidth = 200;
-                float vw = PWidth(ds, r.Value, ui, 17);
+                float vw = PWidth(ds, r.Value, fui, 17);
                 float left = Math.Min(W - 300, W - vw - 76 - sliderWidth);
                 float fraction = Math.Clamp((r.Number - r.Minimum) / (float)Math.Max(1, r.Maximum - r.Minimum), 0, 1);
-                ds.FillRoundedRectangle(left, cy - 2, sliderWidth, 4, 2, 2, Gfx.WithAlpha(CcText, .18f));
-                if (fraction > 0) ds.FillRoundedRectangle(left, cy - 2, sliderWidth * fraction, 4, 2, 2, PerfAccent);
-                ds.FillCircle(left + sliderWidth * fraction, cy, f ? 6 : 5, CcText);
-                PText(ds, r.Value, ui, 17, CcText, W - 22 - vw, cy, vw + 4);
-                DrawChevron(ds, W - 34 - vw, cy, true, CcText);
-                DrawChevron(ds, W - 6, cy, false, CcText);
-                targets.Add(new(i, SettingsTargetKind.Decrease, W - 56 - vw, y, 44, PerfRowH));
-                targets.Add(new(i, SettingsTargetKind.Increase, W - 44, y, 44, PerfRowH));
-                targets.Add(new(i, SettingsTargetKind.Slider, left, y, sliderWidth, PerfRowH));
+                ds.FillRoundedRectangle(left, cy - 2, sliderWidth, 4, 2, 2, Gfx.WithAlpha(fg, .18f));
+                if (fraction > 0) ds.FillRoundedRectangle(left, cy - 2, sliderWidth * fraction, 4, 2, 2, ink ? fg : PerfAccent);
+                ds.FillCircle(left + sliderWidth * fraction, cy, f ? 6 : 5, fg);
+                PText(ds, r.Value, fui, 17, fg, W - 22 - vw, cy, vw + 4);
+                DrawChevron(ds, W - 34 - vw, cy, true, fg);
+                DrawChevron(ds, W - 6, cy, false, fg);
+                targets?.Add(new(i, SettingsTargetKind.Decrease, W - 56 - vw, y, 44, PerfRowH));
+                targets?.Add(new(i, SettingsTargetKind.Increase, W - 44, y, 44, PerfRowH));
+                targets?.Add(new(i, SettingsTargetKind.Slider, left, y, sliderWidth, PerfRowH));
             }
             else if (r.Choices != null)
             {
@@ -621,24 +621,24 @@ public sealed partial class WallStage
                 float x = W;
                 if (!leadingNotes && r.Value.Length > 0)
                 {
-                    float vw = PWidth(ds, r.Value, ui, 14);
+                    float vw = PWidth(ds, r.Value, fui, 14);
                     x -= vw;
-                    PText(ds, r.Value, ui, 14, Gfx.WithAlpha(CcText, 0.45f), x, cy, vw + 4);
+                    PText(ds, r.Value, fui, 14, Gfx.WithAlpha(fg, 0.45f), x, cy, vw + 4);
                     x -= 24;
                 }
-                var widths = r.Choices.Select(c => PWidth(ds, c, ui, 17)).ToArray();
+                var widths = r.Choices.Select(c => PWidth(ds, c, fui, 17)).ToArray();
                 if (leadingNotes && r.Value.Length > 0)
                 {
                     // Keep controls on one axis; fit essential status into the space before them.
                     float choicesW = widths.Sum(w => targets != null ? Math.Max(44, w + 20) : w + 20);
                     float right = W - choicesW - 24;
-                    float left = 36 + r.Indent + PWidth(ds, r.Title, ui, 17) + 24;
+                    float left = 36 + r.Indent + PWidth(ds, r.Title, fui, 17) + 24;
                     float available = Math.Max(0, right - left);
                     if (available > 0)
                     {
-                        string note = GpFit(ds, r.Value, ui, 14, available);
-                        float noteW = PWidth(ds, note, ui, 14);
-                        PText(ds, note, ui, 14, Gfx.WithAlpha(CcText, 0.65f), right - noteW, cy, noteW + 4);
+                        string note = GpFit(ds, r.Value, fui, 14, available);
+                        float noteW = PWidth(ds, note, fui, 14);
+                        PText(ds, note, fui, 14, Gfx.WithAlpha(fg, 0.65f), right - noteW, cy, noteW + 4);
                     }
                 }
                 for (int j = r.Choices.Length - 1; j >= 0; j--)
@@ -647,8 +647,8 @@ public sealed partial class WallStage
                     x -= width;
                     float textX = x + (width - widths[j]) / 2;
                     bool on = j == r.Choice;
-                    var col = on ? (f ? CcText : Gfx.WithAlpha(CcText, 0.92)) : Gfx.WithAlpha(CcText, 0.38);
-                    PText(ds, r.Choices[j], ui, 17, Gfx.WithAlpha(col, a), textX, cy, widths[j] + 4);
+                    var col = on ? (f ? fg : Gfx.WithAlpha(fg, 0.92)) : Gfx.WithAlpha(fg, 0.38);
+                    PText(ds, r.Choices[j], fui, 17, Gfx.WithAlpha(col, a), textX, cy, widths[j] + 4);
                     if (on) ds.FillRectangle(textX, cy + 13, widths[j], 2, Gfx.WithAlpha(col, a));
                     targets?.Add(new(i, SettingsTargetKind.Choice, x, y, width, PerfRowH, j));
                     if (targets == null) x -= 20;
@@ -657,11 +657,11 @@ public sealed partial class WallStage
             else
             {
                 string v = r.Value;
-                float vw = PWidth(ds, v, ui, 17);
-                var col = Gfx.WithAlpha(CcText, leadingNotes && r.Disabled ? 0.65f : (f || r.BrightValue ? 1f : 0.6f) * a);
+                float vw = PWidth(ds, v, fui, 17);
+                var col = Gfx.WithAlpha(fg, leadingNotes && r.Disabled ? 0.65f : (f || r.BrightValue ? 1f : 0.6f) * a);
                 if (r.Secondary != null)
                 {
-                    PText(ds, v, ui, 17, col, W - 56 - vw, cy, vw + 4);
+                    PText(ds, v, fui, 17, col, W - 56 - vw, cy, vw + 4);
                     LineIcons.Draw(ds, "", W - 22, cy, 18, col);
                     targets?.Add(new(i, SettingsTargetKind.Secondary, W - 44, y, 44, PerfRowH));
                 }
@@ -670,12 +670,12 @@ public sealed partial class WallStage
                     // 确认进入调整后才显示 ‹ 值 › 并开放箭头命中。
                     float right = W;
                     DrawChevron(ds, right - 6, cy, false, col);
-                    PText(ds, v, ui, 17, col, right - 22 - vw, cy, vw + 4);
+                    PText(ds, v, fui, 17, col, right - 22 - vw, cy, vw + 4);
                     DrawChevron(ds, right - 34 - vw, cy, true, col);
                     targets?.Add(new(i, SettingsTargetKind.Decrease, right - 56 - vw, y, 44, PerfRowH));
                     targets?.Add(new(i, SettingsTargetKind.Increase, right - 44, y, 44, PerfRowH));
                 }
-                else PText(ds, v, ui, 17, col, W - (r.Numeric ? 22 : 0) - vw, cy, vw + 4);
+                else PText(ds, v, fui, 17, col, W - (r.Numeric ? 22 : 0) - vw, cy, vw + 4);
             }
             y += PerfRowH;
         }

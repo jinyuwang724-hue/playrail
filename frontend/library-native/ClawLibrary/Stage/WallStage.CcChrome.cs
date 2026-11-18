@@ -23,6 +23,7 @@ public sealed partial class WallStage
         public string Label = "";
         public ContainerVisual El = null!;
         public SpriteVisual Normal = null!, Focused = null!;
+        public Reveal? Fill;
         /// <summary>屏幕 DIP（相对控制中心层）。</summary>
         public Vector2 Pos, Size;
         public bool On;
@@ -170,9 +171,15 @@ public sealed partial class WallStage
     {
         if (b.Id != "avatar")
         {
-            var c = focus ? CcText : Gfx.WithAlpha(CcText, 0.6);
-            CcGlyph(ds, b.Glyph, w / 2, h / 2 - 2, CcDockIcon, c);
-            if (focus) ds.FillCircle(w / 2, h - 5, 2, CcText);
+            // 11-19 PS5 焦点：平时毛玻璃圆 + 白图标，选中白圆 + 黑图标
+            float rr = MathF.Min(w, h) / 2;
+            if (focus) ds.FillRoundedRectangle(0, 0, w, h, rr, rr, Gfx.Rgba(255, 255, 255));
+            else
+            {
+                ds.FillRoundedRectangle(0, 0, w, h, rr, rr, Gfx.Rgba(255, 255, 255, 0.11));
+                ds.DrawRoundedRectangle(0.5f, 0.5f, w - 1, h - 1, rr - 0.5f, rr - 0.5f, Gfx.Rgba(255, 255, 255, 0.14), 1);
+            }
+            CcGlyph(ds, b.Glyph, w / 2, h / 2, CcDockIcon, focus ? FocusInk : Gfx.WithAlpha(CcText, 0.92));
             return;
         }
         var fill = focus ? Gfx.Rgba(0xfa, 0xfa, 0xfa, 0.96) : CcChip;
@@ -375,10 +382,22 @@ public sealed partial class WallStage
     private void CcChromeFocus(bool instant = false)
     {
         CcAway(_ccZone == CcZone.Row ? 0 : 1, instant);
+        // PS5 焦点：功能坞 / 电源菜单和拼盘卡共用一个焦点框（_ccChrome 层，DIP 坐标），按实际位置移过去
+        var fx = _ccChrome != null ? FxFor(_ccChrome) : null;
+        var fb = _ccZone switch { CcZone.Dock => _ccDock[_ccDockFocus], CcZone.Power => _ccPower[_ccPowerFocus], _ => null };
+        int dir = 1;
+        if (fb != null && fx != null)
+        {
+            var sz = fb.Size * 1.08f;
+            var p = fb.Pos - (sz - fb.Size) / 2;
+            dir = fx.DirTo(p.X, p.Y, sz.X, sz.Y);
+            fx.To(p.X, p.Y, sz.X, sz.Y, sz.Y / 2, 1, false, instant: instant || Reduced);
+        }
+        else if (fx != null && !_ccBento) fx.Hide(!instant);
         for (int i = 0; i < _ccDock.Count; i++)
-            CcFocusVisual(_ccDock[i], (_ccZone == CcZone.Dock && i == _ccDockFocus) || (i == 0 && _ccPowerOpen), instant);
+            CcFocusVisual(_ccDock[i], (_ccZone == CcZone.Dock && i == _ccDockFocus) || (i == 0 && _ccPowerOpen), instant, dir);
         for (int i = 0; i < _ccPower.Count; i++)
-            CcFocusVisual(_ccPower[i], _ccZone == CcZone.Power && i == _ccPowerFocus, instant);
+            CcFocusVisual(_ccPower[i], _ccZone == CcZone.Power && i == _ccPowerFocus, instant, dir);
         if (_ccBlocks.Count > 0 && _ccLabel != null) CcPaintLabels();
         CcBentoLayout(animate: !instant);
     }
@@ -416,20 +435,23 @@ public sealed partial class WallStage
     }
 
     /// <summary>图标焦点：亮度 0.15 s 渐变（从当前亮度起），放大用 folia 按钮那根弹簧（460 / 36 / 0.9）。都可打断。</summary>
-    private void CcFocusVisual(CcButton b, bool on, bool instant)
+    private void CcFocusVisual(CcButton b, bool on, bool instant, int dir = 1)
     {
         if (b.On == on && !instant) return;
         b.On = on;
         float s = on ? 1.08f : 1f;
+        // 选中层（白底黑图标）按焦点移动方向裁进来 / 退出去，不再淡入淡出
+        b.Focused.StopAnimation("Opacity");
+        b.Focused.Opacity = 1;
+        b.Fill ??= new Reveal(G, b.Focused) { Icon = b.Focused };
         if (instant || Reduced)
         {
-            b.Focused.StopAnimation("Opacity");
-            b.Focused.Opacity = on ? 1 : 0;
+            b.Fill.Set(on, b.Size.X, b.Size.Y);
             b.El.StopAnimation("Scale");
             b.El.Scale = new Vector3(s, s, 1);
             return;
         }
-        b.Focused.StartAnimation("Opacity", ToScalar(on ? 1 : 0, 150, EaseOutCss));
+        if (on) b.Fill.Enter(dir, b.Size.X, b.Size.Y); else b.Fill.Exit(dir, b.Size.X, b.Size.Y);
         b.El.StartAnimation("Scale", G.SpringV3(new Vector3(s, s, 1), Spring.Button));
     }
 

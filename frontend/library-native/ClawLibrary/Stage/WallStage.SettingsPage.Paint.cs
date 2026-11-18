@@ -13,22 +13,17 @@ public sealed partial class WallStage
 {
     private const float StGutter = 22;
 
-    private void PaintStNav(CanvasDrawingSession ds, float h)
+    /// <summary>ink：只画焦点分类，黑色粗体（叠在 FocusFx 的白底上）；平时一律细体，焦点不再画 ▸。</summary>
+    private void PaintStNav(CanvasDrawingSession ds, float h, bool ink = false)
     {
         float x = StGutter;
+        if (ink) { PText(ds, StCats[_stCat], TextKit.Ui(600), 17, FocusInk, x, PerfSecH + _stCat * StCatH + StCatH / 2, StLeftW - 10); return; }
         PText(ds, "分类", TextKit.Ui(500), 13, Gfx.WithAlpha(CcText, 0.42), x, PerfSecH - 10, 200);
         for (int i = 0; i < StCats.Length; i++)
         {
             float cy = PerfSecH + i * StCatH + StCatH / 2;
             bool cur = i == _stCat;
-            if (cur && _stZone == 0)
-            {
-                using var pb = new CanvasPathBuilder(ds);
-                pb.BeginFigure(x - 21, cy - 6); pb.AddLine(x - 13, cy); pb.AddLine(x - 21, cy + 6); pb.EndFigure(CanvasFigureLoop.Closed);
-                using var g = CanvasGeometry.CreatePath(pb);
-                ds.FillGeometry(g, CcText);
-            }
-            PText(ds, StCats[i], TextKit.Ui(400), 17, Gfx.WithAlpha(CcText, cur ? 1f : 0.45f), x, cy, StLeftW - 10);
+            PText(ds, StCats[i], TextKit.Ui(cur && _stZone == 0 ? (ushort)600 : (ushort)300), 17, Gfx.WithAlpha(CcText, cur ? 1f : 0.45f), x, cy, StLeftW - 10);
         }
         if (_stAgentDown) PText(ds, "连不上工具箱后台", TextKit.Ui(400), 13, Gfx.WithAlpha(CcText, 0.5), x, h - 12, StLeftW);
     }

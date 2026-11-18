@@ -143,7 +143,7 @@ public sealed partial class WallStage
         var g = s < p.Items.Count ? p.Items[s] : null;
         if (p.StandCase is { } cur && cur.Index == s && cur.Item == g)
         {
-            cur.Ring.StartAnimation("Opacity", CsS(p.Acts ? 0 : 1, CsMs(250), CsQuart));
+            cur.Ring.StopAnimation("Opacity"); cur.Ring.Opacity = 0;   // 焦点框由 FocusFx 画（CsFocusFx）
             p.Prev = s;
             return;
         }
@@ -152,7 +152,7 @@ public sealed partial class WallStage
         HeTiltSetup(wide, HeW, HeH, 0);
         CsSelect(wide, true, shine: animate && !rapid, delay: 80, dimOthers: false);
         wide.Dim.Opacity = 0;
-        wide.Ring.Opacity = p.Acts ? 0 : 1;
+        wide.Ring.StopAnimation("Opacity"); wide.Ring.Opacity = 0;
         wide.Offset = new Vector3(HeX, HeY, 0);
         wide.Size = new Vector2(HeW, HeH);
         wide.Root.Offset = wide.Offset;
@@ -212,7 +212,7 @@ public sealed partial class WallStage
         After(ms + 20, () =>
         {
             if (p.HeroLeaving.Remove(old)) { p.Content.Children.Remove(old.Root); CsDisposeCase(old); }
-            if (p.StandCase == wide && NowMs - p.HeroLast >= ms) wide.Ring.StartAnimation("Opacity", CsS(p.Acts ? 0 : 1, CsMs(200), CsQuart));
+            if (p.StandCase == wide && NowMs - p.HeroLast >= ms && !p.Acts) FxFor(p.Content).Hoop();   // 新大卡落定：焦点框再套一次
         });
         p.Prev = s;
     }

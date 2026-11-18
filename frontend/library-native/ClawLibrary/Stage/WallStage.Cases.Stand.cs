@@ -75,14 +75,14 @@ public sealed partial class WallStage
         var g = s < p.Items.Count ? p.Items[s] : null;
         if (p.StandCase is { } cur && cur.Index == s && cur.Item == g)
         {
-            cur.Ring.StartAnimation("Opacity", CsS(p.Acts ? 0 : 1, CsMs(250), CsQuart));
+            cur.Ring.StopAnimation("Opacity"); cur.Ring.Opacity = 0;   // 焦点框由 FocusFx 画（CsFocusFx）
             p.Prev = s;
             return;
         }
         var stand = CsNewCase(g, s, new Vector2(StdW, StdH), hiRes: true);
         CsSelect(stand, true, shine: animate, delay: 120, dimOthers: false);
         stand.Dim.Opacity = 0;
-        stand.Ring.Opacity = p.Acts ? 0 : 1;
+        stand.Ring.StopAnimation("Opacity"); stand.Ring.Opacity = 0;
         stand.Offset = new Vector3(StdX, StdY, 0);
         stand.Size = new Vector2(StdW, StdH);
         p.Content.Children.InsertAtTop(stand.Root);
@@ -142,7 +142,7 @@ public sealed partial class WallStage
             foreach (var prop in new[] { "Offset", "Scale" }) stand.Root.StopAnimation(prop);
             stand.Root.Offset = new Vector3(StdX, StdY, 0);
             stand.Root.Scale = Vector3.One;
-            if (p.StandCase == stand) stand.Ring.StartAnimation("Opacity", CsS(p.Acts ? 0 : 1, CsMs(200), CsQuart));
+            if (p.StandCase == stand && !p.Acts) { var sfx = FxFor(p.Content); CsFocusFx(p, stand.Item, -1, false); sfx.Hoop(); }
             if (p.StandLeaving == old) p.StandLeaving = null;
             p.Content.Children.Remove(old.Root);
             CsDisposeCase(old);

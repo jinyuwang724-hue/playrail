@@ -1165,6 +1165,7 @@ public sealed partial class WallStage
         _settingsTargets.Clear();
         float rw = StRightW;
         CcSet(_stRight, CcDraw(rw, h, raster, ds => PaintRowList(ds, _stRows, _stZone == 1 && _gsMapFocus < 0 ? _stFocus : -1, _settingsTargets, false, rw)));
+        RowFocusFx(_stRight, _stRows, _stZone == 1 && _gsMapFocus < 0 ? _stFocus : -1, rw, raster);
         _stRight.Size = new Vector2(rw * k, h * k);
         _stRightView.Size = new Vector2(rw * k, vh * k);
         _stRightView.Offset = new Vector3(StRightX * k, PerfTop * k, 0);
@@ -1174,6 +1175,13 @@ public sealed partial class WallStage
         CcSet(_stLeft, CcDraw(lw + StGutter, vh, raster, ds => PaintStNav(ds, vh)));
         _stLeft.Size = new Vector2((lw + StGutter) * k, vh * k);
         _stLeft.Offset = new Vector3((PerfLeftX - StGutter) * k, PerfTop * k, 0);
+        var navFx = FxFor(_stLeft);
+        if (_stZone == 0)
+        {
+            float top = PerfSecH + _stCat * StCatH;
+            navFx.To(StGutter - 18, top + 2, lw - 10 + 18, StCatH - 4, 12, k, false);
+        }
+        else navFx.Hide();
         PaintGsOverlay(k, raster);
         if (stSw.ElapsedMilliseconds > 40) Log.Info($"settings paint {stSw.ElapsedMilliseconds}ms (cat {_stCat}, {_stRows.Count} rows, {h:F0}px)");
     }

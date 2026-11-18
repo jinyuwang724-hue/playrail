@@ -22,7 +22,10 @@ public sealed partial class WallStage
     private sealed class CcTile
     {
         public required ContainerVisual El, Box;
-        public required SpriteVisual Glow, Face, Cover, Over, Glare, Ring;
+        public required SpriteVisual Glow, Face, Cover, Over, Glare, Ring, InvFace, InvOver;
+        /// <summary>选中层（白底 + 黑色粗体），按焦点移动方向用圆形长出来 / 收回去（Reveal）。</summary>
+        public required ContainerVisual Inv;
+        public required Reveal InvFill;
         public required CompositionPathGeometry ClipGeo;
         public required CompositionRadialGradientBrush GlowBrush;
         public string Drawn = "";
@@ -93,6 +96,13 @@ public sealed partial class WallStage
             glare.Opacity = 0;
             box.Children.InsertAtTop(cover);
             box.Children.InsertAtTop(over);
+            var inv = G.C.CreateContainerVisual();
+            var invFace = G.Sprite(G.Solid(Microsoft.UI.Colors.White), relative: false);
+            var invOver = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+            var invFill = new Reveal(G, inv) { Plate = invFace, Icon = invOver };
+            inv.Children.InsertAtTop(invFace);
+            inv.Children.InsertAtTop(invOver);
+            box.Children.InsertAtTop(inv);
             box.Children.InsertAtTop(glare);
             var ring = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
             ring.Opacity = 0;
@@ -101,7 +111,7 @@ public sealed partial class WallStage
             el.Children.InsertAtTop(box);
             el.Children.InsertAtTop(ring);
             _ccBentoRoot.Children.InsertAtTop(el);
-            _ccTiles.Add(new CcTile { El = el, Box = box, Glow = glow, Face = face, Cover = cover, Over = over, Glare = glare, Ring = ring, ClipGeo = geo, GlowBrush = glowBrush });
+            _ccTiles.Add(new CcTile { El = el, Box = box, Glow = glow, Face = face, Cover = cover, Over = over, Glare = glare, Ring = ring, ClipGeo = geo, GlowBrush = glowBrush, Inv = inv, InvFill = invFill, InvFace = invFace, InvOver = invOver });
         }
     }
 
@@ -150,7 +160,21 @@ public sealed partial class WallStage
         if (_ccBentoRoot == null || !_ccBento) return;
         int focus = _ccZone == CcZone.Row ? _ccFocus : -1;
         bool changed = focus != _ccBentoShown;
+        int was = _ccBentoShown;
         _ccBentoShown = focus;
+        // PS5 焦点：一个焦点框在卡之间按实际位置移动（套圈），选中层按移动方向铺进来
+        // 焦点框挂在功能坞那一层（_ccChrome，DIP）：卡和功能坞之间也是同一个框移过去；拼盘根缩放 _ccK，所以坐标 × _ccK
+        var fx = _ccChrome != null ? FxFor(_ccChrome) : null;
+        bool still = !animate || Reduced;
+        int dir = 1;
+        if (focus >= 0 && fx != null)
+        {
+            var fr = CcTileRect(focus);
+            float fs = 1 + 14f / MathF.Max(fr.W, fr.H) * 2, fw = fr.W * fs, fh = fr.H * fs;
+            float fx0 = fr.X - (fw - fr.W) / 2, fy0 = fr.Y - (fh - fr.H) / 2;
+            dir = fx.DirTo(fx0, fy0, fw, fh);
+            fx.To(fx0, fy0, fw, fh, BtRadius * fs, _ccK, false, instant: still);
+        }
         for (int i = 0; i < _ccTiles.Count; i++)
         {
             var t = _ccTiles[i];
@@ -164,14 +188,18 @@ public sealed partial class WallStage
             {
                 t.El.StopAnimation("Scale"); t.El.Scale = new Vector3(s, s, 1);
                 t.El.StopAnimation("Opacity"); t.El.Opacity = on || focus < 0 ? 1 : 0.84f;
-                t.Ring.StopAnimation("Opacity"); t.Ring.Opacity = on ? 1 : 0;
+                t.Ring.StopAnimation("Opacity"); t.Ring.Opacity = 0;
+                t.InvFill.Set(on, r.W, r.H);
                 t.Glow.StopAnimation("Opacity"); t.Glow.Opacity = on ? 1 : 0;
             }
             else
             {
                 t.El.StartAnimation("Scale", G.SpringV3(new Vector3(s, s, 1), BtSpring));
                 t.El.StartAnimation("Opacity", G.Scalar(t.El.Opacity, on || focus < 0 ? 1 : 0.84f, 200, EaseOutCss));
-                t.Ring.StartAnimation("Opacity", G.Scalar(t.Ring.Opacity, on ? 1 : 0, on ? 180 : 120, EaseOutCss));
+                t.Ring.Opacity = 0;
+                if (changed && on) t.InvFill.Enter(dir, r.W, r.H);
+                else if (changed && i == was) t.InvFill.Exit(dir, r.W, r.H);
+                else if (changed) t.InvFill.Set(false, r.W, r.H);
                 t.Glow.StartAnimation("Opacity", G.Scalar(t.Glow.Opacity, on ? 1 : 0, on ? 320 : 160, EaseOutCss));
                 if (on && changed)
                 {
@@ -578,13 +606,17 @@ public sealed partial class WallStage
             t.Drawn = key;
             t.Size = new Vector2(w, h);
             t.Face.Size = t.Over.Size = t.Cover.Size = t.Box.Size = t.Size;
+            t.Inv.Size = t.InvFace.Size = t.InvOver.Size = t.Size;
+            t.InvFace.Opacity = i == 0 ? 0 : 1;
             using (var shape = BtShape(G.Device, 0, 0, w, h, BtRadius)) t.ClipGeo.Path = new CompositionPath(shape);
             var col = i == 0 ? (Gfx.Rgba(0x27, 0x25, 0x24), Gfx.Rgba(0x4a, 0x44, 0x40), Gfx.Rgba(0x3a, 0x38, 0x3a), Gfx.Rgba(0x8a, 0x84, 0x80)) : CcTileColors(i);
             t.Tone = i == 0 ? Gfx.Mix(b.Accent, 0.5, Gfx.Rgba(0x60, 0x5a, 0x56)) : col.Item2;
-            t.Face.Opacity = 0.94f;
+            t.Face.Opacity = 1;
             int idx = i;
-            CcSet(t.Face, CcDraw(w, h, raster, ds => { if (cover == null) CcPaintTileFace(ds, col, w, h, idx); }));
-            CcSet(t.Over, CcDraw(w, h, raster, ds => CcPaintTileOver(ds, b, w, h, idx, cover != null, title)));
+            // 11-19 jinyu（PS5 焦点）：没选中 = 毛玻璃 + 白色细体；选中 = 白底 + 黑色粗体（Inv 层按焦点移动方向裁进来）
+            CcSet(t.Face, CcDraw(w, h, raster, ds => { if (cover == null) CcPaintGlass(ds, w, h, BtRadius); }));
+            CcSet(t.Over, CcDraw(w, h, raster, ds => CcPaintTileOver(ds, b, w, h, idx, cover != null, title, false)));
+            CcSet(t.InvOver, CcDraw(w, h, raster, ds => CcPaintTileOver(ds, b, w, h, idx, cover != null, title, true)));
             // 焦点白边：比卡大一圈
             const float m = 6;
             t.Ring.Size = new Vector2(w + 2 * m, h + 2 * m);
@@ -643,29 +675,32 @@ public sealed partial class WallStage
     }
 
     /// <summary>盖在卡面（或封面）上的一层：上下压暗、内沿细边、图标、读数、名称、状态。</summary>
-    private void CcPaintTileOver(CanvasDrawingSession ds, CcBlock b, float w, float h, int i, bool cover, string title)
+    private void CcPaintTileOver(CanvasDrawingSession ds, CcBlock b, float w, float h, int i, bool cover, string title, bool inv)
     {
-        bool dark = BtDark;
-        var ink = BtInk;
-        var paper = CcTileColors(1).Base;
+        bool dark = true;
+        var ink = inv && !cover ? FocusInk : Microsoft.UI.Colors.White;
+        var paper = Gfx.Rgba(0, 0, 0);
+        ushort thin = 300, bold = 600;
         const float pad = 22;
         // 封面卡：底部渐变到和功能卡同一个浅色（字写在这块浅色上，深墨色），左上角图标后面一小片浅色。
         // 11-16 jinyu：之前是按深色页面做的压黑 + 白字，页面改成浅色调后不搭。
         // 不在这里裁圆角（外面的 Box 已经按同一个形状裁了），并且画出边界一圈，边缘不漏没盖住的封面。
         if (cover)
         {
-            using (var g = new CanvasLinearGradientBrush(ds, Gfx.WithAlpha(paper, 0), Gfx.WithAlpha(paper, 0.97)) { StartPoint = new Vector2(0, h * 0.56f), EndPoint = new Vector2(0, h * 0.84f) })
+            // 11-19：封面底部压暗，白字（选中层只换粗体，不填白：图片只套框）
+            using (var g = new CanvasLinearGradientBrush(ds, Gfx.WithAlpha(paper, 0), Gfx.WithAlpha(paper, 0.62)) { StartPoint = new Vector2(0, h * 0.55f), EndPoint = new Vector2(0, h) })
                 ds.FillRectangle(-2, -2, w + 4, h + 4, g);
-            using (var g = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(paper, 0.85), Gfx.WithAlpha(paper, 0)) { Center = new Vector2(pad + 15, pad + 15), RadiusX = 70, RadiusY = 70 })
+            using (var g = new CanvasRadialGradientBrush(ds, Gfx.WithAlpha(paper, 0.35), Gfx.WithAlpha(paper, 0)) { Center = new Vector2(pad + 15, pad + 15), RadiusX = 70, RadiusY = 70 })
                 ds.FillRectangle(-2, -2, w + 4, h + 4, g);
         }
         // 内沿：一圈很淡的边，上沿亮一点。封面卡不画：亮色封面上这圈会变成一道白边
         using var rim = BtShape(ds, 0.5f, 0.5f, w - 1, h - 1, BtRadius);
-        if (!cover) ds.DrawGeometry(rim, dark ? Gfx.Rgba(255, 255, 255, 0.10) : Gfx.Rgba(0, 0, 0, 0.08), 1);
-        if (!cover) using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(255, 255, 255, dark ? 0.28 : 0.9), Gfx.Rgba(255, 255, 255, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, MathF.Min(h * 0.3f, 60)) })
+        if (!cover && !inv) ds.DrawGeometry(rim, dark ? Gfx.Rgba(255, 255, 255, 0.10) : Gfx.Rgba(0, 0, 0, 0.08), 1);
+        if (!cover && !inv) using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(255, 255, 255, dark ? 0.28 : 0.9), Gfx.Rgba(255, 255, 255, 0)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, MathF.Min(h * 0.3f, 60)) })
             ds.DrawGeometry(rim, g, 1);
 
         LineIcons.Draw(ds, b.Icon, pad + 15, pad + 15, 30, Gfx.WithAlpha(ink, 0.95f));
+        if (inv && !cover) LineIcons.Draw(ds, b.Icon, pad + 15.4f, pad + 15, 30, Gfx.WithAlpha(ink, 0.6f));   // 选中时图标描粗一点
         if (b.HasReading && b.Reading.Length > 0 && b.Reading != "—")
         {
             using var rd = TextKit.Layout(ds, b.Reading, TextKit.Ui(300), 30, w - pad * 2 - 44, CanvasHorizontalAlignment.Right);
@@ -676,7 +711,7 @@ public sealed partial class WallStage
         float bottom = h - pad;
         if (small.Length > 0)
         {
-            using var s = TextKit.Layout(ds, small, TextKit.Ui(400), 13, w - pad * 2, CanvasHorizontalAlignment.Left);
+            using var s = TextKit.Layout(ds, small, TextKit.Ui(inv ? (ushort)500 : thin), 13, w - pad * 2, CanvasHorizontalAlignment.Left);
             s.WordWrapping = CanvasWordWrapping.NoWrap;
             s.TrimmingGranularity = CanvasTextTrimmingGranularity.Character;
             s.TrimmingSign = CanvasTrimmingSign.Ellipsis;
@@ -684,9 +719,22 @@ public sealed partial class WallStage
             ds.DrawTextLayout(s, pad, bottom - (float)s.LayoutBounds.Y, Gfx.WithAlpha(ink, 0.74f));
             bottom -= 6;
         }
-        using var name = TextKit.Layout(ds, b.Name, TextKit.Ui(700), i == 0 ? 30 : 22, w - pad * 2, CanvasHorizontalAlignment.Left);
+        using var name = TextKit.Layout(ds, b.Name, TextKit.Ui(inv ? bold : thin), i == 0 ? 30 : 22, w - pad * 2, CanvasHorizontalAlignment.Left);
         bottom -= (float)name.LayoutBounds.Height;
         ds.DrawTextLayout(name, pad, bottom - (float)name.LayoutBounds.Y, ink);
+    }
+
+    /// <summary>毛玻璃面：很淡的白、上沿一道高光、底下稍暗，细颗粒；壁纸本身是模糊的流体色，透出来就是玻璃感。</summary>
+    private static void CcPaintGlass(CanvasDrawingSession ds, float w, float h, float r)
+    {
+        using var clip = BtShape(ds, 0, 0, w, h, r);
+        using var layer = ds.CreateLayer(1, clip);
+        using (var g = new CanvasLinearGradientBrush(ds, Gfx.Rgba(255, 255, 255, 0.16), Gfx.Rgba(255, 255, 255, 0.07)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(0, h) })
+            ds.FillRectangle(0, 0, w, h, g);
+        var rnd = new Random(31);
+        int count = (int)(w * h / 90);
+        for (int i = 0; i < count; i++)
+            ds.FillRectangle((float)rnd.NextDouble() * w, (float)rnd.NextDouble() * h, 1, 1, rnd.Next(2) == 0 ? Gfx.Rgba(255, 255, 255, 0.05) : Gfx.Rgba(0, 0, 0, 0.05));
     }
 
     /// <summary>连续曲率圆角（苹果那种）：四个角是超椭圆弧（n = 4.6），占的边长比同半径的圆角长一截，和直边之间没有突变。</summary>

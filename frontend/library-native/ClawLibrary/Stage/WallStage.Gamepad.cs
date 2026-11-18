@@ -778,6 +778,16 @@ public sealed partial class WallStage
         CcSet(_gpBody, CcDraw(1280, 800, raster, PaintGpUi));
         _gpBody.Size = new Vector2(1280 * k, 800 * k);
         _gpBody.Offset = Vector3.Zero;
+        // 分类焦点：PS5 式白底 + 黑色粗体（FocusFx），映射表等其余部分仍是原来的标记
+        var sideFx = FxFor(_gpBody);
+        int sideRow = -1;
+        for (int i = 0, c = 0; i < GpSidebar.Length; i++) if (!GpSidebar[i].Group && c++ == _gpCat) { sideRow = i; break; }
+        if (_gpInSide && _gpPicker == null && sideRow >= 0)
+        {
+            float cy = GpSidebarY(sideRow);
+            sideFx.To(GpSideX - 2, cy - GpCatH / 2 + 2, 164, GpCatH - 4, 12, k, false);
+        }
+        else sideFx.Hide();
         PaintGpHi();
         float artAlpha = _gpPicker != null ? 0f : 1f;
         if (_gpArtPage.Opacity != artAlpha) _gpArtPage.Opacity = artAlpha;
@@ -899,9 +909,9 @@ public sealed partial class WallStage
     }
 
     /// <summary>分类：竖向居中，只有字；分组小标题小一号、更淡，正在用的模式后面标「当前」；当前类白字，焦点在分类上时前面加 ▸。</summary>
-    private void PaintGpSidebar(CanvasDrawingSession ds)
+    private void PaintGpSidebar(CanvasDrawingSession ds, bool ink = false)
     {
-        var ui = TextKit.Ui(400);
+        var ui = TextKit.Ui(300);
         int cat = 0;
         string? mode = GpWantDesktop ? "desktop" : Str(_gpFw?["mode"]);
         for (int i = 0; i < GpSidebar.Length; i++)
@@ -910,6 +920,7 @@ public sealed partial class WallStage
             float cy = GpSidebarY(i);
             if (e.Group)
             {
+                if (ink) continue;
                 var gf = TextKit.Ui(500);
                 PText(ds, e.Title, gf, 12, Gfx.WithAlpha(CcText, 0.36f), GpSideX, cy, 200);
                 if (mode == e.Id)
@@ -920,11 +931,11 @@ public sealed partial class WallStage
                 }
                 continue;
             }
+            if (ink) { if (cat++ == _gpCat) PText(ds, e.Title, TextKit.Ui(600), 17, FocusInk, GpSideX + 16, cy, 200); continue; }
             _gpTargets.Add(new(cat, SettingsTargetKind.Category, 32, cy - GpCatH / 2, 138, GpCatH));
             bool cur = cat++ == _gpCat;
             var col = cur ? (_gpInSide ? CcText : Gfx.WithAlpha(CcText, 0.92f)) : Gfx.WithAlpha(CcText, 0.45f);
-            PText(ds, e.Title, cur ? TextKit.Ui(600) : ui, 17, col, GpSideX + 16, cy, 200);
-            if (cur && _gpInSide && _gpPicker == null) GpFocusMark(ds, GpSideX, cy, CcText);
+            PText(ds, e.Title, cur && _gpInSide && _gpPicker == null ? TextKit.Ui(600) : ui, 17, col, GpSideX + 16, cy, 200);
         }
     }
 
