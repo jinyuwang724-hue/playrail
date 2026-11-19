@@ -42,6 +42,13 @@ public sealed partial class WallStage
                 Log.Info($"recrow move: {n} frames");
             }
             await Still("after");
+            // 左上面板：↑ 进面板，→ 到 Steam，A 切过去；网格里走几步；B 回首页
+            Move(Direction.Up); await Still("panel");
+            Move(Direction.Right); await Task.Delay(300);
+            Activate(); await Task.Delay(1200); await Still("steam");
+            Move(Direction.Down); await Task.Delay(400); Move(Direction.Down); await Task.Delay(400);
+            Move(Direction.Right); await Task.Delay(400); Move(Direction.Right); await Still("steam-grid");
+            Back(); await Task.Delay(1200); await Still("back-home");
         }
         catch (Exception ex) { Log.Error("recrow", ex); }
         if (_cs != null && style != HomeStyle.Row) { SaveUi(_prefs with { Home = style }); CsMorphStyle(); }

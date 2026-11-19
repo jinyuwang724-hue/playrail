@@ -8,6 +8,7 @@
 using System.Numerics;
 using System.Runtime.InteropServices.WindowsRuntime;
 using ClawLibrary.Data;
+using ClawLibrary.Engine;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Brushes;
 using Microsoft.UI;
@@ -40,7 +41,7 @@ public sealed partial class WallStage
     private static readonly string RwCjk = RwPackaged ? "ms-appx:///Assets/Fonts/PingFangSC-Medium.otf#PingFang SC" : "Microsoft YaHei UI";
 
     // 面板（设计单位，按截图实测）：x, y, w, h, 圆角, 种类（0 = 灰色磨砂状态面板，1 = 淡灰圆按钮）
-    private static readonly (float X, float Y, float W, float H, float R, int Kind) RwPanelL = (38, 23, 217, 112, 36, 0);   // 不放 LB 提示（11-20 jinyu）：截图里的面板去掉肩键那一格，头像往左挪 64
+    private static readonly (float X, float Y, float W, float H, float R, int Kind) RwPanelL = (38, 23, 264, 112, 36, 0);   // 不放 LB 提示（11-20 jinyu）：截图里的面板去掉肩键那一格，头像往左挪 64
     private static readonly (float X, float Y, float W, float H, float R, int Kind) RwMore = (1818, 187, 74, 74, 37, 1);
     private const float RwPanelRRight = 1882, RwClockW0 = 168;
     private const float RwPanelPad = 20;   // 面板贴图四周留给投影的边
@@ -53,6 +54,10 @@ public sealed partial class WallStage
         public CompositionDrawingSurface? WallSurf, LSurf, RSurf, MoreSurf, GlowSurf, LineSurf, RimSurf;
         public DispatcherQueueTimer? Tick;
         public int Phase = -1;
+        /// <summary>焦点在左上面板上时是第几个页签图标；-1 = 焦点在封面上。</summary>
+        public int PanelFocus = -1;
+        /// <summary>这一页卡片的尺寸（首页 280×420，Steam / 本地网格更小）：焦点框按它画。</summary>
+        public float CardW = RwW, CardH = RwH;
         public BatteryState Bat;
         public SystemInfo.NetState Net;
         public bool StatusBusy;
@@ -62,6 +67,15 @@ public sealed partial class WallStage
         public float Raster;
         public bool Disposed;
     }
+
+    // 壁纸像素和最近一次读到的电量 / 网络在页面之间共用：切到 Steam / 本地页不用重新解码壁纸，面板一出来就是对的电量
+    private CanvasRenderTarget? _rwSharp, _rwSoft;
+    private CompositionDrawingSurface? _rwWallSurf;
+    private string _rwWallKey = "";
+    private BatteryState _rwBat;
+    private SystemInfo.NetState _rwNet;
+    /// <summary>从面板切页签：新页面一建好焦点就停在面板上（不跳回封面）。</summary>
+    private bool _rwPanelNext;
 
     // ---------------- 页面 ----------------
 
@@ -75,6 +89,7 @@ public sealed partial class WallStage
         root.Children.InsertAtTop(wall);
         SpriteVisual Sp() { var s = G.Sprite(G.C.CreateSurfaceBrush(), relative: false); return s; }
         var rw = new RwChrome { Root = root, Wall = wall, PanelL = Sp(), PanelR = Sp(), More = Sp(), Glow = Sp(), Line = Sp(), Rim = Sp() };
+        rw.Bat = _rwBat; rw.Net = _rwNet;
         page.Rw = rw;
         RwLoadWallpaper(page, entry);
         return root;
@@ -84,9 +99,11 @@ public sealed partial class WallStage
     private void RwAttach(CsPage page)
     {
         if (page.Rw is not { } rw) return;
-        foreach (var v in new Visual[] { rw.PanelL, rw.PanelR, rw.More }) page.Content.Children.InsertAtTop(v);
+        foreach (var v in new Visual[] { rw.PanelL, rw.PanelR }) page.Content.Children.InsertAtTop(v);
         foreach (var v in new Visual[] { rw.Glow, rw.Line, rw.Rim }) page.Content.Children.InsertAtTop(v);
+        if (_rwPanelNext) { _rwPanelNext = false; rw.PanelFocus = Math.Max(0, Array.IndexOf(RwTabs, page.Tab)); }
         RwPaintCursorStatic(page);
+        if (rw.PanelFocus >= 0) foreach (var v in new Visual[] { rw.Glow, rw.Line, rw.Rim }) v.Opacity = 0;
         rw.Tick = _dq.CreateTimer();
         rw.Tick.Interval = TimeSpan.FromMilliseconds(1000);
         rw.Tick.Tick += (_, _) => RwTick(page);
@@ -99,8 +116,8 @@ public sealed partial class WallStage
         if (page.Rw is not { } rw || rw.Disposed) return;
         rw.Disposed = true;
         rw.Tick?.Stop();
-        rw.Sharp?.Dispose(); rw.Soft?.Dispose();
-        foreach (var s in new[] { rw.WallSurf, rw.LSurf, rw.RSurf, rw.MoreSurf, rw.GlowSurf, rw.LineSurf, rw.RimSurf }) s?.Dispose();
+        // 壁纸像素是共用缓存（_rwSharp / _rwSoft / _rwWallSurf），不在这里释放
+        foreach (var s in new[] { rw.LSurf, rw.RSurf, rw.MoreSurf, rw.GlowSurf, rw.LineSurf, rw.RimSurf }) s?.Dispose();
     }
 
     /// <summary>
@@ -120,7 +137,7 @@ public sealed partial class WallStage
             {
                 rw.StatusBusy = false;
                 if (rw.Disposed) return;
-                rw.Bat = b; rw.Net = n;
+                rw.Bat = b; rw.Net = n; _rwBat = b; _rwNet = n;
                 if (rw.Sharp != null && RwStatusKey(rw) != rw.Drawn) RwPaintPanels(page);
             });
         });
@@ -147,6 +164,18 @@ public sealed partial class WallStage
         var dev = G.Device;
         float R = CsRaster;
         rw.Raster = R;
+        string key = $"{path}|{(path != null ? File.GetLastWriteTimeUtc(path).Ticks : 0)}|{R}";
+        if (key == _rwWallKey && _rwSharp != null && _rwSoft != null && _rwWallSurf != null)
+        {
+            rw.Sharp = _rwSharp; rw.Soft = _rwSoft; rw.WallSurf = _rwWallSurf;
+            rw.Wall.Brush = G.C.CreateSurfaceBrush(_rwWallSurf);
+            _dq.TryEnqueue(() =>
+            {
+                try { if (!rw.Disposed) RwPaintPanels(page); } catch (Exception ex) { Log.Error("row panels", ex); }
+                CsBgReady(page, entry);
+            });
+            return;
+        }
         _ = Task.Run(async () =>
         {
             CanvasBitmap? bmp = null;
@@ -169,6 +198,9 @@ public sealed partial class WallStage
                 {
                     if (rw.Disposed) { bmp?.Dispose(); return; }
                     int pw = (int)Math.Ceiling(CsW * R), ph = (int)Math.Ceiling(CsH * R);
+                    // 换了壁纸：旧的像素等离场页面淡完再释放
+                    var (o1, o2, o3) = (_rwSharp, _rwSoft, _rwWallSurf);
+                    if (o1 != null) After(3000, () => { o1.Dispose(); o2?.Dispose(); o3?.Dispose(); });
                     rw.Sharp = new CanvasRenderTarget(dev, pw, ph, 96);
                     rw.Soft = new CanvasRenderTarget(dev, pw, ph, 96);
                     using (var ds = rw.Sharp.CreateDrawingSession())
@@ -188,6 +220,7 @@ public sealed partial class WallStage
                     rw.WallSurf = G.Surface(pw, ph);
                     using (var ds = CanvasComposition.CreateDrawingSession(rw.WallSurf)) ds.DrawImage(rw.Sharp);
                     rw.Wall.Brush = G.C.CreateSurfaceBrush(rw.WallSurf);
+                    (_rwSharp, _rwSoft, _rwWallSurf, _rwWallKey) = (rw.Sharp, rw.Soft, rw.WallSurf, key);
                     RwPaintPanels(page);
                 }
                 catch (Exception ex) { Log.Error("row wallpaper paint", ex); }
@@ -202,7 +235,7 @@ public sealed partial class WallStage
     {
         var b = rw.Bat; var n = rw.Net;
         var now = DateTime.Now;
-        return $"{now:hh:mm tt}|{b.Percent}|{b.Charging}|{n.Online}|{n.Wlan}|{_railModel.Avatar != null}|{CsRaster}";
+        return $"{_cs?.Tab}|{rw.PanelFocus}|{now:hh:mm tt}|{b.Percent}|{b.Charging}|{n.Online}|{n.Wlan}|{_railModel.Avatar != null}|{CsRaster}";
     }
 
     private static string RwClock(DateTime t) => $"{(t.Hour % 12 == 0 ? 12 : t.Hour % 12)}:{t.Minute:00}";
@@ -219,9 +252,8 @@ public sealed partial class WallStage
         float clockW = RwClockWidth(dev, clock, ampm);
         float dx = MathF.Round(clockW - RwClockW0);
         var panelR = (X: 1496 - dx, Y: 23f, W: 386 + dx, H: 112f, R: 36f, Kind: 0);
-        RwPanel(rw, ref rw.LSurf, rw.PanelL, RwPanelL, R, ds => RwDrawLeft(ds));
+        RwPanel(rw, ref rw.LSurf, rw.PanelL, RwPanelL, R, ds => RwDrawLeft(ds, rw));
         RwPanel(rw, ref rw.RSurf, rw.PanelR, panelR, R, ds => RwDrawRight(ds, rw, -dx, clock, ampm));
-        RwPanel(rw, ref rw.MoreSurf, rw.More, RwMore, R, ds => RwDrawMore(ds));
     }
 
     private float RwClockWidth(ICanvasResourceCreator dev, string clock, string ampm)
@@ -355,55 +387,89 @@ public sealed partial class WallStage
         ds.DrawImage(cl);
     }
 
-    private void RwDrawLeft(CanvasDrawingSession ds)
+    /// <summary>左上面板的页签（11-20 jinyu：主页 / Steam / 本地，用图标不写字）。tab 编号沿用卡盒版：0 首页、2 Steam、3 本地。</summary>
+    private static readonly int[] RwTabs = { 0, 2, 3 };
+    private const float RwTabX0 = 92, RwTabPitch = 78, RwTabY = 79;
+
+    /// <summary>贴纸风格的三个页签图标：当前页签填主题色渐变，其余灰；焦点在面板上时，焦点那个外面套一圈小四角括号。</summary>
+    private void RwDrawLeft(CanvasDrawingSession ds, RwChrome rw)
     {
         var dev = ds.Device;
-        var t0 = ds.Transform;
-        ds.Transform = Matrix3x2.CreateTranslation(-64, 0) * t0;
-        // 头像：直径 75，白圈 7.5
-        float ax = 141, ay = 42.5f, ad = 75;
-        using (var sh = new CanvasCommandList(dev))
+        int cur = _cs?.Tab ?? 0;
+        for (int i = 0; i < RwTabs.Length; i++)
         {
-            using (var s = sh.CreateDrawingSession()) s.FillCircle(ax + ad / 2, ay + ad / 2, ad / 2, Colors.Black);
-            using var se = new ShadowEffect { Source = sh, BlurAmount = 1.5f * ds.Transform.M11, ShadowColor = Color.FromArgb(56, 40, 40, 60) };
-            ds.DrawImage(se, 0, 1.5f);
-        }
-        ds.FillCircle(ax + ad / 2, ay + ad / 2, ad / 2, RwWhite);
-        float ir = ad / 2 - 7.5f;
-        if (_railModel.Avatar is { } av)
-        {
-            using var clip = CanvasGeometry.CreateCircle(dev, ax + ad / 2, ay + ad / 2, ir);
-            using (ds.CreateLayer(1, clip))
+            float cx = RwTabX0 + i * RwTabPitch, cy = RwTabY;
+            bool on = RwTabs[i] == cur;
+            using var fill = on ? new CanvasLinearGradientBrush(dev, RwC1, RwC2) { StartPoint = new Vector2(0, cy - 22), EndPoint = new Vector2(0, cy + 22) }
+                                : new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xC9, 0xCB, 0xD3), Color.FromArgb(255, 0xA0, 0xA3, 0xAE)) { StartPoint = new Vector2(0, cy - 22), EndPoint = new Vector2(0, cy + 22) };
+            switch (RwTabs[i])
             {
-                double side = Math.Min(av.Bounds.Width, av.Bounds.Height);
-                var src = new Windows.Foundation.Rect((av.Bounds.Width - side) / 2, (av.Bounds.Height - side) / 2, side, side);
-                ds.DrawImage(av, new Windows.Foundation.Rect(ax + ad / 2 - ir, ay + ad / 2 - ir, ir * 2, ir * 2), src, 1, CanvasImageInterpolation.HighQualityCubic);
+                case 0:
+                {
+                    // 房子：圆角屋顶 + 屋身，白色小门
+                    using var pb = new CanvasPathBuilder(dev);
+                    pb.BeginFigure(cx - 20, cy - 1); pb.AddLine(cx, cy - 19); pb.AddLine(cx + 20, cy - 1); pb.AddLine(cx + 15.5f, cy - 1);
+                    pb.AddLine(cx + 15.5f, cy + 18); pb.AddLine(cx - 15.5f, cy + 18); pb.AddLine(cx - 15.5f, cy - 1);
+                    pb.EndFigure(CanvasFigureLoop.Closed);
+                    using var raw = CanvasGeometry.CreatePath(pb);
+                    using var house = raw.Stroke(5, RwRoundStroke).CombineWith(raw, Matrix3x2.Identity, CanvasGeometryCombine.Union);
+                    RwSticker(ds, house, 10);
+                    ds.FillGeometry(house, fill);
+                    ds.FillRoundedRectangle(cx - 5, cy + 5, 10, 15.5f, 3, 3, RwWhite);
+                    break;
+                }
+                case 2:
+                {
+                    // Steam：渐变圆底上一枚白色 Steam 标志
+                    using var disc = CanvasGeometry.CreateCircle(dev, cx, cy, 21);
+                    RwSticker(ds, disc, 10);
+                    ds.FillGeometry(disc, fill);
+                    _rwSteamSvg ??= Microsoft.Graphics.Canvas.Svg.CanvasSvgDocument.LoadFromXml(dev, File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Assets", "Steam.svg")));
+                    _rwSteamSvg.Root.SetColorAttribute("fill", RwWhite);
+                    ds.DrawSvg(_rwSteamSvg, new Windows.Foundation.Size(30, 30), cx - 15, cy - 15);
+                    break;
+                }
+                default:
+                {
+                    // 本地：文件夹（左上一个小签）
+                    using var body = CanvasGeometry.CreateRoundedRectangle(dev, cx - 22, cy - 11, 44, 29, 6, 6);
+                    using var tab = CanvasGeometry.CreateRoundedRectangle(dev, cx - 22, cy - 18, 20, 12, 4, 4);
+                    using var folder = body.CombineWith(tab, Matrix3x2.Identity, CanvasGeometryCombine.Union);
+                    RwSticker(ds, folder, 10);
+                    ds.FillGeometry(folder, fill);
+                    ds.FillRoundedRectangle(cx - 22, cy - 5, 44, 2.5f, 1.2f, 1.2f, Color.FromArgb(70, 255, 255, 255));
+                    break;
+                }
             }
+            if (rw.PanelFocus == i) RwMiniBrackets(ds, cx, cy, 70);
         }
-        else
-        {
-            using var gb = new CanvasLinearGradientBrush(dev, RwC1, RwC2) { StartPoint = new Vector2(0, ay), EndPoint = new Vector2(0, ay + ad) };
-            ds.FillCircle(ax + ad / 2, ay + ad / 2, ir, gb);
-        }
-        // 账号：头 r13.8 @ (263.5, 72)，肩 243–284 × 86–100；主题色渐变
-        using var head = CanvasGeometry.CreateCircle(dev, 263.5f, 72, 13.8f);
+    }
+
+    private Microsoft.Graphics.Canvas.Svg.CanvasSvgDocument? _rwSteamSvg;
+
+    /// <summary>面板里的焦点：和封面焦点框同一种四角括号，缩小到图标大小（主题两色斜向渐变）。</summary>
+    private static void RwMiniBrackets(CanvasDrawingSession ds, float cx, float cy, float size)
+    {
+        var dev = ds.Device;
+        float h = size / 2, r = 18, leg = 7;
         using var pb = new CanvasPathBuilder(dev);
-        pb.BeginFigure(243.2f, 98.2f);
-        pb.AddQuadraticBezier(new Vector2(244.6f, 86.3f), new Vector2(257, 86));
-        pb.AddLine(270, 86);
-        pb.AddQuadraticBezier(new Vector2(282.4f, 86.3f), new Vector2(283.8f, 98.2f));
-        pb.AddQuadraticBezier(new Vector2(284, 100), new Vector2(282, 100));
-        pb.AddLine(245, 100);
-        pb.AddQuadraticBezier(new Vector2(243, 100), new Vector2(243.2f, 98.2f));
-        pb.EndFigure(CanvasFigureLoop.Closed);
-        using var body = CanvasGeometry.CreatePath(pb);
-        using var both = body.CombineWith(head, Matrix3x2.Identity, CanvasGeometryCombine.Union);
-        RwSticker(ds, both, 10);
-        using var acc = new CanvasLinearGradientBrush(dev, RwC1, RwC2) { StartPoint = new Vector2(0, 58), EndPoint = new Vector2(0, 100) };
-        ds.FillGeometry(body, acc);
-        ds.FillCircle(263.5f, 72, 16, RwWhite);
-        ds.FillGeometry(head, acc);
-        ds.Transform = t0;
+        void Corner(float sx, float sy)
+        {
+            // 从竖腿起，经圆弧到横腿
+            var a = new Vector2(cx + sx * h, cy + sy * (h - r - leg));
+            pb.BeginFigure(a);
+            pb.AddLine(cx + sx * h, cy + sy * (h - r));
+            pb.AddArc(new Vector2(cx + sx * (h - r), cy + sy * h), r, r, 0, sx * sy > 0 ? CanvasSweepDirection.Clockwise : CanvasSweepDirection.CounterClockwise, CanvasArcSize.Small);
+            pb.AddLine(cx + sx * (h - r - leg), cy + sy * h);
+            pb.EndFigure(CanvasFigureLoop.Open);
+        }
+        Corner(-1, -1); Corner(1, -1); Corner(1, 1); Corner(-1, 1);
+        using var geo = CanvasGeometry.CreatePath(pb);
+        using var glow = new CanvasCommandList(dev);
+        using (var g = glow.CreateDrawingSession()) g.DrawGeometry(geo, RwC2, 7, RwRoundStroke);
+        using (var blur = new GaussianBlurEffect { Source = glow, BlurAmount = 4 * ds.Transform.M11 }) ds.DrawImage(blur);
+        using var br = new CanvasLinearGradientBrush(dev, RwC1, RwC2) { StartPoint = new Vector2(cx - h, cy - h), EndPoint = new Vector2(cx + h, cy + h) };
+        ds.DrawGeometry(geo, br, 3.5f, RwRoundStroke);
     }
 
     private void RwDrawRight(CanvasDrawingSession ds, RwChrome rw, float shift, string clock, string ampm)
@@ -488,9 +554,9 @@ public sealed partial class WallStage
     // ---------------- 焦点框：四角括号 ----------------
 
     /// <summary>焦点卡的大小固定（1.15 倍的卡），所以括号画一次；移动时只挪精灵。</summary>
-    private static (float W, float H, float Out, float R, float Leg) RwBracketGeom()
+    private static (float W, float H, float Out, float R, float Leg) RwBracketGeom(float cw, float ch)
     {
-        float w = RwW * RwFocus, h = RwH * RwFocus;
+        float w = cw * RwFocus, h = ch * RwFocus;
         float o = Math.Clamp(0.12f * w, 5 * RwDp, 24 * RwDp) * RwThick;
         float W = w + o, H = h + o;
         float r = MathF.Min(w * RwRound + o / 2, MathF.Min(W, H) / 2);
@@ -503,9 +569,9 @@ public sealed partial class WallStage
     private const float RwCurPad = 44;   // 精灵四周给光晕留的边
 
     /// <summary>四个括号的采样点：(x, y, 周长位置 s)，s 从上边中点顺时针。</summary>
-    private static (List<List<Vector3>> Segs, float P) RwBracketPoints()
+    private static (List<List<Vector3>> Segs, float P) RwBracketPoints(float cw, float ch)
     {
-        var (W, H, _, r, leg) = RwBracketGeom();
+        var (W, H, _, r, leg) = RwBracketGeom(cw, ch);
         float x0 = RwCurPad, y0 = RwCurPad;
         float sx = W - 2 * r, sy = H - 2 * r, q = MathF.PI * r / 2, P = 2 * sx + 2 * sy + 4 * q;
         List<Vector3> Line(float ax, float ay, float bx, float by, float s0, float len)
@@ -553,10 +619,10 @@ public sealed partial class WallStage
         var rw = page.Rw!;
         var dev = G.Device;
         float R = CsRaster;
-        var (W, H, _, _, _) = RwBracketGeom();
+        var (W, H, _, _, _) = RwBracketGeom(rw.CardW, rw.CardH);
         float sw = W + RwCurPad * 2, shh = H + RwCurPad * 2;
         int pw = (int)Math.Ceiling(sw * R), ph = (int)Math.Ceiling(shh * R);
-        var (segs, _) = RwBracketPoints();
+        var (segs, _) = RwBracketPoints(rw.CardW, rw.CardH);
         using var path = RwBracketPath(dev, segs);
         rw.GlowSurf ??= G.Surface(pw, ph);
         using (var ds = CanvasComposition.CreateDrawingSession(rw.GlowSurf))
@@ -657,7 +723,7 @@ public sealed partial class WallStage
 
     private void CsLayoutRow(CsPage p, bool animate, bool entry = false)
     {
-        int n = CsCount(p), s = Math.Clamp(p.Sel, 0, n - 1);
+        int n = Math.Max(1, p.Items.Count), s = Math.Clamp(p.Sel, 0, n - 1);   // 单行不放行尾的「全部 N」（没有「全部」页签）
         int scroll = RwScrollIndex(s, n);
         p.RailX = scroll;
         int lo = Math.Max(0, scroll - 4), hi = Math.Min(n - 1, scroll + 10);   // 两边多留几张：连按时不在屏幕边上现建现解码
@@ -670,7 +736,7 @@ public sealed partial class WallStage
             var off = new Vector3(RwSlotX(i, scroll), RwY, 0);
             if (!p.Cases.TryGetValue(i, out var c))
             {
-                c = CsNewCase(i < p.Items.Count ? p.Items[i] : null, i, new Vector2(RwW, RwH), radiusK: RwRound);
+                c = CsNewCase(i < p.Items.Count ? p.Items[i] : null, i, new Vector2(RwW, RwH), radiusK: RwRound, circle: true);
                 c.Root.CenterPoint = new Vector3(RwW / 2, RwH / 2, 0);
                 c.Ring.Opacity = 0; c.Dim.Opacity = 0; c.Glow.Opacity = 0;
                 // 新出现的卡从上一轮的位置开始（滑进来），不是凭空出现在终点
@@ -700,13 +766,13 @@ public sealed partial class WallStage
         // 焦点框：中心对准焦点卡中心
         if (p.Rw is { } rw)
         {
-            var (W, H, _, _, _) = RwBracketGeom();
+            var (W, H, _, _, _) = RwBracketGeom(RwW, RwH);
             var to = new Vector3(RwSlotX(s, scroll) + RwW / 2 - W / 2 - RwCurPad, RwY + RwH / 2 - H / 2 - RwCurPad, 0);
             foreach (var v in new Visual[] { rw.Glow, rw.Line, rw.Rim })
             {
                 if (move) v.StartAnimation("Offset", RwSpring(to));
                 else { v.StopAnimation("Offset"); v.Offset = to; }
-                if (entry && !Reduced && !move) { v.Opacity = 0; v.StartAnimation("Opacity", CsS(1, 420, CsQuart, 300)); }
+                if (entry && !Reduced && !move && rw.PanelFocus < 0) { v.Opacity = 0; v.StartAnimation("Opacity", CsS(1, 420, CsQuart, 300)); }
             }
         }
         p.Prev = s;
@@ -714,5 +780,191 @@ public sealed partial class WallStage
 
     /// <summary>焦点卡在屏幕上的矩形（放大后），给启动动画用。</summary>
     private static (float X, float Y, float W, float H) RwFocusRect(CsCase c) =>
-        (c.Offset.X - RwW * (RwFocus - 1) / 2, c.Offset.Y - RwH * (RwFocus - 1) / 2, RwW * RwFocus, RwH * RwFocus);
+        (c.Offset.X - c.Size.X * (RwFocus - 1) / 2, c.Offset.Y - c.Size.Y * (RwFocus - 1) / 2, c.Size.X * RwFocus, c.Size.Y * RwFocus);
+
+    // ---------------- 页签切换（左上面板） ----------------
+
+    /// <summary>当前样式下显示的页签：主页一定有，Steam / 本地没有游戏时跳过。</summary>
+    private List<int> RwTabsShown() => RwTabs.Where(t => t == 0 || CsList(t).Count > 0).ToList();
+
+    private void RwPanelEnter(CsPage p)
+    {
+        if (p.Rw is not { } rw) return;
+        rw.PanelFocus = Math.Max(0, Array.IndexOf(RwTabs, p.Tab));
+        CuePan(-0.6f);
+        RwCursorShow(p, false);
+        RwPaintPanels(p);
+    }
+
+    private void RwPanelLeave(CsPage p)
+    {
+        if (p.Rw is not { } rw || rw.PanelFocus < 0) return;
+        rw.PanelFocus = -1;
+        Cue(Sfx.Back);
+        RwCursorShow(p, true);
+        RwPaintPanels(p);
+    }
+
+    private void RwCursorShow(CsPage p, bool on)
+    {
+        if (p.Rw is not { } rw) return;
+        foreach (var v in new Visual[] { rw.Glow, rw.Line, rw.Rim }) { v.StopAnimation("Opacity"); v.StartAnimation("Opacity", CsS(on ? 1 : 0, CsMs(160), CsQuart)); }
+    }
+
+    private void RwMove(CsPage p, Direction dir)
+    {
+        if (p.Rw is not { } rw) return;
+        int n = p.Items.Count;
+        if (rw.PanelFocus >= 0)
+        {
+            if (dir is Direction.Left or Direction.Right)
+            {
+                var shown = RwTabsShown();
+                int at = shown.IndexOf(RwTabs[rw.PanelFocus]) + (dir == Direction.Right ? 1 : -1);
+                if (at < 0 || at >= shown.Count) { Cue(Sfx.Bump, pan: dir == Direction.Left ? -0.6f : 0.6f); return; }
+                rw.PanelFocus = Array.IndexOf(RwTabs, shown[at]);
+                CuePan(dir == Direction.Left ? -0.4f : 0.4f);
+                RwPaintPanels(p);
+                return;
+            }
+            if (dir == Direction.Down && n > 0) { RwPanelLeave(p); return; }
+            Cue(Sfx.Bump);
+            return;
+        }
+        int s = p.Sel, j = s;
+        if (p.Tab == 0)
+        {
+            if (dir == Direction.Up) { RwPanelEnter(p); return; }
+            if (dir == Direction.Left) j = s - 1; else if (dir == Direction.Right) j = s + 1;
+        }
+        else
+        {
+            int row = s / RgCols, rows = (n + RgCols - 1) / RgCols;
+            if (dir == Direction.Up) { if (row == 0) { RwPanelEnter(p); return; } j = s - RgCols; }
+            else if (dir == Direction.Down) j = s + RgCols < n ? s + RgCols : row < rows - 1 ? n - 1 : s;
+            else if (dir == Direction.Left) j = s % RgCols == 0 ? s : s - 1;
+            else j = s % RgCols == RgCols - 1 ? s : s + 1;
+        }
+        if (j < 0 || j >= n || j == s) { Cue(Sfx.Bump, pan: dir == Direction.Left ? -0.6f : dir == Direction.Right ? 0.6f : 0); return; }
+        CuePan(dir == Direction.Left ? -0.3f : dir == Direction.Right ? 0.3f : 0);
+        p.Prev = s;
+        p.Sel = j;
+        p.Ai = j; p.InRecent = false;
+        if (p.Tab == 0) CsLayoutRow(p, animate: true); else RwLayoutGrid(p, animate: true);
+        CsNoteSpot();
+    }
+
+    private void RwActivate(CsPage p)
+    {
+        if (p.Rw is not { } rw) return;
+        if (rw.PanelFocus >= 0)
+        {
+            int tab = RwTabs[rw.PanelFocus];
+            if (tab == p.Tab) { RwPanelLeave(p); return; }
+            _rwPanelNext = true;
+            CsGoTab(tab);
+            return;
+        }
+        if (p.Sel >= p.Items.Count) { Cue(Sfx.Bump); return; }
+        var g = p.Items[p.Sel];
+        if (RunningGame(g.Id) is { } running) { ResumeGame(running); return; }
+        if (p.Cases.TryGetValue(p.Sel, out var c)) CsLaunch(g, c.Root, RwFocusRect(c));
+    }
+
+    // ---------------- Steam / 本地页：竖封面网格 ----------------
+
+    // 8 列 196×294，列距 36、行距 44；第一行从面板下面开始；焦点行保持在第二行（第一行时就在第一行），三行一屏
+    private const int RgCols = 8;
+    private const float RgW = 196, RgH = 294, RgGapX = 36, RgGapY = 44, RgY0 = 186;
+    private static float RgX0 => (CsW - (RgCols * RgW + (RgCols - 1) * RgGapX)) / 2;
+    private const float RgPitchY = RgH + RgGapY;
+
+    private CsPage RwBuildCat(int tab, string? spot, bool entry)
+    {
+        var items = CsList(tab);
+        var root = G.Container(relative: false);
+        root.Size = new Vector2(CsW, CsH);
+        var content = G.Container(relative: false);
+        content.Size = new Vector2(CsW, CsH);
+        var page = new CsPage { Root = root, Bg = null!, Content = content, Tab = tab, Style = HomeStyle.Row, Items = items, Built = NowMs };
+        page.Bg = RwBuild(page, entry);
+        page.Bg.Opacity = 0;
+        page.Rw!.CardW = RgW; page.Rw.CardH = RgH;
+        root.Children.InsertAtTop(page.Bg);
+        root.Children.InsertAtTop(content);
+        var grid = G.Container(relative: false);
+        grid.Size = new Vector2(CsW, CsH);
+        content.Children.InsertAtTop(grid);
+        page.Row = grid;
+        int k = spot == null ? -1 : items.FindIndex(g => g.Id == spot);
+        page.Sel = page.Prev = page.Ai = Math.Max(0, k);
+        var prev = _cs!.Page;
+        _cs.Page = page;
+        RwAttach(page);
+        RwLayoutGrid(page, animate: false, entry: entry);
+        _cs.Page = prev;
+        return page;
+    }
+
+    private static int RgScrollRow(int s, int n)
+    {
+        int rows = (n + RgCols - 1) / RgCols;
+        return Math.Clamp(s / RgCols - 1, 0, Math.Max(0, rows - 3));
+    }
+
+    private void RwLayoutGrid(CsPage p, bool animate, bool entry = false)
+    {
+        int n = p.Items.Count;
+        if (n == 0) { RwCursorShow(p, false); return; }
+        int s = Math.Clamp(p.Sel, 0, n - 1);
+        int sr = RgScrollRow(s, n), psr = RgScrollRow(Math.Clamp(p.Prev, 0, n - 1), n);
+        int lo = Math.Max(0, (sr - 2) * RgCols), hi = Math.Min(n - 1, (sr + 5) * RgCols - 1);
+        foreach (var gone in p.Cases.Keys.Where(i => i < lo || i > hi).ToList())
+            if (p.Cases.Remove(gone, out var gc)) { p.Row!.Children.Remove(gc.Root); CsDisposeCase(gc); }
+        bool move = animate && !Reduced;
+        Vector3 Slot(int i, int scrollRow) => new(RgX0 + i % RgCols * (RgW + RgGapX), RgY0 + (i / RgCols - scrollRow) * RgPitchY, 0);
+        for (int i = lo; i <= hi; i++)
+        {
+            var off = Slot(i, sr);
+            if (!p.Cases.TryGetValue(i, out var c))
+            {
+                c = CsNewCase(p.Items[i], i, new Vector2(RgW, RgH), radiusK: RwRound, circle: true);
+                c.Root.CenterPoint = new Vector3(RgW / 2, RgH / 2, 0);
+                c.Ring.Opacity = 0; c.Dim.Opacity = 0; c.Glow.Opacity = 0;
+                c.Root.Offset = move ? Slot(i, psr) : off;
+                p.Cases[i] = c;
+                p.Row!.Children.InsertAtTop(c.Root);
+            }
+            c.Offset = off; c.Size = new Vector2(RgW, RgH);
+            var scale = new Vector3(i == s ? RwFocus : 1, i == s ? RwFocus : 1, 1);
+            if (move) { c.Root.StartAnimation("Offset", RwSpring(off, 1500)); c.Root.StartAnimation("Scale", RwSpring(scale, 1500)); c.Root.StopAnimation("Opacity"); c.Root.Opacity = 1; }
+            else
+            {
+                c.Root.StopAnimation("Offset"); c.Root.StopAnimation("Scale");
+                c.Root.Scale = scale;
+                if (entry && !Reduced && off.Y < CsH)
+                {
+                    double delay = 80 + (i - lo) % (RgCols * 3) * 18;
+                    c.Root.Offset = off + new Vector3(0, 40, 0);
+                    c.Root.Opacity = 0;
+                    c.Root.StartAnimation("Offset", CsV3(off, 560, CsQuart, delay));
+                    c.Root.StartAnimation("Opacity", CsS(1, 400, CsQuart, delay));
+                }
+                else c.Root.Offset = off;
+            }
+        }
+        if (p.Rw is { } rw)
+        {
+            var (W, H, _, _, _) = RwBracketGeom(RgW, RgH);
+            var o = Slot(s, sr);
+            var to = new Vector3(o.X + RgW / 2 - W / 2 - RwCurPad, o.Y + RgH / 2 - H / 2 - RwCurPad, 0);
+            foreach (var v in new Visual[] { rw.Glow, rw.Line, rw.Rim })
+            {
+                if (move) v.StartAnimation("Offset", RwSpring(to));
+                else { v.StopAnimation("Offset"); v.Offset = to; }
+                if (entry && !Reduced && !move && rw.PanelFocus < 0) { v.Opacity = 0; v.StartAnimation("Opacity", CsS(1, 420, CsQuart, 300)); }
+            }
+        }
+        p.Prev = s;
+    }
 }

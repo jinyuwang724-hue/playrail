@@ -166,14 +166,14 @@ public sealed partial class WallStage
         };
     }
 
-    private List<int> CsTabsShown() => Enumerable.Range(0, _csQuery != null ? 5 : 4).Where(t => t <= 1 || CsList(t).Count > 0).ToList();
+    private List<int> CsTabsShown() => _prefs.Home == HomeStyle.Row && _csQuery == null ? RwTabsShown() : Enumerable.Range(0, _csQuery != null ? 5 : 4).Where(t => t <= 1 || CsList(t).Count > 0).ToList();
 
     private LibraryItem? CsSpotItem()
     {
         var p = _cs?.Page;
         if (p == null) return null;
         if (p.Style == HomeStyle.Wall && p.Tab == 0) return _ccGameId != null ? Lookup(_ccGameId) : null;
-        if (p.Tab == 0) return p.Sel < p.Items.Count ? p.Items[p.Sel] : null;
+        if (p.Tab == 0 || p.Style == HomeStyle.Row) return p.Sel < p.Items.Count ? p.Items[p.Sel] : null;
         return p.InRecent ? (p.Ai < p.Recent.Count ? p.Recent[p.Ai] : null) : (p.Ai < p.Items.Count ? p.Items[p.Ai] : null);
     }
 
@@ -405,7 +405,7 @@ public sealed partial class WallStage
         _cs.Tab = tab;
         CsPaintTabs(animate: old != null);
         var page = tab == 0 && _prefs.Home == HomeStyle.Wall ? CsBuildWallPage()
-            : tab == 0 ? CsBuildHome(_prefs.Home, spot, entry || dir != 0) : CsBuildCat(tab, spot, entry || dir != 0);
+            : tab == 0 ? CsBuildHome(_prefs.Home, spot, entry || dir != 0) : _prefs.Home == HomeStyle.Row && tab is 2 or 3 ? RwBuildCat(tab, spot, entry || dir != 0) : CsBuildCat(tab, spot, entry || dir != 0);
         _cs.Page = page;
         _cs.Pages.Children.InsertAtTop(page.Root);
         double ms = CsMs(220);
@@ -437,7 +437,7 @@ public sealed partial class WallStage
             CsNoteSpot();
             return;
         }
-        if (_csInsert == null) _cs.Header.StartAnimation("Opacity", CsS(page.Style == HomeStyle.Row && page.Tab == 0 ? 0 : 1, CsMs(220), CsQuart));
+        if (_csInsert == null) _cs.Header.StartAnimation("Opacity", CsS(page.Style == HomeStyle.Row ? 0 : 1, CsMs(220), CsQuart));
         if (old != null)
         {
             // 旧页面：内容滑走、淡出；背景留在下面，等新页面的背景整层淡进来盖住再拆（不会先暗一下）
@@ -1003,7 +1003,7 @@ public sealed partial class WallStage
     private void CsPaintInfo(CsPage p, bool animate)
     {
         if (p.InfoA == null || p.InfoB == null || p.ActsV == null) return;
-        if (p.Style == HomeStyle.Row && p.Tab == 0) { p.InfoA.Opacity = 0; p.InfoB.Opacity = 0; p.ActsV.Opacity = 0; return; }
+        if (p.Style == HomeStyle.Row) { p.InfoA.Opacity = 0; p.InfoB.Opacity = 0; p.ActsV.Opacity = 0; return; }
         var g = p.Sel < p.Items.Count ? p.Items[p.Sel] : null;
         string title = g?.Title ?? "全部游戏";
         string meta = g != null ? CsMetaFull(g) : $"{p.Items.Count} 款";
@@ -1397,13 +1397,13 @@ public sealed partial class WallStage
     {
         if (_cs?.Page is not { } p || _csInsert != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) { Cue(Sfx.None); return; }
+        if (p.Style == HomeStyle.Row) { RwMove(p, dir); return; }
         if (p.Tab == 0) CsHomeMove(p, dir); else CsCatMove(p, dir);
     }
 
     private void CsHomeMove(CsPage p, Direction dir)
     {
         if (p.Style == HomeStyle.Stack) { CsStackMove(p, dir); return; }
-        if (p.Style == HomeStyle.Row && dir is Direction.Up or Direction.Down) { Cue(Sfx.Bump); return; }
         if (p.Acts)
         {
             var g = p.Sel < p.Items.Count ? p.Items[p.Sel] : null;
@@ -1562,6 +1562,7 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return;
         if (_csInsert != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) { if (_csSearchBox?.Text.Trim().Length > 0) CsSubmitSearch(); else CsFocusSearchBox(); return; }
+        if (p.Style == HomeStyle.Row) { RwActivate(p); return; }
         if (p.Tab == 0)
         {
             if (p.Sel >= p.Items.Count) { CsGoTab(1); return; }
@@ -1609,6 +1610,7 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return false;
         if (_csInsert != null) { CsInsertBack(); return true; }
         if (_csSearchOpen) { CsCloseSearch(); return true; }
+        if (p.Style == HomeStyle.Row && p.Rw is { PanelFocus: >= 0 }) { RwPanelLeave(p); return true; }
         if (p.Tab != 0)
         {
             Cue(Sfx.Tab);
