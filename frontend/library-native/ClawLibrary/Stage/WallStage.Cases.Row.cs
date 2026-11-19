@@ -1103,13 +1103,24 @@ public sealed partial class WallStage
         foreach (var v in new Visual[] { rw.RGlow, rw.RLine, rw.RRim }) { v.Size = new Vector2(S, S); v.Opacity = 0; }
     }
 
+    /// <summary>
+    /// 直接跳到位：用一段 1 ms 的关键帧动画盖掉正在跑的弹簧（StopAnimation 之后马上赋值，有时会被还没停下的弹簧盖回去——
+    /// 压页时焦点框停在上一页那一行就是这个原因）。
+    /// </summary>
+    private void RwJump(Visual v, Vector3 to)
+    {
+        v.StopAnimation("Offset");
+        v.Offset = to;
+        v.StartAnimation("Offset", CsV3(to, 1, CsQuart));
+    }
+
     /// <summary>圆环显示 / 隐藏、移到第 i 个图标（move = 弹簧滑过去，否则直接到位）。</summary>
     private void RwRingTo(RwChrome rw, int i, bool show, bool move)
     {
         var to = RwRingOffset(Math.Max(0, i));
         foreach (var v in new Visual[] { rw.RGlow, rw.RLine, rw.RRim })
         {
-            if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else { v.StopAnimation("Offset"); v.Offset = to; }
+            if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else RwJump(v, to);
             v.StopAnimation("Opacity");
             v.StartAnimation("Opacity", CsS(show ? 1 : 0, CsMs(160), CsQuart));
         }

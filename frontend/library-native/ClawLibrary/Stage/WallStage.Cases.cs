@@ -155,6 +155,7 @@ public sealed partial class WallStage
     /// <summary>tab 0 首页 / 1 全部：所有游戏按最近游玩；2 Steam；3 本地（非 Steam、非 Xbox）。</summary>
     private List<LibraryItem> CsList(int tab)
     {
+        RwApplyMetaAll(_lib.Games);   // 「单行」编辑元数据里改过的标题
         var all = _lib.Games.Where(g => g.Kind == ItemKind.Game)
             .Select((g, i) => (g, i)).OrderByDescending(x => x.g.LastPlayed ?? long.MinValue).ThenBy(x => x.i).Select(x => x.g);
         return tab switch
@@ -510,6 +511,7 @@ public sealed partial class WallStage
 
     private void CsSwitchTab(int delta)
     {
+        if (_rs != null) { RsTab(delta); return; }
         if (_cs == null || _csInsert != null || _rm != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) CsCloseSearch();
         var tabs = CsTabsShown();
@@ -1397,6 +1399,7 @@ public sealed partial class WallStage
     {
         if (_cs?.Page is not { } p || _csInsert != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) { Cue(Sfx.None); return; }
+        if (_rs != null) { RsMove(dir); return; }
         if (_rm != null) { RmMove(dir); return; }
         if (p.Style == HomeStyle.Row) { RwMove(p, dir); return; }
         if (p.Tab == 0) CsHomeMove(p, dir); else CsCatMove(p, dir);
@@ -1563,6 +1566,7 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return;
         if (_csInsert != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) { if (_csSearchBox?.Text.Trim().Length > 0) CsSubmitSearch(); else CsFocusSearchBox(); return; }
+        if (_rs != null) { RsActivate(); return; }
         if (_rm != null) { RmActivate(); return; }
         if (p.Style == HomeStyle.Row) { RwActivate(p); return; }
         if (p.Tab == 0)
@@ -1612,6 +1616,7 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return false;
         if (_csInsert != null) { CsInsertBack(); return true; }
         if (_csSearchOpen) { CsCloseSearch(); return true; }
+        if (_rs != null) return RsBack();
         if (_rm != null) return RmBack();
         if (p.Style == HomeStyle.Row && p.Rw is { PanelFocus: >= 0 }) { RwPanelLeave(p); return true; }
         if (p.Tab != 0)
@@ -1630,7 +1635,7 @@ public sealed partial class WallStage
     private void CsGameSettings()
     {
         if (_csInsert != null) return;
-        if (_cs?.Page is { Style: HomeStyle.Row } rp) { if (_rm != null) RmActivateY(); else RmShow(rp); return; }
+        if (_cs?.Page is { Style: HomeStyle.Row } rp) { if (_rs != null) RsSave(); else if (_rm != null) RmActivateY(); else RmShow(rp); return; }
         var g = CsSpotItem();
         if (g == null) { Cue(Sfx.Bump); return; }
         CsOpenGameSettings(g);

@@ -77,6 +77,7 @@ public sealed partial class WallStage
         catch (Exception ex) { Log.Warn($"game settings: {ex.Message}"); if (_gsItem == item) Toast(ex.Message.Contains("不支持的后台调用") ? "工具箱后台版本太旧" : "没读到游戏设置"); }
         finally { _gsLoading = false; }
         if (_stOpen && _gsItem == item) Repaint();
+        if (_rs != null && _gsItem == item) RsRefresh();   // 「单行」的游戏配置页
     }
 
     /// <summary>改一项：先在界面上改过来，后台做完再读一次真实状态。</summary>
@@ -103,6 +104,7 @@ public sealed partial class WallStage
         if (_gsState?[path] is JsonObject o) o[key] = value?.DeepClone();
         else if (path.Length == 0 && _gsState != null) _gsState[key] = value?.DeepClone();
         Repaint();
+        RsRefresh();
     }
 
     /// <summary>通用 › 启动：在右栏选择程序或 Windows 快捷方式。</summary>

@@ -261,6 +261,7 @@ public sealed partial class WallStage
         if (v != d.Version) return;
         d.Pending.Remove(kind);
         AgRepaint(d);
+        _dq.TryEnqueue(RsPaintSoon);
     }
 
     private async Task AgLoadOfficial(AgDraft d)
@@ -1478,6 +1479,7 @@ public sealed partial class WallStage
                 if (_lgBitmaps.Count > 200)
                     foreach (var k in _lgBitmaps.Keys.Where(k => k != key).Take(_lgBitmaps.Count - 150).ToList()) { _lgBitmaps[k]?.Dispose(); _lgBitmaps.Remove(k); }
                 AgPaintSoon();
+                RsPaintSoon();
             });
         }
         catch (Exception ex) { Log.Warn($"preview {Path.GetFileName(path)}: {ex.Message}"); }

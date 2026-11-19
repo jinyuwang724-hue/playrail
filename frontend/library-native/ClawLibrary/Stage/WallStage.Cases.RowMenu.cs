@@ -266,12 +266,14 @@ public sealed partial class WallStage
 
     private const float RmCurPad = 44;
 
-    /// <summary>行的四角括号：线中心比行外扩 12，圆角 = 半个行高（括号是两端圆的胶囊形），直腿 31。</summary>
+    /// <summary>
+    /// 行的四角括号（照 jinyu 11-20 截图实测）：线中心左右外扩 7、上下外扩 10，圆角 57，
+    /// 每个角只有圆弧加 5 的短腿，左右两边中间留 13 左右的缺口（不是两端闭合的半圆）。
+    /// </summary>
     private static (float W, float H, float R, float Leg) RmBracketGeom()
     {
-        float o = 12, W = RmCardW + o * 2, H = RmRowH + o * 2, r = H / 2;
-        float leg = MathF.Max(0, MathF.Min(18 * RwDp, (W - 2 * r) / 2 - 40));
-        return (W, H, r, leg);
+        float W = RmCardW + 14, H = RmRowH + 20, r = 57;
+        return (W, H, r, MathF.Max(0, (H - 2 * r - 13) / 2));
     }
 
     private void RmPaintCursor(RmState rm)
@@ -322,7 +324,7 @@ public sealed partial class WallStage
         var to = new Vector3(RmCardX + RmCardW / 2 - W / 2 - RmCurPad, rowY + RmRowH / 2 - H / 2 - RmCurPad, 0);
         foreach (var v in new Visual[] { rm.Glow, rm.Line, rm.Rim })
         {
-            if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else { v.StopAnimation("Offset"); v.Offset = to; }
+            if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else RwJump(v, to);
         }
     }
 
@@ -352,17 +354,12 @@ public sealed partial class WallStage
                 RwActivate(p);
                 return;
             case 1:
-                RmClose();
-                // TODO(二级页)：编辑元数据 / 封面管理。先进原来的游戏设置页的封面分类
-                CsOpenGameSettings(g);
-                _stCat = Array.IndexOf(GsCats, "封面");
-                Repaint();
+                Cue(Sfx.ModalShow);
+                RsOpen(g, p, RsEditPage(g, p));   // 菜单留在下面：编辑页退到底回到菜单
                 return;
             case 2:
-                RmClose();
-                CsOpenGameSettings(g);
-                _stCat = Array.IndexOf(GsCats, "画面");
-                Repaint();
+                Cue(Sfx.ModalShow);
+                RsOpen(g, p, RsConfigPage(g));
                 return;
             case 3:
                 Cue(Sfx.Activate);

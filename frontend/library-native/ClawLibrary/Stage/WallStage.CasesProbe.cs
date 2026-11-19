@@ -60,7 +60,25 @@ public sealed partial class WallStage
             // 游戏菜单：Y 打开，往下两行，B 关
             CsGameSettings(); await Still("menu");
             Move(Direction.Down); await Task.Delay(250); Move(Direction.Down); await Still("menu2");
-            Back(); await Task.Delay(600);
+            // 菜单里再按 Y 进编辑；A 进编辑元数据，往下走几行；B 一路退回
+            CsGameSettings(); await Still("edit");
+            Activate(); await Still("meta");
+            for (int i = 0; i < 6; i++) { Move(Direction.Down); await Task.Delay(220); }
+            await Still("meta2");
+            // 退回编辑 → 封面管理：A 到 SteamGridDB 取图，切到背景页签
+            Back(); await Task.Delay(500);
+            Move(Direction.Down); await Task.Delay(300); Activate(); await Still("art");
+            Activate(); await Task.Delay(7000); await Still("art2");
+            CsSwitchTab(1); await Still("art3");
+            Back(); await Task.Delay(400); Back(); await Task.Delay(400); Back(); await Task.Delay(500);
+            // 游戏配置：小黄鸭、功耗档位
+            if (_rm == null) { CsGameSettings(); await Task.Delay(600); }
+            Move(Direction.Down); await Task.Delay(250); Move(Direction.Down); await Task.Delay(250); Activate(); await Task.Delay(2500); await Still("config");
+            Activate(); await Still("config-duck");
+            Back(); await Task.Delay(400);
+            for (int i = 0; i < 3; i++) { Move(Direction.Down); await Task.Delay(250); }
+            Activate(); await Still("config-power");
+            Back(); await Task.Delay(400); Back(); await Task.Delay(400); Back(); await Task.Delay(600);
         }
         catch (Exception ex) { Log.Error("recrow", ex); }
         if (_cs != null && style != HomeStyle.Row) { SaveUi(_prefs with { Home = style }); CsMorphStyle(); }
