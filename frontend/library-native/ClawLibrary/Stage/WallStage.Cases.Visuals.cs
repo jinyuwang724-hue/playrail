@@ -418,7 +418,7 @@ public sealed partial class WallStage
         return p;
     }
 
-    private CsCase CsNewCase(LibraryItem? g, int index, Vector2 size, bool hiRes = false, bool wide = false)
+    private CsCase CsNewCase(LibraryItem? g, int index, Vector2 size, bool hiRes = false, bool wide = false, float radiusK = 0.105f)
     {
         CsEnsureShared();
         var tint = CsTint(g);
@@ -435,7 +435,7 @@ public sealed partial class WallStage
         var face = G.Container();
         // 11-17 jinyu：卡盒不再是复古卡盒，改成和控制中心同一种连续曲率圆角的纯封面（半径 ≈ 宽 × 0.105，大封面 ≈ 28）。
         // 路径按建卡时的尺寸画一次，卡片尺寸动画时整条裁切按比例缩放（卡片始终是 2:3，圆角不会变形）。
-        float w0 = Math.Max(size.X, 1), h0 = Math.Max(size.Y, 1), r0 = Math.Min(w0, h0 * 0.6667f) * 0.105f;   // 横版大卡按高度算，和竖卡同一个圆角
+        float w0 = Math.Max(size.X, 1), h0 = Math.Max(size.Y, 1), r0 = Math.Min(w0, h0 * 0.6667f) * radiusK;   // 横版大卡按高度算，和竖卡同一个圆角
         if (wide)
         {
             // 横卡要连续变宽（竖卡 ↔ 横卡的切换动画）：裁切用跟着尺寸走的圆角矩形，圆角不随宽度变形

@@ -11,6 +11,43 @@ public sealed partial class WallStage
     /// <summary>录屏时插卡不真的启动游戏：插到底只放启动画面。</summary>
     private bool _csDemo;
 
+    /// <summary>--state=recrow：「单行」首页静帧（原分辨率 png）+ 左右翻几张的录屏（看弹簧、放大和焦点框流光）。</summary>
+    internal async Task RecRowAsync()
+    {
+        await Task.Delay(2500);
+        var style = _prefs.Home;
+        string dir = Path.Combine(App.CacheDir, "rec");
+        async Task Still(string name)
+        {
+            await Task.Delay(1500);
+            var r = new FrameRecorder { Full = true };
+            if (!r.Start(HostWindow)) return;
+            await Task.Delay(300);
+            int n = await r.StopAndSaveAsync(Path.Combine(dir, "row-" + name), System.Diagnostics.Stopwatch.GetTimestamp());
+            Log.Info($"recrow {name}: {n} frames");
+        }
+        try
+        {
+            if (_cs != null && _prefs.Home != HomeStyle.Row) { SaveUi(_prefs with { Home = HomeStyle.Row }); CsMorphStyle(); await Task.Delay(1500); }
+            await Still("home");
+            var rec = new FrameRecorder();
+            if (rec.Start(HostWindow))
+            {
+                long mark = System.Diagnostics.Stopwatch.GetTimestamp();
+                await Task.Delay(400);
+                foreach (var d in new[] { Direction.Right, Direction.Right, Direction.Right, Direction.Right, Direction.Left, Direction.Left })
+                { Move(d); await Task.Delay(650); }
+                Move(Direction.Right); await Task.Delay(120); Move(Direction.Right); await Task.Delay(1200);   // 连按打断
+                int n = await rec.StopAndSaveAsync(Path.Combine(dir, "row-move"), mark);
+                Log.Info($"recrow move: {n} frames");
+            }
+            await Still("after");
+        }
+        catch (Exception ex) { Log.Error("recrow", ex); }
+        if (_cs != null && style != HomeStyle.Row) { SaveUi(_prefs with { Home = style }); CsMorphStyle(); }
+        Log.Info("recrow done");
+    }
+
     /// <summary>--state=recstatus：原分辨率静帧核对顶栏 / 状态栏 / 竖条 / 快捷面板的对齐（中英混排基线、电池和数字等高）。</summary>
     internal async Task RecStatusAsync()
     {

@@ -57,6 +57,8 @@ public sealed partial class WallStage
         /// <summary>「大图」：正在收回的旧大卡（连按时可能同时有好几张，各自动画走完再拆）。</summary>
         public readonly List<CsCase> HeroLeaving = new();
         public long HeroLast;
+        /// <summary>「单行」：壁纸背景、顶部面板、焦点框。</summary>
+        public RwChrome? Rw;
         public float RailX;
         public Action? StandFinish;
         public long Built;
@@ -435,7 +437,7 @@ public sealed partial class WallStage
             CsNoteSpot();
             return;
         }
-        if (_csInsert == null) _cs.Header.StartAnimation("Opacity", CsS(1, CsMs(220), CsQuart));
+        if (_csInsert == null) _cs.Header.StartAnimation("Opacity", CsS(page.Style == HomeStyle.Row && page.Tab == 0 ? 0 : 1, CsMs(220), CsQuart));
         if (old != null)
         {
             // 旧页面：内容滑走、淡出；背景留在下面，等新页面的背景整层淡进来盖住再拆（不会先暗一下）
@@ -502,6 +504,7 @@ public sealed partial class WallStage
         foreach (var (c, cap) in page.Grid.Values) { CsDisposeCase(c); cap.Dispose(); }
         foreach (var c in page.Carts.Values) CsDisposeCart(c);
         if (page.Bn != null) BnDispose(page.Bn);
+        RwDispose(page);
         page.Root.Dispose();
     }
 
@@ -525,8 +528,8 @@ public sealed partial class WallStage
         CsShowTab(tab, dir == 0 ? 1 : dir, entry: true);
     }
 
-    internal static readonly HomeStyle[] CsStyleOrder = { HomeStyle.Wall, HomeStyle.Shelf, HomeStyle.Stand, HomeStyle.Stack, HomeStyle.Hero };
-    internal static string CsStyleName(HomeStyle s) => s switch { HomeStyle.Wall => "海报墙", HomeStyle.Stack => "叠放", HomeStyle.Stand => "展台", HomeStyle.Hero => "大图", _ => "展架" };
+    internal static readonly HomeStyle[] CsStyleOrder = { HomeStyle.Wall, HomeStyle.Shelf, HomeStyle.Stand, HomeStyle.Stack, HomeStyle.Hero, HomeStyle.Row };
+    internal static string CsStyleName(HomeStyle s) => s switch { HomeStyle.Wall => "海报墙", HomeStyle.Stack => "叠放", HomeStyle.Stand => "展台", HomeStyle.Hero => "大图", HomeStyle.Row => "单行", _ => "展架" };
 
     /// <summary>设置 › 游戏库 › 首页样式：按 A 立即生效。设置页盖着游戏库时等回到游戏库再播切换动画。</summary>
     private void CsSetHomeStyle(HomeStyle style)
@@ -565,7 +568,7 @@ public sealed partial class WallStage
         if (_cs.Tab != 0) { CsShowTab(0, -1, entry: true); return; }
         var old = _cs.Page!;
         // 和海报墙之间：墙和卡盒页整层交叉淡入淡出（卡盒页自带不透明背景，淡进来盖住墙；回墙时卡盒页淡掉）
-        if (old.Style is HomeStyle.Wall or HomeStyle.Stand or HomeStyle.Hero || _prefs.Home is HomeStyle.Wall or HomeStyle.Stand or HomeStyle.Hero) { CsShowTab(0, 0, entry: true); return; }
+        if (old.Style is HomeStyle.Wall or HomeStyle.Stand or HomeStyle.Hero or HomeStyle.Row || _prefs.Home is HomeStyle.Wall or HomeStyle.Stand or HomeStyle.Hero or HomeStyle.Row) { CsShowTab(0, 0, entry: true); return; }
         string? spot = CsSpotItem()?.Id;
         old.Cases.TryGetValue(old.Sel, out var from);
         var page = CsBuildHome(_prefs.Home, spot, entry: false);
@@ -703,7 +706,8 @@ public sealed partial class WallStage
         var content = G.Container(relative: false);
         content.Size = new Vector2(CsW, CsH);
         var page = new CsPage { Root = root, Bg = null!, Content = content, Tab = 0, Style = style, Items = items, Built = NowMs };
-        page.Bg = CsBuildBg(page, style, cat: false);
+        page.Bg = style == HomeStyle.Row ? RwBuild(page, entry) : CsBuildBg(page, style, cat: false);
+        if (style == HomeStyle.Row) page.Bg.Opacity = 0;
         root.Children.InsertAtTop(page.Bg);
         root.Children.InsertAtTop(content);
         int k = spot == null ? -1 : items.FindIndex(g => g.Id == spot);
@@ -724,9 +728,10 @@ public sealed partial class WallStage
         if (style == HomeStyle.Shelf) CsLayoutShelf(page, animate: false, entry: entry);
         else if (style == HomeStyle.Stand) CsLayoutStand(page, animate: false, entry: entry);
         else if (style == HomeStyle.Hero) CsLayoutHero(page, animate: false, entry: entry);
+        else if (style == HomeStyle.Row) { RwAttach(page); CsLayoutRow(page, animate: false, entry: entry); }
         else CsLayoutStack(page, animate: false, entry: entry);
         CsPaintInfo(page, animate: false);
-        CsSetBackground(CsSpotItem(), entry: entry);
+        if (style != HomeStyle.Row) CsSetBackground(CsSpotItem(), entry: entry);
         _cs.Page = prevPage;
         if (entry && !Reduced)
         {
@@ -998,6 +1003,7 @@ public sealed partial class WallStage
     private void CsPaintInfo(CsPage p, bool animate)
     {
         if (p.InfoA == null || p.InfoB == null || p.ActsV == null) return;
+        if (p.Style == HomeStyle.Row && p.Tab == 0) { p.InfoA.Opacity = 0; p.InfoB.Opacity = 0; p.ActsV.Opacity = 0; return; }
         var g = p.Sel < p.Items.Count ? p.Items[p.Sel] : null;
         string title = g?.Title ?? "全部游戏";
         string meta = g != null ? CsMetaFull(g) : $"{p.Items.Count} 款";
@@ -1397,6 +1403,7 @@ public sealed partial class WallStage
     private void CsHomeMove(CsPage p, Direction dir)
     {
         if (p.Style == HomeStyle.Stack) { CsStackMove(p, dir); return; }
+        if (p.Style == HomeStyle.Row && dir is Direction.Up or Direction.Down) { Cue(Sfx.Bump); return; }
         if (p.Acts)
         {
             var g = p.Sel < p.Items.Count ? p.Items[p.Sel] : null;
@@ -1499,9 +1506,9 @@ public sealed partial class WallStage
 
     private void CsLayoutHome(CsPage p, bool animate)
     {
-        if (p.Style == HomeStyle.Shelf) CsLayoutShelf(p, animate); else if (p.Style == HomeStyle.Stand) CsLayoutStand(p, animate); else if (p.Style == HomeStyle.Hero) CsLayoutHero(p, animate); else CsLayoutStack(p, animate);
+        if (p.Style == HomeStyle.Shelf) CsLayoutShelf(p, animate); else if (p.Style == HomeStyle.Stand) CsLayoutStand(p, animate); else if (p.Style == HomeStyle.Hero) CsLayoutHero(p, animate); else if (p.Style == HomeStyle.Row) CsLayoutRow(p, animate); else CsLayoutStack(p, animate);
         // 展台：焦点只画在展台上的大卡盒，排里的小卡盒不画（一屏一个焦点）
-        if (!p.Acts && p.Style is not (HomeStyle.Stand or HomeStyle.Hero) && p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(1, CsMs(300), CsQuart));
+        if (!p.Acts && p.Style is not (HomeStyle.Stand or HomeStyle.Hero or HomeStyle.Row) && p.Cases.TryGetValue(p.Sel, out var c)) c.Ring.StartAnimation("Opacity", CsS(1, CsMs(300), CsQuart));
         p.Prev = p.Sel;
     }
 
@@ -1592,6 +1599,7 @@ public sealed partial class WallStage
 
     private (float X, float Y, float W, float H) CsCaseRect(CsPage p, CsCase c)
     {
+        if (p.Style == HomeStyle.Row) return RwFocusRect(c);
         if (p.Style == HomeStyle.Stack) return (c.Offset.X, c.Offset.Y, StW, StH);
         return (c.Offset.X, c.Offset.Y, c.Size.X, c.Size.Y);
     }
@@ -1701,7 +1709,7 @@ public sealed partial class WallStage
             CsCase? hit = null;
             if (p.Style == HomeStyle.Stand && x >= StdX && x <= StdX + StdW && y >= StdY && y <= StdY + StdH) hit = p.Cases.GetValueOrDefault(p.Sel) ?? p.StandCase;
             else if (p.Style == HomeStyle.Hero && x >= HeX && x <= HeX + HeW && y >= HeY && y <= HeY + HeH) hit = p.Cases.GetValueOrDefault(p.Sel) ?? p.StandCase;
-            else if (p.Style is HomeStyle.Shelf or HomeStyle.Stand or HomeStyle.Hero)
+            else if (p.Style is HomeStyle.Shelf or HomeStyle.Stand or HomeStyle.Hero or HomeStyle.Row)
             {
                 foreach (var c in p.Cases.Values)
                     if ((p.Style != HomeStyle.Hero || c.Index != p.Sel) && x >= HeRowX - (p.Style == HomeStyle.Hero ? 0 : 99999) && x >= c.Offset.X && x <= c.Offset.X + c.Size.X && y >= c.Offset.Y && y <= c.Offset.Y + c.Size.Y) hit = c;
@@ -1776,7 +1784,7 @@ public sealed partial class WallStage
         if (_csDragAxis == 0) _csDragAxis = Math.Abs(lx) >= Math.Abs(ly) ? 1 : 2;
         if (p.Tab == 0)
         {
-            bool row = p.Style is HomeStyle.Shelf or HomeStyle.Stand or HomeStyle.Hero;
+            bool row = p.Style is HomeStyle.Shelf or HomeStyle.Stand or HomeStyle.Hero or HomeStyle.Row;
             // 叠放：横向拖动翻牌（左拖下一张、右拖上一张）
             float d = lx;
             float unit = row ? 120 : 90;
