@@ -23,7 +23,7 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private const float RwW = 280, RwH = 420, RwPitch = 330, RwX = 62, RwBottom = 46, RwFocus = 1.15f, RwRound = 0.17391305f;
+    private const float RwW = 280, RwH = 420, RwPitch = 330, RwX = 62, RwBottom = 64, RwFocus = 1.15f, RwRound = 0.17391305f;
     private const float RwY = CsH - RwBottom - RwH;
     /// <summary>Cocoon 设备上 1 dp ≈ 1.75 px（截图反推）；规格里的 dp 数值都乘这个换成我们的设计单位。</summary>
     private const float RwDp = 1.75f;
@@ -31,10 +31,13 @@ public sealed partial class WallStage
     private static readonly Color RwC1 = Color.FromArgb(255, 0x86, 0xA7, 0xFD), RwC2 = Color.FromArgb(255, 0x80, 0x37, 0xFF);
     private const double RwPeriodMs = 1800;
     private const int RwSteps = 45;
-    private const string RwPoppins = "ms-appx:///Assets/Fonts/Poppins-SemiBold.ttf#Poppins";
-    private const string RwPoppinsXb = "ms-appx:///Assets/Fonts/Poppins-ExtraBold.ttf#Poppins";
-    private const string RwPoppinsB = "ms-appx:///Assets/Fonts/Poppins-Bold.ttf#Poppins";
-    private const string RwCjk = "ms-appx:///Assets/Fonts/PingFangSC-Medium.otf#PingFang SC";
+    // 随包字体只在打包运行时能按 ms-appx 加载；不打包的录屏版退回系统字体（只影响自测录屏的字形）
+    private static readonly bool RwPackaged = RwIsPackaged();
+    private static bool RwIsPackaged() { try { return Windows.ApplicationModel.Package.Current != null; } catch { return false; } }
+    private static readonly string RwPoppins = RwPackaged ? "ms-appx:///Assets/Fonts/Poppins-SemiBold.ttf#Poppins" : "Segoe UI Variable Display";
+    private static readonly string RwPoppinsXb = RwPackaged ? "ms-appx:///Assets/Fonts/Poppins-ExtraBold.ttf#Poppins" : "Segoe UI Variable Display";
+    private static readonly string RwPoppinsB = RwPackaged ? "ms-appx:///Assets/Fonts/Poppins-Bold.ttf#Poppins" : "Segoe UI Variable Display";
+    private static readonly string RwCjk = RwPackaged ? "ms-appx:///Assets/Fonts/PingFangSC-Medium.otf#PingFang SC" : "Microsoft YaHei UI";
 
     // 面板（设计单位，按截图实测）：x, y, w, h, 圆角, 种类（0 = 灰色磨砂状态面板，1 = 淡灰圆按钮）
     private static readonly (float X, float Y, float W, float H, float R, int Kind) RwPanelL = (38, 23, 281, 112, 36, 0);
