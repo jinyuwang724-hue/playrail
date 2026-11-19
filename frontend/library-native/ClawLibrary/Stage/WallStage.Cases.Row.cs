@@ -40,7 +40,7 @@ public sealed partial class WallStage
     private static readonly string RwCjk = RwPackaged ? "ms-appx:///Assets/Fonts/PingFangSC-Medium.otf#PingFang SC" : "Microsoft YaHei UI";
 
     // 面板（设计单位，按截图实测）：x, y, w, h, 圆角, 种类（0 = 灰色磨砂状态面板，1 = 淡灰圆按钮）
-    private static readonly (float X, float Y, float W, float H, float R, int Kind) RwPanelL = (38, 23, 281, 112, 36, 0);
+    private static readonly (float X, float Y, float W, float H, float R, int Kind) RwPanelL = (38, 23, 217, 112, 36, 0);   // 不放 LB 提示（11-20 jinyu）：截图里的面板去掉肩键那一格，头像往左挪 64
     private static readonly (float X, float Y, float W, float H, float R, int Kind) RwMore = (1818, 187, 74, 74, 37, 1);
     private const float RwPanelRRight = 1882, RwClockW0 = 168;
     private const float RwPanelPad = 20;   // 面板贴图四周留给投影的边
@@ -53,6 +53,11 @@ public sealed partial class WallStage
         public CompositionDrawingSurface? WallSurf, LSurf, RSurf, MoreSurf, GlowSurf, LineSurf, RimSurf;
         public DispatcherQueueTimer? Tick;
         public int Phase = -1;
+        public BatteryState Bat;
+        public SystemInfo.NetState Net;
+        public bool StatusBusy;
+        public CompositionLinearGradientBrush? Flow;
+        public CompositionPropertySet? FlowProps;
         public string Drawn = "";
         public float Raster;
         public bool Disposed;
@@ -83,9 +88,10 @@ public sealed partial class WallStage
         foreach (var v in new Visual[] { rw.Glow, rw.Line, rw.Rim }) page.Content.Children.InsertAtTop(v);
         RwPaintCursorStatic(page);
         rw.Tick = _dq.CreateTimer();
-        rw.Tick.Interval = TimeSpan.FromMilliseconds(20);
+        rw.Tick.Interval = TimeSpan.FromMilliseconds(1000);
         rw.Tick.Tick += (_, _) => RwTick(page);
         rw.Tick.Start();
+        RwTick(page);
     }
 
     private void RwDispose(CsPage page)
@@ -97,14 +103,27 @@ public sealed partial class WallStage
         foreach (var s in new[] { rw.WallSurf, rw.LSurf, rw.RSurf, rw.MoreSurf, rw.GlowSurf, rw.LineSurf, rw.RimSurf }) s?.Dispose();
     }
 
-    /// <summary>每 20 ms：焦点框流光换一档（只在档位变了时重画），整分钟 / 电量 / 网络变了重画右面板。</summary>
+    /// <summary>
+    /// 每秒一次：电量、网络在后台线程读（读网络状态要枚举连接，放在界面线程上会卡住翻页和动画），
+    /// 回来后只在整分钟 / 电量 / 网络变了时重画右面板。焦点框流光由合成器自己转（RwFlow），不占界面线程。
+    /// </summary>
     private void RwTick(CsPage page)
     {
-        if (page.Rw is not { } rw || rw.Disposed) return;
+        if (page.Rw is not { } rw || rw.Disposed || rw.StatusBusy) return;
         if (_cs == null || (_cs.Page != page && !_cs.Leaving.Contains(page))) { rw.Tick?.Stop(); return; }
-        int phase = Reduced ? 0 : (int)(NowMs % (long)RwPeriodMs * RwSteps / (long)RwPeriodMs);
-        if (phase != rw.Phase) { rw.Phase = phase; RwPaintCursorLine(page, phase / (float)RwSteps); }
-        if (rw.Sharp != null && RwStatusKey() != rw.Drawn) RwPaintPanels(page);
+        rw.StatusBusy = true;
+        _ = Task.Run(() =>
+        {
+            BatteryState b = default; SystemInfo.NetState n = default;
+            try { b = SystemInfo.Battery(); n = SystemInfo.Network(); } catch { }
+            _dq.TryEnqueue(() =>
+            {
+                rw.StatusBusy = false;
+                if (rw.Disposed) return;
+                rw.Bat = b; rw.Net = n;
+                if (rw.Sharp != null && RwStatusKey(rw) != rw.Drawn) RwPaintPanels(page);
+            });
+        });
     }
 
     // ---------------- 壁纸 ----------------
@@ -179,10 +198,9 @@ public sealed partial class WallStage
 
     // ---------------- 顶部面板 ----------------
 
-    private string RwStatusKey()
+    private string RwStatusKey(RwChrome rw)
     {
-        var b = SystemInfo.Battery();
-        var n = SystemInfo.Network();
+        var b = rw.Bat; var n = rw.Net;
         var now = DateTime.Now;
         return $"{now:hh:mm tt}|{b.Percent}|{b.Charging}|{n.Online}|{n.Wlan}|{_railModel.Avatar != null}|{CsRaster}";
     }
@@ -192,7 +210,7 @@ public sealed partial class WallStage
     private void RwPaintPanels(CsPage page)
     {
         if (page.Rw is not { } rw || rw.Sharp == null || rw.Soft == null) return;
-        rw.Drawn = RwStatusKey();
+        rw.Drawn = RwStatusKey(rw);
         var dev = G.Device;
         float R = rw.Raster;
         var now = DateTime.Now;
@@ -200,9 +218,9 @@ public sealed partial class WallStage
         // 时间变宽 / 变窄时右面板向左长（右边缘固定），里面的东西跟着整体平移
         float clockW = RwClockWidth(dev, clock, ampm);
         float dx = MathF.Round(clockW - RwClockW0);
-        var panelR = (X: 1428 - dx, Y: 23f, W: 454 + dx, H: 112f, R: 36f, Kind: 0);
+        var panelR = (X: 1496 - dx, Y: 23f, W: 386 + dx, H: 112f, R: 36f, Kind: 0);
         RwPanel(rw, ref rw.LSurf, rw.PanelL, RwPanelL, R, ds => RwDrawLeft(ds));
-        RwPanel(rw, ref rw.RSurf, rw.PanelR, panelR, R, ds => RwDrawRight(ds, -dx, clock, ampm));
+        RwPanel(rw, ref rw.RSurf, rw.PanelR, panelR, R, ds => RwDrawRight(ds, rw, -dx, clock, ampm));
         RwPanel(rw, ref rw.MoreSurf, rw.More, RwMore, R, ds => RwDrawMore(ds));
     }
 
@@ -340,7 +358,8 @@ public sealed partial class WallStage
     private void RwDrawLeft(CanvasDrawingSession ds)
     {
         var dev = ds.Device;
-        RwShoulder(ds, 77, 60, 33, 38, "LB");
+        var t0 = ds.Transform;
+        ds.Transform = Matrix3x2.CreateTranslation(-64, 0) * t0;
         // 头像：直径 75，白圈 7.5
         float ax = 141, ay = 42.5f, ad = 75;
         using (var sh = new CanvasCommandList(dev))
@@ -384,16 +403,16 @@ public sealed partial class WallStage
         ds.FillGeometry(body, acc);
         ds.FillCircle(263.5f, 72, 16, RwWhite);
         ds.FillGeometry(head, acc);
+        ds.Transform = t0;
     }
 
-    private void RwDrawRight(CanvasDrawingSession ds, float shift, string clock, string ampm)
+    private void RwDrawRight(CanvasDrawingSession ds, RwChrome rw, float shift, string clock, string ampm)
     {
         var dev = ds.Device;
         var t0 = ds.Transform;
         ds.Transform = Matrix3x2.CreateTranslation(shift, 0) * t0;
-        RwShoulder(ds, 1467, 61, 34, 37, "RB");
         // Wi-Fi：右下一个点 + 三段四分之一圆弧（圆心 = 点，半径 11 / 20 / 29.5，线宽 5.2）
-        var net = SystemInfo.Network();
+        var net = rw.Net;
         bool on = net.Online || net.Wlan || net.Wired;
         var wc = new Vector2(1573.2f, 93.8f);
         using (var pb = new CanvasPathBuilder(dev))
@@ -413,23 +432,34 @@ public sealed partial class WallStage
                               : new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xC6, 0xC8, 0xD0), Color.FromArgb(255, 0xA4, 0xA7, 0xB2)) { StartPoint = new Vector2(0, 62), EndPoint = new Vector2(0, 98) };
             ds.FillGeometry(all, wb);
         }
-        // 电量：橙色电池（右侧小正极）+ 前面一块白牌写百分比，充电时加小闪电
-        var bat = SystemInfo.Battery();
-        using (var body = CanvasGeometry.CreateRoundedRectangle(dev, 1611, 65, 44.5f, 30, 7, 7))
-        using (var nub = CanvasGeometry.CreateRoundedRectangle(dev, 1652, 71.5f, 6, 7, 2, 2))
-        using (var badge = CanvasGeometry.CreateRoundedRectangle(dev, 1613.5f, 74, 44.5f, 27, 13.5f, 13.5f))
+        // 电量（两套，照 jinyu 的两张截图）：
+        // 充电中 = 橙色电池（右侧橙色小正极）+ 左下贴一块白牌写百分比 + 小闪电；
+        // 没充电 = 绿色电池（灰色小正极）+ 右下一块更窄更高的白牌写百分比，没有闪电。
+        var bat = rw.Bat;
+        bool chg = bat.Charging;
+        string pct = bat.HasBattery ? Math.Clamp(bat.Percent, 0, 100).ToString() : "AC";
+        var (bx, by, bw, bh, br) = chg ? (1611f, 65f, 44.5f, 30f, 7f) : (1614f, 64f, 42.5f, 28.5f, 5f);
+        var (nx, ny, nw, nh) = chg ? (1652f, 71.5f, 6f, 7f) : (1654.5f, 72f, 5.5f, 8f);
+        var (gx, gy, gw, gh, gr) = chg ? (1613.5f, 74f, 44.5f, 27f, 13.5f) : (1626.5f, 74f, 38f, 32f, 14f);
+        Color top = chg ? Color.FromArgb(255, 0xFF, 0xC0, 0x9C) : Color.FromArgb(255, 0x7C, 0xD9, 0x8A);
+        Color bot = chg ? Color.FromArgb(255, 0xFF, 0x8A, 0x28) : Color.FromArgb(255, 0x0F, 0xD0, 0xB5);
+        using (var body = CanvasGeometry.CreateRoundedRectangle(dev, bx, by, bw, bh, br, br))
+        using (var nub = CanvasGeometry.CreateRoundedRectangle(dev, nx, ny, nw, nh, 2, 2))
+        using (var badge = CanvasGeometry.CreateRoundedRectangle(dev, gx, gy, gw, gh, gr, gr))
         using (var cell = body.CombineWith(nub, Matrix3x2.Identity, CanvasGeometryCombine.Union))
         using (var all = cell.CombineWith(badge, Matrix3x2.Identity, CanvasGeometryCombine.Union))
         {
             RwSticker(ds, all, 9);
-            using var ob = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xFF, 0xC0, 0x9C), Color.FromArgb(255, 0xFF, 0x8A, 0x28)) { StartPoint = new Vector2(0, 64), EndPoint = new Vector2(0, 100) };
-            ds.FillGeometry(cell, ob);
+            using var ob = new CanvasLinearGradientBrush(dev, top, bot) { StartPoint = new Vector2(0, by), EndPoint = new Vector2(0, by + bh) };
+            if (chg) ds.FillGeometry(cell, ob);
+            else { ds.FillGeometry(nub, Color.FromArgb(255, 0xDC, 0xDC, 0xE0)); ds.FillGeometry(body, ob); }
             ds.FillGeometry(badge, RwWhite);
-            string pct = bat.HasBattery ? Math.Clamp(bat.Percent, 0, 100).ToString() : "AC";
             using var nf = new CanvasTextFormat { FontFamily = RwPoppinsXb, FontSize = pct.Length > 2 ? 18 : 24, FontWeight = new Windows.UI.Text.FontWeight(800), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
-            using var nb = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xFF, 0xBE, 0x95), Color.FromArgb(255, 0xFF, 0x8F, 0x30)) { StartPoint = new Vector2(0, 82), EndPoint = new Vector2(0, 100) };
-            ds.DrawText(pct, new Windows.Foundation.Rect(1614, 73, bat.Charging ? 38 : 44, 31), nb, nf);
-            if (bat.Charging)
+            using var nb = chg ? new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xFF, 0xBE, 0x95), Color.FromArgb(255, 0xFF, 0x8F, 0x30)) { StartPoint = new Vector2(0, 82), EndPoint = new Vector2(0, 100) }
+                               : new CanvasLinearGradientBrush(dev, top, bot) { StartPoint = new Vector2(0, 81), EndPoint = new Vector2(0, 98) };
+            var textBox = chg ? new Windows.Foundation.Rect(1614, 73, 38, 31) : new Windows.Foundation.Rect(gx, gy - 1, gw, gh);
+            ds.DrawText(pct, textBox, nb, nf);
+            if (chg)
             {
                 using var pb = new CanvasPathBuilder(dev);
                 pb.BeginFigure(1655.6f, 86); pb.AddLine(1650.2f, 92.4f); pb.AddLine(1653.6f, 92.4f); pb.AddLine(1651.8f, 96.8f); pb.AddLine(1657.4f, 90.2f); pb.AddLine(1654, 90.2f);
@@ -547,33 +577,61 @@ public sealed partial class WallStage
             using var ring = outer.CombineWith(inner, Matrix3x2.Identity, CanvasGeometryCombine.Exclude);
             ds.FillGeometry(ring, Color.FromArgb(102, 0xfa, 0xfa, 0xfa));
         }
+        // 主线：白色线条只画一次当遮罩，颜色是一块会转的线性渐变（合成器按显示刷新率转，界面线程不参与，不再一档一档地跳）
         rw.LineSurf ??= G.Surface(pw, ph);
-        foreach (var (v, s) in new[] { (rw.Glow, rw.GlowSurf), (rw.Line, rw.LineSurf), (rw.Rim, rw.RimSurf) })
+        using (var ds = CanvasComposition.CreateDrawingSession(rw.LineSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(R);
+            ds.DrawGeometry(path, Colors.White, RwSw, RwRoundStroke);
+        }
+        foreach (var (v, s) in new[] { (rw.Glow, rw.GlowSurf), (rw.Rim, rw.RimSurf) })
         {
             ((CompositionSurfaceBrush)v.Brush).Surface = s;
             v.Size = new Vector2(sw, shh);
         }
-        RwPaintCursorLine(page, 0);
+        rw.Line.Size = new Vector2(sw, shh);
+        rw.Line.Brush = RwFlowBrush(rw);
     }
 
-    /// <summary>主线：沿周长的两色渐变，颜色 = mix(色1, 色2, 0.5 − 0.5 cos 2π(s/P − 相位))。</summary>
-    private void RwPaintCursorLine(CsPage page, float phase)
+    /// <summary>
+    /// 流光：色2 亮带在一侧、色1 在对侧，中间按 0.5 − 0.5 cos 过渡（和规格里沿周长的公式同一条曲线），
+    /// 渐变方向绕中心顺时针转，1.8 s 一圈，连续不分档。
+    /// </summary>
+    private CompositionMaskBrush RwFlowBrush(RwChrome rw)
     {
-        var rw = page.Rw!;
-        if (rw.LineSurf == null) return;
-        float R = CsRaster;
-        var (segs, P) = RwBracketPoints();
-        using var ds = CanvasComposition.CreateDrawingSession(rw.LineSurf);
-        ds.Clear(Colors.Transparent);
-        ds.Transform = Matrix3x2.CreateScale(R);
-        foreach (var sg in segs)
-            for (int i = 1; i < sg.Count; i++)
-            {
-                var a = sg[i - 1]; var b = sg[i];
-                float t = 0.5f - 0.5f * MathF.Cos(2 * MathF.PI * ((a.Z + b.Z) / 2 / P - phase));
-                var col = Color.FromArgb(255, (byte)(RwC1.R + (RwC2.R - RwC1.R) * t), (byte)(RwC1.G + (RwC2.G - RwC1.G) * t), (byte)(RwC1.B + (RwC2.B - RwC1.B) * t));
-                ds.DrawLine(a.X, a.Y, b.X, b.Y, col, RwSw, RwRoundStroke);
-            }
+        var grad = G.C.CreateLinearGradientBrush();
+        Color Mix(float t) => Color.FromArgb(255, (byte)(RwC1.R + (RwC2.R - RwC1.R) * t), (byte)(RwC1.G + (RwC2.G - RwC1.G) * t), (byte)(RwC1.B + (RwC2.B - RwC1.B) * t));
+        for (int i = 0; i <= 8; i++)
+        {
+            float x = i / 8f, t = 0.5f + 0.5f * MathF.Cos(MathF.PI * x);
+            grad.ColorStops.Add(G.C.CreateColorGradientStop(x, Mix(t)));
+        }
+        rw.Flow = grad;
+        var props = G.C.CreatePropertySet();
+        props.InsertScalar("a", 0);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var start = G.C.CreateExpressionAnimation("Vector2(0.5 + 0.5 * Cos(p.a), 0.5 + 0.5 * Sin(p.a))");
+        start.SetReferenceParameter("p", props);
+        var end = G.C.CreateExpressionAnimation("Vector2(0.5 - 0.5 * Cos(p.a), 0.5 - 0.5 * Sin(p.a))");
+        end.SetReferenceParameter("p", props);
+        grad.StartAnimation("StartPoint", start);
+        grad.StartAnimation("EndPoint", end);
+        if (!Reduced)
+        {
+            var spin = G.C.CreateScalarKeyFrameAnimation();
+            spin.InsertKeyFrame(0, -MathF.PI / 2, G.Linear);
+            spin.InsertKeyFrame(1, -MathF.PI / 2 + 2 * MathF.PI, G.Linear);
+            spin.Duration = TimeSpan.FromMilliseconds(RwPeriodMs);
+            spin.IterationBehavior = AnimationIterationBehavior.Forever;
+            props.StartAnimation("a", spin);
+        }
+        else props.InsertScalar("a", -MathF.PI / 2);
+        rw.FlowProps = props;
+        var mask = G.C.CreateMaskBrush();
+        mask.Source = grad;
+        mask.Mask = G.C.CreateSurfaceBrush(rw.LineSurf);
+        return mask;
     }
 
     // ---------------- 排 ----------------
@@ -586,11 +644,13 @@ public sealed partial class WallStage
 
     private static float RwSlotX(int i, int scroll) => RwX + (i - scroll) * RwPitch;
 
-    private SpringVector3NaturalMotionAnimation RwSpring(Vector3 to)
+    /// <summary>临界阻尼弹簧。Cocoon：焦点框刚度 600（「默认」档），整排滚动用安卓默认的滚动弹簧（刚度 1500，更快）。</summary>
+    private SpringVector3NaturalMotionAnimation RwSpring(Vector3 to, float stiffness = 600)
     {
         var a = G.C.CreateSpringVector3Animation();
         a.DampingRatio = 1f;
-        a.Period = TimeSpan.FromSeconds(2 * Math.PI / Math.Sqrt(600));
+        // 合成器的弹簧 Period 实测按 ω = 1 / Period 算（录屏量出来的），不是 2π / Period
+        a.Period = TimeSpan.FromSeconds(1 / Math.Sqrt(stiffness));
         a.FinalValue = to;
         return a;
     }
@@ -600,7 +660,7 @@ public sealed partial class WallStage
         int n = CsCount(p), s = Math.Clamp(p.Sel, 0, n - 1);
         int scroll = RwScrollIndex(s, n);
         p.RailX = scroll;
-        int lo = Math.Max(0, scroll - 2), hi = Math.Min(n - 1, scroll + 7);
+        int lo = Math.Max(0, scroll - 4), hi = Math.Min(n - 1, scroll + 10);   // 两边多留几张：连按时不在屏幕边上现建现解码
         foreach (var gone in p.Cases.Keys.Where(i => i < lo || i > hi).ToList())
             if (p.Cases.Remove(gone, out var gc)) { p.Row!.Children.Remove(gc.Root); CsDisposeCase(gc); }
         bool move = animate && !Reduced;
@@ -620,7 +680,7 @@ public sealed partial class WallStage
             }
             c.Offset = off; c.Size = new Vector2(RwW, RwH);
             var scale = new Vector3(i == s ? RwFocus : 1, i == s ? RwFocus : 1, 1);
-            if (move) { c.Root.StartAnimation("Offset", RwSpring(off)); c.Root.StartAnimation("Scale", RwSpring(scale)); }
+            if (move) { c.Root.StartAnimation("Offset", RwSpring(off, 1500)); c.Root.StartAnimation("Scale", RwSpring(scale, 1500)); c.Root.StopAnimation("Opacity"); c.Root.Opacity = 1; }
             else
             {
                 c.Root.StopAnimation("Offset"); c.Root.StopAnimation("Scale");
@@ -636,8 +696,7 @@ public sealed partial class WallStage
                 else c.Root.Offset = off;
             }
         }
-        // 焦点那张放在最上层（放大后盖住左右邻居）
-        if (p.Cases.TryGetValue(s, out var sel)) { p.Row!.Children.Remove(sel.Root); p.Row.Children.InsertAtTop(sel.Root); }
+        // 不调整叠放顺序：放大 1.15 后每边只多出 21，卡距 50 碰不到邻居；把卡从树上摘下再挂回会打断它的动画（连按时卡片停在半路或消失）
         // 焦点框：中心对准焦点卡中心
         if (p.Rw is { } rw)
         {
