@@ -69,8 +69,6 @@ public sealed partial class WallStage
     }
 
     // 壁纸像素和最近一次读到的电量 / 网络在页面之间共用：切到 Steam / 本地页不用重新解码壁纸，面板一出来就是对的电量
-    private CanvasRenderTarget? _rwSharp, _rwSoft;
-    private CompositionDrawingSurface? _rwWallSurf;
     private string _rwWallKey = "";
     private BatteryState _rwBat;
     private SystemInfo.NetState _rwNet;
@@ -157,22 +155,67 @@ public sealed partial class WallStage
         return File.Exists(t) ? t : null;
     }
 
+    /// <summary>
+    /// 壁纸两种处理，按页面用：0 = 原样（首页）；1 = 网格页（Steam / 本地）用的「退后」版：大半径模糊 + 压暗 + 略去饱和，
+    /// 让封面网格从背景里跳出来（11-20 jinyu：网格页太满、看不过来）。都按壁纸路径 + 修改时间 + 缩放缓存，跨页面共用。
+    /// </summary>
+    private readonly Dictionary<int, (CanvasRenderTarget Sharp, CanvasRenderTarget Soft, CompositionDrawingSurface Surf)> _rwWall = new();
+
+    private void RwApplyWall(CsPage page, bool entry, int mode)
+    {
+        var rw = page.Rw!;
+        var w = _rwWall[mode];
+        rw.Sharp = w.Sharp; rw.Soft = w.Soft; rw.WallSurf = w.Surf;
+        rw.Wall.Brush = G.C.CreateSurfaceBrush(w.Surf);
+        try { if (!rw.Disposed) RwPaintPanels(page); } catch (Exception ex) { Log.Error("row panels", ex); }
+        CsBgReady(page, entry);
+    }
+
+    /// <summary>从原样那一份算出网格页的退后版：模糊 18、亮度 × 0.6、饱和 × 0.75。</summary>
+    private void RwDeriveDim()
+    {
+        var dev = G.Device;
+        var src = _rwWall[0].Sharp;
+        int pw = (int)src.SizeInPixels.Width, ph = (int)src.SizeInPixels.Height;
+        float R = pw / CsW;
+        var sharp = new CanvasRenderTarget(dev, pw, ph, 96);
+        using (var ds = sharp.CreateDrawingSession())
+        using (var blur = new GaussianBlurEffect { Source = src, BlurAmount = 18 * R, BorderMode = EffectBorderMode.Hard, Optimization = EffectOptimization.Quality })
+        using (var sat = new SaturationEffect { Source = blur, Saturation = 0.75f })
+        using (var dim = new ColorMatrixEffect { Source = sat, ColorMatrix = new Matrix5x4 { M11 = 0.6f, M22 = 0.6f, M33 = 0.6f, M44 = 1 } })
+            ds.DrawImage(dim);
+        var soft = new CanvasRenderTarget(dev, pw, ph, 96);
+        using (var ds = soft.CreateDrawingSession())
+        using (var blur = new GaussianBlurEffect { Source = sharp, BlurAmount = 3 * RwDp * R, BorderMode = EffectBorderMode.Hard, Optimization = EffectOptimization.Quality })
+            ds.DrawImage(blur);
+        var surf = G.Surface(pw, ph);
+        using (var ds = CanvasComposition.CreateDrawingSession(surf)) ds.DrawImage(sharp);
+        _rwWall[1] = (sharp, soft, surf);
+    }
+
     private void RwLoadWallpaper(CsPage page, bool entry)
     {
         var rw = page.Rw!;
+        int mode = page.Tab == 0 ? 0 : 1;
         string? path = RwWallpaperPath();
         var dev = G.Device;
         float R = CsRaster;
         rw.Raster = R;
         string key = $"{path}|{(path != null ? File.GetLastWriteTimeUtc(path).Ticks : 0)}|{R}";
-        if (key == _rwWallKey && _rwSharp != null && _rwSoft != null && _rwWallSurf != null)
+        if (key != _rwWallKey && _rwWall.Count > 0)
         {
-            rw.Sharp = _rwSharp; rw.Soft = _rwSoft; rw.WallSurf = _rwWallSurf;
-            rw.Wall.Brush = G.C.CreateSurfaceBrush(_rwWallSurf);
+            // 换了壁纸 / 缩放：旧的像素等离场页面淡完再释放
+            var old = _rwWall.Values.ToList();
+            _rwWall.Clear();
+            After(3000, () => { foreach (var o in old) { o.Sharp.Dispose(); o.Soft.Dispose(); o.Surf.Dispose(); } });
+        }
+        if (key == _rwWallKey && _rwWall.ContainsKey(0))
+        {
             _dq.TryEnqueue(() =>
             {
-                try { if (!rw.Disposed) RwPaintPanels(page); } catch (Exception ex) { Log.Error("row panels", ex); }
-                CsBgReady(page, entry);
+                if (rw.Disposed) return;
+                try { if (!_rwWall.ContainsKey(mode)) RwDeriveDim(); RwApplyWall(page, entry, mode); }
+                catch (Exception ex) { Log.Error("row wallpaper", ex); CsBgReady(page, entry); }
             });
             return;
         }
@@ -183,7 +226,7 @@ public sealed partial class WallStage
             {
                 if (path != null)
                 {
-                    // 拷到临时文件再读：壁纸可能正被资源管理器占着
+                    // 读进内存再解码：壁纸文件可能正被资源管理器占着
                     using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                     using var ms = new MemoryStream();
                     await fs.CopyToAsync(ms);
@@ -197,34 +240,34 @@ public sealed partial class WallStage
                 try
                 {
                     if (rw.Disposed) { bmp?.Dispose(); return; }
-                    int pw = (int)Math.Ceiling(CsW * R), ph = (int)Math.Ceiling(CsH * R);
-                    // 换了壁纸：旧的像素等离场页面淡完再释放
-                    var (o1, o2, o3) = (_rwSharp, _rwSoft, _rwWallSurf);
-                    if (o1 != null) After(3000, () => { o1.Dispose(); o2?.Dispose(); o3?.Dispose(); });
-                    rw.Sharp = new CanvasRenderTarget(dev, pw, ph, 96);
-                    rw.Soft = new CanvasRenderTarget(dev, pw, ph, 96);
-                    using (var ds = rw.Sharp.CreateDrawingSession())
+                    if (!_rwWall.ContainsKey(0))
                     {
-                        ds.Clear(Gfx.Rgba(0x1b, 0x1b, 0x22));
-                        if (bmp != null)
+                        int pw = (int)Math.Ceiling(CsW * R), ph = (int)Math.Ceiling(CsH * R);
+                        var sharp = new CanvasRenderTarget(dev, pw, ph, 96);
+                        var soft = new CanvasRenderTarget(dev, pw, ph, 96);
+                        using (var ds = sharp.CreateDrawingSession())
                         {
-                            double cover = Math.Max(pw / bmp.Bounds.Width, ph / bmp.Bounds.Height);
-                            var dest = new Windows.Foundation.Rect((pw - bmp.Bounds.Width * cover) / 2, (ph - bmp.Bounds.Height * cover) / 2, bmp.Bounds.Width * cover, bmp.Bounds.Height * cover);
-                            ds.DrawImage(bmp, dest, bmp.Bounds, 1, CanvasImageInterpolation.HighQualityCubic);
+                            ds.Clear(Gfx.Rgba(0x1b, 0x1b, 0x22));
+                            if (bmp != null)
+                            {
+                                double cover = Math.Max(pw / bmp.Bounds.Width, ph / bmp.Bounds.Height);
+                                var dest = new Windows.Foundation.Rect((pw - bmp.Bounds.Width * cover) / 2, (ph - bmp.Bounds.Height * cover) / 2, bmp.Bounds.Width * cover, bmp.Bounds.Height * cover);
+                                ds.DrawImage(bmp, dest, bmp.Bounds, 1, CanvasImageInterpolation.HighQualityCubic);
+                            }
                         }
+                        using (var ds = soft.CreateDrawingSession())
+                        using (var blur = new GaussianBlurEffect { Source = sharp, BlurAmount = 3 * RwDp * R, BorderMode = EffectBorderMode.Hard, Optimization = EffectOptimization.Quality })
+                            ds.DrawImage(blur);
+                        var surf = G.Surface(pw, ph);
+                        using (var ds = CanvasComposition.CreateDrawingSession(surf)) ds.DrawImage(sharp);
+                        _rwWall[0] = (sharp, soft, surf);
+                        _rwWallKey = key;
                     }
-                    using (var ds = rw.Soft.CreateDrawingSession())
-                    using (var blur = new GaussianBlurEffect { Source = rw.Sharp, BlurAmount = 3 * RwDp * R, BorderMode = EffectBorderMode.Hard, Optimization = EffectOptimization.Quality })
-                        ds.DrawImage(blur);
                     bmp?.Dispose();
-                    rw.WallSurf = G.Surface(pw, ph);
-                    using (var ds = CanvasComposition.CreateDrawingSession(rw.WallSurf)) ds.DrawImage(rw.Sharp);
-                    rw.Wall.Brush = G.C.CreateSurfaceBrush(rw.WallSurf);
-                    (_rwSharp, _rwSoft, _rwWallSurf, _rwWallKey) = (rw.Sharp, rw.Soft, rw.WallSurf, key);
-                    RwPaintPanels(page);
+                    if (!_rwWall.ContainsKey(mode)) RwDeriveDim();
+                    RwApplyWall(page, entry, mode);
                 }
-                catch (Exception ex) { Log.Error("row wallpaper paint", ex); }
-                CsBgReady(page, entry);
+                catch (Exception ex) { Log.Error("row wallpaper paint", ex); CsBgReady(page, entry); }
             });
         });
     }
@@ -441,13 +484,25 @@ public sealed partial class WallStage
                     break;
                 }
             }
-            if (rw.PanelFocus == i) RwMiniBrackets(ds, cx, cy, 70);
+            if (rw.PanelFocus == i) RwFocusCircle(ds, cx, cy, 34);
         }
     }
 
     private Microsoft.Graphics.Canvas.Svg.CanvasSvgDocument? _rwSteamSvg;
 
-    /// <summary>面板里的焦点：和封面焦点框同一种四角括号，缩小到图标大小（主题两色斜向渐变）。</summary>
+    /// <summary>面板里的焦点：圆环（11-20 jinyu：图标是圆的，圆环更合适）。主题两色斜向渐变 + 第二色光晕，线宽同封面焦点框。</summary>
+    private static void RwFocusCircle(CanvasDrawingSession ds, float cx, float cy, float r)
+    {
+        var dev = ds.Device;
+        using var glow = new CanvasCommandList(dev);
+        using (var g = glow.CreateDrawingSession()) g.DrawCircle(cx, cy, r, RwC2, RwSw * 1.6f);
+        using (var blur = new GaussianBlurEffect { Source = glow, BlurAmount = 4 * ds.Transform.M11 }) ds.DrawImage(blur);
+        using var br = new CanvasLinearGradientBrush(dev, RwC1, RwC2) { StartPoint = new Vector2(cx - r, cy - r), EndPoint = new Vector2(cx + r, cy + r) };
+        ds.DrawCircle(cx, cy, r, br, RwSw * 0.85f);
+        ds.DrawCircle(cx, cy, r + RwSw * 0.425f, Color.FromArgb(70, 0xfa, 0xfa, 0xfa), 1.2f);
+    }
+
+    /// <summary>（旧）面板里的焦点：和封面焦点框同一种四角括号，缩小到图标大小（主题两色斜向渐变）。</summary>
     private static void RwMiniBrackets(CanvasDrawingSession ds, float cx, float cy, float size)
     {
         var dev = ds.Device;
@@ -745,7 +800,8 @@ public sealed partial class WallStage
                 p.Row!.Children.InsertAtTop(c.Root);
             }
             c.Offset = off; c.Size = new Vector2(RwW, RwH);
-            var scale = new Vector3(i == s ? RwFocus : 1, i == s ? RwFocus : 1, 1);
+            bool big = i == s && (p.Rw?.PanelFocus ?? -1) < 0;   // 焦点在左上面板时卡片不放大
+            var scale = new Vector3(big ? RwFocus : 1, big ? RwFocus : 1, 1);
             if (move) { c.Root.StartAnimation("Offset", RwSpring(off, 1500)); c.Root.StartAnimation("Scale", RwSpring(scale, 1500)); c.Root.StopAnimation("Opacity"); c.Root.Opacity = 1; }
             else
             {
@@ -793,6 +849,7 @@ public sealed partial class WallStage
         rw.PanelFocus = Math.Max(0, Array.IndexOf(RwTabs, p.Tab));
         CuePan(-0.6f);
         RwCursorShow(p, false);
+        if (p.Cases.TryGetValue(p.Sel, out var c)) c.Root.StartAnimation("Scale", RwSpring(Vector3.One, 1500));
         RwPaintPanels(p);
     }
 
@@ -802,6 +859,7 @@ public sealed partial class WallStage
         rw.PanelFocus = -1;
         Cue(Sfx.Back);
         RwCursorShow(p, true);
+        if (p.Cases.TryGetValue(p.Sel, out var c)) c.Root.StartAnimation("Scale", RwSpring(new Vector3(RwFocus, RwFocus, 1), 1500));
         RwPaintPanels(p);
     }
 
@@ -873,9 +931,9 @@ public sealed partial class WallStage
 
     // ---------------- Steam / 本地页：竖封面网格 ----------------
 
-    // 8 列 196×294，列距 36、行距 44；第一行从面板下面开始；焦点行保持在第二行（第一行时就在第一行），三行一屏
-    private const int RgCols = 8;
-    private const float RgW = 196, RgH = 294, RgGapX = 36, RgGapY = 44, RgY0 = 186;
+    // 6 列 240×360，列距 52、行距 48（11-20 jinyu：8 列太满）；一屏两整行加第三行露头；焦点行保持在第二行
+    private const int RgCols = 6;
+    private const float RgW = 240, RgH = 360, RgGapX = 52, RgGapY = 48, RgY0 = 196;
     private static float RgX0 => (CsW - (RgCols * RgW + (RgCols - 1) * RgGapX)) / 2;
     private const float RgPitchY = RgH + RgGapY;
 
@@ -909,7 +967,7 @@ public sealed partial class WallStage
     private static int RgScrollRow(int s, int n)
     {
         int rows = (n + RgCols - 1) / RgCols;
-        return Math.Clamp(s / RgCols - 1, 0, Math.Max(0, rows - 3));
+        return Math.Clamp(s / RgCols - 1, 0, Math.Max(0, rows - 2));
     }
 
     private void RwLayoutGrid(CsPage p, bool animate, bool entry = false)
@@ -936,7 +994,8 @@ public sealed partial class WallStage
                 p.Row!.Children.InsertAtTop(c.Root);
             }
             c.Offset = off; c.Size = new Vector2(RgW, RgH);
-            var scale = new Vector3(i == s ? RwFocus : 1, i == s ? RwFocus : 1, 1);
+            bool big = i == s && (p.Rw?.PanelFocus ?? -1) < 0;   // 焦点在左上面板时卡片不放大
+            var scale = new Vector3(big ? RwFocus : 1, big ? RwFocus : 1, 1);
             if (move) { c.Root.StartAnimation("Offset", RwSpring(off, 1500)); c.Root.StartAnimation("Scale", RwSpring(scale, 1500)); c.Root.StopAnimation("Opacity"); c.Root.Opacity = 1; }
             else
             {
