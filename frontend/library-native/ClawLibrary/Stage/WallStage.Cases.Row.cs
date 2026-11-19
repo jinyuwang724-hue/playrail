@@ -640,7 +640,12 @@ public sealed partial class WallStage
     private static (List<List<Vector3>> Segs, float P) RwBracketPoints(float cw, float ch)
     {
         var (W, H, _, r, leg) = RwBracketGeom(cw, ch);
-        float x0 = RwCurPad, y0 = RwCurPad;
+        return RwBracketPointsRaw(W, H, r, leg, RwCurPad, RwCurPad);
+    }
+
+    /// <summary>任意矩形的四角括号采样点（菜单行、按钮也用这一套）：W×H 是线的中心框，r 圆角，leg 直腿长。</summary>
+    private static (List<List<Vector3>> Segs, float P) RwBracketPointsRaw(float W, float H, float r, float leg, float x0, float y0)
+    {
         float sx = W - 2 * r, sy = H - 2 * r, q = MathF.PI * r / 2, P = 2 * sx + 2 * sy + 4 * q;
         List<Vector3> Line(float ax, float ay, float bx, float by, float s0, float len)
         {

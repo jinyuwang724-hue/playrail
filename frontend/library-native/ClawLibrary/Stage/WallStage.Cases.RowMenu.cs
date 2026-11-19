@@ -1,0 +1,434 @@
+// 「单行」样式的游戏菜单（11-20 jinyu：照 Cocoon 的游戏菜单——卡片上按 Y 弹出）。
+// 整屏压暗，左边是这款游戏放大的封面和标题，右边一张白色圆角卡，一行一个操作：
+// 启动 / 编辑 / 游戏配置 / 打开本地文件 / 移除（红色）；焦点是同一套四角括号（流光、光晕、边光），上下移动时弹簧滑过去。
+// 编辑、游戏配置的二级页还在做：现在先进原来的游戏设置页（编辑 → 封面分类，游戏配置 → 画面分类）。
+using System.Numerics;
+using System.Text.Json.Nodes;
+using ClawLibrary.Data;
+using ClawLibrary.Engine;
+using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Brushes;
+using Microsoft.Graphics.Canvas.Effects;
+using Microsoft.Graphics.Canvas.Geometry;
+using Microsoft.Graphics.Canvas.Text;
+using Microsoft.Graphics.Canvas.UI.Composition;
+using Microsoft.UI;
+using Microsoft.UI.Composition;
+using Microsoft.UI.Xaml.Media;
+using Windows.UI;
+
+namespace ClawLibrary.Stage;
+
+public sealed partial class WallStage
+{
+    private sealed class RmState
+    {
+        public required ContainerVisual Root;
+        public required SpriteVisual Scrim, Card, Cover, Title, Glow, Line, Rim;
+        public required LibraryItem Item;
+        public required CsPage Page;
+        public CompositionDrawingSurface? CardSurf, TitleSurf, GlowSurf, LineSurf, RimSurf;
+        public LoadedImageSurface? CoverSurf;
+        public int Sel;
+        public bool Armed;   // 移除：按第一次变成「再按一次确认」
+        public bool Closing;
+    }
+
+    private RmState? _rm;
+
+    // 卡片几何（设计单位，1920×1200）：右边白卡 x 1260–1882，行高 117，行间 3 px 分隔线；左边封面 300×450
+    private const float RmCardX = 1260, RmCardW = 622, RmRowH = 117, RmSep = 3, RmCardR = 40;
+    private const float RmCoverW = 300, RmCoverH = 450, RmCoverCx = 640;
+    private static readonly string[] RmLabels = { "启动", "编辑", "游戏配置", "打开本地文件", "移除" };
+    private static float RmCardH => RmLabels.Length * RmRowH + (RmLabels.Length - 1) * RmSep;
+    private static float RmCardY => (CsH - RmCardH) / 2;
+    private static readonly Color RmInk = Color.FromArgb(255, 0x1E, 0x1E, 0x24), RmRed = Color.FromArgb(255, 0xF2, 0x4B, 0x5A);
+
+    private bool RmOpen => _rm is { Closing: false };
+
+    /// <summary>Y：焦点游戏的菜单（单行样式的首页和网格页）。</summary>
+    private void RmShow(CsPage p)
+    {
+        if (_cs == null || _rm != null || p.Rw is not { PanelFocus: < 0 }) { Cue(Sfx.Bump); return; }
+        var g = p.Sel < p.Items.Count ? p.Items[p.Sel] : null;
+        if (g == null) { Cue(Sfx.Bump); return; }
+        Cue(Sfx.MenuIn);
+        var root = G.Container(relative: false);
+        root.Size = new Vector2(CsW, CsH);
+        // 背后整屏模糊 + 压暗（Cocoon 的菜单背景是糊掉的）；合成器不支持就只压暗
+        var scrim = G.Sprite(G.Solid(Color.FromArgb(150, 8, 8, 14)), relative: false);
+        try
+        {
+            var blur = new GaussianBlurEffect { Name = "blur", BlurAmount = 28, BorderMode = EffectBorderMode.Hard, Source = new CompositionEffectSourceParameter("src") };
+            var tint = new ArithmeticCompositeEffect { MultiplyAmount = 0, Source1Amount = 0.55f, Source2Amount = 0.45f, Offset = 0, Source1 = blur, Source2 = new ColorSourceEffect { Color = Color.FromArgb(255, 10, 10, 16) } };
+            var eb = G.C.CreateEffectFactory(tint).CreateBrush();
+            eb.SetSourceParameter("src", G.C.CreateBackdropBrush());
+            scrim.Brush = eb;
+        }
+        catch (Exception ex) { Log.Warn($"menu backdrop: {ex.Message}"); }
+        scrim.Size = new Vector2(CsW, CsH);
+        SpriteVisual Sp() => G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+        var rm = new RmState { Root = root, Scrim = scrim, Card = Sp(), Cover = Sp(), Title = Sp(), Glow = Sp(), Line = Sp(), Rim = Sp(), Item = g, Page = p };
+        _rm = rm;
+        root.Children.InsertAtTop(scrim);
+        foreach (var v in new Visual[] { rm.Cover, rm.Title, rm.Card, rm.Glow, rm.Line, rm.Rim }) root.Children.InsertAtTop(v);
+        _cs.Root.Children.InsertAtTop(root);
+
+        // 封面：竖封面，圆角同卡片（宽 × 0.174），左半屏居中，标题在下面
+        string? art = g.Art is { } k ? (k.Has('q') ? k.File('q') : k.Has('p') ? k.File('p') : null) : null;
+        float R = CsRaster;
+        if (art != null)
+        {
+            rm.CoverSurf = Images.AcquireReuse(art, (int)Math.Ceiling(RmCoverW * R), (int)Math.Ceiling(RmCoverH * R));
+            var b = G.C.CreateSurfaceBrush(rm.CoverSurf);
+            b.Stretch = CompositionStretch.UniformToFill;
+            rm.Cover.Brush = b;
+        }
+        rm.Cover.Size = new Vector2(RmCoverW, RmCoverH);
+        float coverY = (CsH - RmCoverH) / 2 - 40;
+        rm.Cover.Offset = new Vector3(RmCoverCx - RmCoverW / 2, coverY, 0);
+        var rr = G.C.CreateRoundedRectangleGeometry();
+        rr.CornerRadius = new Vector2(RmCoverW * RwRound);
+        rr.Size = new Vector2(RmCoverW, RmCoverH);
+        rm.Cover.Clip = G.C.CreateGeometricClip(rr);
+        RmPaintTitle(rm, coverY + RmCoverH + 34);
+        RmPaintCard(rm);
+        RmPaintCursor(rm);
+        RmCursorTo(rm, move: false);
+
+        if (!Reduced)
+        {
+            root.Opacity = 0;
+            root.StartAnimation("Opacity", CsS(1, 220, CsQuart));
+            rm.Card.Offset += new Vector3(40, 0, 0);
+            var co = rm.Card.Offset - new Vector3(40, 0, 0);
+            rm.Card.StartAnimation("Offset", CsV3(co, 320, CsQuart));
+            rm.Cover.CenterPoint = new Vector3(RmCoverW / 2, RmCoverH / 2, 0);
+            rm.Cover.Scale = new Vector3(0.92f, 0.92f, 1);
+            rm.Cover.StartAnimation("Scale", RwSpring(Vector3.One, 600));
+        }
+    }
+
+    private void RmClose(bool instant = false)
+    {
+        if (_rm is not { } rm || rm.Closing) return;
+        rm.Closing = true;
+        void Drop()
+        {
+            if (_cs != null) _cs.Root.Children.Remove(rm.Root);
+            Images.Release(rm.CoverSurf);
+            foreach (var s in new[] { rm.CardSurf, rm.TitleSurf, rm.GlowSurf, rm.LineSurf, rm.RimSurf }) s?.Dispose();
+            rm.Root.Dispose();
+            if (_rm == rm) _rm = null;
+        }
+        if (instant || Reduced) { Drop(); return; }
+        rm.Root.StartAnimation("Opacity", CsS(0, 180, CsQuart));
+        After(200, Drop);
+    }
+
+    private void RmPaintTitle(RmState rm, float y)
+    {
+        var dev = G.Device;
+        float R = CsRaster, w = 760, h = 60;
+        rm.TitleSurf = G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(h * R));
+        using (var ds = CanvasComposition.CreateDrawingSession(rm.TitleSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(R);
+            using var f = new CanvasTextFormat { FontFamily = RmFont(rm.Item.Title), FontSize = 38, FontWeight = new Windows.UI.Text.FontWeight(500), HorizontalAlignment = CanvasHorizontalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character };
+            ds.DrawText(rm.Item.Title, new Windows.Foundation.Rect(0, 0, w, h), Color.FromArgb(255, 0xFA, 0xFA, 0xFA), f);
+        }
+        ((CompositionSurfaceBrush)rm.Title.Brush).Surface = rm.TitleSurf;
+        rm.Title.Size = new Vector2(w, h);
+        rm.Title.Offset = new Vector3(RmCoverCx - w / 2, y, 0);
+    }
+
+    /// <summary>中文用苹方，纯西文用 Poppins（和 Cocoon 一样的字形）。</summary>
+    private static string RmFont(string text) => text.Any(ch => ch >= 0x2E80) ? RwCjk : RwPoppins;
+
+    /// <summary>白卡：每行左边彩色贴纸图标、粗体字；移除是红色。编辑行尾有 Y 提示。</summary>
+    private void RmPaintCard(RmState rm)
+    {
+        var dev = G.Device;
+        float R = CsRaster, pad = 40, w = RmCardW + pad * 2, h = RmCardH + pad * 2;
+        rm.CardSurf ??= G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(h * R));
+        using (var ds = CanvasComposition.CreateDrawingSession(rm.CardSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(R);
+            using (var shadow = new CanvasCommandList(dev))
+            {
+                using (var s = shadow.CreateDrawingSession()) s.FillRoundedRectangle(pad, pad + 10, RmCardW, RmCardH, RmCardR, RmCardR, Colors.Black);
+                using var blur = new GaussianBlurEffect { Source = shadow, BlurAmount = 18 * R, BorderMode = EffectBorderMode.Soft };
+                using var op = new OpacityEffect { Source = blur, Opacity = 0.35f };
+                ds.Transform = Matrix3x2.Identity;
+                ds.DrawImage(op);
+                ds.Transform = Matrix3x2.CreateScale(R);
+            }
+            ds.FillRoundedRectangle(pad, pad, RmCardW, RmCardH, RmCardR, RmCardR, Color.FromArgb(255, 0xF7, 0xF8, 0xFA));
+            for (int i = 0; i < RmLabels.Length; i++)
+            {
+                float y = pad + i * (RmRowH + RmSep);
+                if (i > 0) ds.FillRectangle(pad, y - RmSep, RmCardW, RmSep, Color.FromArgb(255, 0xE6, 0xE8, 0xEC));
+                bool danger = i == RmLabels.Length - 1;
+                string label = danger && rm.Armed ? "再按一次确认移除" : RmLabels[i];
+                RmIcon(ds, i, pad + 62, y + RmRowH / 2);
+                using var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 38, VerticalAlignment = CanvasVerticalAlignment.Center };
+                ds.DrawText(label, new Windows.Foundation.Rect(pad + 112, y, RmCardW - 200, RmRowH), danger ? RmRed : RmInk, f);
+                if (i == 1) RmBadge(ds, pad + RmCardW - 58, y + RmRowH / 2, "Y");
+            }
+        }
+        ((CompositionSurfaceBrush)rm.Card.Brush).Surface = rm.CardSurf;
+        rm.Card.Size = new Vector2(w, h);
+        rm.Card.Offset = new Vector3(RmCardX - pad, RmCardY - pad, 0);
+    }
+
+    /// <summary>行尾的手柄键提示：灰色圆底白字（Cocoon 的 Y / R1 小圆章）。</summary>
+    private static void RmBadge(CanvasDrawingSession ds, float cx, float cy, string text)
+    {
+        ds.FillCircle(cx, cy, 21, Color.FromArgb(255, 0x8E, 0x90, 0x98));
+        using var f = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
+        ds.DrawText(text, new Windows.Foundation.Rect(cx - 21, cy - 21, 42, 42), Color.FromArgb(255, 0xF2, 0xF2, 0xF4), f);
+    }
+
+    /// <summary>每行的贴纸图标（主题色渐变 + 白描边；移除是红色）。</summary>
+    private void RmIcon(CanvasDrawingSession ds, int i, float cx, float cy)
+    {
+        var dev = ds.Device;
+        bool danger = i == RmLabels.Length - 1;
+        using var fill = danger ? new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xFF, 0x7A, 0x84), RmRed) { StartPoint = new Vector2(0, cy - 22), EndPoint = new Vector2(0, cy + 22) }
+                                : new CanvasLinearGradientBrush(dev, RwC1, RwC2) { StartPoint = new Vector2(0, cy - 22), EndPoint = new Vector2(0, cy + 22) };
+        CanvasGeometry geo;
+        switch (i)
+        {
+            case 0:
+            {
+                using var pb = new CanvasPathBuilder(dev);
+                pb.BeginFigure(cx - 13, cy - 19); pb.AddLine(cx + 19, cy); pb.AddLine(cx - 13, cy + 19); pb.EndFigure(CanvasFigureLoop.Closed);
+                using var tri = CanvasGeometry.CreatePath(pb);
+                geo = tri.Stroke(6, RwRoundStroke).CombineWith(tri, Matrix3x2.Identity, CanvasGeometryCombine.Union);
+                break;
+            }
+            case 1:
+            {
+                // 铅笔：斜着的圆角长条 + 笔尖
+                using var body = CanvasGeometry.CreateRoundedRectangle(dev, -6, -24, 12, 38, 4, 4);
+                using var pb = new CanvasPathBuilder(dev);
+                pb.BeginFigure(-6, 16); pb.AddLine(6, 16); pb.AddLine(0, 26); pb.EndFigure(CanvasFigureLoop.Closed);
+                using var tip = CanvasGeometry.CreatePath(pb);
+                using var pen = body.CombineWith(tip, Matrix3x2.Identity, CanvasGeometryCombine.Union);
+                geo = pen.Transform(Matrix3x2.CreateRotation(MathF.PI / 4) * Matrix3x2.CreateTranslation(cx, cy));
+                break;
+            }
+            case 2:
+            {
+                // 游戏配置：三条滑杆
+                CanvasGeometry? acc = null;
+                for (int k = 0; k < 3; k++)
+                {
+                    float yy = cy - 14 + k * 14, kx = cx + (k == 1 ? 8 : -8);
+                    using var bar = CanvasGeometry.CreateRoundedRectangle(dev, cx - 20, yy - 2.5f, 40, 5, 2.5f, 2.5f);
+                    using var knob = CanvasGeometry.CreateCircle(dev, kx, yy, 6.5f);
+                    var one = bar.CombineWith(knob, Matrix3x2.Identity, CanvasGeometryCombine.Union);
+                    if (acc == null) acc = one; else { var u = acc.CombineWith(one, Matrix3x2.Identity, CanvasGeometryCombine.Union); acc.Dispose(); one.Dispose(); acc = u; }
+                }
+                geo = acc!;
+                break;
+            }
+            case 3:
+            {
+                using var body = CanvasGeometry.CreateRoundedRectangle(dev, cx - 21, cy - 10, 42, 28, 6, 6);
+                using var tab = CanvasGeometry.CreateRoundedRectangle(dev, cx - 21, cy - 17, 19, 12, 4, 4);
+                geo = body.CombineWith(tab, Matrix3x2.Identity, CanvasGeometryCombine.Union);
+                break;
+            }
+            default:
+            {
+                // 垃圾桶：桶身 + 盖子 + 提手
+                using var can = CanvasGeometry.CreateRoundedRectangle(dev, cx - 14, cy - 9, 28, 29, 5, 5);
+                using var lid = CanvasGeometry.CreateRoundedRectangle(dev, cx - 19, cy - 16, 38, 6, 3, 3);
+                using var handle = CanvasGeometry.CreateRoundedRectangle(dev, cx - 6, cy - 21, 12, 7, 3, 3);
+                using var a = can.CombineWith(lid, Matrix3x2.Identity, CanvasGeometryCombine.Union);
+                geo = a.CombineWith(handle, Matrix3x2.Identity, CanvasGeometryCombine.Union);
+                break;
+            }
+        }
+        using (geo)
+        {
+            RwSticker(ds, geo, 9);
+            ds.FillGeometry(geo, fill);
+            if (i == 4)
+                for (int k = -1; k <= 1; k++) ds.FillRoundedRectangle(cx + k * 7 - 1.5f, cy - 3, 3, 17, 1.5f, 1.5f, Color.FromArgb(160, 255, 255, 255));
+        }
+    }
+
+    // ---------------- 焦点 ----------------
+
+    private const float RmCurPad = 44;
+
+    /// <summary>行的四角括号：线中心比行外扩 12，圆角 = 半个行高（括号是两端圆的胶囊形），直腿 31。</summary>
+    private static (float W, float H, float R, float Leg) RmBracketGeom()
+    {
+        float o = 12, W = RmCardW + o * 2, H = RmRowH + o * 2, r = H / 2;
+        float leg = MathF.Max(0, MathF.Min(18 * RwDp, (W - 2 * r) / 2 - 40));
+        return (W, H, r, leg);
+    }
+
+    private void RmPaintCursor(RmState rm)
+    {
+        var dev = G.Device;
+        float R = CsRaster;
+        var (W, H, r, leg) = RmBracketGeom();
+        float sw = W + RmCurPad * 2, sh = H + RmCurPad * 2;
+        int pw = (int)Math.Ceiling(sw * R), ph = (int)Math.Ceiling(sh * R);
+        var (segs, _) = RwBracketPointsRaw(W, H, r, leg, RmCurPad, RmCurPad);
+        using var path = RwBracketPath(dev, segs);
+        rm.GlowSurf = G.Surface(pw, ph);
+        using (var ds = CanvasComposition.CreateDrawingSession(rm.GlowSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            using var cl = new CanvasCommandList(ds);
+            using (var s = cl.CreateDrawingSession()) { s.Transform = Matrix3x2.CreateScale(R); s.DrawGeometry(path, RwC2, RwSw * 2, RwRoundStroke); }
+            using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 7 * RwDp * R / 2, BorderMode = EffectBorderMode.Soft };
+            ds.DrawImage(blur);
+        }
+        rm.RimSurf = G.Surface(pw, ph);
+        using (var ds = CanvasComposition.CreateDrawingSession(rm.RimSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(R);
+            using var outer = path.Stroke(RwSw + 2 * RwDp, RwRoundStroke);
+            using var inner = path.Stroke(MathF.Max(0.1f, RwSw - 2 * RwDp), RwRoundStroke);
+            using var ring = outer.CombineWith(inner, Matrix3x2.Identity, CanvasGeometryCombine.Exclude);
+            ds.FillGeometry(ring, Color.FromArgb(102, 0xfa, 0xfa, 0xfa));
+        }
+        rm.LineSurf = G.Surface(pw, ph);
+        using (var ds = CanvasComposition.CreateDrawingSession(rm.LineSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(R);
+            ds.DrawGeometry(path, Colors.White, RwSw, RwRoundStroke);
+        }
+        ((CompositionSurfaceBrush)rm.Glow.Brush).Surface = rm.GlowSurf;
+        ((CompositionSurfaceBrush)rm.Rim.Brush).Surface = rm.RimSurf;
+        rm.Line.Brush = RwFlowBrush(rm.Page.Rw!, rm.LineSurf);
+        foreach (var v in new Visual[] { rm.Glow, rm.Line, rm.Rim }) v.Size = new Vector2(sw, sh);
+    }
+
+    private void RmCursorTo(RmState rm, bool move)
+    {
+        var (W, H, _, _) = RmBracketGeom();
+        float rowY = RmCardY + rm.Sel * (RmRowH + RmSep);
+        var to = new Vector3(RmCardX + RmCardW / 2 - W / 2 - RmCurPad, rowY + RmRowH / 2 - H / 2 - RmCurPad, 0);
+        foreach (var v in new Visual[] { rm.Glow, rm.Line, rm.Rim })
+        {
+            if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else { v.StopAnimation("Offset"); v.Offset = to; }
+        }
+    }
+
+    // ---------------- 输入 ----------------
+
+    private void RmMove(Direction dir)
+    {
+        if (_rm is not { } rm || rm.Closing) return;
+        if (dir is Direction.Left or Direction.Right) { Cue(Sfx.Bump); return; }
+        int j = rm.Sel + (dir == Direction.Down ? 1 : -1);
+        if (j < 0 || j >= RmLabels.Length) { Cue(Sfx.Bump); return; }
+        CuePan(0);
+        rm.Sel = j;
+        if (rm.Armed) { rm.Armed = false; RmPaintCard(rm); }
+        RmCursorTo(rm, move: true);
+    }
+
+    private void RmActivate()
+    {
+        if (_rm is not { } rm || rm.Closing) return;
+        var g = rm.Item;
+        var p = rm.Page;
+        switch (rm.Sel)
+        {
+            case 0:
+                RmClose(instant: true);
+                RwActivate(p);
+                return;
+            case 1:
+                RmClose();
+                // TODO(二级页)：编辑元数据 / 封面管理。先进原来的游戏设置页的封面分类
+                CsOpenGameSettings(g);
+                _stCat = Array.IndexOf(GsCats, "封面");
+                Repaint();
+                return;
+            case 2:
+                RmClose();
+                CsOpenGameSettings(g);
+                _stCat = Array.IndexOf(GsCats, "画面");
+                Repaint();
+                return;
+            case 3:
+                Cue(Sfx.Activate);
+                _ = RmOpenFolder(g);
+                return;
+            default:
+                if (!rm.Armed) { rm.Armed = true; Cue(Sfx.Error); RmPaintCard(rm); return; }
+                RmClose();
+                _ = RmRemove(g);
+                return;
+        }
+    }
+
+    /// <summary>菜单开着时按 Y：直接进「编辑」（Cocoon 的编辑行尾就是 Y）。</summary>
+    private void RmActivateY()
+    {
+        if (_rm is not { } rm || rm.Closing) return;
+        rm.Sel = 1;
+        RmActivate();
+    }
+
+    private bool RmBack()
+    {
+        if (_rm is not { } rm || rm.Closing) return false;
+        Cue(Sfx.MenuOut);
+        RmClose();
+        return true;
+    }
+
+    /// <summary>打开本地文件：问后台这款游戏的安装目录 / 程序位置，用资源管理器打开。</summary>
+    private async Task RmOpenFolder(LibraryItem g)
+    {
+        try
+        {
+            _agent ??= new AgentClient();
+            var req = new JsonObject { ["id"] = g.Id, ["platform"] = g.Platform, ["title"] = g.Title };
+            if (await _agent.CallLong("game_settings_get", 30, req) is JsonObject s)
+            {
+                string? folder = Str(s["folder"]), exe = Str(s["exe"]);
+                if (!string.IsNullOrEmpty(folder) && Directory.Exists(folder)) { SystemInfo.Open("explorer.exe", $"\"{folder}\""); return; }
+                if (!string.IsNullOrEmpty(exe) && File.Exists(exe)) { SystemInfo.Open("explorer.exe", $"/select,\"{exe}\""); return; }
+            }
+            Toast("找不到这款游戏的文件");
+        }
+        catch (Exception ex) { Log.Warn($"open folder {g.Id}: {ex.Message}"); Toast("没读到游戏位置"); }
+    }
+
+    /// <summary>移除：本地游戏从游戏库删掉记录（不删文件）；Steam 游戏在库中隐藏（和 Steam 里「隐藏此游戏」一样）。</summary>
+    private async Task RmRemove(LibraryItem g)
+    {
+        try
+        {
+            _agent ??= new AgentClient();
+            if (g.Platform == "steam")
+            {
+                var req = new JsonObject { ["id"] = g.Id, ["platform"] = g.Platform, ["title"] = g.Title };
+                await _agent.CallLong("game_settings_set", 40, req, JsonValue.Create("hidden"), JsonValue.Create(true));
+                Toast($"已在游戏库中隐藏「{g.Title}」");
+            }
+            else
+            {
+                await _agent.Call("local_games_remove", JsonValue.Create(g.Id));
+                Toast($"已移除「{g.Title}」");
+            }
+            await LgRefresh();
+        }
+        catch (Exception ex) { Toast(ex.Message.Contains("不支持的后台调用") ? "工具箱后台版本太旧" : $"没有移除：{ex.Message}"); }
+    }
+}

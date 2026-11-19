@@ -57,6 +57,10 @@ public sealed partial class WallStage
             Move(Direction.Down); await Task.Delay(400); Move(Direction.Down); await Task.Delay(400);
             Move(Direction.Right); await Task.Delay(400); Move(Direction.Right); await Still("steam-grid");
             Back(); await Task.Delay(1200); await Still("back-home");
+            // 游戏菜单：Y 打开，往下两行，B 关
+            CsGameSettings(); await Still("menu");
+            Move(Direction.Down); await Task.Delay(250); Move(Direction.Down); await Still("menu2");
+            Back(); await Task.Delay(600);
         }
         catch (Exception ex) { Log.Error("recrow", ex); }
         if (_cs != null && style != HomeStyle.Row) { SaveUi(_prefs with { Home = style }); CsMorphStyle(); }

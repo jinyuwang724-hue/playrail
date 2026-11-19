@@ -510,7 +510,7 @@ public sealed partial class WallStage
 
     private void CsSwitchTab(int delta)
     {
-        if (_cs == null || _csInsert != null) { Cue(Sfx.None); return; }
+        if (_cs == null || _csInsert != null || _rm != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) CsCloseSearch();
         var tabs = CsTabsShown();
         int at = Math.Max(0, tabs.IndexOf(_cs.Tab));
@@ -1397,6 +1397,7 @@ public sealed partial class WallStage
     {
         if (_cs?.Page is not { } p || _csInsert != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) { Cue(Sfx.None); return; }
+        if (_rm != null) { RmMove(dir); return; }
         if (p.Style == HomeStyle.Row) { RwMove(p, dir); return; }
         if (p.Tab == 0) CsHomeMove(p, dir); else CsCatMove(p, dir);
     }
@@ -1562,6 +1563,7 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return;
         if (_csInsert != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) { if (_csSearchBox?.Text.Trim().Length > 0) CsSubmitSearch(); else CsFocusSearchBox(); return; }
+        if (_rm != null) { RmActivate(); return; }
         if (p.Style == HomeStyle.Row) { RwActivate(p); return; }
         if (p.Tab == 0)
         {
@@ -1610,6 +1612,7 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return false;
         if (_csInsert != null) { CsInsertBack(); return true; }
         if (_csSearchOpen) { CsCloseSearch(); return true; }
+        if (_rm != null) return RmBack();
         if (p.Style == HomeStyle.Row && p.Rw is { PanelFocus: >= 0 }) { RwPanelLeave(p); return true; }
         if (p.Tab != 0)
         {
@@ -1627,6 +1630,7 @@ public sealed partial class WallStage
     private void CsGameSettings()
     {
         if (_csInsert != null) return;
+        if (_cs?.Page is { Style: HomeStyle.Row } rp) { if (_rm != null) RmActivateY(); else RmShow(rp); return; }
         var g = CsSpotItem();
         if (g == null) { Cue(Sfx.Bump); return; }
         CsOpenGameSettings(g);
