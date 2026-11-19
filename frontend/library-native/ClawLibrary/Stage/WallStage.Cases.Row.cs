@@ -49,7 +49,8 @@ public sealed partial class WallStage
     private sealed class RwChrome
     {
         public required ContainerVisual Root;
-        public required SpriteVisual Wall, PanelL, PanelR, More, Glow, Line, Rim;
+        public required SpriteVisual Wall, PanelL, PanelR, More, Glow, Line, Rim, RGlow, RLine, RRim;
+        public CompositionDrawingSurface? RGlowSurf, RLineSurf, RRimSurf;
         public CanvasRenderTarget? Sharp, Soft;   // 壁纸原图 / 模糊后的像素（画面板用）
         public CompositionDrawingSurface? WallSurf, LSurf, RSurf, MoreSurf, GlowSurf, LineSurf, RimSurf;
         public DispatcherQueueTimer? Tick;
@@ -86,7 +87,7 @@ public sealed partial class WallStage
         wall.Size = new Vector2(CsW, CsH);
         root.Children.InsertAtTop(wall);
         SpriteVisual Sp() { var s = G.Sprite(G.C.CreateSurfaceBrush(), relative: false); return s; }
-        var rw = new RwChrome { Root = root, Wall = wall, PanelL = Sp(), PanelR = Sp(), More = Sp(), Glow = Sp(), Line = Sp(), Rim = Sp() };
+        var rw = new RwChrome { Root = root, Wall = wall, PanelL = Sp(), PanelR = Sp(), More = Sp(), Glow = Sp(), Line = Sp(), Rim = Sp(), RGlow = Sp(), RLine = Sp(), RRim = Sp() };
         rw.Bat = _rwBat; rw.Net = _rwNet;
         page.Rw = rw;
         RwLoadWallpaper(page, entry);
@@ -97,9 +98,19 @@ public sealed partial class WallStage
     private void RwAttach(CsPage page)
     {
         if (page.Rw is not { } rw) return;
-        foreach (var v in new Visual[] { rw.PanelL, rw.PanelR }) page.Content.Children.InsertAtTop(v);
+        // 面板和图标焦点放在背景层：切页时页面内容会左右滑，背景层只淡入淡出，面板位置纹丝不动
+        foreach (var v in new Visual[] { rw.PanelL, rw.PanelR, rw.RGlow, rw.RLine, rw.RRim }) rw.Root.Children.InsertAtTop(v);
+        RwPaintRing(rw);
         foreach (var v in new Visual[] { rw.Glow, rw.Line, rw.Rim }) page.Content.Children.InsertAtTop(v);
-        if (_rwPanelNext) { _rwPanelNext = false; rw.PanelFocus = Math.Max(0, Array.IndexOf(RwTabs, page.Tab)); }
+        if (_rwPanelNext)
+        {
+            _rwPanelNext = false;
+            rw.PanelFocus = Math.Max(0, Array.IndexOf(RwTabs, page.Tab));
+            // 圆环从上一页按下时所在的图标滑到新页签的图标
+            if (_rwRingFrom is { } from) foreach (var v in new Visual[] { rw.RGlow, rw.RLine, rw.RRim }) v.Offset = new Vector3(from.X - RwRingSize / 2, from.Y - RwRingSize / 2, 0);
+            RwRingTo(rw, rw.PanelFocus, show: true, move: _rwRingFrom != null);
+            _rwRingFrom = null;
+        }
         RwPaintCursorStatic(page);
         if (rw.PanelFocus >= 0) foreach (var v in new Visual[] { rw.Glow, rw.Line, rw.Rim }) v.Opacity = 0;
         rw.Tick = _dq.CreateTimer();
@@ -115,7 +126,7 @@ public sealed partial class WallStage
         rw.Disposed = true;
         rw.Tick?.Stop();
         // 壁纸像素是共用缓存（_rwSharp / _rwSoft / _rwWallSurf），不在这里释放
-        foreach (var s in new[] { rw.LSurf, rw.RSurf, rw.MoreSurf, rw.GlowSurf, rw.LineSurf, rw.RimSurf }) s?.Dispose();
+        foreach (var s in new[] { rw.LSurf, rw.RSurf, rw.MoreSurf, rw.GlowSurf, rw.LineSurf, rw.RimSurf, rw.RGlowSurf, rw.RLineSurf, rw.RRimSurf }) s?.Dispose();
     }
 
     /// <summary>
@@ -278,7 +289,7 @@ public sealed partial class WallStage
     {
         var b = rw.Bat; var n = rw.Net;
         var now = DateTime.Now;
-        return $"{_cs?.Tab}|{rw.PanelFocus}|{now:hh:mm tt}|{b.Percent}|{b.Charging}|{n.Online}|{n.Wlan}|{_railModel.Avatar != null}|{CsRaster}";
+        return $"{_cs?.Tab}|{now:hh:mm tt}|{b.Percent}|{b.Charging}|{n.Online}|{n.Wlan}|{_railModel.Avatar != null}|{CsRaster}";
     }
 
     private static string RwClock(DateTime t) => $"{(t.Hour % 12 == 0 ? 12 : t.Hour % 12)}:{t.Minute:00}";
@@ -322,7 +333,7 @@ public sealed partial class WallStage
         int y1 = Math.Min((int)rw.Sharp.SizeInPixels.Height, (int)Math.Ceiling((p.Y + p.H + pad) * R));
         int w = x1 - x0, h = y1 - y0;
         if (w <= 0 || h <= 0) return;
-        byte[] sharp = rw.Sharp.GetPixelBytes(x0, y0, w, h), soft = rw.Soft!.GetPixelBytes(x0, y0, w, h);
+        byte[] soft = rw.Soft!.GetPixelBytes(x0, y0, w, h);
         var outPx = new byte[w * h * 4];
         Vector2 hs = new(p.W / 2, p.H / 2), c = new(p.X + hs.X, p.Y + hs.Y);
         float rad = p.R;
@@ -334,15 +345,17 @@ public sealed partial class WallStage
             int k = (j * w + i) * 4;
             var pt = new Vector2((x0 + i + 0.5f) / R, (y0 + j + 0.5f) / R);
             float best = Sd(pt - c, hs, rad);
-            // BGRA
-            float b = sharp[k] / 255f, g = sharp[k + 1] / 255f, r = sharp[k + 2] / 255f;
-            if (p.Kind == 0 && best > -1)
+            // 输出是预乘 BGRA：面板外面只有投影（黑色半透明，压暗下面真实的背景，不烤背景像素进来——
+            // 否则切页时这圈边会带着上一页的背景，显出一块矩形）；面板里面是不透明的磨砂。
+            float shadeA = 0;
+            if (p.Kind == 0)
             {
                 float s = Sd(pt - c - new Vector2(0, 6), hs - new Vector2(3), MathF.Max(rad - 3, 0));
-                float sh = 1 - 0.22f * MathF.Pow(1 - Sst(-2, 12, s), 2);
-                sh *= 1 - 0.03f * MathF.Exp(-MathF.Max(best, 0) * 1.2f);
-                r *= sh; g *= sh; b *= sh;
+                float m = 1 - 0.22f * MathF.Pow(1 - Sst(-2, 12, s), 2);
+                m *= 1 - 0.03f * MathF.Exp(-MathF.Max(best, 0) * 1.2f);
+                shadeA = 1 - m;
             }
+            float r = 0, g = 0, b = 0, a = shadeA;
             if (best < 0.5f / R + 0.5f)
             {
                 float cover = Math.Clamp(0.5f - best * R, 0, 1);
@@ -368,12 +381,13 @@ public sealed partial class WallStage
                 {
                     gr += (0.43f - gr) * 0.2f; gg += (0.43f - gg) * 0.2f; gb += (0.49f - gb) * 0.2f;
                 }
-                r += (gr - r) * cover; g += (gg - g) * cover; b += (gb - b) * cover;
+                r = gr * cover; g = gg * cover; b = gb * cover;
+                a = cover + (1 - cover) * shadeA;
             }
             outPx[k] = (byte)Math.Clamp(b * 255 + 0.5f, 0, 255);
             outPx[k + 1] = (byte)Math.Clamp(g * 255 + 0.5f, 0, 255);
             outPx[k + 2] = (byte)Math.Clamp(r * 255 + 0.5f, 0, 255);
-            outPx[k + 3] = 255;
+            outPx[k + 3] = (byte)Math.Clamp(a * 255 + 0.5f, 0, 255);
         }
         using var bmp = CanvasBitmap.CreateFromBytes(dev, outPx, w, h, Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized, 96);
         if (surf == null || (int)surf.Size.Width != w || (int)surf.Size.Height != h) { surf?.Dispose(); surf = G.Surface(w, h); }
@@ -484,7 +498,6 @@ public sealed partial class WallStage
                     break;
                 }
             }
-            if (rw.PanelFocus == i) RwFocusCircle(ds, cx, cy, 34);
         }
     }
 
@@ -712,14 +725,14 @@ public sealed partial class WallStage
             v.Size = new Vector2(sw, shh);
         }
         rw.Line.Size = new Vector2(sw, shh);
-        rw.Line.Brush = RwFlowBrush(rw);
+        rw.Line.Brush = RwFlowBrush(rw, rw.LineSurf);
     }
 
     /// <summary>
     /// 流光：色2 亮带在一侧、色1 在对侧，中间按 0.5 − 0.5 cos 过渡（和规格里沿周长的公式同一条曲线），
     /// 渐变方向绕中心顺时针转，1.8 s 一圈，连续不分档。
     /// </summary>
-    private CompositionMaskBrush RwFlowBrush(RwChrome rw)
+    private CompositionMaskBrush RwFlowBrush(RwChrome rw, CompositionDrawingSurface maskSurf)
     {
         var grad = G.C.CreateLinearGradientBrush();
         Color Mix(float t) => Color.FromArgb(255, (byte)(RwC1.R + (RwC2.R - RwC1.R) * t), (byte)(RwC1.G + (RwC2.G - RwC1.G) * t), (byte)(RwC1.B + (RwC2.B - RwC1.B) * t));
@@ -751,7 +764,7 @@ public sealed partial class WallStage
         rw.FlowProps = props;
         var mask = G.C.CreateMaskBrush();
         mask.Source = grad;
-        mask.Mask = G.C.CreateSurfaceBrush(rw.LineSurf);
+        mask.Mask = G.C.CreateSurfaceBrush(maskSurf);
         return mask;
     }
 
@@ -849,18 +862,18 @@ public sealed partial class WallStage
         rw.PanelFocus = Math.Max(0, Array.IndexOf(RwTabs, p.Tab));
         CuePan(-0.6f);
         RwCursorShow(p, false);
+        RwRingTo(rw, rw.PanelFocus, show: true, move: false);
         if (p.Cases.TryGetValue(p.Sel, out var c)) c.Root.StartAnimation("Scale", RwSpring(Vector3.One, 1500));
-        RwPaintPanels(p);
     }
 
     private void RwPanelLeave(CsPage p)
     {
         if (p.Rw is not { } rw || rw.PanelFocus < 0) return;
+        RwRingTo(rw, rw.PanelFocus, show: false, move: false);
         rw.PanelFocus = -1;
         Cue(Sfx.Back);
         RwCursorShow(p, true);
         if (p.Cases.TryGetValue(p.Sel, out var c)) c.Root.StartAnimation("Scale", RwSpring(new Vector3(RwFocus, RwFocus, 1), 1500));
-        RwPaintPanels(p);
     }
 
     private void RwCursorShow(CsPage p, bool on)
@@ -882,7 +895,7 @@ public sealed partial class WallStage
                 if (at < 0 || at >= shown.Count) { Cue(Sfx.Bump, pan: dir == Direction.Left ? -0.6f : 0.6f); return; }
                 rw.PanelFocus = Array.IndexOf(RwTabs, shown[at]);
                 CuePan(dir == Direction.Left ? -0.4f : 0.4f);
-                RwPaintPanels(p);
+                RwRingTo(rw, rw.PanelFocus, show: true, move: true);
                 return;
             }
             if (dir == Direction.Down && n > 0) { RwPanelLeave(p); return; }
@@ -920,6 +933,7 @@ public sealed partial class WallStage
             int tab = RwTabs[rw.PanelFocus];
             if (tab == p.Tab) { RwPanelLeave(p); return; }
             _rwPanelNext = true;
+            _rwRingFrom = new Vector2(RwTabX0 + rw.PanelFocus * RwTabPitch, RwTabY);
             CsGoTab(tab);
             return;
         }
@@ -931,9 +945,9 @@ public sealed partial class WallStage
 
     // ---------------- Steam / 本地页：竖封面网格 ----------------
 
-    // 6 列 240×360，列距 52、行距 48（11-20 jinyu：8 列太满）；一屏两整行加第三行露头；焦点行保持在第二行
+    // 6 列 264×396，列距 52、行距 48；左右边缘对齐左上 / 右上面板的外边（x 38 – 1882，11-20 jinyu）；一屏两整行加第三行露头；焦点行保持在第二行
     private const int RgCols = 6;
-    private const float RgW = 240, RgH = 360, RgGapX = 52, RgGapY = 48, RgY0 = 196;
+    private const float RgW = 264, RgH = 396, RgGapX = 52, RgGapY = 48, RgY0 = 196;
     private static float RgX0 => (CsW - (RgCols * RgW + (RgCols - 1) * RgGapX)) / 2;
     private const float RgPitchY = RgH + RgGapY;
 
@@ -953,6 +967,7 @@ public sealed partial class WallStage
         var grid = G.Container(relative: false);
         grid.Size = new Vector2(CsW, CsH);
         content.Children.InsertAtTop(grid);
+        grid.Clip = G.C.CreateInsetClip(0, 150, 0, 0);   // 往上滚走的卡从面板下面那条线消失，不压在面板上
         page.Row = grid;
         int k = spot == null ? -1 : items.FindIndex(g => g.Id == spot);
         page.Sel = page.Prev = page.Ai = Math.Max(0, k);
@@ -1025,5 +1040,73 @@ public sealed partial class WallStage
             }
         }
         p.Prev = s;
+    }
+
+    // ---------------- 左上图标的焦点：断开的圆环 ----------------
+
+    // Cocoon 在圆按钮上的焦点：同一套四角括号变成圆，被上下左右四个缺口分成四段弧（jinyu 11-20 截图）。
+    // 线宽、光晕、边光、流光都和封面焦点框一样；只是画在图标外面一圈，焦点左右移动时弹簧滑过去。
+    private const float RwRingR = 36, RwRingPad = 30, RwRingSpan = 52;   // 每段弧 52°，缺口 38°
+    private static float RwRingSize => (RwRingR + RwRingPad) * 2;
+    private Vector2? _rwRingFrom;
+
+    private static Vector3 RwRingOffset(int i) => new(RwTabX0 + i * RwTabPitch - RwRingSize / 2, RwTabY - RwRingSize / 2, 0);
+
+    private void RwPaintRing(RwChrome rw)
+    {
+        var dev = G.Device;
+        float R = CsRaster, S = RwRingSize, c = S / 2;
+        int px = (int)Math.Ceiling(S * R);
+        using var pb = new CanvasPathBuilder(dev);
+        for (int k = 0; k < 4; k++)
+        {
+            float mid = MathF.PI / 4 + k * MathF.PI / 2, half = RwRingSpan * MathF.PI / 360;
+            pb.BeginFigure(c + RwRingR * MathF.Cos(mid - half), c + RwRingR * MathF.Sin(mid - half));
+            pb.AddArc(new Vector2(c + RwRingR * MathF.Cos(mid + half), c + RwRingR * MathF.Sin(mid + half)), RwRingR, RwRingR, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
+            pb.EndFigure(CanvasFigureLoop.Open);
+        }
+        using var path = CanvasGeometry.CreatePath(pb);
+        rw.RGlowSurf ??= G.Surface(px, px);
+        using (var ds = CanvasComposition.CreateDrawingSession(rw.RGlowSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            using var cl = new CanvasCommandList(ds);
+            using (var s = cl.CreateDrawingSession()) { s.Transform = Matrix3x2.CreateScale(R); s.DrawGeometry(path, RwC2, RwSw * 2, RwRoundStroke); }
+            using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 7 * RwDp * R / 2, BorderMode = EffectBorderMode.Soft };
+            ds.DrawImage(blur);
+        }
+        rw.RRimSurf ??= G.Surface(px, px);
+        using (var ds = CanvasComposition.CreateDrawingSession(rw.RRimSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(R);
+            using var outer = path.Stroke(RwSw + 2 * RwDp, RwRoundStroke);
+            using var inner = path.Stroke(MathF.Max(0.1f, RwSw - 2 * RwDp), RwRoundStroke);
+            using var ring = outer.CombineWith(inner, Matrix3x2.Identity, CanvasGeometryCombine.Exclude);
+            ds.FillGeometry(ring, Color.FromArgb(102, 0xfa, 0xfa, 0xfa));
+        }
+        rw.RLineSurf ??= G.Surface(px, px);
+        using (var ds = CanvasComposition.CreateDrawingSession(rw.RLineSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(R);
+            ds.DrawGeometry(path, Colors.White, RwSw, RwRoundStroke);
+        }
+        ((CompositionSurfaceBrush)rw.RGlow.Brush).Surface = rw.RGlowSurf;
+        ((CompositionSurfaceBrush)rw.RRim.Brush).Surface = rw.RRimSurf;
+        rw.RLine.Brush = RwFlowBrush(rw, rw.RLineSurf);
+        foreach (var v in new Visual[] { rw.RGlow, rw.RLine, rw.RRim }) { v.Size = new Vector2(S, S); v.Opacity = 0; }
+    }
+
+    /// <summary>圆环显示 / 隐藏、移到第 i 个图标（move = 弹簧滑过去，否则直接到位）。</summary>
+    private void RwRingTo(RwChrome rw, int i, bool show, bool move)
+    {
+        var to = RwRingOffset(Math.Max(0, i));
+        foreach (var v in new Visual[] { rw.RGlow, rw.RLine, rw.RRim })
+        {
+            if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else { v.StopAnimation("Offset"); v.Offset = to; }
+            v.StopAnimation("Opacity");
+            v.StartAnimation("Opacity", CsS(show ? 1 : 0, CsMs(160), CsQuart));
+        }
     }
 }

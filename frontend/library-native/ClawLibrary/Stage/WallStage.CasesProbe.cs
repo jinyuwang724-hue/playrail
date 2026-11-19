@@ -45,7 +45,15 @@ public sealed partial class WallStage
             // 左上面板：↑ 进面板，→ 到 Steam，A 切过去；网格里走几步；B 回首页
             Move(Direction.Up); await Still("panel");
             Move(Direction.Right); await Task.Delay(300);
-            Activate(); await Task.Delay(1200); await Still("steam");
+            var sw = new FrameRecorder();
+            if (sw.Start(HostWindow))
+            {
+                long m2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                Activate(); await Task.Delay(900);
+                Log.Info($"recrow switch: {await sw.StopAndSaveAsync(Path.Combine(dir, "row-switch"), m2)} frames");
+            }
+            else { Activate(); await Task.Delay(1200); }
+            await Still("steam");
             Move(Direction.Down); await Task.Delay(400); Move(Direction.Down); await Task.Delay(400);
             Move(Direction.Right); await Task.Delay(400); Move(Direction.Right); await Still("steam-grid");
             Back(); await Task.Delay(1200); await Still("back-home");
