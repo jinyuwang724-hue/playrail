@@ -47,6 +47,16 @@ public sealed partial class WallStage
         public string? Sub;
         /// <summary>Order（来源优先级）：还能不能往上 / 往下挪。</summary>
         public bool CanUp, CanDown;
+        /// <summary>下拉框（Cocoon：按 A 在原地展开成一张选项卡片，行跟着变高）：选项、当前选中、选中后。</summary>
+        public string[]? Options;
+        public Func<int>? Current;
+        public Action<int>? Choose;
+        /// <summary>多选下拉（资料类型 / 图片类型）：每项右边一个勾，A 勾选 / 取消，B 收起。</summary>
+        public bool Multi;
+        public Func<int, bool>? Checked;
+        public Action<int>? ToggleOpt;
+        /// <summary>画的时候填：展开着时焦点在第几个选项（-1 = 没展开）。</summary>
+        public int OpenSel = -1;
     }
 
     private sealed class RsPage
@@ -67,6 +77,8 @@ public sealed partial class WallStage
         public Action<CanvasDrawingSession>? PaintHeaderExtra;
         /// <summary>Y 不是「保存并退出」而是一个动作（刮削页的 Y ▶ 开始）：右上胶囊画成三角，按了不退页。</summary>
         public Action? YAction;
+        /// <summary>展开着的下拉是第几行（-1 = 没有），焦点在它的第几个选项。</summary>
+        public int Open = -1, OptSel;
     }
 
     private sealed class RsState
@@ -89,6 +101,8 @@ public sealed partial class WallStage
         /// <summary>每次入场动画一个号：延时显示焦点框时核对，期间又翻页了就不显示旧的。</summary>
         public int EnterSeq;
         public bool FromMenu;
+        /// <summary>焦点框现在画成的尺寸（整行 / 下拉选项）：换尺寸时重画并从旧尺寸弹过去。</summary>
+        public float CurW, CurH;
     }
 
     private RsState? _rs;
@@ -244,6 +258,7 @@ public sealed partial class WallStage
             _cs?.Root.Children.Remove(rs.Root);
             foreach (var s in new[] { rs.SheetSurf, rs.GlowSurf, rs.LineSurf, rs.RimSurf, rs.SkelSurf, rs.GroupsSurf, rs.TitleSurf, rs.CustomSurf, rs.ChevSurf }) s?.Dispose();
             foreach (var s in rs.RowSurf) s.Dispose();
+            _rsEdPanel = null;
             rs.Root.Dispose();
         }
         bool toMenu = rs.FromMenu && _rm is { Closing: false };
@@ -357,16 +372,16 @@ public sealed partial class WallStage
     private static List<(int I, float Y)> RsLayoutRows(RsPage page)
     {
         var rows = page.Rows;
-        List<(int I, float Y)> Lay(int top) => RsLay(rows, top);
+        List<(int I, float Y)> Lay(int top) => RsLay(page, top);
         page.Top = Math.Clamp(page.Top, 0, Math.Max(0, rows.Count - 1));
         if (page.Sel < page.Top) page.Top = page.Sel;
         var lay = Lay(page.Top);
-        while (page.Top < page.Sel && !lay.Any(e => e.I == page.Sel && e.Y + RsRowH <= RsBottom)) lay = Lay(++page.Top);
+        while (page.Top < page.Sel && !lay.Any(e => e.I == page.Sel && e.Y + RsHi(page, e.I) <= RsBottom)) lay = Lay(++page.Top);
         // 上面还有行、下面又空着：往回滚，把空位补上
         while (page.Top > 0)
         {
             var prev = Lay(page.Top - 1);
-            if (prev.Count > 0 && prev[^1].I == rows.Count - 1 && prev[^1].Y + RsRowH <= RsBottom && prev.Any(e => e.I == page.Sel)) { page.Top--; lay = prev; }
+            if (prev.Count > 0 && prev[^1].I == rows.Count - 1 && prev[^1].Y + RsHi(page, prev[^1].I) <= RsBottom && prev.Any(e => e.I == page.Sel)) { page.Top--; lay = prev; }
             else break;
         }
         return lay;
@@ -379,21 +394,33 @@ public sealed partial class WallStage
     }
 
     /// <summary>露在底边外的半行淡一些（Cocoon 列表底部那行是半透明的）。</summary>
-    private static float RsRowOpacity(RsState rs, int k) => k >= rs.Layout.Count ? 1f : rs.Layout[k].Y < RsTop ? 0.4f : rs.Layout[k].Y + RsRowH > RsBottom ? 0.45f : 1f;
+    private static float RsRowOpacity(RsState rs, int k) => k >= rs.Layout.Count ? 1f : rs.Layout[k].Y < RsTop ? 0.4f : rs.Layout[k].Y + RsHi(rs.Stack[^1], rs.Layout[k].I) > RsBottom ? 0.45f : 1f;
 
+
+    // 下拉框几何：右边白色胶囊（x 1340，宽 436，高 84，竖直居中在行的上 136 里），展开后下面接一张选项卡片，每项 96 高
+    private const float RsPickX = 1340, RsPickW = 436, RsPickH = 84, RsOptH = 96;
+
+    /// <summary>这一行的高度：展开着的下拉行要加上选项卡片的高度（Cocoon 行在原地变高，下面的行往下推）。</summary>
+    private static float RsHi(RsPage page, int i) =>
+        RsRowH + (page.Open == i && i < page.Rows.Count && page.Rows[i].Options is { Length: > 0 } o ? RsOptH * o.Length + 30 : 0);
+
+    /// <summary>展开的下拉里第 k 个选项的方框（设计单位）。</summary>
+    private static (float X, float Y, float W, float H) RsOptRect(float rowY, int k) =>
+        (RsPickX, rowY + RsRowH / 2 + RsPickH / 2 + 14 + k * RsOptH, RsPickW, RsOptH);
 
     /// <summary>从 top 起的行位置；上面还有行时，把上一行也排在标题下面（滚上去的那行半透明地压在标题底下，和 Cocoon 一样）。</summary>
-    private static List<(int I, float Y)> RsLay(List<RsRow> rows, int top)
+    private static List<(int I, float Y)> RsLay(RsPage page, int top)
     {
         var l = new List<(int I, float Y)>();
-        if (top > 0 && top < rows.Count) l.Add((top - 1, RsTop - RsRowH - RsSep - (rows[top].Break ? RsGap : 0)));
+        var rows = page.Rows;
+        if (top > 0 && top < rows.Count) l.Add((top - 1, RsTop - RsHi(page, top - 1) - RsSep - (rows[top].Break ? RsGap : 0)));
         float y = RsTop;
         for (int i = top; i < rows.Count; i++)
         {
             if (i > top && rows[i].Break) y += RsGap;
             if (y >= RsY + RsH - 8) break;
             l.Add((i, y));
-            y += RsRowH + RsSep;
+            y += RsHi(page, i) + RsSep;
         }
         return l;
     }
@@ -409,12 +436,12 @@ public sealed partial class WallStage
         for (int k = 0; k < lay.Count; k++)
         {
             var (i, y) = lay[k];
-            if (k == 0 || page.Rows[i].Break) groups.Add((y, y + RsRowH, new List<float>()));
-            else { var g = groups[^1]; g.Seps.Add(y - RsSep); groups[^1] = (g.Y0, y + RsRowH, g.Seps); }
+            if (k == 0 || page.Rows[i].Break) groups.Add((y, y + RsHi(page, i), new List<float>()));
+            else { var g = groups[^1]; g.Seps.Add(y - RsSep); groups[^1] = (g.Y0, y + RsHi(page, i), g.Seps); }
         }
         // 最后一组下面还有没排进来的同组行（或者最后一行只露一截）：卡片一直延到面板底外面，被圆角裁掉
         var last = lay[^1];
-        if ((last.I < page.Rows.Count - 1 && !page.Rows[last.I + 1].Break) || last.Y + RsRowH > RsBottom)
+        if ((last.I < page.Rows.Count - 1 && !page.Rows[last.I + 1].Break) || last.Y + RsHi(page, last.I) > RsBottom)
             groups[^1] = (groups[^1].Y0, RsY + RsH + 60, groups[^1].Seps);
         float x = RsListX, w = RsListW, r = RsGroupR;
         foreach (var (y0, y1, seps) in groups)
@@ -468,17 +495,29 @@ public sealed partial class WallStage
             v.StopAnimation("Scale");
             v.Scale = Vector3.One;
             v.Opacity = RsRowOpacity(rs, k);
+            // 展开的下拉行更高：画布按这一行的高度重新分配（选项卡片带投影，再多留一点）
+            float hk = RsHi(page, i) + pad * 2 + (page.Open == i ? 24 : 0);
+            if (Math.Abs(v.Size.Y - hk) > 0.5f)
+            {
+                rs.RowSurf[k].Dispose();
+                rs.RowSurf[k] = G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(hk * R));
+                ((CompositionSurfaceBrush)v.Brush).Surface = rs.RowSurf[k];
+                v.Size = new Vector2(w, hk);
+                v.CenterPoint = new Vector3(w / 2, h / 2, 0);
+            }
+            var row = page.Rows[i];
+            row.OpenSel = page.Open == i ? page.OptSel : -1;
             using var ds = CanvasComposition.CreateDrawingSession(rs.RowSurf[k]);
             ds.Clear(Colors.Transparent);
             ds.Transform = Matrix3x2.CreateTranslation(pad - RsListX, pad - y) * Matrix3x2.CreateScale(R);
-            RsPaintRow(ds, page.Rows[i], y, rs.Item);
+            RsPaintRow(ds, row, y, rs.Item);
         }
     }
 
     /// <summary>下面还有：紫色向下小箭头（白描边），在面板底边中间。</summary>
     private void RsPaintChevron(RsState rs, RsPage page)
     {
-        bool more = rs.Layout.Count > 0 && (rs.Layout[^1].I < page.Rows.Count - 1 || rs.Layout[^1].Y + RsRowH > RsBottom);
+        bool more = rs.Layout.Count > 0 && (rs.Layout[^1].I < page.Rows.Count - 1 || rs.Layout[^1].Y + RsHi(page, rs.Layout[^1].I) > RsBottom);
         rs.Chev.IsVisible = more;
         if (!more) return;
         float R = CsRaster, w = 60, h = 40;
@@ -655,11 +694,15 @@ public sealed partial class WallStage
                 ds.DrawRoundedRectangle(px + 0.5f, py + 0.5f, pw - 1, ph - 1, ph / 2, ph / 2, Color.FromArgb(255, 0xEC, 0xED, 0xF0), 1);
                 using var vf = new CanvasTextFormat { FontFamily = RmFont(val), FontSize = 36, FontWeight = RsWt(val), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
                 ds.DrawText(val, new Windows.Foundation.Rect(px + 30, py, pw - 90, ph), RmInk, vf);
+                bool open = row.OpenSel >= 0 && row.Options is { Length: > 0 };
                 using var pb = new CanvasPathBuilder(ds.Device);
-                pb.BeginFigure(px + pw - 50, cy - 5); pb.AddLine(px + pw - 36, cy - 5); pb.AddLine(px + pw - 43, cy + 4); pb.EndFigure(CanvasFigureLoop.Closed);
+                if (open) { pb.BeginFigure(px + pw - 50, cy + 4); pb.AddLine(px + pw - 36, cy + 4); pb.AddLine(px + pw - 43, cy - 5); }   // 展开时三角朝上
+                else { pb.BeginFigure(px + pw - 50, cy - 5); pb.AddLine(px + pw - 36, cy - 5); pb.AddLine(px + pw - 43, cy + 4); }
+                pb.EndFigure(CanvasFigureLoop.Closed);
                 using var tri = CanvasGeometry.CreatePath(pb);
-                ds.FillGeometry(tri, RsSub);
-                ds.DrawGeometry(tri, RsSub, 3, RwRoundStroke);
+                ds.FillGeometry(tri, open ? RmInk : RsSub);
+                ds.DrawGeometry(tri, open ? RmInk : RsSub, 3, RwRoundStroke);
+                if (open) RsPaintOptions(ds, row, y);
                 break;
             }
             case RsKind.Action when row.Value is { Length: > 0 } val:
@@ -669,6 +712,48 @@ public sealed partial class WallStage
                 break;
             }
         }
+    }
+
+    /// <summary>
+    /// 展开的下拉：胶囊下面一张白色圆角卡片（投影、细描边），一项一行，行间细线；
+    /// 单选：当前值用强调色字；多选：右边一个勾（选中是紫色渐变圆 + 白勾，没选是灰圈），焦点那一行垫淡紫底（照 Cocoon 视频）。
+    /// </summary>
+    private void RsPaintOptions(CanvasDrawingSession ds, RsRow row, float y)
+    {
+        var opts = row.Options!;
+        var (x0, y0, w, _) = RsOptRect(y, 0);
+        float h = opts.Length * RsOptH;
+        RsSoftShadow(ds, x0, y0 + 5, w, h, 30, 8, 0.18f);
+        using var card = CanvasGeometry.CreateRoundedRectangle(ds.Device, x0, y0, w, h, 30, 30);
+        ds.FillGeometry(card, Color.FromArgb(255, 0xFC, 0xFC, 0xFD));
+        int cur = row.Current?.Invoke() ?? -1;
+        using (ds.CreateLayer(1, card))
+            for (int k = 0; k < opts.Length; k++)
+            {
+                float oy = y0 + k * RsOptH;
+                if (row.Multi && k == row.OpenSel) ds.FillRectangle(x0, oy, w, RsOptH, Color.FromArgb(255, 0xEC, 0xE6, 0xFF));
+                if (k > 0) ds.FillRectangle(x0 + 28, oy - 1, w - 56, 2, Color.FromArgb(255, 0xE6, 0xE7, 0xEA));
+                bool sel = !row.Multi && k == cur;
+                using var tf = new CanvasTextFormat { FontFamily = RmFont(opts[k]), FontSize = 36, FontWeight = RsWt(opts[k]), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
+                ds.DrawText(opts[k], new Windows.Foundation.Rect(x0 + 30, oy, w - (row.Multi ? 110 : 60), RsOptH), sel ? Color.FromArgb(255, 0x4F, 0x9D, 0xF2) : RmInk, tf);
+                if (row.Multi)
+                {
+                    float cx = x0 + w - 52, ccy = oy + RsOptH / 2;
+                    if (row.Checked?.Invoke(k) == true)
+                    {
+                        RsSoftShadow(ds, cx - 21, ccy - 21 + 2, 42, 42, 21, 3, 0.2f);
+                        using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, RwC2) { StartPoint = new Vector2(cx - 21, ccy - 21), EndPoint = new Vector2(cx + 21, ccy + 21) };
+                        ds.FillCircle(cx, ccy, 21, br);
+                        ds.DrawCircle(cx, ccy, 20, Color.FromArgb(255, 0xFA, 0xFA, 0xFA), 2.5f);
+                        using var pb = new CanvasPathBuilder(ds.Device);
+                        pb.BeginFigure(cx - 9, ccy); pb.AddLine(cx - 2.5f, ccy + 7); pb.AddLine(cx + 10, ccy - 7); pb.EndFigure(CanvasFigureLoop.Open);
+                        using var tick = CanvasGeometry.CreatePath(pb);
+                        ds.DrawGeometry(tick, Color.FromArgb(255, 0xFA, 0xFA, 0xFA), 4.5f, RwRoundStroke);
+                    }
+                    else ds.DrawCircle(cx, ccy, 19, Color.FromArgb(255, 0xB4, 0xB6, 0xBC), 3.5f);
+                }
+            }
+        ds.DrawRoundedRectangle(x0 + 0.5f, y0 + 0.5f, w - 1, h - 1, 30, 30, Color.FromArgb(255, 0xE6, 0xE7, 0xEA), 1);
     }
 
     /// <summary>一圈很淡的投影（下拉框胶囊、开关圆钮）。</summary>
@@ -849,22 +934,24 @@ public sealed partial class WallStage
 
     // ---------------- 焦点 ----------------
 
-    private static (float W, float H, float R, float Leg) RsBracketGeom()
+    private static (float W, float H, float R, float Leg) RsBracketGeom(bool option = false)
     {
-        // 和游戏菜单同一种：圆角 60，左右中间留 13 的缺口
-        float W = RsListW + 14, H = RsRowH + 20, r = 60;
+        // 整行：和游戏菜单同一种，圆角 60，左右中间留 13 的缺口；下拉选项：小一号，贴着选项卡片
+        float W = option ? RsPickW + 24 : RsListW + 14, H = option ? RsOptH + 16 : RsRowH + 20, r = option ? 46 : 60;
         return (W, H, r, MathF.Max(0, (H - 2 * r - 13) / 2));
     }
 
-    private void RsPaintCursor(RsState rs)
+    private void RsPaintCursor(RsState rs, bool option = false)
     {
         var dev = G.Device;
         float R = CsRaster;
-        var (W, H, r, leg) = RsBracketGeom();
+        var (W, H, r, leg) = RsBracketGeom(option);
+        rs.CurW = W; rs.CurH = H;
         float sw = W + RmCurPad * 2, sh = H + RmCurPad * 2;
         int pw = (int)Math.Ceiling(sw * R), ph = (int)Math.Ceiling(sh * R);
         var (segs, _) = RwBracketPointsRaw(W, H, r, leg, RmCurPad, RmCurPad);
         using var path = RwBracketPath(dev, segs);
+        foreach (var s in new[] { rs.GlowSurf, rs.RimSurf, rs.LineSurf }) s?.Dispose();
         rs.GlowSurf = G.Surface(pw, ph);
         using (var ds = CanvasComposition.CreateDrawingSession(rs.GlowSurf))
         {
@@ -894,16 +981,45 @@ public sealed partial class WallStage
         ((CompositionSurfaceBrush)rs.Glow.Brush).Surface = rs.GlowSurf;
         ((CompositionSurfaceBrush)rs.Rim.Brush).Surface = rs.RimSurf;
         rs.Line.Brush = RwFlowBrush(rs.Page.Rw!, rs.LineSurf);
-        foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim }) v.Size = new Vector2(sw, sh);
+        foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim }) { v.Size = new Vector2(sw, sh); v.CenterPoint = new Vector3(sw / 2, sh / 2, 0); }
     }
 
+    /// <summary>
+    /// 焦点框到当前行；下拉展开时到当前选项。尺寸变了（整行 ↔ 选项）就按新尺寸重画，
+    /// 从旧的大小和位置弹簧缩 / 放过去（Cocoon：按 A 展开时括号从整行收到选项上）。
+    /// </summary>
     private void RsCursorTo(RsState rs, bool move)
     {
         var page = rs.Stack[^1];
-        var (W, H, _, _) = RsBracketGeom();
-        float y = RsRowY(rs, page.Sel);
-        var to = new Vector3(RsListX + RsListW / 2 - W / 2 - RmCurPad, y + RsRowH / 2 - H / 2 - RmCurPad, 0);
+        bool option = page.Open >= 0;
+        var (W, H, _, _) = RsBracketGeom(option);
+        Vector2 center;
+        if (option)
+        {
+            var (ox, oy, ow, oh) = RsOptRect(RsRowY(rs, page.Open), page.OptSel);
+            center = new Vector2(ox + ow / 2, oy + oh / 2);
+        }
+        else center = new Vector2(RsListX + RsListW / 2, RsRowY(rs, page.Sel) + RsRowH / 2);
+        float sw = W + RmCurPad * 2, sh = H + RmCurPad * 2;
+        var to = new Vector3(center.X - sw / 2, center.Y - sh / 2, 0);
         bool show = page.Rows.Count > 0 && page.Paint == null;
+        if (MathF.Abs(rs.CurW - W) > 0.5f || MathF.Abs(rs.CurH - H) > 0.5f)
+        {
+            float ow = rs.CurW, oh = rs.CurH;
+            var oldCenter = new Vector3(rs.Glow.Offset.X + (ow + RmCurPad * 2) / 2, rs.Glow.Offset.Y + (oh + RmCurPad * 2) / 2, 0);
+            RsPaintCursor(rs, option);
+            foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim })
+            {
+                v.StopAnimation("Offset");
+                v.Offset = oldCenter - new Vector3(sw / 2, sh / 2, 0);
+                if (move && !Reduced && ow > 0)
+                {
+                    v.Scale = new Vector3((ow + RmCurPad * 2) / sw, (oh + RmCurPad * 2) / sh, 1);
+                    v.StartAnimation("Scale", RwSpring(Vector3.One));
+                }
+                else v.Scale = Vector3.One;
+            }
+        }
         foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim })
         {
             if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else RwJump(v, to);
@@ -920,8 +1036,28 @@ public sealed partial class WallStage
         if (_rs is not { } rs || _rsEditing != null) return;
         var page = rs.Stack[^1];
         if (page.Move != null) { if (page.Move(dir)) { RsPaint(rs); CuePan(0); } else Cue(Sfx.Bump); return; }
+        if (page.Open >= 0)
+        {
+            // 下拉展开着：上下在选项里走，左右不动
+            var orow = page.Rows[page.Open];
+            int n = orow.Options?.Length ?? 0;
+            int to = page.OptSel + (dir == Direction.Down ? 1 : dir == Direction.Up ? -1 : 0);
+            if (dir is Direction.Left or Direction.Right || to < 0 || to >= n) { Cue(Sfx.Bump); return; }
+            page.OptSel = to;
+            CuePan(0);
+            if (orow.Multi) RsPaint(rs);   // 多选：焦点那一项垫淡紫底，要重画
+            RsCursorTo(rs, move: true);
+            return;
+        }
         if (dir is Direction.Left or Direction.Right)
         {
+            if (page.Sel < page.Rows.Count && page.Rows[page.Sel] is { Kind: RsKind.Pick, Step: null, Multi: false, Options: { Length: > 1 } cyc, Choose: { } ch } crow)
+            {
+                Cue(Sfx.Nav, pan: dir == Direction.Left ? -0.4f : 0.4f);
+                ch(((crow.Current?.Invoke() ?? 0) + (dir == Direction.Left ? -1 : 1) + cyc.Length) % cyc.Length);
+                if (_rs == rs) { page.Rows = page.Build(); RsPaint(rs); }
+                return;
+            }
             if (page.Sel < page.Rows.Count && page.Rows[page.Sel] is { Step: { } step } srow && srow.Kind is RsKind.Pick or RsKind.Toggle or RsKind.Order)
             {
                 Cue(Sfx.Nav, pan: dir == Direction.Left ? -0.4f : 0.4f);
@@ -943,7 +1079,7 @@ public sealed partial class WallStage
         {
             // 滚动：按新位置重画，整个列表从旧位置弹簧滑过来；焦点框同一根弹簧，和列表一起走
             float before = float.NaN;
-            foreach (var e in RsLay(page.Rows, top)) if (e.I == page.Top) before = e.Y;
+            foreach (var e in RsLay(page, top)) if (e.I == page.Top) before = e.Y;
             float delta = float.IsNaN(before) ? (top - page.Top) * (RsRowH + RsSep) * -1 : before - RsTop;
             RsPaint(rs);
             if (!Reduced && MathF.Abs(delta) > 0.5f)
@@ -963,6 +1099,34 @@ public sealed partial class WallStage
         if (_rsEditing != null) { RsEndEdit(commit: true); return; }
         var page = rs.Stack[^1];
         if (page.Activate != null) { page.Activate(); if (_rs == rs && rs.Stack.Count > 0 && rs.Stack[^1] == page) RsPaint(rs); return; }
+        if (page.Open >= 0)
+        {
+            // 下拉展开着：单选选中后收起；多选勾 / 取消，留着
+            var orow = page.Rows[page.Open];
+            if (orow.Multi)
+            {
+                Cue(orow.Checked?.Invoke(page.OptSel) == true ? Sfx.ToggleOff : Sfx.ToggleOn);
+                orow.ToggleOpt?.Invoke(page.OptSel);
+                page.Rows = page.Build();
+                RsPaint(rs);
+                return;
+            }
+            Cue(Sfx.Positive);
+            orow.Choose?.Invoke(page.OptSel);
+            RsCloseDrop(rs, page);
+            return;
+        }
+        if (page.Sel < page.Rows.Count && page.Rows[page.Sel] is { Kind: RsKind.Pick, Options: { Length: > 0 } } prow && prow.Press == null)
+        {
+            // 下拉框：在原地展开（行变高，下面的行往下推），焦点框从整行缩到当前选项
+            Cue(Sfx.Activate);
+            page.Open = page.Sel;
+            page.OptSel = prow.Multi ? 0 : Math.Clamp(prow.Current?.Invoke() ?? 0, 0, prow.Options!.Length - 1);
+            RsLayoutRows(page);
+            RsPaint(rs);
+            RsCursorTo(rs, move: true);
+            return;
+        }
         if (page.Sel >= page.Rows.Count) return;
         var row = page.Rows[page.Sel];
         switch (row.Kind)
@@ -977,6 +1141,17 @@ public sealed partial class WallStage
         }
     }
 
+
+    /// <summary>收起下拉：行变回原高度，焦点框从选项弹回整行。</summary>
+    private void RsCloseDrop(RsState rs, RsPage page)
+    {
+        page.Open = -1;
+        if (_rs != rs || rs.Stack.Count == 0 || rs.Stack[^1] != page) return;
+        page.Rows = page.Build();
+        RsLayoutRows(page);
+        RsPaint(rs);
+        RsCursorTo(rs, move: true);
+    }
     /// <summary>LB / RB：页里有分段页签（封面管理）就切页签。</summary>
     private void RsTab(int delta)
     {
@@ -1003,6 +1178,7 @@ public sealed partial class WallStage
         if (_rs is not { } rs) return;
         if (_rsEditing != null) RsEndEdit(commit: true);
         var page = rs.Stack[^1];
+        if (page.Open >= 0) { RsCloseDrop(rs, page); return; }
         if (page.YAction != null) { page.YAction(); return; }
         page.Save?.Invoke();
         Cue(Sfx.Positive);
@@ -1014,6 +1190,7 @@ public sealed partial class WallStage
     {
         if (_rs is not { } rs) return false;
         if (_rsEditing != null) { RsEndEdit(commit: false); return true; }
+        if (rs.Stack[^1] is { Open: >= 0 } openPage) { Cue(Sfx.Back); RsCloseDrop(rs, openPage); return true; }
         var page = rs.Stack[^1];
         if (page.Dirty?.Invoke() == true && !rs.DiscardArmed)
         {
@@ -1029,26 +1206,108 @@ public sealed partial class WallStage
 
     // ---------------- 文字编辑（触屏键盘 / 实体键盘） ----------------
 
+    // 文字输入（照 Cocoon 视频）：面板和列表退下去，屏幕上半出现一张输入卡——左上「✕ ←」、字段名做标题、右上「▶ ✓」，
+    // 下面一个大的浅灰输入框，光标是紫色竖线；键盘在屏幕下半（我们用系统触摸键盘，能打中文）。A / 回车确认，B / Esc 取消。
+    private const float RsEdX = 40, RsEdY = 30, RsEdW = 1840, RsEdH = 470;
+    private const float RsFieldX = 80, RsFieldY = 160, RsFieldW = 1760, RsFieldH = 300;
+    private SpriteVisual? _rsEdPanel;
+    private CompositionDrawingSurface? _rsEdSurf;
+
     private void RsBeginEdit(RsState rs, RsRow row)
     {
         RsEnsureBox();
         _rsEditing = row;
-        var page = rs.Stack[^1];
-        float y = RsRowY(rs, page.Sel);
         var o = _cs!.Root.Offset;
         float k = _cs.K;
+        RsShowEditPanel(rs, row.Title);
         var box = _rsBox!;
         box.Text = row.Value ?? "";
         box.AcceptsReturn = row.Multiline;
-        box.TextWrapping = row.Multiline ? TextWrapping.Wrap : TextWrapping.NoWrap;
-        box.FontSize = Math.Max(12, 40 * k);
-        box.Width = 1440 * k;
-        box.Height = (row.Multiline ? 300 : 64) * k;
-        Microsoft.UI.Xaml.Controls.Canvas.SetLeft(box, o.X + 248 * k);
-        Microsoft.UI.Xaml.Controls.Canvas.SetTop(box, o.Y + (y + 56) * k);
+        box.TextWrapping = TextWrapping.Wrap;
+        box.FontSize = Math.Max(12, 44 * k);
+        box.Width = (RsFieldW - 70) * k;
+        box.Height = (RsFieldH - 40) * k;
+        Microsoft.UI.Xaml.Controls.Canvas.SetLeft(box, o.X + (RsFieldX + 35) * k);
+        Microsoft.UI.Xaml.Controls.Canvas.SetTop(box, o.Y + (RsFieldY + 20) * k);
         box.Visibility = Visibility.Visible;
-        box.SelectAll();
+        box.Select(box.Text.Length, 0);   // Cocoon：光标停在末尾，不全选
         FocusTextBox(box, () => _rsEditing == row);
+    }
+
+    /// <summary>输入卡：投影、#FAFAFA 圆角面、两个胶囊、标题、浅灰渐变输入框；列表和面板淡下去。</summary>
+    private void RsShowEditPanel(RsState rs, string title)
+    {
+        var dev = G.Device;
+        float R = CsRaster, pad = 40, w = RsEdW + pad * 2, h = RsEdH + pad * 2;
+        _rsEdSurf ??= G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(h * R));
+        using (var ds = CanvasComposition.CreateDrawingSession(_rsEdSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateTranslation(pad - RsEdX, pad - RsEdY) * Matrix3x2.CreateScale(R);
+            RsSoftShadow(ds, RsEdX, RsEdY + 10, RsEdW, RsEdH, 60, 18, 0.35f);
+            ds.FillRoundedRectangle(RsEdX, RsEdY, RsEdW, RsEdH, 60, 60, RsBg);
+            // 左上：灰胶囊里 ✕ 圆章 + 返回箭头
+            ds.FillRoundedRectangle(58, 50, 134, 74, 37, 37, Color.FromArgb(255, 0xE2, 0xE3, 0xE7));
+            ds.FillCircle(94, 87, 21, Color.FromArgb(255, 0x9A, 0x9C, 0xA3));
+            ds.DrawLine(87, 80, 101, 94, Color.FromArgb(255, 0xF2, 0xF2, 0xF4), 4, RwRoundStroke);
+            ds.DrawLine(101, 80, 87, 94, Color.FromArgb(255, 0xF2, 0xF2, 0xF4), 4, RwRoundStroke);
+            using (var pb = new CanvasPathBuilder(dev))
+            {
+                pb.BeginFigure(172, 87); pb.AddLine(136, 87); pb.EndFigure(CanvasFigureLoop.Open);
+                pb.BeginFigure(152, 71); pb.AddLine(136, 87); pb.AddLine(152, 103); pb.EndFigure(CanvasFigureLoop.Open);
+                using var arrow = CanvasGeometry.CreatePath(pb);
+                ds.DrawGeometry(arrow, RmInk, 7, RwRoundStroke);
+            }
+            using (var f = new CanvasTextFormat { FontFamily = RmFont(title), FontSize = 48, FontWeight = RsWt(title), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
+                ds.DrawText(title, new Windows.Foundation.Rect(212, 50, 1200, 74), RmInk, f);
+            // 右上：紫胶囊里 ▶（确认键）+ 白色对勾圆
+            RsSoftShadow(ds, 1734, 58, 126, 70, 35, 9, 0.45f);
+            using (var br = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0x8A, 0x7B, 0xFF), Color.FromArgb(255, 0x7A, 0x3C, 0xFF)) { StartPoint = new Vector2(1730, 50), EndPoint = new Vector2(1864, 124) })
+                ds.FillRoundedRectangle(1730, 50, 134, 74, 37, 37, br);
+            ds.FillCircle(1767, 87, 21, Color.FromArgb(255, 0xB9, 0xA9, 0xFF));
+            using (var pb = new CanvasPathBuilder(dev))
+            {
+                pb.BeginFigure(1760, 77); pb.AddLine(1777, 87); pb.AddLine(1760, 97); pb.EndFigure(CanvasFigureLoop.Closed);
+                using var tri = CanvasGeometry.CreatePath(pb);
+                ds.FillGeometry(tri, Color.FromArgb(255, 0x7A, 0x4C, 0xFF));
+            }
+            ds.FillCircle(1828, 87, 21, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
+            using (var pb = new CanvasPathBuilder(dev))
+            {
+                pb.BeginFigure(1818, 87); pb.AddLine(1825, 94); pb.AddLine(1838, 80); pb.EndFigure(CanvasFigureLoop.Open);
+                using var tick = CanvasGeometry.CreatePath(pb);
+                ds.DrawGeometry(tick, Color.FromArgb(255, 0x7A, 0x4C, 0xFF), 5, RwRoundStroke);
+            }
+            // 输入框：浅灰，上浅下深
+            using (var field = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xF2, 0xF3, 0xF6), Color.FromArgb(255, 0xE1, 0xE2, 0xE8)) { StartPoint = new Vector2(0, RsFieldY), EndPoint = new Vector2(0, RsFieldY + RsFieldH) })
+                ds.FillRoundedRectangle(RsFieldX, RsFieldY, RsFieldW, RsFieldH, 48, 48, field);
+        }
+        if (_rsEdPanel == null || _rsEdPanel.Parent != rs.Root)
+        {
+            _rsEdPanel = G.Sprite(G.C.CreateSurfaceBrush(_rsEdSurf), relative: false);
+            rs.Root.Children.InsertAtTop(_rsEdPanel);
+        }
+        _rsEdPanel.Size = new Vector2(w, h);
+        _rsEdPanel.Offset = new Vector3(RsEdX - pad, RsEdY - pad, 0);
+        _rsEdPanel.CenterPoint = new Vector3(w / 2, pad + 60, 0);
+        _rsEdPanel.IsVisible = true;
+        foreach (var v in new Visual[] { rs.Body, rs.Sheet, rs.Glow, rs.Line, rs.Rim }) v.StartAnimation("Opacity", CsS(0, Reduced ? 1 : 120, Bezier.EaseOut));
+        if (!Reduced)
+        {
+            _rsEdPanel.Opacity = 0;
+            _rsEdPanel.Scale = new Vector3(0.96f, 0.96f, 1);
+            _rsEdPanel.StartAnimation("Opacity", CsS(1, 120, Bezier.EaseOut));
+            _rsEdPanel.StartAnimation("Scale", CsV3(Vector3.One, 200, new Bezier(0.22f, 1f, 0.36f, 1f)));
+        }
+    }
+
+    private void RsHideEditPanel(RsState? rs)
+    {
+        if (_rsEdPanel == null) return;
+        var panel = _rsEdPanel;
+        if (rs == null || panel.Parent != rs.Root) { panel.IsVisible = false; return; }
+        foreach (var v in new Visual[] { rs.Body, rs.Sheet, rs.Glow, rs.Line, rs.Rim }) v.StartAnimation("Opacity", CsS(1, Reduced ? 1 : 140, Bezier.EaseOut));
+        panel.StartAnimation("Opacity", CsS(0, Reduced ? 1 : 100, Bezier.EaseOut));
     }
 
     private void RsEndEdit(bool commit)
@@ -1058,6 +1317,7 @@ public sealed partial class WallStage
         if (commit) { row.Value = _rsBox.Text.Trim(); Cue(Sfx.Positive); row.Commit?.Invoke(row.Value); }
         _rsBox.Visibility = Visibility.Collapsed;
         _rootEl.Focus(FocusState.Programmatic);
+        RsHideEditPanel(_rs);
         if (_rs is { } rs) RsPaint(rs);
     }
 
@@ -1075,7 +1335,7 @@ public sealed partial class WallStage
             IsTextPredictionEnabled = false,
             Visibility = Visibility.Collapsed,
         };
-        var bg = new Microsoft.UI.Xaml.Media.SolidColorBrush(Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
+        var bg = new Microsoft.UI.Xaml.Media.SolidColorBrush(Color.FromArgb(0, 0xFF, 0xFF, 0xFF));
         var ink = new Microsoft.UI.Xaml.Media.SolidColorBrush(RmInk);
         foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused" }) _rsBox.Resources[key] = bg;
         foreach (var key in new[] { "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused" }) _rsBox.Resources[key] = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.Transparent);
@@ -1215,7 +1475,11 @@ public sealed partial class WallStage
         if (r.Choices is { Length: 2 } c && c[0] == "关" && c[1] == "开")
             return new RsRow { Kind = RsKind.Toggle, Title = r.Title, IsOn = () => r.Choice == 1, Press = r.Press, Step = r.Step };
         if (r.Choices != null && r.Choice >= 0 && r.Choice < r.Choices.Length)
-            return new RsRow { Kind = RsKind.Pick, Title = r.Title, Value = r.Choices[r.Choice], Press = r.Press ?? (() => r.Step?.Invoke(1)), Step = r.Step };
+            return new RsRow
+            {
+                Kind = RsKind.Pick, Title = r.Title, Value = r.Choices[r.Choice], Options = r.Choices, Current = () => r.Choice,
+                Choose = i => { if (r.Select != null) r.Select(i); else if (i != r.Choice) r.Step?.Invoke(i - r.Choice); },
+            };
         if (r.Numeric || r.Step != null)
             return new RsRow { Kind = RsKind.Pick, Title = r.Title, Value = r.Value.Length > 0 ? r.Value : r.Number.ToString(), Press = r.Press ?? (() => r.Step?.Invoke(1)), Step = r.Step };
         return new RsRow { Kind = RsKind.Action, Title = r.Title, Value = r.Value.Replace("  ›", "").Trim(), Press = r.Press };

@@ -34,7 +34,7 @@ public sealed partial class WallStage
         public readonly HashSet<string> Searched = new();
     }
 
-    private static readonly (string Kind, string Title)[] RaKinds = { ("p", "封面"), ("hero", "背景"), ("logo", "标志") };
+    private static readonly (string Kind, string Title)[] RaKinds = { ("p", "封面"), ("header", "横封面"), ("hero", "背景"), ("logo", "标志") };   // 横封面 = Steam 的横版封面（460×215）
     private const float RaLeftX = 124, RaLeftW = 584, RaRightX = 728, RaRightW = 1068, RaTop = 196, RaBottom = 1100;
     private const float RaPrevH = 250;
     private const int RaCols = 5;
@@ -108,7 +108,7 @@ public sealed partial class WallStage
     /// <summary>标题栏中间：灰色胶囊里 LB · 封面 背景 标志 · RB，当前的那个是白底紫字。</summary>
     private void RaPaintTabs(CanvasDrawingSession ds, RaState a)
     {
-        float x = 950, y = 104, h = 74, w = 600;
+        float x = 880, y = 104, h = 74, w = 740;
         ds.FillRoundedRectangle(x, y, w, h, 37, 37, Color.FromArgb(255, 0xE2, 0xE3, 0xE7));
         RaShoulder(ds, x + 20, y + 19, "LB");
         RaShoulder(ds, x + w - 56, y + 19, "RB");
@@ -183,7 +183,7 @@ public sealed partial class WallStage
         var cands = RaCands(a);
         float gx = RaRightX + 36, gy = RaTop - 10 + RaPrevH + 30, gw = RaRightW - 72;
         float cellW = (gw - (RaCols - 1) * 20) / RaCols;
-        float aspect = kind switch { "hero" => 0.32f, "logo" => 0.45f, _ => 1.5f };
+        float aspect = kind switch { "hero" => 0.32f, "logo" => 0.45f, "header" => 0.467f, _ => 1.5f };
         float cellH = cellW * aspect;
         int rowsVisible = Math.Max(1, (int)((RaBottom - 20 - gy) / (cellH + 20)));
         if (cands.Count == 0)

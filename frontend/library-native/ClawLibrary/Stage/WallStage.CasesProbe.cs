@@ -93,6 +93,9 @@ public sealed partial class WallStage
             // 菜单里再按 Y 进编辑；A 进编辑元数据，往下走几行；B 一路退回
             await Rec("editopen", CsGameSettings, 1300); await Still("edit");
             await Rec("metapush", Activate, 900); await Still("meta");
+            // 文字输入：标题这一行按 A，录输入卡出现，B 取消（不改资料）
+            await Rec("editfield", Activate, 700); await Still("field");
+            Back(); await Task.Delay(500);
             for (int i = 0; i < 6; i++) { Move(Direction.Down); await Task.Delay(220); }
             await Still("meta2");
             // 退回编辑 → 封面管理：A 到 SteamGridDB 取图，切到背景页签
@@ -103,6 +106,15 @@ public sealed partial class WallStage
             await Rec("artpop", () => Back(), 800);
             // 刮削游戏：只看页面和匹配（不按开始，免得改了用户的资料）
             Move(Direction.Down); await Task.Delay(300); Activate(); await Task.Delay(5000); await Still("scrape");
+            // 下拉框：刮削方式展开（录下展开和焦点框收到选项），看一眼，B 收起
+            Move(Direction.Down); await Task.Delay(300);
+            await Rec("dropopen", Activate, 700); await Still("drop");
+            Back(); await Task.Delay(400);
+            // 多选下拉：资料类型（勾掉第一项看一眼再勾回来，不改设置）
+            for (int i = 0; i < 4; i++) { Move(Direction.Down); await Task.Delay(220); }
+            await Rec("multiopen", Activate, 600);
+            Activate(); await Task.Delay(300); await Still("multi");
+            Activate(); await Task.Delay(300); Back(); await Task.Delay(400);
             for (int i = 0; i < 9; i++) { Move(Direction.Down); await Task.Delay(200); }
             await Still("scrape2");
             {

@@ -42,7 +42,7 @@ public sealed partial class WallStage
         public Dictionary<string, string> Got = new();
     }
 
-    private static readonly (string Kind, string Title)[] ScArtKinds = { ("p", "封面"), ("hero", "背景"), ("logo", "标志"), ("header", "横幅") };
+    private static readonly (string Kind, string Title)[] ScArtKinds = { ("p", "封面"), ("hero", "背景"), ("logo", "标志"), ("header", "横封面") };
     private static readonly string[] ScModes = { "只补空缺", "补选中项", "全部覆盖" };
     private static string ScSrcName(string id) => id switch { "steam" => "Steam 商店", "launchbox" => "LaunchBox", "igdb" => "IGDB", "sgdb" => "SteamGridDB", _ => id };
     private static string ScSrcIcon(string id) => id switch { "steam" => "steam", "launchbox" => "cube", "igdb" => "igdb", "sgdb" => "stack", _ => "" };
@@ -134,12 +134,12 @@ public sealed partial class WallStage
             new()
             {
                 Kind = RsKind.Pick, Icon = "filter", Title = "刮削方式", Sub = "只补缺的基本资料、只补选中的类型，或全部重新刮削", Value = ScModes[p.Mode],
-                Press = () => { p.Mode = (p.Mode + 1) % 3; Save(); }, Step = k => { p.Mode = (p.Mode + k + 3) % 3; Save(); },
+                Options = ScModes, Current = () => p.Mode, Choose = i => { p.Mode = i; Save(); },
             },
             new()
             {
                 Kind = RsKind.Pick, Icon = "globe", Title = "资料语言", Sub = "Steam 商店资料用哪种语言（其他来源只有英文）", Value = p.En ? "English" : "简体中文",
-                Press = () => { p.En = !p.En; Save(); }, Step = _ => { p.En = !p.En; Save(); },
+                Options = new[] { "简体中文", "English" }, Current = () => p.En ? 1 : 0, Choose = i => { p.En = i == 1; Save(); },
             },
             new()
             {
@@ -155,27 +155,24 @@ public sealed partial class WallStage
             {
                 Kind = RsKind.Pick, Icon = "filter", Title = "资料类型", Sub = "刮削时包括哪些资料",
                 Value = p.MetaTypes.Count >= RsMetaFields.Length ? "全部资料" : $"{p.MetaTypes.Count} 项",
-                Press = () => RsPush(ScTypesPage("资料类型", RsMetaFields.Select(f => (f.Key, f.Title)).ToArray(), p.MetaTypes)),
+                Options = RsMetaFields.Select(f => f.Title).ToArray(), Multi = true, Checked = i => p.MetaTypes.Contains(RsMetaFields[i].Key),
+                ToggleOpt = i => { if (!p.MetaTypes.Remove(RsMetaFields[i].Key)) p.MetaTypes.Add(RsMetaFields[i].Key); Save(); },
             },
         };
         ScSourceRows(rows, p.MetaSrc, p);
         rows.Add(new RsRow
         {
-            Kind = RsKind.Toggle, Break = true, Icon = "artwork", Title = "刮削图片", Sub = "封面、背景、标志、横幅",
+            Kind = RsKind.Toggle, Break = true, Icon = "artwork", Title = "刮削图片", Sub = "封面、横封面、背景、标志",
             IsOn = () => p.Art, Press = () => { p.Art = !p.Art; Save(); }, Step = k => { p.Art = k > 0; Save(); },
         });
         rows.Add(new RsRow
         {
             Kind = RsKind.Pick, Icon = "filter", Title = "图片类型", Sub = "刮削时包括哪些图",
             Value = p.ArtTypes.Count >= ScArtKinds.Length ? "全部图片" : $"{p.ArtTypes.Count} 种",
-            Press = () => RsPush(ScTypesPage("图片类型", ScArtKinds, p.ArtTypes)),
+            Options = ScArtKinds.Select(k => k.Title).ToArray(), Multi = true, Checked = i => p.ArtTypes.Contains(ScArtKinds[i].Kind),
+            ToggleOpt = i => { if (!p.ArtTypes.Remove(ScArtKinds[i].Kind)) p.ArtTypes.Add(ScArtKinds[i].Kind); Save(); },
         });
         ScSourceRows(rows, p.ArtSrc, p);
-        rows.Add(new RsRow
-        {
-            Kind = RsKind.Nav, Icon = "igdb", Title = "IGDB 密钥", Sub = p.IgdbReady ? "已设置" : "在 dev.twitch.tv 建一个应用，填它的 Client ID 和 Secret",
-            Press = () => RsPush(ScIgdbPage(p)),
-        });
         rows.Add(new RsRow
         {
             Kind = RsKind.Action, Break = true, Icon = "scrape", Title = s.Busy ? "正在刮削…" : "开始刮削", Value = s.Status,
@@ -202,12 +199,12 @@ public sealed partial class WallStage
             rows.Add(new RsRow
             {
                 Kind = RsKind.Order, Icon = ScSrcIcon(id), Title = ScSrcName(id),
-                Sub = needKey ? "未设置密钥（A 去填）" : $"优先级 {i + 1} / {src.Count}",
+                Sub = needKey ? "未设置密钥（在 设置 › 刮削来源密钥 里填）" : $"优先级 {i + 1} / {src.Count}",
                 IsOn = () => src[at].On && !(src[at].Id == "igdb" && !p.IgdbReady),
                 CanUp = i > 0, CanDown = i < src.Count - 1,
                 Press = () =>
                 {
-                    if (src[at].Id == "igdb" && !p.IgdbReady) { RsPush(ScIgdbPage(p)); return; }
+                    if (src[at].Id == "igdb" && !p.IgdbReady) { Cue(Sfx.Bump); Toast("先在 设置 › 刮削来源密钥 里填 IGDB 的 Client ID 和 Secret"); return; }
                     src[at] = (src[at].Id, !src[at].On);
                     ScSavePrefs();
                 },
@@ -223,32 +220,50 @@ public sealed partial class WallStage
         }
     }
 
-    /// <summary>资料类型 / 图片类型：每种一个开关（Cocoon 的多选下拉）。</summary>
-    private RsPage ScTypesPage(string title, (string Key, string Title)[] all, HashSet<string> set) => new()
-    {
-        Title = title,
-        Build = () => all.Select(a => new RsRow
-        {
-            Kind = RsKind.Toggle, Title = a.Title, IsOn = () => set.Contains(a.Key),
-            Press = () => { if (!set.Remove(a.Key)) set.Add(a.Key); ScSavePrefs(); },
-            Step = k => { if (k > 0) set.Add(a.Key); else set.Remove(a.Key); ScSavePrefs(); },
-        }).ToList(),
-    };
 
-    private RsPage ScIgdbPage(ScPrefs p)
+
+    /// <summary>
+    /// 设置 › 刮削来源密钥（11-21 jinyu：各刮削源的 key 放到设置里，设置页之后会重做）。
+    /// 这一版设置页还没有文字输入：在浏览器里复制好，按 A 从剪贴板粘贴；再按一次清除。
+    /// </summary>
+    private void BuildStScrapeKeys()
     {
-        var rows = new List<RsRow>
+        var p = ScLoadPrefs();
+        _stRows.Add(new PerfRow { Section = true, Title = "刮削来源密钥 · IGDB（dev.twitch.tv 建应用后获得）" });
+        string Mask(string s) => s.Length == 0 ? "未设置 · A 从剪贴板粘贴" : $"已设置 ···{s[Math.Max(0, s.Length - 4)..]} · A 清除";
+        PerfRow Key(string title, string id, Func<string> get, Action<string> set) => StAction(title, id, Mask(get()), () =>
         {
-            new() { Kind = RsKind.Field, Title = "Client ID", Key = "igdbId", Value = p.IgdbId },
-            new() { Kind = RsKind.Field, Title = "Client Secret", Key = "igdbSecret", Value = p.IgdbSecret.Length > 0 ? p.IgdbSecret : "" },
-            new() { Kind = RsKind.Info, Break = true, Title = "怎么拿", Value = "dev.twitch.tv › Console › 注册应用（类别选 Application Integration）" },
-        };
-        return new RsPage
-        {
-            Title = "IGDB 密钥", TitleIcon = "igdb", Build = () => rows,
-            Dirty = () => (rows[0].Value ?? "") != p.IgdbId || (rows[1].Value ?? "") != p.IgdbSecret,
-            Save = () => { p.IgdbId = (rows[0].Value ?? "").Trim(); p.IgdbSecret = (rows[1].Value ?? "").Trim(); ScSavePrefs(); Toast(p.IgdbReady ? "IGDB 密钥存好了" : "IGDB 密钥清空了"); },
-        };
+            if (get().Length > 0) { set(""); ScSavePrefs(); Toast($"{title} 清除了"); Repaint(); return; }
+            _ = Task.Run(async () =>
+            {
+                string text = "";
+                try
+                {
+                    var tcs = new TaskCompletionSource<string>();
+                    _dq.TryEnqueue(async () =>
+                    {
+                        try
+                        {
+                            var c = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
+                            tcs.TrySetResult(c.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.Text) ? await c.GetTextAsync() : "");
+                        }
+                        catch (Exception ex) { tcs.TrySetException(ex); }
+                    });
+                    text = (await tcs.Task).Trim();
+                }
+                catch (Exception ex) { Log.Warn($"scrape key paste: {ex.Message}"); }
+                _dq.TryEnqueue(() =>
+                {
+                    if (text.Length == 0 || text.Length > 200 || text.Any(char.IsWhiteSpace)) { Toast("剪贴板里没有可用的密钥（先复制一行不含空格的文字）"); return; }
+                    set(text);
+                    ScSavePrefs();
+                    Toast($"{title} 存好了");
+                    Repaint();
+                });
+            });
+        });
+        _stRows.Add(Key("Client ID", "scrape:igdbid", () => p.IgdbId, v => p.IgdbId = v));
+        _stRows.Add(Key("Client Secret", "scrape:igdbsecret", () => p.IgdbSecret, v => p.IgdbSecret = v));
     }
 
     private static string ScMatchName(JsonObject m)
