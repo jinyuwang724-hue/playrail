@@ -221,7 +221,7 @@ public sealed partial class WallStage
         Images.Release(run.Poster);
         Images.Release(run.Label);
         run.Root.Dispose();
-        _cs?.Header.StartAnimation("Opacity", CsS(1, 300, CsQuart));
+        _cs?.Header.StartAnimation("Opacity", CsS(_cs?.Page is { Style: HomeStyle.Row } ? 0 : 1, 300, CsQuart));
     }
 
     // ---------------- 各个面 ----------------

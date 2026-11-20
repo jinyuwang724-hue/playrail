@@ -50,6 +50,11 @@ public sealed partial class WallStage
     {
         public required ContainerVisual Root;
         public required SpriteVisual Wall, PanelL, PanelR, More, Glow, Line, Rim, RGlow, RLine, RRim;
+        /// <summary>背景层里壁纸上面的组件层（顶部面板、图标焦点）：开菜单时和内容层一起模糊；壁纸只压暗不糊（照 Cocoon 视频）。</summary>
+        public LayerVisual Ui = null!;
+        /// <summary>开菜单时的效果：壁纸压暗层（壁纸上、组件层下）和两个组件层的模糊压暗。</summary>
+        public SpriteVisual? Dim;
+        public CompositionEffectBrush? UiFx, ContentFx;
         public CompositionDrawingSurface? RGlowSurf, RLineSurf, RRimSurf;
         public CanvasRenderTarget? Sharp, Soft;   // 壁纸原图 / 模糊后的像素（画面板用）
         public CompositionDrawingSurface? WallSurf, LSurf, RSurf, MoreSurf, GlowSurf, LineSurf, RimSurf;
@@ -89,6 +94,9 @@ public sealed partial class WallStage
         SpriteVisual Sp() { var s = G.Sprite(G.C.CreateSurfaceBrush(), relative: false); return s; }
         var rw = new RwChrome { Root = root, Wall = wall, PanelL = Sp(), PanelR = Sp(), More = Sp(), Glow = Sp(), Line = Sp(), Rim = Sp(), RGlow = Sp(), RLine = Sp(), RRim = Sp() };
         rw.Bat = _rwBat; rw.Net = _rwNet;
+        rw.Ui = G.C.CreateLayerVisual();
+        rw.Ui.Size = new Vector2(CsW, CsH);
+        root.Children.InsertAtTop(rw.Ui);
         page.Rw = rw;
         RwLoadWallpaper(page, entry);
         return root;
@@ -99,7 +107,7 @@ public sealed partial class WallStage
     {
         if (page.Rw is not { } rw) return;
         // 面板和图标焦点放在背景层：切页时页面内容会左右滑，背景层只淡入淡出，面板位置纹丝不动
-        foreach (var v in new Visual[] { rw.PanelL, rw.PanelR, rw.RGlow, rw.RLine, rw.RRim }) rw.Root.Children.InsertAtTop(v);
+        foreach (var v in new Visual[] { rw.PanelL, rw.PanelR, rw.RGlow, rw.RLine, rw.RRim }) rw.Ui.Children.InsertAtTop(v);
         RwPaintRing(rw);
         foreach (var v in new Visual[] { rw.Glow, rw.Line, rw.Rim }) page.Content.Children.InsertAtTop(v);
         if (_rwPanelNext)
@@ -961,7 +969,7 @@ public sealed partial class WallStage
         var items = CsList(tab);
         var root = G.Container(relative: false);
         root.Size = new Vector2(CsW, CsH);
-        var content = G.Container(relative: false);
+        ContainerVisual content = G.C.CreateLayerVisual();   // 组件层：开菜单时整层模糊
         content.Size = new Vector2(CsW, CsH);
         var page = new CsPage { Root = root, Bg = null!, Content = content, Tab = tab, Style = HomeStyle.Row, Items = items, Built = NowMs };
         page.Bg = RwBuild(page, entry);

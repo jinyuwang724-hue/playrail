@@ -87,7 +87,7 @@ public sealed partial class WallStage
         var ss = _csSs;
         if (ss == null) return;
         _csSs = null;
-        if (_cs != null && _csInsert == null) _cs.Header.StartAnimation("Opacity", CsS(CsWallHome ? 0 : 1, CsMs(400), CsQuart));
+        if (_cs != null && _csInsert == null) _cs.Header.StartAnimation("Opacity", CsS(CsNoHeader ? 0 : 1, CsMs(400), CsQuart));
         _cs?.Pages.StartAnimation("Opacity", CsS(1, CsMs(400), CsQuart));
         ss.Root.StartAnimation("Opacity", CsS(0, CsMs(500), Bezier.EaseOut));
         After(CsMs(520), () =>

@@ -52,6 +52,68 @@ public sealed partial class WallStage
 
     private bool RmOpen => _rm is { Closing: false };
 
+    // 按 Y 后的背景（逐帧比对 jinyu 的 Cocoon 视频，11-20）：分三层——
+    //   壁纸：细节不变（不模糊），只压暗到约 0.43、饱和度约 0.55（实测 (136,155,207) → (59,64,77)）；
+    //   首页组件（卡片、面板、焦点框）：同样压暗去饱和，再重度模糊（标志字样糊到认不出，σ≈15 px）；
+    //   菜单层（封面、标题、白卡）：清晰不变。
+    private const float RmFxSat = 0.65f, RmFxExposure = -1.45f, RmFxBlur = 15;   // 曝光在线性光里算：-1.45 档量出来 sRGB 约 ×0.40，和视频一致
+
+    private CompositionEffectBrush RwFxBrush(bool blur, CompositionBrush? src)
+    {
+        var sat = new SaturationEffect { Name = "sat", Saturation = 1, Source = new CompositionEffectSourceParameter("src") };
+        var exp = blur
+            ? new ExposureEffect { Name = "exp", Exposure = 0, Source = new GaussianBlurEffect { Name = "blur", BlurAmount = 0, BorderMode = EffectBorderMode.Soft, Optimization = EffectOptimization.Balanced, Source = sat } }
+            : new ExposureEffect { Name = "exp", Exposure = 0, Source = sat };
+        var props = blur ? new[] { "sat.Saturation", "exp.Exposure", "blur.BlurAmount" } : new[] { "sat.Saturation", "exp.Exposure" };
+        var b = G.C.CreateEffectFactory(exp, props).CreateBrush();
+        if (src != null) b.SetSourceParameter("src", src);
+        return b;
+    }
+
+    /// <summary>开 / 关菜单时的分层背景：壁纸上面一层压暗（背景画刷，只盖得到壁纸），组件层（LayerVisual）整层模糊压暗。</summary>
+    private void RwBackdropFx(CsPage p, bool on, double ms)
+    {
+        if (p.Rw is not { Disposed: false } rw) return;
+        try
+        {
+            var content = p.Content as LayerVisual;
+            if (on)
+            {
+                if (rw.Dim == null)
+                {
+                    rw.Dim = G.Sprite(RwFxBrush(false, G.C.CreateBackdropBrush()), relative: false);
+                    rw.Dim.Size = new Vector2(CsW, CsH);
+                    rw.Root.Children.InsertAbove(rw.Dim, rw.Wall);
+                }
+                rw.Dim.IsVisible = true;
+                rw.UiFx ??= RwFxBrush(true, null);
+                rw.Ui.Effect = rw.UiFx;
+                if (content != null) { rw.ContentFx ??= RwFxBrush(true, null); content.Effect = rw.ContentFx; }
+            }
+            var e = on ? Bezier.EaseOut : new Bezier(0.3f, 0f, 0.2f, 1f);
+            foreach (var (b, blur) in new[] { (rw.Dim?.Brush as CompositionEffectBrush, false), (rw.UiFx, true), (rw.ContentFx, true) })
+            {
+                if (b == null) continue;
+                b.StartAnimation("sat.Saturation", CsS(on ? RmFxSat : 1, ms, e));
+                b.StartAnimation("exp.Exposure", CsS(on ? RmFxExposure : 0, ms, e));
+                if (blur) b.StartAnimation("blur.BlurAmount", CsS(on ? RmFxBlur : 0, ms, e));
+            }
+            if (!on)
+                After(ms + 30, () =>
+                {
+                    if (_rm != null || rw.Disposed) return;   // 又开了菜单
+                    try
+                    {
+                        rw.Ui.Effect = null;
+                        if (content != null) content.Effect = null;
+                        if (rw.Dim != null) rw.Dim.IsVisible = false;
+                    }
+                    catch (ObjectDisposedException) { }
+                });
+        }
+        catch (Exception ex) { Log.Warn($"menu backdrop fx: {ex.Message}"); }
+    }
+
     /// <summary>Y：焦点游戏的菜单（单行样式的首页和网格页）。</summary>
     private void RmShow(CsPage p)
     {
@@ -61,18 +123,11 @@ public sealed partial class WallStage
         Cue(Sfx.MenuIn);
         var root = G.Container(relative: false);
         root.Size = new Vector2(CsW, CsH);
-        // 背后整屏模糊 + 压暗（Cocoon 的菜单背景是糊掉的）；合成器不支持就只压暗
-        var scrim = G.Sprite(G.Solid(Color.FromArgb(150, 8, 8, 14)), relative: false);
-        try
-        {
-            var blur = new GaussianBlurEffect { Name = "blur", BlurAmount = 28, BorderMode = EffectBorderMode.Hard, Source = new CompositionEffectSourceParameter("src") };
-            var tint = new ArithmeticCompositeEffect { MultiplyAmount = 0, Source1Amount = 0.55f, Source2Amount = 0.45f, Offset = 0, Source1 = blur, Source2 = new ColorSourceEffect { Color = Color.FromArgb(255, 10, 10, 16) } };
-            var eb = G.C.CreateEffectFactory(tint).CreateBrush();
-            eb.SetSourceParameter("src", G.C.CreateBackdropBrush());
-            scrim.Brush = eb;
-        }
-        catch (Exception ex) { Log.Warn($"menu backdrop: {ex.Message}"); }
+        // 背景分层处理（RwBackdropFx）：壁纸只压暗、去饱和，首页组件层模糊 + 压暗，菜单这一层清晰。
+        // Scrim 只留作占位（透明），不再整屏糊。
+        var scrim = G.Sprite(G.Solid(Color.FromArgb(0, 0, 0, 0)), relative: false);
         scrim.Size = new Vector2(CsW, CsH);
+        RwBackdropFx(p, true, Reduced ? 1 : 230);
         SpriteVisual Sp() => G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         var rm = new RmState { Root = root, Scrim = scrim, Card = Sp(), Cover = Sp(), Title = Sp(), Glow = Sp(), Line = Sp(), Rim = Sp(), Item = g, Page = p };
         _rm = rm;
@@ -206,10 +261,10 @@ public sealed partial class WallStage
             try { if (rm.From != null) rm.From.Opacity = 1; } catch (ObjectDisposedException) { }
             if (rm.Page.Rw is { PanelFocus: < 0, Disposed: false }) RwCursorShow(rm.Page, true);
         }
+        RwBackdropFx(rm.Page, false, instant || Reduced ? 1 : 220);
         if (instant || Reduced) { Restore(); Drop(); return; }
         // 关：白卡、焦点框、标题先淡掉，封面原路飞回卡片位置，背景同时退回清晰
         foreach (var v in new Visual[] { rm.Card, rm.Cur, rm.Title }) v.StartAnimation("Opacity", CsS(0, 100, Bezier.EaseOut));
-        rm.Scrim.StartAnimation("Opacity", CsS(0, 220, Bezier.EaseOut));
         if (rm.From != null)
         {
             var back = rm.FromCenter - new Vector3(RmCoverW / 2, RmCoverH / 2, 0);

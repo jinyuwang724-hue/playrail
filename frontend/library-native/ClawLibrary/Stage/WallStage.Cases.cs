@@ -92,6 +92,8 @@ public sealed partial class WallStage
     private bool CsActive => _cs != null && !_ccOpen && !CsWallHome;
     /// <summary>首页样式是海报墙、正停在首页：墙照原样工作，顶栏标签叠在上面。</summary>
     private bool CsWallHome => _cs?.Page is { Tab: 0, Style: HomeStyle.Wall };
+    /// <summary>这一页不显示顶栏（海报墙首页、单行样式各页）：屏保退出、插卡动画结束时别把顶栏淡回来。</summary>
+    private bool CsNoHeader => CsWallHome || _cs?.Page is { Style: HomeStyle.Row };
     /// <summary>墙藏起来了（卡盒版的页面整层盖住它）。离开海报墙时等新页面的背景盖满了才藏。</summary>
     private bool CsHidesWall => _cs != null && !_csWallShown;
     private bool _csWallShown, _csRailTab;
@@ -705,7 +707,7 @@ public sealed partial class WallStage
         var items = CsList(0);
         var root = G.Container(relative: false);
         root.Size = new Vector2(CsW, CsH);
-        var content = G.Container(relative: false);
+        ContainerVisual content = style == HomeStyle.Row ? G.C.CreateLayerVisual() : G.Container(relative: false);   // 单行：组件层是 LayerVisual，开菜单时整层模糊（壁纸不糊）
         content.Size = new Vector2(CsW, CsH);
         var page = new CsPage { Root = root, Bg = null!, Content = content, Tab = 0, Style = style, Items = items, Built = NowMs };
         page.Bg = style == HomeStyle.Row ? RwBuild(page, entry) : CsBuildBg(page, style, cat: false);
