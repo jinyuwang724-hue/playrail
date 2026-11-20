@@ -1702,6 +1702,7 @@ public sealed partial class WallStage
     private bool CsClick(double sx, double sy)
     {
         if (_cs?.Page is not { } p) return false;
+        if (_rm != null || _rs != null) return true;   // 菜单 / 二级页开着：点到后面的卡片不算
         if (_csInsert != null) { if (_csInsert.Done) { } return true; }
         var (x, y) = CsLocal(sx, sy);
         if (_csSearchOpen && y >= CatTop) { CsCloseSearch(); return true; }
@@ -1794,6 +1795,7 @@ public sealed partial class WallStage
     private void CsDrag(double dx, double dy)
     {
         if (_cs?.Page is not { } p || _csInsert != null) return;
+        if (_rm != null || _rs != null) return;   // 游戏菜单 / 二级页开着：后面的卡片不跟手指滑
         float k = _cs.K;
         float lx = (float)(dx / k), ly = (float)(dy / k);
         if (_csDragAxis == 0) _csDragAxis = Math.Abs(lx) >= Math.Abs(ly) ? 1 : 2;

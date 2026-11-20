@@ -103,6 +103,17 @@ public sealed partial class WallStage
         public bool FromMenu;
         /// <summary>焦点框现在画成的尺寸（整行 / 下拉选项）：换尺寸时重画并从旧尺寸弹过去。</summary>
         public float CurW, CurH;
+        /// <summary>焦点框线的右半（左右各一个沿周长流动的渐变）。</summary>
+        public SpriteVisual Line2 = null!;
+        /// <summary>分组卡片精灵；本次排版里每组 / 每行的位置（下一次重排时拿来做滑动动画）。</summary>
+        public readonly List<SpriteVisual> GroupVis = new();
+        public readonly List<CompositionDrawingSurface?> GroupSurf = new();
+        public readonly Dictionary<string, (float Y0, float Y1)> GroupRects = new();
+        public readonly Dictionary<string, float> RowYs = new();
+        /// <summary>焦点在来源行上时，↓↑ 胶囊展开成两个带十字键的按钮（单独一层，好做展开动画）。</summary>
+        public SpriteVisual? Pill;
+        public CompositionDrawingSurface? PillSurf;
+        public int PillRow = -1;
     }
 
     private RsState? _rs;
@@ -164,10 +175,11 @@ public sealed partial class WallStage
             Body = body, Rows = rows, Scroll = scroll, Groups = Sp(), Skel = Sp(), Title = Sp(), Custom = Sp(), Chev = Sp(), FromMenu = fromMenu,
         };
         _rs = rs;
+        rs.Line2 = Sp();
         rows.Children.InsertAtBottom(rs.Groups);
         scroll.Children.InsertAtTop(rows);
         foreach (var v in new Visual[] { scroll, rs.Skel, rs.Custom, rs.Title, rs.Chev }) body.Children.InsertAtTop(v);
-        foreach (var v in new Visual[] { scrim, rs.Sheet, body, rs.Glow, rs.Line, rs.Rim }) root.Children.InsertAtTop(v);
+        foreach (var v in new Visual[] { scrim, rs.Sheet, body, rs.Glow, rs.Line, rs.Line2, rs.Rim }) root.Children.InsertAtTop(v);
         _cs.Root.Children.InsertAtTop(root);
         RsPaintSheet(rs);
         RsPaintCursor(rs);
@@ -223,11 +235,11 @@ public sealed partial class WallStage
         }
         // 焦点框和下箭头：最后一行出来后约 230 ms 直接出现
         bool cursor = page.Rows.Count > 0 && page.Paint == null;
-        foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim, rs.Chev }) v.Opacity = 0;
+        foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Line2, rs.Rim, rs.Chev }) v.Opacity = 0;
         After(tRows + 33 * Math.Max(0, items.Count - 1) + 230, () =>
         {
             if (_rs != rs || rs.EnterSeq != seq || rs.Stack.Count == 0 || rs.Stack[^1] != page) return;
-            if (cursor) foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim }) v.Opacity = 1;
+            if (cursor) foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Line2, rs.Rim }) v.Opacity = 1;
             rs.Chev.Opacity = 1;
         });
     }
@@ -258,6 +270,8 @@ public sealed partial class WallStage
             _cs?.Root.Children.Remove(rs.Root);
             foreach (var s in new[] { rs.SheetSurf, rs.GlowSurf, rs.LineSurf, rs.RimSurf, rs.SkelSurf, rs.GroupsSurf, rs.TitleSurf, rs.CustomSurf, rs.ChevSurf }) s?.Dispose();
             foreach (var s in rs.RowSurf) s.Dispose();
+            foreach (var s in rs.GroupSurf) s?.Dispose();
+            rs.PillSurf?.Dispose();
             _rsEdPanel = null;
             rs.Root.Dispose();
         }
@@ -267,7 +281,7 @@ public sealed partial class WallStage
         {
             // 内容先没，面板缩回中心消失，菜单回来
             rs.Body.Opacity = 0;
-            foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim }) v.Opacity = 0;
+            foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Line2, rs.Rim }) v.Opacity = 0;
             var easeIn = new Bezier(0.4f, 0f, 1f, 1f);
             rs.Sheet.StartAnimation("Scale", CsV3(new Vector3(0.3f, 0.3f, 1), 70, easeIn));
             rs.Sheet.StartAnimation("Opacity", CsS(0, 70, easeIn));
@@ -320,9 +334,11 @@ public sealed partial class WallStage
 
     private Matrix3x2 RsFullXf => Matrix3x2.CreateTranslation(RsPad - RsX, RsPad - RsY) * Matrix3x2.CreateScale(CsRaster);
 
-    private void RsPaint(RsState rs)
+    private void RsPaint(RsState rs, bool animate = false)
     {
         var page = rs.Stack[^1];
+        var oldRows = animate ? new Dictionary<string, float>(rs.RowYs) : null;
+        var oldGroups = animate ? new Dictionary<string, (float Y0, float Y1)>(rs.GroupRects) : null;
         rs.Layout = page.Paint == null ? RsLayoutRows(page) : new();
         // 骨架：胶囊、页签；分组卡片和分隔线单独一层（跟着列表滚）
         using (var ds = CanvasComposition.CreateDrawingSession(RsFullSurf(ref rs.SkelSurf, rs.Skel)))
@@ -342,12 +358,8 @@ public sealed partial class WallStage
             RsPaintPills(ds, page.YAction != null);
             page.PaintHeaderExtra?.Invoke(ds);
         }
-        using (var ds = CanvasComposition.CreateDrawingSession(RsFullSurf(ref rs.GroupsSurf, rs.Groups)))
-        {
-            ds.Clear(Colors.Transparent);
-            ds.Transform = RsFullXf;
-            if (page.Paint == null) RsPaintGroups(ds, page, rs.Layout);
-        }
+        rs.Groups.IsVisible = false;
+        RsPaintGroupVis(rs, page);
         rs.Rows.StopAnimation("Offset");
         rs.Rows.Offset = Vector3.Zero;
         RsPaintTitle(rs, page);
@@ -363,6 +375,8 @@ public sealed partial class WallStage
         else rs.Custom.IsVisible = false;
         RsPaintRows(rs, page);
         RsPaintChevron(rs, page);
+        if (oldRows != null && oldGroups != null) RsAnimateRelayout(rs, page, oldRows, oldGroups);
+        RsUpdatePill(rs, page, animate);
     }
 
     /// <summary>
@@ -426,25 +440,76 @@ public sealed partial class WallStage
     }
 
     /// <summary>分组卡片：#F7F8FA 圆角面、上浅下深的描边、底部内阴影和下方一圈很淡的投影；组内行间 4 px 分隔线。</summary>
-    private void RsPaintGroups(CanvasDrawingSession ds, RsPage page, List<(int I, float Y)> lay)
+    /// <summary>这一页的分组：每组的上下边、组内分隔线、组里第一行的键（动画时用来对应前后两次排版）。</summary>
+    private static List<(float Y0, float Y1, List<float> Seps, string Key)> RsGroupsOf(RsPage page, List<(int I, float Y)> lay)
     {
-        if (lay.Count == 0) return;
-        var dev = ds.Device;
-        using var sheetClip = CanvasGeometry.CreateRoundedRectangle(dev, RsX, RsY, RsW, RsH - 3, RsR, RsR);
-        using var layer = ds.CreateLayer(1, sheetClip);
-        var groups = new List<(float Y0, float Y1, List<float> Seps)>();
+        var groups = new List<(float Y0, float Y1, List<float> Seps, string Key)>();
         for (int k = 0; k < lay.Count; k++)
         {
             var (i, y) = lay[k];
-            if (k == 0 || page.Rows[i].Break) groups.Add((y, y + RsHi(page, i), new List<float>()));
-            else { var g = groups[^1]; g.Seps.Add(y - RsSep); groups[^1] = (g.Y0, y + RsHi(page, i), g.Seps); }
+            if (k == 0 || page.Rows[i].Break) groups.Add((y, y + RsHi(page, i), new List<float>(), RsKey(page.Rows[i])));
+            else { var g = groups[^1]; g.Seps.Add(y - RsSep); groups[^1] = (g.Y0, y + RsHi(page, i), g.Seps, g.Key); }
         }
         // 最后一组下面还有没排进来的同组行（或者最后一行只露一截）：卡片一直延到面板底外面，被圆角裁掉
-        var last = lay[^1];
-        if ((last.I < page.Rows.Count - 1 && !page.Rows[last.I + 1].Break) || last.Y + RsHi(page, last.I) > RsBottom)
-            groups[^1] = (groups[^1].Y0, RsY + RsH + 60, groups[^1].Seps);
+        if (lay.Count > 0)
+        {
+            var last = lay[^1];
+            if ((last.I < page.Rows.Count - 1 && !page.Rows[last.I + 1].Break) || last.Y + RsHi(page, last.I) > RsBottom)
+                groups[^1] = (groups[^1].Y0, RsY + RsH + 60, groups[^1].Seps, groups[^1].Key);
+        }
+        return groups;
+    }
+
+    private static string RsKey(RsRow r) => $"{(int)r.Kind}|{r.Icon}|{r.Title}";
+
+    /// <summary>
+    /// 分组卡片一组一个精灵（在行容器最底下，跟着列表滚）：开关展开 / 收起子项、来源换位置时，
+    /// 卡片能单独滑动、长高（裁剪从旧高度展开到新高度）。
+    /// </summary>
+    private void RsPaintGroupVis(RsState rs, RsPage page)
+    {
+        var groups = page.Paint == null ? RsGroupsOf(page, rs.Layout) : new();
+        rs.GroupRects.Clear();
+        float R = CsRaster, pad = 24, w = RsListW + pad * 2;
+        while (rs.GroupVis.Count < groups.Count)
+        {
+            var v = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+            rs.Rows.Children.InsertAtBottom(v);
+            rs.GroupVis.Add(v);
+            rs.GroupSurf.Add(null);
+        }
+        for (int k = 0; k < rs.GroupVis.Count; k++)
+        {
+            var v = rs.GroupVis[k];
+            if (k >= groups.Count) { v.IsVisible = false; continue; }
+            var (y0, y1, seps, key) = groups[k];
+            rs.GroupRects[key] = (y0, y1);
+            float hh = y1 - y0 + pad * 2;
+            if (rs.GroupSurf[k] == null || MathF.Abs(v.Size.Y - hh) > 0.5f)
+            {
+                rs.GroupSurf[k]?.Dispose();
+                rs.GroupSurf[k] = G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(hh * R));
+                ((CompositionSurfaceBrush)v.Brush).Surface = rs.GroupSurf[k];
+                v.Size = new Vector2(w, hh);
+            }
+            v.IsVisible = true;
+            v.StopAnimation("Offset");
+            v.StopAnimation("Opacity");
+            v.Opacity = 1;
+            v.Clip = null;
+            v.Offset = new Vector3(RsListX - pad, y0 - pad, 0);
+            using var ds = CanvasComposition.CreateDrawingSession(rs.GroupSurf[k]!);
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateTranslation(pad - RsListX, pad - y0) * Matrix3x2.CreateScale(R);
+            RsPaintGroup(ds, y0, y1, seps);
+        }
+    }
+
+    /// <summary>一张分组卡片：#F7F8FA 圆角面、上浅下深的描边、底部内阴影和下方一圈很淡的投影；组内行间 4 px 分隔线。</summary>
+    private void RsPaintGroup(CanvasDrawingSession ds, float y0, float y1, List<float> seps)
+    {
+        var dev = ds.Device;
         float x = RsListX, w = RsListW, r = RsGroupR;
-        foreach (var (y0, y1, seps) in groups)
         {
             float h = y1 - y0;
             using (var cl = new CanvasCommandList(dev))
@@ -484,11 +549,13 @@ public sealed partial class WallStage
             ((CompositionSurfaceBrush)v.Brush).Surface = s;
             rs.RowSurf.Add(s);
         }
+        rs.RowYs.Clear();
         for (int k = 0; k < rs.RowVis.Count; k++)
         {
             var v = rs.RowVis[k];
             if (k >= rs.Layout.Count) { v.IsVisible = false; continue; }
             var (i, y) = rs.Layout[k];
+            rs.RowYs[RsKey(page.Rows[i])] = y;
             v.IsVisible = true;
             v.Offset = new Vector3(RsListX - pad, y - pad, 0);
             v.StopAnimation("Opacity");
@@ -980,8 +1047,12 @@ public sealed partial class WallStage
         }
         ((CompositionSurfaceBrush)rs.Glow.Brush).Surface = rs.GlowSurf;
         ((CompositionSurfaceBrush)rs.Rim.Brush).Surface = rs.RimSurf;
-        rs.Line.Brush = RwFlowBrush(rs.Page.Rw!, rs.LineSurf);
-        foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim }) { v.Size = new Vector2(sw, sh); v.CenterPoint = new Vector3(sw / 2, sh / 2, 0); }
+        // 流光沿整圈周长走：左右两半各一个竖向渐变，颜色按各自在周长上的位置随时间流动（宽框不再整块左右换色）
+        rs.Line.Brush = RsPerimFlow(rs.LineSurf, W, H, r, right: false);
+        rs.Line2.Brush = RsPerimFlow(rs.LineSurf, W, H, r, right: true);
+        rs.Line.Clip = G.C.CreateInsetClip(0, 0, sw / 2, 0);
+        rs.Line2.Clip = G.C.CreateInsetClip(sw / 2, 0, 0, 0);
+        foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Line2, rs.Rim }) { v.Size = new Vector2(sw, sh); v.CenterPoint = new Vector3(sw / 2, sh / 2, 0); }
     }
 
     /// <summary>
@@ -1008,7 +1079,7 @@ public sealed partial class WallStage
             float ow = rs.CurW, oh = rs.CurH;
             var oldCenter = new Vector3(rs.Glow.Offset.X + (ow + RmCurPad * 2) / 2, rs.Glow.Offset.Y + (oh + RmCurPad * 2) / 2, 0);
             RsPaintCursor(rs, option);
-            foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim })
+            foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Line2, rs.Rim })
             {
                 v.StopAnimation("Offset");
                 v.Offset = oldCenter - new Vector3(sw / 2, sh / 2, 0);
@@ -1020,7 +1091,7 @@ public sealed partial class WallStage
                 else v.Scale = Vector3.One;
             }
         }
-        foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim })
+        foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Line2, rs.Rim })
         {
             if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else RwJump(v, to);
             v.Opacity = show ? 1 : 0;
@@ -1061,8 +1132,16 @@ public sealed partial class WallStage
             if (page.Sel < page.Rows.Count && page.Rows[page.Sel] is { Step: { } step } srow && srow.Kind is RsKind.Pick or RsKind.Toggle or RsKind.Order)
             {
                 Cue(Sfx.Nav, pan: dir == Direction.Left ? -0.4f : 0.4f);
+                bool wasOn = srow.IsOn?.Invoke() == true;
                 step(dir == Direction.Left ? -1 : 1);
-                if (_rs == rs) { page.Rows = page.Build(); RsPaint(rs); }
+                if (_rs == rs)
+                {
+                    page.Rows = page.Build();
+                    RsLayoutRows(page);
+                    RsPaint(rs, animate: true);   // 来源换位置：两行互相滑过去，焦点框跟着走
+                    RsCursorTo(rs, move: true);
+                    if (srow.Kind == RsKind.Toggle && srow.IsOn?.Invoke() is bool nowOn && nowOn != wasOn) RsToggleFx(rs, RsRowY(rs, page.Sel), nowOn);
+                }
                 return;
             }
             Cue(Sfx.Bump);
@@ -1090,7 +1169,7 @@ public sealed partial class WallStage
             }
             else RsCursorTo(rs, move: false);
         }
-        else RsCursorTo(rs, move: true);
+        else { RsCursorTo(rs, move: true); RsUpdatePill(rs, page, animate: true); }
     }
 
     private void RsActivate()
@@ -1123,7 +1202,7 @@ public sealed partial class WallStage
             page.Open = page.Sel;
             page.OptSel = prow.Multi ? 0 : Math.Clamp(prow.Current?.Invoke() ?? 0, 0, prow.Options!.Length - 1);
             RsLayoutRows(page);
-            RsPaint(rs);
+            RsPaint(rs, animate: true);
             RsCursorTo(rs, move: true);
             return;
         }
@@ -1135,8 +1214,15 @@ public sealed partial class WallStage
             case RsKind.Info: Cue(Sfx.Bump); return;
             default:
                 Cue(row.Kind is RsKind.Toggle or RsKind.Order ? Sfx.ToggleOn : Sfx.Activate);
+                bool wasOn = row.IsOn?.Invoke() == true;
                 row.Press?.Invoke();
-                if (_rs == rs && rs.Stack.Count > 0 && rs.Stack[^1] == page) { page.Rows = page.Build(); RsPaint(rs); }
+                if (_rs == rs && rs.Stack.Count > 0 && rs.Stack[^1] == page)
+                {
+                    page.Rows = page.Build();
+                    RsPaint(rs, animate: true);   // 开关管着的子项展开 / 收起：下面的行滑开、新行淡入
+                    RsCursorTo(rs, move: true);
+                    if (row.Kind is RsKind.Toggle or RsKind.Order && row.IsOn?.Invoke() is bool nowOn && nowOn != wasOn) RsToggleFx(rs, RsRowY(rs, page.Sel), nowOn);
+                }
                 return;
         }
     }
@@ -1149,7 +1235,7 @@ public sealed partial class WallStage
         if (_rs != rs || rs.Stack.Count == 0 || rs.Stack[^1] != page) return;
         page.Rows = page.Build();
         RsLayoutRows(page);
-        RsPaint(rs);
+        RsPaint(rs, animate: true);
         RsCursorTo(rs, move: true);
     }
     /// <summary>LB / RB：页里有分段页签（封面管理）就切页签。</summary>
@@ -1291,7 +1377,7 @@ public sealed partial class WallStage
         _rsEdPanel.Offset = new Vector3(RsEdX - pad, RsEdY - pad, 0);
         _rsEdPanel.CenterPoint = new Vector3(w / 2, pad + 60, 0);
         _rsEdPanel.IsVisible = true;
-        foreach (var v in new Visual[] { rs.Body, rs.Sheet, rs.Glow, rs.Line, rs.Rim }) v.StartAnimation("Opacity", CsS(0, Reduced ? 1 : 120, Bezier.EaseOut));
+        foreach (var v in new Visual[] { rs.Body, rs.Sheet, rs.Glow, rs.Line, rs.Line2, rs.Rim }) v.StartAnimation("Opacity", CsS(0, Reduced ? 1 : 120, Bezier.EaseOut));
         if (!Reduced)
         {
             _rsEdPanel.Opacity = 0;
@@ -1306,7 +1392,7 @@ public sealed partial class WallStage
         if (_rsEdPanel == null) return;
         var panel = _rsEdPanel;
         if (rs == null || panel.Parent != rs.Root) { panel.IsVisible = false; return; }
-        foreach (var v in new Visual[] { rs.Body, rs.Sheet, rs.Glow, rs.Line, rs.Rim }) v.StartAnimation("Opacity", CsS(1, Reduced ? 1 : 140, Bezier.EaseOut));
+        foreach (var v in new Visual[] { rs.Body, rs.Sheet, rs.Glow, rs.Line, rs.Line2, rs.Rim }) v.StartAnimation("Opacity", CsS(1, Reduced ? 1 : 140, Bezier.EaseOut));
         panel.StartAnimation("Opacity", CsS(0, Reduced ? 1 : 100, Bezier.EaseOut));
     }
 

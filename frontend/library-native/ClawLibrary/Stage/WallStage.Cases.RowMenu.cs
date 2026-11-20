@@ -516,13 +516,13 @@ public sealed partial class WallStage
         }
         ((CompositionSurfaceBrush)rm.Glow.Brush).Surface = rm.GlowSurf;
         ((CompositionSurfaceBrush)rm.Rim.Brush).Surface = rm.RimSurf;
-        rm.Line.Brush = RwFlowBrush(rm.Page.Rw!, rm.LineSurf);
+        rm.Line.Brush = RsPerimFlow(rm.LineSurf!, W, H, r, right: false);   // 沿周长流（和二级页一样）
         foreach (var v in new Visual[] { rm.Glow, rm.Line, rm.Rim }) v.Size = new Vector2(sw, sh);
         // 右半：同样三层（共用画刷），裁成右半；左半裁掉右半
         rm.CurR.Children.RemoveAll();
         foreach (var v in new[] { rm.Glow, rm.Line, rm.Rim })
         {
-            var copy = G.Sprite(v.Brush, relative: false);
+            var copy = G.Sprite(v == rm.Line ? RsPerimFlow(rm.LineSurf!, W, H, r, right: true) : v.Brush, relative: false);
             copy.Size = v.Size;
             rm.CurR.Children.InsertAtTop(copy);
         }

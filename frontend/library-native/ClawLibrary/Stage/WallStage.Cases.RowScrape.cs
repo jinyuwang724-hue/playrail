@@ -151,28 +151,29 @@ public sealed partial class WallStage
                 Kind = RsKind.Toggle, Break = true, Icon = "abc", Title = "刮削资料", Sub = "简介、开发商、发行商、发行日期、类型",
                 IsOn = () => p.Meta, Press = () => { p.Meta = !p.Meta; Save(); }, Step = k => { p.Meta = k > 0; Save(); },
             },
-            new()
+        };
+        // 刮削资料关着：资料类型和资料来源收起来（Cocoon：开关管着的子项跟着展开 / 收起）
+        if (p.Meta) rows.Add(new RsRow
             {
                 Kind = RsKind.Pick, Icon = "filter", Title = "资料类型", Sub = "刮削时包括哪些资料",
                 Value = p.MetaTypes.Count >= RsMetaFields.Length ? "全部资料" : $"{p.MetaTypes.Count} 项",
                 Options = RsMetaFields.Select(f => f.Title).ToArray(), Multi = true, Checked = i => p.MetaTypes.Contains(RsMetaFields[i].Key),
                 ToggleOpt = i => { if (!p.MetaTypes.Remove(RsMetaFields[i].Key)) p.MetaTypes.Add(RsMetaFields[i].Key); Save(); },
-            },
-        };
-        ScSourceRows(rows, p.MetaSrc, p);
+            });
+        if (p.Meta) ScSourceRows(rows, p.MetaSrc, p);
         rows.Add(new RsRow
         {
             Kind = RsKind.Toggle, Break = true, Icon = "artwork", Title = "刮削图片", Sub = "封面、横封面、背景、标志",
             IsOn = () => p.Art, Press = () => { p.Art = !p.Art; Save(); }, Step = k => { p.Art = k > 0; Save(); },
         });
-        rows.Add(new RsRow
+        if (p.Art) rows.Add(new RsRow
         {
             Kind = RsKind.Pick, Icon = "filter", Title = "图片类型", Sub = "刮削时包括哪些图",
             Value = p.ArtTypes.Count >= ScArtKinds.Length ? "全部图片" : $"{p.ArtTypes.Count} 种",
             Options = ScArtKinds.Select(k => k.Title).ToArray(), Multi = true, Checked = i => p.ArtTypes.Contains(ScArtKinds[i].Kind),
             ToggleOpt = i => { if (!p.ArtTypes.Remove(ScArtKinds[i].Kind)) p.ArtTypes.Add(ScArtKinds[i].Kind); Save(); },
         });
-        ScSourceRows(rows, p.ArtSrc, p);
+        if (p.Art) ScSourceRows(rows, p.ArtSrc, p);
         rows.Add(new RsRow
         {
             Kind = RsKind.Action, Break = true, Icon = "scrape", Title = s.Busy ? "正在刮削…" : "开始刮削", Value = s.Status,

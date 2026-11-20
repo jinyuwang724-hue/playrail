@@ -115,6 +115,15 @@ public sealed partial class WallStage
             await Rec("multiopen", Activate, 600);
             Activate(); await Task.Delay(300); await Still("multi");
             Activate(); await Task.Delay(300); Back(); await Task.Delay(400);
+            // 开关：刮削资料关掉再打开（录子项收起 / 展开、圆钮滑动），设置还原
+            Move(Direction.Up); await Task.Delay(300);
+            await Rec("toggleoff", Activate, 700);
+            await Rec("toggleon", Activate, 800);
+            // 来源排序：焦点落到 LaunchBox（↓↑ 展开成十字键按钮），→ 挪到第一，← 挪回去
+            Move(Direction.Down); await Task.Delay(250); Move(Direction.Down); await Task.Delay(400);
+            await Rec("orderfocus", () => Move(Direction.Down), 500);
+            await Rec("ordermove", () => Move(Direction.Right), 700);
+            Move(Direction.Left); await Task.Delay(400);
             for (int i = 0; i < 9; i++) { Move(Direction.Down); await Task.Delay(200); }
             await Still("scrape2");
             {
