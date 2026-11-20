@@ -24,7 +24,7 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private enum RsKind { Nav, Toggle, Field, Info, Action, Pick }
+    private enum RsKind { Nav, Toggle, Field, Info, Action, Pick, Order }
 
     private sealed class RsRow
     {
@@ -43,6 +43,10 @@ public sealed partial class WallStage
         public bool Break;
         /// <summary>文字编辑提交后回调（刮削游戏的搜索词）。</summary>
         public Action<string>? Commit;
+        /// <summary>标题下面一行灰色说明（Cocoon 每一行都有）。</summary>
+        public string? Sub;
+        /// <summary>Order（来源优先级）：还能不能往上 / 往下挪。</summary>
+        public bool CanUp, CanDown;
     }
 
     private sealed class RsPage
@@ -61,6 +65,8 @@ public sealed partial class WallStage
         public Action? Activate;
         public Action<int>? Tab;
         public Action<CanvasDrawingSession>? PaintHeaderExtra;
+        /// <summary>Y 不是「保存并退出」而是一个动作（刮削页的 Y ▶ 开始）：右上胶囊画成三角，按了不退页。</summary>
+        public Action? YAction;
     }
 
     private sealed class RsState
@@ -146,7 +152,7 @@ public sealed partial class WallStage
         _rs = rs;
         rows.Children.InsertAtBottom(rs.Groups);
         scroll.Children.InsertAtTop(rows);
-        foreach (var v in new Visual[] { rs.Skel, scroll, rs.Custom, rs.Title, rs.Chev }) body.Children.InsertAtTop(v);
+        foreach (var v in new Visual[] { scroll, rs.Skel, rs.Custom, rs.Title, rs.Chev }) body.Children.InsertAtTop(v);
         foreach (var v in new Visual[] { scrim, rs.Sheet, body, rs.Glow, rs.Line, rs.Rim }) root.Children.InsertAtTop(v);
         _cs.Root.Children.InsertAtTop(root);
         RsPaintSheet(rs);
@@ -308,7 +314,17 @@ public sealed partial class WallStage
         {
             ds.Clear(Colors.Transparent);
             ds.Transform = RsFullXf;
-            RsPaintPills(ds);
+            if (page.Paint == null && page.Top > 0)
+            {
+                // 列表滚上去以后，标题栏下面一条从面板底色渐隐到透明（滚上去的那行淡淡地压在标题下面，和 Cocoon 一样）
+                using var clip = CanvasGeometry.CreateRoundedRectangle(ds.Device, RsX, RsY, RsW, RsH, RsR, RsR);
+                using (ds.CreateLayer(1, clip))
+                {
+                    using var fade = new CanvasLinearGradientBrush(ds.Device, Color.FromArgb(170, RsBg.R, RsBg.G, RsBg.B), Color.FromArgb(0, RsBg.R, RsBg.G, RsBg.B)) { StartPoint = new Vector2(0, RsY), EndPoint = new Vector2(0, RsTop - 6) };
+                    ds.FillRectangle(RsX, RsY, RsW, RsTop - 6 - RsY, fade);
+                }
+            }
+            RsPaintPills(ds, page.YAction != null);
             page.PaintHeaderExtra?.Invoke(ds);
         }
         using (var ds = CanvasComposition.CreateDrawingSession(RsFullSurf(ref rs.GroupsSurf, rs.Groups)))
@@ -363,7 +379,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>露在底边外的半行淡一些（Cocoon 列表底部那行是半透明的）。</summary>
-    private static float RsRowOpacity(RsState rs, int k) => k >= rs.Layout.Count ? 1f : rs.Layout[k].Y < RsTop ? 0.2f : rs.Layout[k].Y + RsRowH > RsBottom ? 0.45f : 1f;
+    private static float RsRowOpacity(RsState rs, int k) => k >= rs.Layout.Count ? 1f : rs.Layout[k].Y < RsTop ? 0.4f : rs.Layout[k].Y + RsRowH > RsBottom ? 0.45f : 1f;
 
 
     /// <summary>从 top 起的行位置；上面还有行时，把上一行也排在标题下面（滚上去的那行半透明地压在标题底下，和 Cocoon 一样）。</summary>
@@ -487,7 +503,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>左上「B ←」灰胶囊、右上「Y ✓」紫胶囊（带一圈紫色投影）。</summary>
-    private void RsPaintPills(CanvasDrawingSession ds)
+    private void RsPaintPills(CanvasDrawingSession ds, bool play = false)
     {
         var dev = ds.Device;
         ds.FillRoundedRectangle(134, 104, 134, 74, 37, 37, Color.FromArgb(255, 0xE2, 0xE3, 0xE7));
@@ -513,6 +529,16 @@ public sealed partial class WallStage
         ds.FillCircle(1689, 141, 21, Color.FromArgb(255, 0xB9, 0xA9, 0xFF));
         using (var f = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
             ds.DrawText("Y", new Windows.Foundation.Rect(1668, 120, 42, 42), Color.FromArgb(255, 0x7A, 0x4C, 0xFF), f);
+        if (play)
+        {
+            // Y ▶：白色实心三角（Cocoon 刮削页右上是「开始」）
+            using var pb = new CanvasPathBuilder(dev);
+            pb.BeginFigure(1740, 124); pb.AddLine(1766, 141); pb.AddLine(1740, 158); pb.EndFigure(CanvasFigureLoop.Closed);
+            using var tri = CanvasGeometry.CreatePath(pb);
+            ds.FillGeometry(tri, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
+            ds.DrawGeometry(tri, Color.FromArgb(255, 0xFA, 0xFA, 0xFA), 4, RwRoundStroke);
+            return;
+        }
         ds.FillCircle(1750, 141, 21, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
         using (var pb = new CanvasPathBuilder(dev))
         {
@@ -558,8 +584,37 @@ public sealed partial class WallStage
             if (row.Kind == RsKind.Field) RsGlyph(ds, row.Key == "released" ? "calendar" : "pencil", 1748, cy, RmInk, 0.8f);
             return;
         }
-        using (var tf = new CanvasTextFormat { FontFamily = RmFont(row.Title), FontSize = 40, FontWeight = RsWt(row.Title), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
+        if (row.Sub is { Length: > 0 } sub)
+        {
+            // 两行：标题在上，灰色说明在下（Cocoon「Scrape type / Fill missing basics, …」）；右边控件让出位置
+            float right = row.Kind switch { RsKind.Pick => 1320, RsKind.Order => 1440, RsKind.Toggle => 1630, _ => 1700 };
+            using (var tf = new CanvasTextFormat { FontFamily = RmFont(row.Title), FontSize = 38, FontWeight = RsWt(row.Title), WordWrapping = CanvasWordWrapping.NoWrap })
+                ds.DrawText(row.Title, new Windows.Foundation.Rect(textX, y + 18, right - textX, 56), ink, tf);
+            using (var sf = new CanvasTextFormat { FontFamily = RmFont(sub), FontSize = 27, FontWeight = RsWt(sub, 500), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
+                ds.DrawText(sub, new Windows.Foundation.Rect(textX, y + 78, right - textX, 42), RsSub, sf);
+        }
+        else
+        {
+            using var tf = new CanvasTextFormat { FontFamily = RmFont(row.Title), FontSize = 40, FontWeight = RsWt(row.Title), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
             ds.DrawText(row.Title, new Windows.Foundation.Rect(textX, y, 1300, RsRowH), ink, tf);
+        }
+        if (row.Kind == RsKind.Order)
+        {
+            // 来源优先级：灰色胶囊里「↓ ↑」（到头的那边变淡），右边开关（Cocoon 的刮削来源行）
+            float px = 1468, pw = 164, ph = 84, py = cy - ph / 2;
+            ds.FillRoundedRectangle(px, py, pw, ph, ph / 2, ph / 2, Color.FromArgb(255, 0xE4, 0xE5, 0xE9));
+            void Chev(float x, bool up, bool on)
+            {
+                using var pb = new CanvasPathBuilder(ds.Device);
+                float d = up ? -1 : 1;
+                pb.BeginFigure(x - 13, cy - 6 * d); pb.AddLine(x, cy + 7 * d); pb.AddLine(x + 13, cy - 6 * d);
+                pb.EndFigure(CanvasFigureLoop.Open);
+                using var g = CanvasGeometry.CreatePath(pb);
+                ds.DrawGeometry(g, on ? RmInk : Color.FromArgb(255, 0xB4, 0xB6, 0xBC), 7, RwRoundStroke);
+            }
+            Chev(px + 42, false, row.CanDown);
+            Chev(px + pw - 42, true, row.CanUp);
+        }
         switch (row.Kind)
         {
             case RsKind.Nav:
@@ -571,6 +626,7 @@ public sealed partial class WallStage
                 ds.DrawGeometry(tri, RmInk, 3, RwRoundStroke);
                 break;
             }
+            case RsKind.Order:
             case RsKind.Toggle:
             {
                 bool on = row.IsOn?.Invoke() == true;
@@ -719,6 +775,69 @@ public sealed partial class WallStage
                 Star(cx + 24, cy + 14, 6);
                 break;
             }
+            case "filter":
+                // 三条由长到短的圆头横杠（Cocoon「Scrape type / Types of …」）
+                ds.FillRoundedRectangle(cx - 28, cy - 24, 56, 13, 6.5f, 6.5f, ink);
+                ds.FillRoundedRectangle(cx - 19, cy - 5, 38, 13, 6.5f, 6.5f, ink);
+                ds.FillRoundedRectangle(cx - 10, cy + 14, 20, 13, 6.5f, 6.5f, ink);
+                break;
+            case "globe":
+                ds.DrawCircle(cx, cy, 27, ink, 6);
+                ds.DrawEllipse(cx, cy, 11, 27, ink, 5);
+                ds.DrawLine(cx - 27, cy, cx + 27, cy, ink, 5);
+                break;
+            case "sliders":
+                foreach (var (ly, kx) in new[] { (-18f, 10f), (0f, -12f), (18f, 6f) })
+                {
+                    ds.DrawLine(cx - 28, cy + ly, cx + 28, cy + ly, ink, 6, RwRoundStroke);
+                    ds.FillCircle(cx + kx, cy + ly, 8, ink);
+                }
+                break;
+            case "abc":
+            {
+                using var f = new CanvasTextFormat { FontFamily = RwPoppinsXb, FontSize = 30, HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
+                ds.DrawText("ABC", new Windows.Foundation.Rect(cx - 50, cy - 30, 100, 60), ink, f);
+                break;
+            }
+            case "steam":
+                // Steam 风格：大圆 + 连杆 + 小圆
+                ds.DrawCircle(cx + 8, cy - 8, 15, ink, 6);
+                ds.FillCircle(cx + 8, cy - 8, 6, ink);
+                ds.DrawLine(cx - 22, cy + 18, cx - 2, cy + 4, ink, 8, RwRoundStroke);
+                ds.FillCircle(cx - 20, cy + 16, 9, ink);
+                break;
+            case "cube":
+            {
+                // 立方体（LaunchBox 的骰子图标）：正六边形轮廓 + 三条棱
+                using var pb = new CanvasPathBuilder(dev);
+                for (int i = 0; i < 6; i++)
+                {
+                    float a = MathF.PI / 3 * i - MathF.PI / 2;
+                    var pt = new Vector2(cx + 28 * MathF.Cos(a), cy + 28 * MathF.Sin(a));
+                    if (i == 0) pb.BeginFigure(pt); else pb.AddLine(pt);
+                }
+                pb.EndFigure(CanvasFigureLoop.Closed);
+                using var hex = CanvasGeometry.CreatePath(pb);
+                ds.FillGeometry(hex, ink);
+                var light = Color.FromArgb(255, 0xFA, 0xFA, 0xFA);
+                ds.DrawLine(cx, cy, cx, cy + 26, light, 3.5f);
+                ds.DrawLine(cx, cy, cx - 23, cy - 13, light, 3.5f);
+                ds.DrawLine(cx, cy, cx + 23, cy - 13, light, 3.5f);
+                break;
+            }
+            case "igdb":
+            {
+                ds.DrawRoundedRectangle(cx - 33, cy - 17, 66, 34, 6, 6, ink, 5);
+                using var f = new CanvasTextFormat { FontFamily = RwPoppinsXb, FontSize = 17, HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
+                ds.DrawText("IGDB", new Windows.Foundation.Rect(cx - 33, cy - 17, 66, 34), ink, f);
+                break;
+            }
+            case "stack":
+                // 叠在一起的三张卡（SteamGridDB）
+                ds.DrawRoundedRectangle(cx - 30, cy - 24, 44, 30, 6, 6, ink, 4);
+                ds.DrawRoundedRectangle(cx - 22, cy - 15, 44, 30, 6, 6, ink, 4);
+                ds.FillRoundedRectangle(cx - 14, cy - 6, 44, 30, 6, 6, ink);
+                break;
             case "clock":
                 ds.DrawCircle(cx, cy, 28, ink, 6);
                 ds.DrawLine(cx, cy, cx, cy - 15, ink, 6, RwRoundStroke);
@@ -803,7 +922,7 @@ public sealed partial class WallStage
         if (page.Move != null) { if (page.Move(dir)) { RsPaint(rs); CuePan(0); } else Cue(Sfx.Bump); return; }
         if (dir is Direction.Left or Direction.Right)
         {
-            if (page.Sel < page.Rows.Count && page.Rows[page.Sel] is { Step: { } step } srow && srow.Kind is RsKind.Pick or RsKind.Toggle)
+            if (page.Sel < page.Rows.Count && page.Rows[page.Sel] is { Step: { } step } srow && srow.Kind is RsKind.Pick or RsKind.Toggle or RsKind.Order)
             {
                 Cue(Sfx.Nav, pan: dir == Direction.Left ? -0.4f : 0.4f);
                 step(dir == Direction.Left ? -1 : 1);
@@ -851,7 +970,7 @@ public sealed partial class WallStage
             case RsKind.Field: Cue(Sfx.Activate); RsBeginEdit(rs, row); return;
             case RsKind.Info: Cue(Sfx.Bump); return;
             default:
-                Cue(row.Kind == RsKind.Toggle ? Sfx.ToggleOn : Sfx.Activate);
+                Cue(row.Kind is RsKind.Toggle or RsKind.Order ? Sfx.ToggleOn : Sfx.Activate);
                 row.Press?.Invoke();
                 if (_rs == rs && rs.Stack.Count > 0 && rs.Stack[^1] == page) { page.Rows = page.Build(); RsPaint(rs); }
                 return;
@@ -884,6 +1003,7 @@ public sealed partial class WallStage
         if (_rs is not { } rs) return;
         if (_rsEditing != null) RsEndEdit(commit: true);
         var page = rs.Stack[^1];
+        if (page.YAction != null) { page.YAction(); return; }
         page.Save?.Invoke();
         Cue(Sfx.Positive);
         RsPop();
@@ -1047,6 +1167,11 @@ public sealed partial class WallStage
         {
             var m = new Dictionary<string, string>();
             foreach (var r in rows) if (r.Key != null && (r.Value ?? "") != Orig(r.Key)) m[r.Key] = r.Value ?? "";
+            // 手动改过的字段记下来：刮削默认不覆盖它们（Cocoon 的「Replace protected fields」）
+            var manual = (saved.TryGetValue(RwManualKey, out var mk) ? mk.Split(',', StringSplitOptions.RemoveEmptyEntries) : Array.Empty<string>()).ToHashSet();
+            foreach (var r in rows) if (r.Key != null && (r.Value ?? "") != draft[r.Key]) manual.Add(r.Key);
+            manual.IntersectWith(m.Keys);
+            if (manual.Count > 0) m[RwManualKey] = string.Join(",", manual);
             RwMetaSave(g, m);
             Toast("已保存");
         };

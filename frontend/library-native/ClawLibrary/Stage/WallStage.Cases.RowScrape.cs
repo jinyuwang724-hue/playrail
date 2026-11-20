@@ -1,10 +1,12 @@
-// 「单行」游戏设置 › 编辑 › 刮削游戏（11-21 jinyu：照 Cocoon 的 Scrape game 做）。
-// Cocoon 的单个游戏刮削就是对这一款强制跑一遍刮削器：选刮削方式（只补空缺 / 全部覆盖）、要不要资料、要不要图，
-// 按来源优先级取第一个命中的，跑完报「成功 / 失败」。我们这边：
-//   匹配：按游戏名搜（和封面管理同一个搜索，SteamGridDB + Steam 商店），←/→ 换候选，A 重新搜；Steam 游戏直接用它自己的 AppID；
-//   资料：Steam 商店 appdetails（中文）——标题、开发商、发行商、发行日期、类型、简介，写进 game-meta.json（和编辑元数据同一份）；
-//   图片：封面 / 背景 / 标志，Steam 官方图优先，没有就用 SteamGridDB 第一张，存法和封面管理一样（AgEmbedSave）；
-//   只补空缺 = 已经有的资料和图不动；全部覆盖 = 都换成刮到的。
+// 「单行」游戏设置 › 编辑 › 刮削游戏（11-21 jinyu：照 Cocoon 的「Scrape selected games」做，来源也对齐）。
+// 页面和 Cocoon 截图同一套排布（每行标题 + 灰色说明，右上 Y ▶ 开始）：
+//   一组：匹配（单个游戏，代替 Cocoon 的「Selected games」）、刮削方式（只补空缺 / 补选中项 / 全部覆盖）、资料语言、覆盖手动修改；
+//   二组：刮削资料、资料类型、资料来源（每个来源一行：↓↑ 调优先级，开关启用；排前面的先用）；
+//   三组：刮削图片、图片类型、图片来源（同上）；
+//   最后：开始刮削（结果写在行尾），刮到的资料列在下面。
+// 来源：Steam 商店（中文资料）、LaunchBox Games DB（免账号，首次下载整库建索引）、IGDB（用户自己的 Twitch 密钥）、SteamGridDB（图）。
+// Cocoon 的 IGDB / ScreenScraper 走的是它自己的中转服务器和密钥，我们不用；ScreenScraper 对 PC 游戏覆盖很差，不接。
+// 设置存在缓存目录 scrape.json，所有游戏共用；手动改过的资料（编辑元数据里存的 _manual）默认不被覆盖。
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -16,38 +18,106 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
+    private const string RwManualKey = "_manual";
+
+    private sealed class ScPrefs
+    {
+        /// <summary>0 只补空缺（基本资料缺什么补什么），1 补选中项（只看选中的类型），2 全部覆盖。</summary>
+        public int Mode;
+        public bool En, Replace, Meta = true, Art = true;
+        public HashSet<string> MetaTypes = new(RsMetaFields.Select(f => f.Key));
+        public HashSet<string> ArtTypes = new(ScArtKinds.Select(k => k.Kind));
+        public List<(string Id, bool On)> MetaSrc = new() { ("steam", true), ("launchbox", true), ("igdb", true) };
+        public List<(string Id, bool On)> ArtSrc = new() { ("steam", true), ("sgdb", true), ("launchbox", true), ("igdb", true) };
+        public string IgdbId = "", IgdbSecret = "";
+        public bool IgdbReady => IgdbId.Length > 0 && IgdbSecret.Length > 0;
+    }
+
     private sealed class ScState
     {
         public AgDraft? D;
-        public bool Force, Meta = true, Art = true;
         public bool Busy, Searching;
         public string Status = "";
-        /// <summary>用户改过的搜索词（null = 用游戏原名）。</summary>
         public string? Query;
-        /// <summary>刮到的资料（预览，写入后也留着给用户看）。</summary>
         public Dictionary<string, string> Got = new();
     }
 
-    private static readonly (string Kind, string Title)[] ScArtKinds = { ("p", "封面"), ("hero", "背景"), ("logo", "标志") };
+    private static readonly (string Kind, string Title)[] ScArtKinds = { ("p", "封面"), ("hero", "背景"), ("logo", "标志"), ("header", "横幅") };
+    private static readonly string[] ScModes = { "只补空缺", "补选中项", "全部覆盖" };
+    private static string ScSrcName(string id) => id switch { "steam" => "Steam 商店", "launchbox" => "LaunchBox", "igdb" => "IGDB", "sgdb" => "SteamGridDB", _ => id };
+    private static string ScSrcIcon(string id) => id switch { "steam" => "steam", "launchbox" => "cube", "igdb" => "igdb", "sgdb" => "stack", _ => "" };
+
+    private static string ScPrefsPath => Path.Combine(App.CacheDir, "scrape.json");
+    private ScPrefs? _scPrefs;
+
+    private ScPrefs ScLoadPrefs()
+    {
+        if (_scPrefs != null) return _scPrefs;
+        var p = new ScPrefs();
+        try
+        {
+            if (File.Exists(ScPrefsPath) && JsonNode.Parse(File.ReadAllText(ScPrefsPath)) is JsonObject o)
+            {
+                p.Mode = Math.Clamp((int?)o["mode"] ?? 0, 0, 2);
+                p.En = (bool?)o["en"] ?? false;
+                p.Replace = (bool?)o["replace"] ?? false;
+                p.Meta = (bool?)o["meta"] ?? true;
+                p.Art = (bool?)o["art"] ?? true;
+                if (o["metaTypes"] is JsonArray mt) p.MetaTypes = mt.Select(x => (string?)x ?? "").ToHashSet();
+                if (o["artTypes"] is JsonArray at) p.ArtTypes = at.Select(x => (string?)x ?? "").ToHashSet();
+                List<(string, bool)> Src(JsonNode? n, List<(string Id, bool On)> def)
+                {
+                    if (n is not JsonArray a) return def;
+                    var l = a.OfType<JsonObject>().Select(x => ((string?)x["id"] ?? "", (bool?)x["on"] ?? true)).Where(x => def.Any(d => d.Id == x.Item1)).ToList();
+                    foreach (var d in def) if (!l.Any(x => x.Item1 == d.Id)) l.Add(d);   // 新来源补在最后
+                    return l;
+                }
+                p.MetaSrc = Src(o["metaSrc"], p.MetaSrc);
+                p.ArtSrc = Src(o["artSrc"], p.ArtSrc);
+                p.IgdbId = (string?)o["igdbId"] ?? "";
+                p.IgdbSecret = (string?)o["igdbSecret"] ?? "";
+            }
+        }
+        catch (Exception ex) { Log.Warn($"scrape prefs: {ex.Message}"); }
+        return _scPrefs = p;
+    }
+
+    private void ScSavePrefs()
+    {
+        if (_scPrefs is not { } p) return;
+        JsonArray Src(List<(string Id, bool On)> l) => new(l.Select(x => (JsonNode?)new JsonObject { ["id"] = x.Id, ["on"] = x.On }).ToArray());
+        var o = new JsonObject
+        {
+            ["mode"] = p.Mode, ["en"] = p.En, ["replace"] = p.Replace, ["meta"] = p.Meta, ["art"] = p.Art,
+            ["metaTypes"] = new JsonArray(p.MetaTypes.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray()),
+            ["artTypes"] = new JsonArray(p.ArtTypes.Select(x => (JsonNode?)JsonValue.Create(x)).ToArray()),
+            ["metaSrc"] = Src(p.MetaSrc), ["artSrc"] = Src(p.ArtSrc), ["igdbId"] = p.IgdbId, ["igdbSecret"] = p.IgdbSecret,
+        };
+        try { File.WriteAllText(ScPrefsPath, o.ToJsonString()); }
+        catch (Exception ex) { Log.Warn($"scrape prefs save: {ex.Message}"); }
+    }
+
+    // ---------------- 页面 ----------------
 
     private RsPage RsScrapePage(LibraryItem g)
     {
         var s = new ScState();
         var page = new RsPage { Title = "刮削游戏", TitleIcon = "scrape", Build = () => ScRows(s, g) };
+        page.YAction = () => { if (!s.Busy && s.D != null) _ = ScRun(s, g); else Cue(Sfx.Bump); };
         _ = ScLoad(s, g);
         return page;
     }
 
     private List<RsRow> ScRows(ScState s, LibraryItem g)
     {
+        var p = ScLoadPrefs();
         var d = s.D;
         string match = d == null || s.Searching ? "正在找…"
             : d.Match >= 0 && d.Match < d.Matches.Count ? ScMatchName(d.Matches[d.Match])
             : g.Platform == "steam" ? $"{g.Title} · Steam" : "没找到";
-        // 匹配：←/→ 换候选；A 改搜索词（中文名在 Steam 上常搜不到，换英文名或原名再搜）
         var matchRow = new RsRow
         {
-            Kind = RsKind.Pick, Icon = "magpie", Title = "匹配", Value = match,
+            Kind = RsKind.Pick, Icon = "pad", Title = "匹配", Sub = "←/→ 换候选，A 改搜索词再搜", Value = match,
             Step = k => { if (s.D is { Matches.Count: > 1 } dd) { dd.Match = (Math.Max(0, dd.Match) + k + dd.Matches.Count) % dd.Matches.Count; ScSyncAppId(dd, g); } },
             Commit = q => { if (s.D is { } dd && q.Length > 0 && !s.Busy) { s.Query = q; _ = ScSearch(s, g, dd); } },
         };
@@ -57,22 +127,60 @@ public sealed partial class WallStage
             matchRow.Value = s.Query ?? (_rwOrigTitle.TryGetValue(g.Id, out var t) ? t : g.Title);
             RsBeginEdit(rs, matchRow);
         };
+        void Save() => ScSavePrefs();
         var rows = new List<RsRow>
         {
             matchRow,
             new()
             {
-                Kind = RsKind.Pick, Break = true, Title = "刮削方式", Value = s.Force ? "全部覆盖" : "只补空缺",
-                Press = () => s.Force = !s.Force, Step = _ => s.Force = !s.Force,
+                Kind = RsKind.Pick, Icon = "filter", Title = "刮削方式", Sub = "只补缺的基本资料、只补选中的类型，或全部重新刮削", Value = ScModes[p.Mode],
+                Press = () => { p.Mode = (p.Mode + 1) % 3; Save(); }, Step = k => { p.Mode = (p.Mode + k + 3) % 3; Save(); },
             },
-            new() { Kind = RsKind.Toggle, Title = "刮削资料", IsOn = () => s.Meta, Press = () => s.Meta = !s.Meta, Step = k => s.Meta = k > 0 },
-            new() { Kind = RsKind.Toggle, Title = "刮削图片", IsOn = () => s.Art, Press = () => s.Art = !s.Art, Step = k => s.Art = k > 0 },
             new()
             {
-                Kind = RsKind.Action, Break = true, Icon = "scrape", Title = s.Busy ? "正在刮削…" : "开始刮削", Value = s.Status,
-                Press = () => { if (!s.Busy && s.D != null) _ = ScRun(s, g); },
+                Kind = RsKind.Pick, Icon = "globe", Title = "资料语言", Sub = "Steam 商店资料用哪种语言（其他来源只有英文）", Value = p.En ? "English" : "简体中文",
+                Press = () => { p.En = !p.En; Save(); }, Step = _ => { p.En = !p.En; Save(); },
+            },
+            new()
+            {
+                Kind = RsKind.Toggle, Icon = "sliders", Title = "覆盖手动修改", Sub = "全部覆盖时，连你在编辑元数据里改过的也换掉",
+                IsOn = () => p.Replace, Press = () => { p.Replace = !p.Replace; Save(); }, Step = k => { p.Replace = k > 0; Save(); },
+            },
+            new()
+            {
+                Kind = RsKind.Toggle, Break = true, Icon = "abc", Title = "刮削资料", Sub = "简介、开发商、发行商、发行日期、类型",
+                IsOn = () => p.Meta, Press = () => { p.Meta = !p.Meta; Save(); }, Step = k => { p.Meta = k > 0; Save(); },
+            },
+            new()
+            {
+                Kind = RsKind.Pick, Icon = "filter", Title = "资料类型", Sub = "刮削时包括哪些资料",
+                Value = p.MetaTypes.Count >= RsMetaFields.Length ? "全部资料" : $"{p.MetaTypes.Count} 项",
+                Press = () => RsPush(ScTypesPage("资料类型", RsMetaFields.Select(f => (f.Key, f.Title)).ToArray(), p.MetaTypes)),
             },
         };
+        ScSourceRows(rows, p.MetaSrc, p);
+        rows.Add(new RsRow
+        {
+            Kind = RsKind.Toggle, Break = true, Icon = "artwork", Title = "刮削图片", Sub = "封面、背景、标志、横幅",
+            IsOn = () => p.Art, Press = () => { p.Art = !p.Art; Save(); }, Step = k => { p.Art = k > 0; Save(); },
+        });
+        rows.Add(new RsRow
+        {
+            Kind = RsKind.Pick, Icon = "filter", Title = "图片类型", Sub = "刮削时包括哪些图",
+            Value = p.ArtTypes.Count >= ScArtKinds.Length ? "全部图片" : $"{p.ArtTypes.Count} 种",
+            Press = () => RsPush(ScTypesPage("图片类型", ScArtKinds, p.ArtTypes)),
+        });
+        ScSourceRows(rows, p.ArtSrc, p);
+        rows.Add(new RsRow
+        {
+            Kind = RsKind.Nav, Icon = "igdb", Title = "IGDB 密钥", Sub = p.IgdbReady ? "已设置" : "在 dev.twitch.tv 建一个应用，填它的 Client ID 和 Secret",
+            Press = () => RsPush(ScIgdbPage(p)),
+        });
+        rows.Add(new RsRow
+        {
+            Kind = RsKind.Action, Break = true, Icon = "scrape", Title = s.Busy ? "正在刮削…" : "开始刮削", Value = s.Status,
+            Press = () => { if (!s.Busy && s.D != null) _ = ScRun(s, g); },
+        });
         bool first = true;
         foreach (var (key, title, _) in RsMetaFields)
             if (s.Got.TryGetValue(key, out var v) && v.Length > 0)
@@ -83,6 +191,66 @@ public sealed partial class WallStage
         return rows;
     }
 
+    /// <summary>来源一行一个：↓↑ 调优先级（←/→），A 开关；IGDB 没填密钥时 A 去填密钥。</summary>
+    private void ScSourceRows(List<RsRow> rows, List<(string Id, bool On)> src, ScPrefs p)
+    {
+        for (int i = 0; i < src.Count; i++)
+        {
+            int at = i;
+            var (id, on) = src[i];
+            bool needKey = id == "igdb" && !p.IgdbReady;
+            rows.Add(new RsRow
+            {
+                Kind = RsKind.Order, Icon = ScSrcIcon(id), Title = ScSrcName(id),
+                Sub = needKey ? "未设置密钥（A 去填）" : $"优先级 {i + 1} / {src.Count}",
+                IsOn = () => src[at].On && !(src[at].Id == "igdb" && !p.IgdbReady),
+                CanUp = i > 0, CanDown = i < src.Count - 1,
+                Press = () =>
+                {
+                    if (src[at].Id == "igdb" && !p.IgdbReady) { RsPush(ScIgdbPage(p)); return; }
+                    src[at] = (src[at].Id, !src[at].On);
+                    ScSavePrefs();
+                },
+                Step = k =>
+                {
+                    int to = at + (k > 0 ? -1 : 1);   // →（↑）往前挪，←（↓）往后挪
+                    if (to < 0 || to >= src.Count) { Cue(Sfx.Bump); return; }
+                    (src[at], src[to]) = (src[to], src[at]);
+                    ScSavePrefs();
+                    if (_rs is { } rs) { var pg = rs.Stack[^1]; pg.Sel += to - at; }   // 焦点跟着这一行走
+                },
+            });
+        }
+    }
+
+    /// <summary>资料类型 / 图片类型：每种一个开关（Cocoon 的多选下拉）。</summary>
+    private RsPage ScTypesPage(string title, (string Key, string Title)[] all, HashSet<string> set) => new()
+    {
+        Title = title,
+        Build = () => all.Select(a => new RsRow
+        {
+            Kind = RsKind.Toggle, Title = a.Title, IsOn = () => set.Contains(a.Key),
+            Press = () => { if (!set.Remove(a.Key)) set.Add(a.Key); ScSavePrefs(); },
+            Step = k => { if (k > 0) set.Add(a.Key); else set.Remove(a.Key); ScSavePrefs(); },
+        }).ToList(),
+    };
+
+    private RsPage ScIgdbPage(ScPrefs p)
+    {
+        var rows = new List<RsRow>
+        {
+            new() { Kind = RsKind.Field, Title = "Client ID", Key = "igdbId", Value = p.IgdbId },
+            new() { Kind = RsKind.Field, Title = "Client Secret", Key = "igdbSecret", Value = p.IgdbSecret.Length > 0 ? p.IgdbSecret : "" },
+            new() { Kind = RsKind.Info, Break = true, Title = "怎么拿", Value = "dev.twitch.tv › Console › 注册应用（类别选 Application Integration）" },
+        };
+        return new RsPage
+        {
+            Title = "IGDB 密钥", TitleIcon = "igdb", Build = () => rows,
+            Dirty = () => (rows[0].Value ?? "") != p.IgdbId || (rows[1].Value ?? "") != p.IgdbSecret,
+            Save = () => { p.IgdbId = (rows[0].Value ?? "").Trim(); p.IgdbSecret = (rows[1].Value ?? "").Trim(); ScSavePrefs(); Toast(p.IgdbReady ? "IGDB 密钥存好了" : "IGDB 密钥清空了"); },
+        };
+    }
+
     private static string ScMatchName(JsonObject m)
     {
         string name = Str(m["name"]) ?? "";
@@ -90,7 +258,6 @@ public sealed partial class WallStage
         return src.Length > 0 ? $"{name} · {src}" : name;
     }
 
-    /// <summary>选中的候选带 Steam AppID 就用它；Steam 游戏本身的 AppID 兜底。</summary>
     private static void ScSyncAppId(AgDraft d, LibraryItem g)
     {
         var m = d.Match >= 0 && d.Match < d.Matches.Count ? d.Matches[d.Match] : null;
@@ -99,7 +266,6 @@ public sealed partial class WallStage
         d.Official.Clear();
     }
 
-    /// <summary>草稿和封面管理一样：本地游戏用本地游戏那份，Steam 游戏读现在用着的图；读好就按名字搜一次。</summary>
     private async Task ScLoad(ScState s, LibraryItem g)
     {
         try
@@ -132,7 +298,6 @@ public sealed partial class WallStage
         {
             d.Query = s.Query ?? (_rwOrigTitle.TryGetValue(g.Id, out var t) ? t : g.Title);
             await AgSearch(d);
-            // Steam 游戏：AppID 一样的候选排第一
             int own = g.Platform == "steam" ? d.Matches.FindIndex(m => Str(m["steamAppId"]) == g.Id) : -1;
             d.Match = own >= 0 ? own : d.Matches.Count > 0 ? 0 : -1;
             ScSyncAppId(d, g);
@@ -142,86 +307,153 @@ public sealed partial class WallStage
         RsRefresh();
     }
 
+    // ---------------- 刮削 ----------------
+
     private async Task ScRun(ScState s, LibraryItem g)
     {
+        var p = ScLoadPrefs();
         var d = s.D!;
         s.Busy = true;
-        s.Status = "";
-        RsRefresh();
-        int metaN = 0, artN = 0;
+        void Say(string msg) { s.Status = msg; _dq.TryEnqueue(RsRefresh); }
+        Say("开始");
         var fails = new List<string>();
-        if (s.Meta)
+        string? appid = d.SteamAppId;
+        var match = d.Match >= 0 && d.Match < d.Matches.Count ? d.Matches[d.Match] : null;
+        var names = new List<string>();
+        void Name(string? n) { if (!string.IsNullOrWhiteSpace(n) && !names.Contains(n)) names.Add(n); }
+        Name(s.Query);
+        Name(match != null ? Str(match["name"]) : null);
+        Name(_rwOrigTitle.TryGetValue(g.Id, out var orig) ? orig : g.Title);
+
+        bool metaOn(string id) => p.Meta && p.MetaSrc.Any(x => x.Id == id && x.On);
+        bool artOn(string id) => p.Art && p.ArtSrc.Any(x => x.Id == id && x.On);
+
+        // Steam 商店：资料（按语言）+ 英文名（LaunchBox / IGDB 按英文名找）
+        Dictionary<string, string>? steam = null;
+        if (appid != null)
         {
-            if (d.SteamAppId is { } appid)
-            {
-                var got = await ScFetchSteam(appid);
-                if (got == null) fails.Add("资料");
-                else
-                {
-                    s.Got = got;
-                    var saved = RwMetaOf(g);
-                    var next = new Dictionary<string, string>(saved);
-                    foreach (var (key, v) in got)
-                    {
-                        if (v.Length == 0) continue;
-                        bool has = saved.TryGetValue(key, out var old) && old.Length > 0
-                            || key == "title"   // 标题一直有：只补空缺时不动
-                            || key == "developer" && g.Subtitle.Length > 0 && g.Subtitle is not ("本地" or "非 Steam")
-                            || key == "genre" && !string.IsNullOrEmpty(g.Genre);
-                        if (s.Force || !has) { next[key] = v; metaN++; }
-                    }
-                    if (metaN > 0) RwMetaSave(g, next);
-                }
-            }
-            else fails.Add("资料（没有 Steam 商店条目）");
+            Say("正在读 Steam 商店");
+            if (metaOn("steam")) { steam = await ScFetchSteam(appid, p.En ? "english" : "schinese"); if (steam == null) fails.Add("Steam 商店"); }
+            var en = p.En && steam != null ? steam : await ScFetchSteam(appid, "english");
+            Name(en?.GetValueOrDefault("title"));
         }
-        if (s.Art)
+        // LaunchBox
+        LbGame? lb = null;
+        if (metaOn("launchbox") || artOn("launchbox"))
+        {
+            if (!LaunchBoxDb.Indexed) Say("第一次用 LaunchBox：下载资料库（约 110 MB）");
+            if (await LaunchBoxDb.EnsureAsync(Say)) lb = LaunchBoxDb.Find(names, appid);
+            else fails.Add("LaunchBox");
+        }
+        // IGDB
+        IgdbGame? ig = null;
+        if ((metaOn("igdb") || artOn("igdb")) && p.IgdbReady)
+        {
+            Say("正在查 IGDB");
+            try { ig = await Igdb.FindAsync(p.IgdbId, p.IgdbSecret, names, appid); }
+            catch (Exception ex) { Log.Warn($"igdb: {ex.Message}"); fails.Add(ex.Message); }
+        }
+
+        // ---- 资料：每一项按来源顺序取第一个有值的 ----
+        int metaN = 0;
+        if (p.Meta)
+        {
+            Dictionary<string, string>? Of(string id) => id switch
+            {
+                "steam" => steam,
+                "launchbox" => lb == null ? null : new() { ["title"] = lb.Name, ["developer"] = lb.Developer ?? "", ["publisher"] = lb.Publisher ?? "", ["released"] = lb.Date ?? "", ["genre"] = lb.Genres ?? "", ["description"] = lb.Overview ?? "" },
+                "igdb" => ig == null ? null : new() { ["title"] = ig.Name, ["developer"] = ig.Developer ?? "", ["publisher"] = ig.Publisher ?? "", ["released"] = ig.Date ?? "", ["genre"] = ig.Genres ?? "", ["description"] = ig.Summary ?? "" },
+                _ => null,
+            };
+            var got = new Dictionary<string, string>();
+            foreach (var (key, _, _) in RsMetaFields)
+                foreach (var (id, on) in p.MetaSrc)
+                    if (on && Of(id) is { } m && m.GetValueOrDefault(key) is { Length: > 0 } v) { got[key] = v; break; }
+            s.Got = got;
+            var saved = RwMetaOf(g);
+            var manual = (saved.TryGetValue(RwManualKey, out var mk) ? mk.Split(',', StringSplitOptions.RemoveEmptyEntries) : Array.Empty<string>()).ToHashSet();
+            var next = new Dictionary<string, string>(saved);
+            foreach (var (key, v) in got)
+            {
+                if (p.Mode != 0 && !p.MetaTypes.Contains(key)) continue;   // 只补空缺看基本资料（全部），另两种只看选中的类型
+                bool has = saved.TryGetValue(key, out var old) && old.Length > 0
+                    || key == "title"
+                    || key == "developer" && g.Subtitle.Length > 0 && g.Subtitle is not ("本地" or "非 Steam")
+                    || key == "genre" && !string.IsNullOrEmpty(g.Genre);
+                bool write = p.Mode == 2 ? !(manual.Contains(key) && !p.Replace) : !has;
+                if (!write) continue;
+                next[key] = v;
+                manual.Remove(key);
+                metaN++;
+            }
+            if (manual.Count > 0) next[RwManualKey] = string.Join(",", manual); else next.Remove(RwManualKey);
+            if (metaN > 0) RwMetaSave(g, next);
+        }
+
+        // ---- 图片：每一种按来源顺序取第一张 ----
+        int artN = 0;
+        if (p.Art)
         {
             try
             {
-                var match = d.Match >= 0 && d.Match < d.Matches.Count ? d.Matches[d.Match] : null;
                 var keepPick = d.Pick.ToDictionary(kv => kv.Key, kv => kv.Value);
-                if (match != null) await AgLoadCandidates(d, match);
-                foreach (var kv in keepPick) d.Pick[kv.Key] = kv.Value;
-                if (d.SteamAppId != null) await AgLoadOfficial(d);
-                foreach (var (kind, _) in ScArtKinds)
+                var kinds = ScArtKinds.Where(k => p.Mode == 0 || p.ArtTypes.Contains(k.Kind)).Select(k => k.Kind)
+                    .Where(k => p.Mode == 2 || keepPick.GetValueOrDefault(k, -1) < 0).ToList();
+                if (kinds.Count > 0)
                 {
-                    bool has = keepPick.GetValueOrDefault(kind, -1) >= 0;
-                    if (has && !s.Force) continue;
-                    var list = d.Cands[kind];
-                    (string? Url, string Thumb)? pick = d.Official.TryGetValue(kind, out var o) ? (o.Url, o.Thumb)
-                        : list.FirstOrDefault(c => c.Url != null) is { Url: not null } c ? c : null;
-                    if (pick is not { } p) continue;
-                    int at = list.FindIndex(x => x.Url == p.Url);
-                    if (at < 0) { list.Add(p); at = list.Count - 1; }
-                    d.Pick[kind] = at;
-                    AgEmbedSave(d, kind);
-                    artN++;
+                    if (artOn("steam") && appid != null) { Say("正在取 Steam 官方图"); await AgLoadOfficial(d); }
+                    if (artOn("sgdb") && match != null) { Say("正在取 SteamGridDB 的图"); await AgLoadCandidates(d, match); foreach (var kv in keepPick) d.Pick[kv.Key] = kv.Value; }
+                    foreach (var kind in kinds)
+                    {
+                        string? url = null;
+                        foreach (var (id, on) in p.ArtSrc)
+                        {
+                            if (!on) continue;
+                            url = id switch
+                            {
+                                "steam" => d.Official.TryGetValue(kind, out var o) ? o.Url : null,
+                                "sgdb" => d.Cands.GetValueOrDefault(kind)?.FirstOrDefault(c => c.Url != null).Url,
+                                "launchbox" => lb?.Images.GetValueOrDefault(kind),
+                                "igdb" => ig?.Images.GetValueOrDefault(kind),
+                                _ => null,
+                            };
+                            if (url != null) break;
+                        }
+                        if (url == null) continue;
+                        if (!d.Cands.TryGetValue(kind, out var list)) d.Cands[kind] = list = new();
+                        int at = list.FindIndex(x => x.Url == url);
+                        if (at < 0) { list.Add((url, url)); at = list.Count - 1; }
+                        d.Pick[kind] = at;
+                        AgEmbedSave(d, kind);
+                        artN++;
+                    }
                 }
             }
             catch (Exception ex) { Log.Warn($"scrape art: {ex.Message}"); fails.Add("图片"); }
         }
+
         s.Busy = false;
         var parts = new List<string>();
-        if (s.Meta && metaN > 0) parts.Add($"资料 {metaN} 项");
-        if (s.Art && artN > 0) parts.Add($"图片 {artN} 张");
-        s.Status = parts.Count > 0 ? "完成 · " + string.Join(" · ", parts)
-            : fails.Count > 0 ? "失败：" + string.Join("、", fails)
+        if (metaN > 0) parts.Add($"资料 {metaN} 项");
+        if (artN > 0) parts.Add($"图片 {artN} 张");
+        s.Status = parts.Count > 0 ? "完成 · " + string.Join(" · ", parts) + (fails.Count > 0 ? $"（{string.Join("、", fails.Distinct())} 没取到）" : "")
+            : fails.Count > 0 ? "失败：" + string.Join("、", fails.Distinct())
+            : lb == null && ig == null && steam == null ? "哪个来源都没找到这款游戏"
             : "没有要补的";
         Cue(parts.Count > 0 ? Sfx.Positive : fails.Count > 0 ? Sfx.Error : Sfx.Bump);
         if (artN > 0) Toast($"「{g.Title}」的图在后台换上了");
         RsRefresh();
     }
 
-    /// <summary>Steam 商店 appdetails（简体中文）：标题、开发商、发行商、发行日期、类型、简介。取不到返回 null。</summary>
-    private static async Task<Dictionary<string, string>?> ScFetchSteam(string appid) => await ScFetchSteam(appid, "CN") ?? await ScFetchSteam(appid, "US");
+    /// <summary>Steam 商店 appdetails：国区没上架的（锁区）换美区再取一次。</summary>
+    private static async Task<Dictionary<string, string>?> ScFetchSteam(string appid, string lang) =>
+        await ScFetchSteam(appid, lang, "CN") ?? await ScFetchSteam(appid, lang, "US");
 
-    /// <summary>国区没上架的（锁区）商店接口回 success:false，换美区再取一次，语言仍是简体中文。</summary>
-    private static async Task<Dictionary<string, string>?> ScFetchSteam(string appid, string cc)
+    private static async Task<Dictionary<string, string>?> ScFetchSteam(string appid, string lang, string cc)
     {
         try
         {
-            string url = $"https://store.steampowered.com/api/appdetails?appids={Uri.EscapeDataString(appid)}&l=schinese&cc={cc}";
+            string url = $"https://store.steampowered.com/api/appdetails?appids={Uri.EscapeDataString(appid)}&l={lang}&cc={cc}";
             using var doc = JsonDocument.Parse(await AgHttp.GetStringAsync(url));
             if (!doc.RootElement.TryGetProperty(appid, out var root) || !root.TryGetProperty("success", out var ok) || !ok.GetBoolean()) return null;
             var data = root.GetProperty("data");
@@ -234,14 +466,10 @@ public sealed partial class WallStage
             desc = Regex.Replace(desc, @"\s+", " ");
             return new Dictionary<string, string>
             {
-                ["title"] = S("name").Trim(),
-                ["developer"] = Join("developers"),
-                ["publisher"] = Join("publishers"),
-                ["released"] = date,
-                ["genre"] = Join("genres", "description"),
-                ["description"] = desc,
+                ["title"] = S("name").Trim(), ["developer"] = Join("developers"), ["publisher"] = Join("publishers"),
+                ["released"] = date, ["genre"] = Join("genres", "description"), ["description"] = desc,
             };
         }
-        catch (Exception ex) { Log.Warn($"scrape steam {appid}: {ex.Message}"); return null; }
+        catch (Exception ex) { Log.Warn($"scrape steam {appid} {cc}: {ex.Message}"); return null; }
     }
 }

@@ -103,6 +103,16 @@ public sealed partial class WallStage
             await Rec("artpop", () => Back(), 800);
             // 刮削游戏：只看页面和匹配（不按开始，免得改了用户的资料）
             Move(Direction.Down); await Task.Delay(300); Activate(); await Task.Delay(5000); await Still("scrape");
+            for (int i = 0; i < 9; i++) { Move(Direction.Down); await Task.Delay(200); }
+            await Still("scrape2");
+            {
+                // LaunchBox 索引：下载 + 建索引 + 查两款（只读，不写用户资料）
+                var sw2 = System.Diagnostics.Stopwatch.StartNew();
+                bool ok = await LaunchBoxDb.EnsureAsync(m => Log.Info($"recrow lb: {m}"));
+                var w = LaunchBoxDb.Find(new[] { "鸣潮", "Wuthering Waves" }, null);
+                var h = LaunchBoxDb.Find(new[] { "Hollow Knight" }, "367520");
+                Log.Info($"recrow lb ready={ok} {sw2.ElapsedMilliseconds} ms; ww={w?.Name}/{w?.Developer}/{w?.Date}/{string.Join(",", w?.Images.Keys ?? Enumerable.Empty<string>())}; hk={h?.Name}/{h?.Publisher}/{string.Join(",", h?.Images.Keys ?? Enumerable.Empty<string>())}");
+            }
             Back(); await Task.Delay(500);
             await Rec("sheetclose", () => Back(), 600); Back(); await Task.Delay(500);
             // 游戏配置：小黄鸭、功耗档位
