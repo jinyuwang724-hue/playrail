@@ -52,8 +52,7 @@ public sealed partial class WallStage
         public required SpriteVisual Wall, PanelL, PanelR, More, Glow, Line, Rim, RGlow, RLine, RRim;
         /// <summary>背景层里壁纸上面的组件层（顶部面板、图标焦点）：开菜单时和内容层一起模糊；壁纸只压暗不糊（照 Cocoon 视频）。</summary>
         public LayerVisual Ui = null!;
-        /// <summary>开菜单时的效果：壁纸压暗层（壁纸上、组件层下）和两个组件层的模糊压暗。</summary>
-        public SpriteVisual? Dim;
+        /// <summary>开菜单时组件层的整层模糊（壁纸不糊）。</summary>
         public CompositionEffectBrush? UiFx, ContentFx;
         public CompositionDrawingSurface? RGlowSurf, RLineSurf, RRimSurf;
         public CanvasRenderTarget? Sharp, Soft;   // 壁纸原图 / 模糊后的像素（画面板用）
