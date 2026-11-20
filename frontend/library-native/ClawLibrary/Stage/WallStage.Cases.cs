@@ -411,6 +411,7 @@ public sealed partial class WallStage
             : tab == 0 ? CsBuildHome(_prefs.Home, spot, entry || dir != 0) : _prefs.Home == HomeStyle.Row && tab is 2 or 3 ? RwBuildCat(tab, spot, entry || dir != 0) : CsBuildCat(tab, spot, entry || dir != 0);
         _cs.Page = page;
         _cs.Pages.Children.InsertAtTop(page.Root);
+        if (_rm != null && page.Style == HomeStyle.Row) RmAdoptPage(page);   // 菜单开着时游戏库刷新、页面原地重建：新页面接着模糊、藏卡
         double ms = CsMs(220);
         if (page.Style == HomeStyle.Wall && page.Tab == 0)
         {
@@ -578,6 +579,7 @@ public sealed partial class WallStage
         var page = CsBuildHome(_prefs.Home, spot, entry: false);
         _cs.Page = page;
         _cs.Pages.Children.InsertAtTop(page.Root);
+        if (_rm != null && page.Style == HomeStyle.Row) RmAdoptPage(page);   // 菜单开着时游戏库刷新、页面原地重建：新页面接着模糊、藏卡
         double ms = CsMs(450);
         CsLeave(old, page);
         old.Content.StartAnimation("Opacity", CsS(0, ms, CsQuart));

@@ -39,6 +39,8 @@ public sealed partial class WallStage
         public bool Danger;
         /// <summary>Pick / Toggle：左右键改值（Cocoon 的下拉框在手柄上用左右切）。</summary>
         public Action<int>? Step;
+        /// <summary>从这一行起另开一张分组卡片。</summary>
+        public bool Break;
     }
 
     private sealed class RsPage
@@ -68,6 +70,17 @@ public sealed partial class WallStage
         public readonly List<RsPage> Stack = new();
         public CompositionDrawingSurface? SheetSurf, GlowSurf, LineSurf, RimSurf;
         public bool DiscardArmed;
+        // 分层（照 Cocoon 视频逐帧拆的入场）：面板底 Sheet 单独放大；Body 里是骨架（胶囊 + 分组卡片 + 分隔线）、标题、
+        // 每一行的内容（各自错开淡入）、自绘页的内容；Body 整体比面板晚一点从中心放大。
+        public required ContainerVisual Body, Rows, Scroll;
+        public required SpriteVisual Skel, Groups, Title, Custom, Chev;
+        public CompositionDrawingSurface? SkelSurf, GroupsSurf, TitleSurf, CustomSurf, ChevSurf;
+        public readonly List<SpriteVisual> RowVis = new();
+        public readonly List<CompositionDrawingSurface> RowSurf = new();
+        public List<(int I, float Y)> Layout = new();
+        /// <summary>每次入场动画一个号：延时显示焦点框时核对，期间又翻页了就不显示旧的。</summary>
+        public int EnterSeq;
+        public bool FromMenu;
     }
 
     private RsState? _rs;
@@ -78,11 +91,26 @@ public sealed partial class WallStage
 
     // 面板几何（设计单位 1920×1200）
     private const float RsX = 96, RsY = 70, RsW = 1728, RsH = 1060, RsR = 64;
-    private const float RsListX = 116, RsListW = 1688, RsTop = 220, RsRowH = 136, RsSep = 3, RsBottom = 1100;
-    private static int RsVisible => (int)((RsBottom - RsTop) / (RsRowH + RsSep));
-    private static readonly Color RsBg = Color.FromArgb(255, 0xF7, 0xF8, 0xFA), RsLine = Color.FromArgb(255, 0xE6, 0xE8, 0xEC), RsSub = Color.FromArgb(255, 0x5F, 0x61, 0x68);
+    private const float RsListX = 116, RsListW = 1688, RsTop = 220, RsRowH = 136, RsSep = 4, RsBottom = 1100;
+    /// <summary>分组之间的空隙、分组卡片圆角（Cocoon：开关类和跳转类分在两张卡片里，中间空 30）。</summary>
+    private const float RsGap = 32, RsGroupR = 30;
+    private const float RsPad = 50;
+    // 面板底 #FAFAFA，分组卡片 #F7F8FA，分隔线 #E2E3E5（从视频像素取）
+    private static readonly Color RsBg = Color.FromArgb(255, 0xFA, 0xFA, 0xFA), RsGroup = Color.FromArgb(255, 0xF7, 0xF8, 0xFA),
+        RsLine = Color.FromArgb(255, 0xE2, 0xE3, 0xE5), RsSub = Color.FromArgb(255, 0x5F, 0x61, 0x68);
+    /// <summary>中文用 PingFang Medium（500）；拉丁字母用 Poppins SemiBold。中文要 600 会被合成加粗，糊成一团。</summary>
+    private static Windows.UI.Text.FontWeight RsWt(string text, ushort latin = 600) => new(text.Any(ch => ch >= 0x2E80) ? (ushort)500 : latin);
 
     // ---------------- 打开 / 关闭 / 压页 ----------------
+    // 动效逐帧拆自 jinyu 录的 Cocoon 视频（11-20，30 fps）。以按下 A 为 0：
+    //   0–60 ms   菜单白卡压扁消失，焦点框立刻收掉；封面往左飞出屏幕（~100 ms）、标题淡出；
+    //   80–230    面板底从屏幕中心 0.3 倍放大到满（缓出，不回弹）；
+    //   150–340   面板里的骨架（返回 / 保存胶囊、分组卡片和分隔线，还没有字）也从中心放大，比面板慢半拍；
+    //   400       标题淡入；
+    //   466 起    每一行的内容逐行出现，间隔 33 ms：0.96 倍放大到 1、淡入 100 ms；
+    //   最后一行出现后约 230 ms 焦点框直接出现（不带动画），下箭头同时出现。
+    // 页内进 / 退一层：内容清空，骨架从中心放大（150 ms），100 ms 标题，170 ms 起逐行。
+    // 退回菜单：面板缩回中心消失（70 ms），菜单白卡和焦点框回来，封面从左边飞回原位（170 ms）。
 
     private void RsOpen(LibraryItem g, CsPage p, RsPage first)
     {
@@ -90,31 +118,40 @@ public sealed partial class WallStage
         RsCloseAll(instant: true);
         var root = G.Container(relative: false);
         root.Size = new Vector2(CsW, CsH);
-        var scrim = G.Sprite(G.Solid(Color.FromArgb(160, 8, 8, 14)), relative: false);
-        try
-        {
-            var blur = new GaussianBlurEffect { BlurAmount = 28, BorderMode = EffectBorderMode.Hard, Source = new CompositionEffectSourceParameter("src") };
-            var tint = new ArithmeticCompositeEffect { MultiplyAmount = 0, Source1Amount = 0.55f, Source2Amount = 0.45f, Source1 = blur, Source2 = new ColorSourceEffect { Color = Color.FromArgb(255, 10, 10, 16) } };
-            var eb = G.C.CreateEffectFactory(tint).CreateBrush();
-            eb.SetSourceParameter("src", G.C.CreateBackdropBrush());
-            scrim.Brush = eb;
-        }
-        catch (Exception ex) { Log.Warn($"sheet backdrop: {ex.Message}"); }
+        // 从游戏菜单进来：背景沿用菜单那层（组件层模糊 + 深灰遮罩），这里不再叠；单独打开时自己盖一层同样的遮罩
+        bool fromMenu = _rm is { Closing: false };
+        var scrim = G.Sprite(G.Solid(fromMenu ? Color.FromArgb(0, 0, 0, 0) : RmScrim), relative: false);
         scrim.Size = new Vector2(CsW, CsH);
         SpriteVisual Sp() => G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
-        var rs = new RsState { Root = root, Scrim = scrim, Sheet = Sp(), Glow = Sp(), Line = Sp(), Rim = Sp(), Item = g, Page = p };
-        _rs = rs;
-        foreach (var v in new Visual[] { scrim, rs.Sheet, rs.Glow, rs.Line, rs.Rim }) root.Children.InsertAtTop(v);
-        _cs.Root.Children.InsertAtTop(root);
-        RsPaintCursor(rs);
-        RsPush(first, animate: false);
-        if (!Reduced)
+        var body = G.Container(relative: false);
+        body.Size = new Vector2(CsW, CsH);
+        body.CenterPoint = new Vector3(RsX + RsW / 2, RsY + RsH / 2, 0);
+        var rows = G.Container(relative: false);
+        rows.Size = new Vector2(CsW, CsH);
+        // 列表（分组卡片 + 行内容）放在一个裁在面板圆角里的外框里：滚动时整体弹簧滑动，上面滑到标题下面、下面露半行
+        var scroll = G.Container(relative: false);
+        scroll.Size = new Vector2(CsW, CsH);
+        var clipGeo = G.C.CreateRoundedRectangleGeometry();
+        clipGeo.Offset = new Vector2(RsX, RsY);
+        clipGeo.Size = new Vector2(RsW, RsH - 3);
+        clipGeo.CornerRadius = new Vector2(RsR);
+        scroll.Clip = G.C.CreateGeometricClip(clipGeo);
+        var rs = new RsState
         {
-            root.Opacity = 0;
-            root.StartAnimation("Opacity", CsS(1, 220, CsQuart));
-            rs.Sheet.Offset = new Vector3(rs.Sheet.Offset.X, rs.Sheet.Offset.Y + 30, 0);
-            rs.Sheet.StartAnimation("Offset", CsV3(new Vector3(rs.Sheet.Offset.X, rs.Sheet.Offset.Y - 30, 0), 320, CsQuart));
-        }
+            Root = root, Scrim = scrim, Sheet = Sp(), Glow = Sp(), Line = Sp(), Rim = Sp(), Item = g, Page = p,
+            Body = body, Rows = rows, Scroll = scroll, Groups = Sp(), Skel = Sp(), Title = Sp(), Custom = Sp(), Chev = Sp(), FromMenu = fromMenu,
+        };
+        _rs = rs;
+        rows.Children.InsertAtBottom(rs.Groups);
+        scroll.Children.InsertAtTop(rows);
+        foreach (var v in new Visual[] { rs.Skel, scroll, rs.Custom, rs.Title, rs.Chev }) body.Children.InsertAtTop(v);
+        foreach (var v in new Visual[] { scrim, rs.Sheet, body, rs.Glow, rs.Line, rs.Rim }) root.Children.InsertAtTop(v);
+        _cs.Root.Children.InsertAtTop(root);
+        RsPaintSheet(rs);
+        RsPaintCursor(rs);
+        if (fromMenu) RmHideForSheet();
+        RsPush(first, animate: false);
+        if (!Reduced) RsEnter(rs, open: true);
     }
 
     private void RsPush(RsPage page, bool animate = true)
@@ -126,17 +163,51 @@ public sealed partial class WallStage
         rs.DiscardArmed = false;
         RsPaint(rs);
         RsCursorTo(rs, move: false);
-        if (animate && !Reduced) RsSlide(rs, 1);
+        if (animate && !Reduced) RsEnter(rs, open: false);
     }
 
-    /// <summary>压页 / 退页：面板内容从右（压进）或左（退回）滑进来一点并淡入。</summary>
-    private void RsSlide(RsState rs, int dir)
+    /// <summary>入场：open = 从菜单打开（面板也放大），否则只是页内换页（面板不动）。</summary>
+    private void RsEnter(RsState rs, bool open)
     {
-        var to = rs.Sheet.Offset;
-        rs.Sheet.Offset = to + new Vector3(40 * dir, 0, 0);
-        rs.Sheet.StartAnimation("Offset", CsV3(to, 260, CsQuart));
-        rs.Sheet.Opacity = 0.4f;
-        rs.Sheet.StartAnimation("Opacity", CsS(1, 200, CsQuart));
+        int seq = ++rs.EnterSeq;
+        var page = rs.Stack[^1];
+        var outQuint = new Bezier(0.22f, 1f, 0.36f, 1f);
+        double tBody = open ? 150 : 0, durBody = open ? 190 : 150, tTitle = open ? 400 : 100, tRows = open ? 466 : 170;
+        if (open)
+        {
+            rs.Sheet.Scale = new Vector3(0.3f, 0.3f, 1);
+            rs.Sheet.Opacity = 0;
+            rs.Sheet.StartAnimation("Scale", CsV3(Vector3.One, 150, outQuint, 80));
+            rs.Sheet.StartAnimation("Opacity", CsS(1, 40, Bezier.EaseOut, 80));
+        }
+        rs.Body.Scale = new Vector3(0.3f, 0.3f, 1);
+        rs.Body.Opacity = 0;
+        rs.Body.StartAnimation("Scale", CsV3(Vector3.One, durBody, outQuint, tBody));
+        rs.Body.StartAnimation("Opacity", CsS(1, 50, Bezier.EaseOut, tBody));
+        rs.Title.Opacity = 0;
+        rs.Title.StartAnimation("Opacity", CsS(1, 70, Bezier.EaseOut, tTitle));
+        // 自绘页（封面管理）的内容当成第一行
+        var items = new List<(Visual V, float Target)>();
+        if (page.Paint != null) items.Add((rs.Custom, 1));
+        for (int k = 0; k < rs.RowVis.Count; k++) if (rs.RowVis[k].IsVisible) items.Add((rs.RowVis[k], RsRowOpacity(rs, k)));
+        for (int k = 0; k < items.Count; k++)
+        {
+            var (v, target) = items[k];
+            double d = tRows + 33 * k;
+            v.Opacity = 0;
+            v.StartAnimation("Opacity", CsS(target, 100, Bezier.EaseOut, d));
+            v.Scale = new Vector3(0.96f, 0.96f, 1);
+            v.StartAnimation("Scale", CsV3(Vector3.One, 130, outQuint, d));
+        }
+        // 焦点框和下箭头：最后一行出来后约 230 ms 直接出现
+        bool cursor = page.Rows.Count > 0 && page.Paint == null;
+        foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim, rs.Chev }) v.Opacity = 0;
+        After(tRows + 33 * Math.Max(0, items.Count - 1) + 230, () =>
+        {
+            if (_rs != rs || rs.EnterSeq != seq || rs.Stack.Count == 0 || rs.Stack[^1] != page) return;
+            if (cursor) foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim }) v.Opacity = 1;
+            rs.Chev.Opacity = 1;
+        });
     }
 
     private void RsPop()
@@ -150,7 +221,7 @@ public sealed partial class WallStage
         rs.DiscardArmed = false;
         RsPaint(rs);
         RsCursorTo(rs, move: false);
-        if (!Reduced) RsSlide(rs, -1);
+        if (!Reduced) RsEnter(rs, open: false);
     }
 
     private void RsCloseAll(bool instant = false)
@@ -158,30 +229,45 @@ public sealed partial class WallStage
         if (_rs is not { } rs) return;
         RsEndEdit(commit: false);
         _rs = null;
+        rs.EnterSeq++;
         if (_rsOwnsGs) { _rsOwnsGs = false; _gsItem = null; _gsState = null; }
         void Drop()
         {
             _cs?.Root.Children.Remove(rs.Root);
-            foreach (var s in new[] { rs.SheetSurf, rs.GlowSurf, rs.LineSurf, rs.RimSurf }) s?.Dispose();
+            foreach (var s in new[] { rs.SheetSurf, rs.GlowSurf, rs.LineSurf, rs.RimSurf, rs.SkelSurf, rs.GroupsSurf, rs.TitleSurf, rs.CustomSurf, rs.ChevSurf }) s?.Dispose();
+            foreach (var s in rs.RowSurf) s.Dispose();
             rs.Root.Dispose();
         }
-        if (instant || Reduced) { Drop(); return; }
+        bool toMenu = rs.FromMenu && _rm is { Closing: false };
+        if (instant || Reduced) { if (toMenu) RmBackFromSheet(instant: true); Drop(); return; }
+        if (toMenu)
+        {
+            // 内容先没，面板缩回中心消失，菜单回来
+            rs.Body.Opacity = 0;
+            foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim }) v.Opacity = 0;
+            var easeIn = new Bezier(0.4f, 0f, 1f, 1f);
+            rs.Sheet.StartAnimation("Scale", CsV3(new Vector3(0.3f, 0.3f, 1), 70, easeIn));
+            rs.Sheet.StartAnimation("Opacity", CsS(0, 70, easeIn));
+            After(60, () => RmBackFromSheet(instant: false));
+            After(90, Drop);
+            return;
+        }
         rs.Root.StartAnimation("Opacity", CsS(0, 180, CsQuart));
         After(200, Drop);
     }
 
     // ---------------- 画 ----------------
 
-    private void RsPaint(RsState rs)
+    /// <summary>面板底（投影 + #FAFAFA 圆角面），打开时画一次。</summary>
+    private void RsPaintSheet(RsState rs)
     {
-        var page = rs.Stack[^1];
         var dev = G.Device;
-        float R = CsRaster, pad = 50, w = RsW + pad * 2, h = RsH + pad * 2;
-        rs.SheetSurf ??= G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(h * R));
+        float R = CsRaster, w = RsW + RsPad * 2, h = RsH + RsPad * 2;
+        rs.SheetSurf = G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(h * R));
         using (var ds = CanvasComposition.CreateDrawingSession(rs.SheetSurf))
         {
             ds.Clear(Colors.Transparent);
-            ds.Transform = Matrix3x2.CreateTranslation(pad - RsX, pad - RsY) * Matrix3x2.CreateScale(R);
+            ds.Transform = Matrix3x2.CreateTranslation(RsPad - RsX, RsPad - RsY) * Matrix3x2.CreateScale(R);
             using (var shadow = new CanvasCommandList(dev))
             {
                 using (var s = shadow.CreateDrawingSession()) { s.Transform = ds.Transform; s.FillRoundedRectangle(RsX, RsY + 12, RsW, RsH, RsR, RsR, Colors.Black); }
@@ -190,51 +276,218 @@ public sealed partial class WallStage
                 var t = ds.Transform; ds.Transform = Matrix3x2.Identity; ds.DrawImage(op); ds.Transform = t;
             }
             ds.FillRoundedRectangle(RsX, RsY, RsW, RsH, RsR, RsR, RsBg);
-            RsPaintHeader(ds, page);
-            page.PaintHeaderExtra?.Invoke(ds);
-            if (page.Paint != null) page.Paint(ds); else RsPaintList(ds, rs, page);
         }
         ((CompositionSurfaceBrush)rs.Sheet.Brush).Surface = rs.SheetSurf;
         rs.Sheet.Size = new Vector2(w, h);
-        rs.Sheet.StopAnimation("Offset");
-        rs.Sheet.Offset = new Vector3(RsX - pad, RsY - pad, 0);
+        rs.Sheet.Offset = new Vector3(RsX - RsPad, RsY - RsPad, 0);
+        rs.Sheet.CenterPoint = new Vector3(RsPad + RsW / 2, RsPad + RsH / 2, 0);
     }
 
-    private void RsPaintList(CanvasDrawingSession ds, RsState rs, RsPage page)
+    /// <summary>整张面板一个尺寸的画布（骨架、自绘内容共用这个坐标）。</summary>
+    private CompositionDrawingSurface RsFullSurf(ref CompositionDrawingSurface? surf, SpriteVisual v)
     {
-        var dev = ds.Device;
+        float R = CsRaster, w = RsW + RsPad * 2, h = RsH + RsPad * 2;
+        surf ??= G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(h * R));
+        ((CompositionSurfaceBrush)v.Brush).Surface = surf;
+        v.Size = new Vector2(w, h);
+        v.Offset = new Vector3(RsX - RsPad, RsY - RsPad, 0);
+        v.CenterPoint = new Vector3(RsPad + RsW / 2, RsPad + RsH / 2, 0);
+        return surf;
+    }
+
+    private Matrix3x2 RsFullXf => Matrix3x2.CreateTranslation(RsPad - RsX, RsPad - RsY) * Matrix3x2.CreateScale(CsRaster);
+
+    private void RsPaint(RsState rs)
+    {
+        var page = rs.Stack[^1];
+        rs.Layout = page.Paint == null ? RsLayoutRows(page) : new();
+        // 骨架：胶囊、页签；分组卡片和分隔线单独一层（跟着列表滚）
+        using (var ds = CanvasComposition.CreateDrawingSession(RsFullSurf(ref rs.SkelSurf, rs.Skel)))
         {
-            // 列表：只画可见的几行，上下多出去的被面板圆角里那块裁掉
-            page.Top = Math.Clamp(page.Top, 0, Math.Max(0, page.Rows.Count - RsVisible));
-            if (page.Sel < page.Top) page.Top = page.Sel;
-            if (page.Sel >= page.Top + RsVisible) page.Top = page.Sel - RsVisible + 1;
-            using var clip = CanvasGeometry.CreateRectangle(dev, RsX, RsTop - 4, RsW, RsBottom - RsTop + 8);
-            using (ds.CreateLayer(1, clip))
-                for (int i = page.Top; i < page.Rows.Count && i < page.Top + RsVisible + 1; i++)
-                {
-                    float y = RsTop + (i - page.Top) * (RsRowH + RsSep);
-                    if (i > page.Top) ds.FillRectangle(RsListX, y - RsSep, RsListW, RsSep, RsLine);
-                    RsPaintRow(ds, page.Rows[i], y, rs.Item);
-                }
-            if (page.Top + RsVisible < page.Rows.Count)
+            ds.Clear(Colors.Transparent);
+            ds.Transform = RsFullXf;
+            RsPaintPills(ds);
+            page.PaintHeaderExtra?.Invoke(ds);
+        }
+        using (var ds = CanvasComposition.CreateDrawingSession(RsFullSurf(ref rs.GroupsSurf, rs.Groups)))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = RsFullXf;
+            if (page.Paint == null) RsPaintGroups(ds, page, rs.Layout);
+        }
+        rs.Rows.StopAnimation("Offset");
+        rs.Rows.Offset = Vector3.Zero;
+        RsPaintTitle(rs, page);
+        // 自绘页的内容
+        if (page.Paint != null)
+        {
+            using var ds = CanvasComposition.CreateDrawingSession(RsFullSurf(ref rs.CustomSurf, rs.Custom));
+            ds.Clear(Colors.Transparent);
+            ds.Transform = RsFullXf;
+            page.Paint(ds);
+            rs.Custom.IsVisible = true;
+        }
+        else rs.Custom.IsVisible = false;
+        RsPaintRows(rs, page);
+        RsPaintChevron(rs, page);
+    }
+
+    /// <summary>
+    /// 从 Top 起排：每行 136 + 4，遇到 Break 空 32 另起一张卡片；排到面板底为止（最后一行可以只露一截）。
+    /// 选中行必须整行在 RsBottom 以内，不够就往下滚。
+    /// </summary>
+    private static List<(int I, float Y)> RsLayoutRows(RsPage page)
+    {
+        var rows = page.Rows;
+        List<(int I, float Y)> Lay(int top) => RsLay(rows, top);
+        page.Top = Math.Clamp(page.Top, 0, Math.Max(0, rows.Count - 1));
+        if (page.Sel < page.Top) page.Top = page.Sel;
+        var lay = Lay(page.Top);
+        while (page.Top < page.Sel && !lay.Any(e => e.I == page.Sel && e.Y + RsRowH <= RsBottom)) lay = Lay(++page.Top);
+        // 上面还有行、下面又空着：往回滚，把空位补上
+        while (page.Top > 0)
+        {
+            var prev = Lay(page.Top - 1);
+            if (prev.Count > 0 && prev[^1].I == rows.Count - 1 && prev[^1].Y + RsRowH <= RsBottom && prev.Any(e => e.I == page.Sel)) { page.Top--; lay = prev; }
+            else break;
+        }
+        return lay;
+    }
+
+    private float RsRowY(RsState rs, int i)
+    {
+        foreach (var (I, Y) in rs.Layout) if (I == i) return Y;
+        return RsTop;
+    }
+
+    /// <summary>露在底边外的半行淡一些（Cocoon 列表底部那行是半透明的）。</summary>
+    private static float RsRowOpacity(RsState rs, int k) => k >= rs.Layout.Count ? 1f : rs.Layout[k].Y < RsTop ? 0.2f : rs.Layout[k].Y + RsRowH > RsBottom ? 0.45f : 1f;
+
+
+    /// <summary>从 top 起的行位置；上面还有行时，把上一行也排在标题下面（滚上去的那行半透明地压在标题底下，和 Cocoon 一样）。</summary>
+    private static List<(int I, float Y)> RsLay(List<RsRow> rows, int top)
+    {
+        var l = new List<(int I, float Y)>();
+        if (top > 0 && top < rows.Count) l.Add((top - 1, RsTop - RsRowH - RsSep - (rows[top].Break ? RsGap : 0)));
+        float y = RsTop;
+        for (int i = top; i < rows.Count; i++)
+        {
+            if (i > top && rows[i].Break) y += RsGap;
+            if (y >= RsY + RsH - 8) break;
+            l.Add((i, y));
+            y += RsRowH + RsSep;
+        }
+        return l;
+    }
+
+    /// <summary>分组卡片：#F7F8FA 圆角面、上浅下深的描边、底部内阴影和下方一圈很淡的投影；组内行间 4 px 分隔线。</summary>
+    private void RsPaintGroups(CanvasDrawingSession ds, RsPage page, List<(int I, float Y)> lay)
+    {
+        if (lay.Count == 0) return;
+        var dev = ds.Device;
+        using var sheetClip = CanvasGeometry.CreateRoundedRectangle(dev, RsX, RsY, RsW, RsH - 3, RsR, RsR);
+        using var layer = ds.CreateLayer(1, sheetClip);
+        var groups = new List<(float Y0, float Y1, List<float> Seps)>();
+        for (int k = 0; k < lay.Count; k++)
+        {
+            var (i, y) = lay[k];
+            if (k == 0 || page.Rows[i].Break) groups.Add((y, y + RsRowH, new List<float>()));
+            else { var g = groups[^1]; g.Seps.Add(y - RsSep); groups[^1] = (g.Y0, y + RsRowH, g.Seps); }
+        }
+        // 最后一组下面还有没排进来的同组行（或者最后一行只露一截）：卡片一直延到面板底外面，被圆角裁掉
+        var last = lay[^1];
+        if ((last.I < page.Rows.Count - 1 && !page.Rows[last.I + 1].Break) || last.Y + RsRowH > RsBottom)
+            groups[^1] = (groups[^1].Y0, RsY + RsH + 60, groups[^1].Seps);
+        float x = RsListX, w = RsListW, r = RsGroupR;
+        foreach (var (y0, y1, seps) in groups)
+        {
+            float h = y1 - y0;
+            using (var cl = new CanvasCommandList(dev))
             {
-                // 下面还有：紫色向下箭头
-                float cx = RsX + RsW / 2, cy = RsBottom + 6;
-                using var pb = new CanvasPathBuilder(dev);
-                pb.BeginFigure(cx - 16, cy - 7); pb.AddLine(cx, cy + 7); pb.AddLine(cx + 16, cy - 7);
-                pb.EndFigure(CanvasFigureLoop.Open);
-                using var chev = CanvasGeometry.CreatePath(pb);
-                ds.DrawGeometry(chev, Color.FromArgb(255, 0xFA, 0xFA, 0xFA), 13, RwRoundStroke);
-                using var br = new CanvasLinearGradientBrush(dev, RwC1, RwC2) { StartPoint = new Vector2(cx, cy - 8), EndPoint = new Vector2(cx, cy + 8) };
-                ds.DrawGeometry(chev, br, 7, RwRoundStroke);
+                using (var s = cl.CreateDrawingSession()) { s.Transform = ds.Transform; s.FillRoundedRectangle(x, y0 + 5, w, h, r, r, Colors.Black); }
+                using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 6 * CsRaster, BorderMode = EffectBorderMode.Soft };
+                using var op = new OpacityEffect { Source = blur, Opacity = 0.16f };
+                var t = ds.Transform; ds.Transform = Matrix3x2.Identity; ds.DrawImage(op); ds.Transform = t;
             }
+            using var card = CanvasGeometry.CreateRoundedRectangle(dev, x, y0, w, h, r, r);
+            ds.FillGeometry(card, RsGroup);
+            using (ds.CreateLayer(1, card))
+            {
+                // 底边往里 26 px 微微压暗
+                using var shade = new CanvasLinearGradientBrush(dev, Color.FromArgb(0, 0, 0, 0), Color.FromArgb(14, 0, 0, 0)) { StartPoint = new Vector2(0, y1 - 26), EndPoint = new Vector2(0, y1) };
+                ds.FillRectangle(x, y1 - 26, w, 26, shade);
+                foreach (var sy in seps) ds.FillRectangle(x, sy, w, RsSep, RsLine);
+                ds.DrawLine(x + r, y0 + 1, x + w - r, y0 + 1, Color.FromArgb(255, 0xFF, 0xFF, 0xFF), 1.5f);
+            }
+            using var edge = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xE8, 0xE9, 0xEC), Color.FromArgb(255, 0xBC, 0xBD, 0xC1)) { StartPoint = new Vector2(0, y0), EndPoint = new Vector2(0, y1) };
+            ds.DrawRoundedRectangle(x + 0.75f, y0 + 0.75f, w - 1.5f, h - 1.5f, r, r, edge, 1.5f);
         }
     }
 
-    private void RsPaintHeader(CanvasDrawingSession ds, RsPage page)
+    /// <summary>每一行一个精灵（入场时逐行淡入）；只画内容，底和分隔线在骨架里。</summary>
+    private void RsPaintRows(RsState rs, RsPage page)
+    {
+        float R = CsRaster, pad = 12, w = RsListW + pad * 2, h = RsRowH + pad * 2;
+        while (rs.RowVis.Count < rs.Layout.Count)
+        {
+            var v = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
+            v.Size = new Vector2(w, h);
+            v.CenterPoint = new Vector3(w / 2, h / 2, 0);
+            rs.Rows.Children.InsertAtTop(v);
+            rs.RowVis.Add(v);
+            var s = G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(h * R));
+            ((CompositionSurfaceBrush)v.Brush).Surface = s;
+            rs.RowSurf.Add(s);
+        }
+        for (int k = 0; k < rs.RowVis.Count; k++)
+        {
+            var v = rs.RowVis[k];
+            if (k >= rs.Layout.Count) { v.IsVisible = false; continue; }
+            var (i, y) = rs.Layout[k];
+            v.IsVisible = true;
+            v.Offset = new Vector3(RsListX - pad, y - pad, 0);
+            v.StopAnimation("Opacity");
+            v.StopAnimation("Scale");
+            v.Scale = Vector3.One;
+            v.Opacity = RsRowOpacity(rs, k);
+            using var ds = CanvasComposition.CreateDrawingSession(rs.RowSurf[k]);
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateTranslation(pad - RsListX, pad - y) * Matrix3x2.CreateScale(R);
+            RsPaintRow(ds, page.Rows[i], y, rs.Item);
+        }
+    }
+
+    /// <summary>下面还有：紫色向下小箭头（白描边），在面板底边中间。</summary>
+    private void RsPaintChevron(RsState rs, RsPage page)
+    {
+        bool more = rs.Layout.Count > 0 && (rs.Layout[^1].I < page.Rows.Count - 1 || rs.Layout[^1].Y + RsRowH > RsBottom);
+        rs.Chev.IsVisible = more;
+        if (!more) return;
+        float R = CsRaster, w = 60, h = 40;
+        if (rs.ChevSurf == null)
+        {
+            rs.ChevSurf = G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(h * R));
+            using var ds = CanvasComposition.CreateDrawingSession(rs.ChevSurf);
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(R);
+            float cx = w / 2, cy = h / 2;
+            using var pb = new CanvasPathBuilder(ds.Device);
+            pb.BeginFigure(cx - 16, cy - 7); pb.AddLine(cx, cy + 7); pb.AddLine(cx + 16, cy - 7);
+            pb.EndFigure(CanvasFigureLoop.Open);
+            using var chev = CanvasGeometry.CreatePath(pb);
+            ds.DrawGeometry(chev, Color.FromArgb(255, 0xFA, 0xFA, 0xFA), 13, RwRoundStroke);
+            using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, RwC2) { StartPoint = new Vector2(cx, cy - 8), EndPoint = new Vector2(cx, cy + 8) };
+            ds.DrawGeometry(chev, br, 7, RwRoundStroke);
+            ((CompositionSurfaceBrush)rs.Chev.Brush).Surface = rs.ChevSurf;
+            rs.Chev.Size = new Vector2(w, h);
+        }
+        rs.Chev.Offset = new Vector3(RsX + RsW / 2 - w / 2, RsY + RsH - 64, 0);
+    }
+
+    /// <summary>左上「B ←」灰胶囊、右上「Y ✓」紫胶囊（带一圈紫色投影）。</summary>
+    private void RsPaintPills(CanvasDrawingSession ds)
     {
         var dev = ds.Device;
-        // 左上：灰色胶囊里 B 圆章 + 黑色返回箭头
         ds.FillRoundedRectangle(134, 104, 134, 74, 37, 37, Color.FromArgb(255, 0xE2, 0xE3, 0xE7));
         ds.FillCircle(170, 141, 21, Color.FromArgb(255, 0x9A, 0x9C, 0xA3));
         using (var f = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
@@ -246,11 +499,13 @@ public sealed partial class WallStage
             using var arrow = CanvasGeometry.CreatePath(pb);
             ds.DrawGeometry(arrow, RmInk, 7, RwRoundStroke);
         }
-        float tx = 288;
-        if (page.TitleIcon.Length > 0) { RsGlyph(ds, page.TitleIcon, 314, 141, RmInk, 0.8f); tx = 362; }
-        using (var f = new CanvasTextFormat { FontFamily = RmFont(page.Title), FontSize = 48, FontWeight = new Windows.UI.Text.FontWeight(600), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
-            ds.DrawText(page.Title, new Windows.Foundation.Rect(tx, 104, 1200, 74), RmInk, f);
-        // 右上：紫色胶囊里 Y 圆章 + 白色对勾圆
+        using (var cl = new CanvasCommandList(dev))
+        {
+            using (var s = cl.CreateDrawingSession()) { s.Transform = ds.Transform; s.FillRoundedRectangle(1656, 112, 126, 70, 35, 35, Color.FromArgb(255, 0x7A, 0x3C, 0xFF)); }
+            using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 9 * CsRaster, BorderMode = EffectBorderMode.Soft };
+            using var op = new OpacityEffect { Source = blur, Opacity = 0.45f };
+            var t = ds.Transform; ds.Transform = Matrix3x2.Identity; ds.DrawImage(op); ds.Transform = t;
+        }
         using (var br = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0x8A, 0x7B, 0xFF), Color.FromArgb(255, 0x7A, 0x3C, 0xFF)) { StartPoint = new Vector2(1652, 104), EndPoint = new Vector2(1786, 178) })
             ds.FillRoundedRectangle(1652, 104, 134, 74, 37, 37, br);
         ds.FillCircle(1689, 141, 21, Color.FromArgb(255, 0xB9, 0xA9, 0xFF));
@@ -265,6 +520,25 @@ public sealed partial class WallStage
         }
     }
 
+    /// <summary>页面标题（单独一层：入场时比骨架晚出来）。</summary>
+    private void RsPaintTitle(RsState rs, RsPage page)
+    {
+        float R = CsRaster, x0 = 280, y0 = 96, w = 1000, h = 90;
+        rs.TitleSurf ??= G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(h * R));
+        using (var ds = CanvasComposition.CreateDrawingSession(rs.TitleSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateTranslation(-x0, -y0) * Matrix3x2.CreateScale(R);
+            float tx = 288;
+            if (page.TitleIcon.Length > 0) { RsGlyph(ds, page.TitleIcon, 314, 141, RmInk, 0.8f); tx = 362; }
+            using var f = new CanvasTextFormat { FontFamily = RmFont(page.Title), FontSize = 48, FontWeight = RsWt(page.Title), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
+            ds.DrawText(page.Title, new Windows.Foundation.Rect(tx, 104, 900, 74), RmInk, f);
+        }
+        ((CompositionSurfaceBrush)rs.Title.Brush).Surface = rs.TitleSurf;
+        rs.Title.Size = new Vector2(w, h);
+        rs.Title.Offset = new Vector3(x0, y0, 0);
+    }
+
     private void RsPaintRow(CanvasDrawingSession ds, RsRow row, float y, LibraryItem g)
     {
         float cy = y + RsRowH / 2;
@@ -274,15 +548,15 @@ public sealed partial class WallStage
         if (row.Icon.Length > 0) RsGlyph(ds, row.Icon, 184, cy, ink, 1);
         if (twoLine)
         {
-            using var lf = new CanvasTextFormat { FontFamily = RmFont(row.Title), FontSize = 30, FontWeight = new Windows.UI.Text.FontWeight(600), WordWrapping = CanvasWordWrapping.NoWrap };
+            using var lf = new CanvasTextFormat { FontFamily = RmFont(row.Title), FontSize = 30, FontWeight = RsWt(row.Title), WordWrapping = CanvasWordWrapping.NoWrap };
             ds.DrawText(row.Title, textX, y + 20, RsSub, lf);
             string v = string.IsNullOrWhiteSpace(row.Value) ? "未设置" : row.Value!.Replace('\n', ' ');
-            using var vf = new CanvasTextFormat { FontFamily = RmFont(v), FontSize = 42, FontWeight = new Windows.UI.Text.FontWeight(600), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
+            using var vf = new CanvasTextFormat { FontFamily = RmFont(v), FontSize = 40, FontWeight = RsWt(v), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
             ds.DrawText(v, new Windows.Foundation.Rect(textX, y + 62, 1520 - textX, 60), string.IsNullOrWhiteSpace(row.Value) ? Color.FromArgb(255, 0x9A, 0x9C, 0xA3) : ink, vf);
             if (row.Kind == RsKind.Field) RsGlyph(ds, row.Key == "released" ? "calendar" : "pencil", 1748, cy, RmInk, 0.8f);
             return;
         }
-        using (var tf = new CanvasTextFormat { FontFamily = RmFont(row.Title), FontSize = 44, FontWeight = new Windows.UI.Text.FontWeight(600), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
+        using (var tf = new CanvasTextFormat { FontFamily = RmFont(row.Title), FontSize = 40, FontWeight = RsWt(row.Title), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
             ds.DrawText(row.Title, new Windows.Foundation.Rect(textX, y, 1300, RsRowH), ink, tf);
         switch (row.Kind)
         {
@@ -309,16 +583,19 @@ public sealed partial class WallStage
                     ds.FillRoundedRectangle(x, ty, 120, 76, 38, 38, Color.FromArgb(255, 0xE4, 0xE5, 0xE9));
                     ds.DrawRoundedRectangle(x + 2, ty + 2, 116, 72, 36, 36, Color.FromArgb(255, 0x9A, 0x9C, 0xA3), 4);
                 }
+                RsSoftShadow(ds, (on ? x + 82 : x + 38) - 27, cy - 27 + 3, 54, 54, 27, 4, 0.22f);
                 ds.FillCircle(on ? x + 82 : x + 38, cy, 27, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
                 break;
             }
             case RsKind.Pick:
             {
-                // 下拉框：浅灰圆角底、当前值、右边小三角（Cocoon 的「Use Default ▾」）
+                // 下拉框：白色胶囊、一圈很淡的投影和细描边，当前值、右边小三角（Cocoon 的「Android (None) ▾」）
                 string val = row.Value ?? "";
                 float px = 1340, pw = 436, ph = 84, py = cy - ph / 2;
-                ds.FillRoundedRectangle(px, py, pw, ph, 30, 30, Color.FromArgb(255, 0xEC, 0xED, 0xF1));
-                using var vf = new CanvasTextFormat { FontFamily = RmFont(val), FontSize = 36, FontWeight = new Windows.UI.Text.FontWeight(600), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
+                RsSoftShadow(ds, px, py + 3, pw, ph, ph / 2, 6, 0.14f);
+                ds.FillRoundedRectangle(px, py, pw, ph, ph / 2, ph / 2, Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
+                ds.DrawRoundedRectangle(px + 0.5f, py + 0.5f, pw - 1, ph - 1, ph / 2, ph / 2, Color.FromArgb(255, 0xEC, 0xED, 0xF0), 1);
+                using var vf = new CanvasTextFormat { FontFamily = RmFont(val), FontSize = 36, FontWeight = RsWt(val), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
                 ds.DrawText(val, new Windows.Foundation.Rect(px + 30, py, pw - 90, ph), RmInk, vf);
                 using var pb = new CanvasPathBuilder(ds.Device);
                 pb.BeginFigure(px + pw - 50, cy - 5); pb.AddLine(px + pw - 36, cy - 5); pb.AddLine(px + pw - 43, cy + 4); pb.EndFigure(CanvasFigureLoop.Closed);
@@ -334,6 +611,16 @@ public sealed partial class WallStage
                 break;
             }
         }
+    }
+
+    /// <summary>一圈很淡的投影（下拉框胶囊、开关圆钮）。</summary>
+    private void RsSoftShadow(CanvasDrawingSession ds, float x, float y, float w, float h, float r, float blur, float alpha)
+    {
+        using var cl = new CanvasCommandList(ds.Device);
+        using (var s = cl.CreateDrawingSession()) { s.Transform = ds.Transform; s.FillRoundedRectangle(x, y, w, h, r, r, Colors.Black); }
+        using var bl = new GaussianBlurEffect { Source = cl, BlurAmount = blur * CsRaster, BorderMode = EffectBorderMode.Soft };
+        using var op = new OpacityEffect { Source = bl, Opacity = alpha };
+        var t = ds.Transform; ds.Transform = Matrix3x2.Identity; ds.DrawImage(op); ds.Transform = t;
     }
 
     /// <summary>行首 / 标题 / 行尾的黑色线面图标（Cocoon 二级页里是纯黑实心图标）。</summary>
@@ -472,7 +759,7 @@ public sealed partial class WallStage
     {
         var page = rs.Stack[^1];
         var (W, H, _, _) = RsBracketGeom();
-        float y = RsTop + (page.Sel - page.Top) * (RsRowH + RsSep);
+        float y = RsRowY(rs, page.Sel);
         var to = new Vector3(RsListX + RsListW / 2 - W / 2 - RmCurPad, y + RsRowH / 2 - H / 2 - RmCurPad, 0);
         bool show = page.Rows.Count > 0 && page.Paint == null;
         foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Rim })
@@ -509,9 +796,23 @@ public sealed partial class WallStage
         page.Sel = j;
         rs.DiscardArmed = false;
         CuePan(0);
-        if (j < page.Top || j >= page.Top + RsVisible) { RsPaint(rs); RsCursorTo(rs, move: false); }
+        RsLayoutRows(page);
+        if (page.Top != top)
+        {
+            // 滚动：按新位置重画，整个列表从旧位置弹簧滑过来；焦点框同一根弹簧，和列表一起走
+            float before = float.NaN;
+            foreach (var e in RsLay(page.Rows, top)) if (e.I == page.Top) before = e.Y;
+            float delta = float.IsNaN(before) ? (top - page.Top) * (RsRowH + RsSep) * -1 : before - RsTop;
+            RsPaint(rs);
+            if (!Reduced && MathF.Abs(delta) > 0.5f)
+            {
+                rs.Rows.Offset = new Vector3(0, delta, 0);
+                rs.Rows.StartAnimation("Offset", RwSpring(Vector3.Zero));
+                RsCursorTo(rs, move: true);
+            }
+            else RsCursorTo(rs, move: false);
+        }
         else RsCursorTo(rs, move: true);
-        if (page.Top != top) RsCursorTo(rs, move: false);
     }
 
     private void RsActivate()
@@ -590,7 +891,7 @@ public sealed partial class WallStage
         RsEnsureBox();
         _rsEditing = row;
         var page = rs.Stack[^1];
-        float y = RsTop + (page.Sel - page.Top) * (RsRowH + RsSep);
+        float y = RsRowY(rs, page.Sel);
         var o = _cs!.Root.Offset;
         float k = _cs.K;
         var box = _rsBox!;
@@ -725,7 +1026,7 @@ public sealed partial class WallStage
             RwMetaSave(g, m);
             Toast("已保存");
         };
-        rows.Add(new RsRow { Kind = RsKind.Info, Icon = "", Title = "游玩时长", Value = g.PlaytimeH is double h && h > 0 ? (h < 1 ? $"{h * 60:0} 分钟" : $"{h:0.#} 小时") : "0 分钟" });
+        rows.Add(new RsRow { Kind = RsKind.Info, Icon = "", Break = true, Title = "游玩时长", Value = g.PlaytimeH is double h && h > 0 ? (h < 1 ? $"{h * 60:0} 分钟" : $"{h:0.#} 小时") : "0 分钟" });
         rows.Add(new RsRow { Kind = RsKind.Info, Icon = "", Title = "上次游玩", Value = g.LastPlayedDays is int d ? (d == 0 ? "今天" : $"{d} 天前") : "没玩过" });
         return page;
     }
@@ -744,12 +1045,13 @@ public sealed partial class WallStage
             _stCat = cat;
             _stRows.Clear();
             BuildGsRows();
-            bool take = false;
+            bool take = false, brk = false;
             foreach (var r in _stRows)
             {
-                if (r.Section) { take = sections.Contains(r.Title); continue; }
+                if (r.Section) { take = sections.Contains(r.Title); brk = outRows.Count > 0; continue; }
                 if (!take || r.Skip) continue;
-                outRows.Add(RsFromPerf(r));
+                var rr = RsFromPerf(r); rr.Break = brk; brk = false;
+                outRows.Add(rr);
             }
         }
         catch (Exception ex) { Log.Warn($"game config rows: {ex.Message}"); }

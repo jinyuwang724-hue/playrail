@@ -26,6 +26,16 @@ public sealed partial class WallStage
             int n = await r.StopAndSaveAsync(Path.Combine(dir, "row-" + name), System.Diagnostics.Stopwatch.GetTimestamp());
             Log.Info($"recrow {name}: {n} frames");
         }
+        async Task Rec(string name, Action act, int ms)
+        {
+            var r = new FrameRecorder();
+            if (!r.Start(HostWindow)) { act(); await Task.Delay(ms); return; }
+            long m = System.Diagnostics.Stopwatch.GetTimestamp();
+            await Task.Delay(120);
+            act();
+            await Task.Delay(ms);
+            Log.Info($"recrow {name}: {await r.StopAndSaveAsync(Path.Combine(dir, "row-" + name), m)} frames");
+        }
         try
         {
             if (_cs != null && _prefs.Home != HomeStyle.Row) { SaveUi(_prefs with { Home = HomeStyle.Row }); CsMorphStyle(); await Task.Delay(1500); }
@@ -81,16 +91,16 @@ public sealed partial class WallStage
             await Still("menu");
             Move(Direction.Down); await Task.Delay(250); Move(Direction.Down); await Still("menu2");
             // 菜单里再按 Y 进编辑；A 进编辑元数据，往下走几行；B 一路退回
-            CsGameSettings(); await Still("edit");
-            Activate(); await Still("meta");
+            await Rec("editopen", CsGameSettings, 1300); await Still("edit");
+            await Rec("metapush", Activate, 900); await Still("meta");
             for (int i = 0; i < 6; i++) { Move(Direction.Down); await Task.Delay(220); }
             await Still("meta2");
             // 退回编辑 → 封面管理：A 到 SteamGridDB 取图，切到背景页签
-            Back(); await Task.Delay(500);
+            await Rec("pop", () => Back(), 800);
             Move(Direction.Down); await Task.Delay(300); Activate(); await Still("art");
             Activate(); await Task.Delay(7000); await Still("art2");
             CsSwitchTab(1); await Still("art3");
-            Back(); await Task.Delay(400); Back(); await Task.Delay(400); Back(); await Task.Delay(500);
+            await Rec("artpop", () => Back(), 800); await Rec("sheetclose", () => Back(), 600); Back(); await Task.Delay(500);
             // 游戏配置：小黄鸭、功耗档位
             if (_rm == null) { CsGameSettings(); await Task.Delay(600); }
             Move(Direction.Down); await Task.Delay(250); Move(Direction.Down); await Task.Delay(250); Activate(); await Task.Delay(2500); await Still("config");

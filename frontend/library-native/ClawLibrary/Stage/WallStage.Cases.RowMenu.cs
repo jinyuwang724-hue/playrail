@@ -224,6 +224,74 @@ public sealed partial class WallStage
         rm.CurR.StartAnimation("Offset", CsV3(Vector3.Zero, 160, new Bezier(0.25f, 0.8f, 0.25f, 1f), 300));
     }
 
+    /// <summary>
+    /// 菜单开着时游戏库刷新（比如存了元数据、换了封面），首页原地重建：新页面没有模糊、焦点框和那张卡又露出来了。
+    /// 把菜单挂到新页面上：组件层直接糊上，行焦点框收起，对应的卡藏起来（关菜单时封面飞回它那里）。
+    /// </summary>
+    private void RmAdoptPage(CsPage p)
+    {
+        if (_rm is not { } rm || rm.Closing || rm.Page == p) return;
+        rm.Page = p;
+        RwBackdropFx(p, true, 1);
+        RwCursorShow(p, false);
+        int k = p.Items.FindIndex(x => x.Id == rm.Item.Id);
+        if (k >= 0 && p.Cases.TryGetValue(k, out var c) && p.Row != null)
+        {
+            var (fx, fy, fw, fh) = RwFocusRect(c);
+            var off = p.Content.Offset + p.Row.Offset;
+            rm.From = c.Root;
+            rm.FromCenter = new Vector3(fx + fw / 2 + off.X, fy + fh / 2 + off.Y, 0);
+            rm.FromScale = fw / RmCoverW;
+            c.Root.Opacity = 0;
+        }
+        else rm.From = null;
+    }
+
+    private static Vector3 RmCoverHome => new(RmCoverCx - RmCoverW / 2, (CsH - RmCoverH) / 2 - 40, 0);
+
+    /// <summary>进二级页：白卡压扁消失、焦点框收掉，封面往左飞出屏幕、标题淡出；背景（模糊 + 遮罩）留着给二级页当底。</summary>
+    private void RmHideForSheet()
+    {
+        if (_rm is not { } rm) return;
+        if (Reduced) { foreach (var v in new Visual[] { rm.Card, rm.Cur, rm.Cover, rm.Title }) v.Opacity = 0; return; }
+        rm.Cur.StopAnimation("Opacity");
+        rm.Cur.Opacity = 0;
+        rm.Card.CenterPoint = new Vector3(RmCardW / 2 + 40, RmCardH / 2 + 40, 0);
+        rm.Card.StartAnimation("Scale", CsV3(new Vector3(1, 0.55f, 1), 60, Bezier.EaseOut));
+        rm.Card.StartAnimation("Opacity", CsS(0, 60, Bezier.EaseOut));
+        var easeIn = new Bezier(0.5f, 0f, 0.9f, 0.6f);
+        rm.Cover.StopAnimation("RotationAngleInDegrees");
+        rm.Cover.RotationAngleInDegrees = 0;
+        rm.Cover.StartAnimation("Offset", CsV3(new Vector3(-RmCoverW - 60, RmCoverHome.Y, 0), 110, easeIn, 30));
+        rm.Cover.StartAnimation("Opacity", CsS(0, 40, Bezier.EaseOut, 100));
+        rm.Title.StartAnimation("Opacity", CsS(0, 70, Bezier.EaseOut));
+    }
+
+    /// <summary>从二级页退回：白卡和焦点框回来，封面从左边飞回原位（170 ms）、标题淡入。</summary>
+    private void RmBackFromSheet(bool instant)
+    {
+        if (_rm is not { } rm) return;
+        foreach (var v in new Visual[] { rm.Card, rm.Cover, rm.Title, rm.Cur }) { v.StopAnimation("Opacity"); v.StopAnimation("Scale"); }
+        rm.Card.Scale = Vector3.One;
+        rm.Cover.Scale = Vector3.One;
+        if (instant || Reduced)
+        {
+            foreach (var v in new Visual[] { rm.Card, rm.Cover, rm.Title, rm.Cur }) v.Opacity = 1;
+            RwJump(rm.Cover, RmCoverHome);
+            return;
+        }
+        rm.Card.Opacity = 0;
+        rm.Card.Scale = new Vector3(0.94f, 0.94f, 1);
+        rm.Card.StartAnimation("Opacity", CsS(1, 60, Bezier.EaseOut));
+        rm.Card.StartAnimation("Scale", CsV3(Vector3.One, 140, new Bezier(0.22f, 1f, 0.36f, 1f)));
+        rm.Cur.Opacity = 1;
+        rm.Cover.Opacity = 1;
+        rm.Cover.Offset = new Vector3(-RmCoverW - 60, RmCoverHome.Y, 0);
+        rm.Cover.StartAnimation("Offset", CsV3(RmCoverHome, 170, new Bezier(0.2f, 0.8f, 0.3f, 1f)));
+        rm.Title.Opacity = 0;
+        rm.Title.StartAnimation("Opacity", CsS(1, 100, Bezier.EaseOut, 80));
+    }
+
     private void RmClose(bool instant = false)
     {
         if (_rm is not { } rm || rm.Closing) return;
