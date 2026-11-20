@@ -58,7 +58,27 @@ public sealed partial class WallStage
             Move(Direction.Right); await Task.Delay(400); Move(Direction.Right); await Still("steam-grid");
             Back(); await Task.Delay(1200); await Still("back-home");
             // 游戏菜单：Y 打开，往下两行，B 关
-            CsGameSettings(); await Still("menu");
+            // 开菜单的动画逐帧录下来（和 Cocoon 视频对照）；先往右挪两张，起点在目标右边
+            Move(Direction.Right); await Task.Delay(500); Move(Direction.Right); await Task.Delay(800);
+            var mo = new FrameRecorder();
+            if (mo.Start(HostWindow))
+            {
+                long m3 = System.Diagnostics.Stopwatch.GetTimestamp();
+                await Task.Delay(150);
+                CsGameSettings(); await Task.Delay(700);
+                Log.Info($"recrow menuopen: {await mo.StopAndSaveAsync(Path.Combine(dir, "row-menuopen"), m3)} frames");
+                var mc = new FrameRecorder();
+                if (mc.Start(HostWindow))
+                {
+                    long m4 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    await Task.Delay(100);
+                    Back(); await Task.Delay(500);
+                    Log.Info($"recrow menuclose: {await mc.StopAndSaveAsync(Path.Combine(dir, "row-menuclose"), m4)} frames");
+                }
+                CsGameSettings(); await Task.Delay(800);
+            }
+            else CsGameSettings();
+            await Still("menu");
             Move(Direction.Down); await Task.Delay(250); Move(Direction.Down); await Still("menu2");
             // 菜单里再按 Y 进编辑；A 进编辑元数据，往下走几行；B 一路退回
             CsGameSettings(); await Still("edit");

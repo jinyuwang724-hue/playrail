@@ -32,6 +32,12 @@ public sealed partial class WallStage
         public int Sel;
         public bool Armed;   // 移除：按第一次变成「再按一次确认」
         public bool Closing;
+        /// <summary>焦点框拆成左右两半：开菜单时先在「启动」行左边冒出一对小括号，右半再滑到行尾（Cocoon 的展开方式）。</summary>
+        public ContainerVisual Cur = null!, CurL = null!, CurR = null!;
+        /// <summary>行里那张卡（开菜单时藏起来，封面从它的位置飞出去；关的时候飞回来再显示）。</summary>
+        public Visual? From;
+        public Vector3 FromCenter;
+        public float FromScale = 1;
     }
 
     private RmState? _rm;
@@ -71,7 +77,15 @@ public sealed partial class WallStage
         var rm = new RmState { Root = root, Scrim = scrim, Card = Sp(), Cover = Sp(), Title = Sp(), Glow = Sp(), Line = Sp(), Rim = Sp(), Item = g, Page = p };
         _rm = rm;
         root.Children.InsertAtTop(scrim);
-        foreach (var v in new Visual[] { rm.Cover, rm.Title, rm.Card, rm.Glow, rm.Line, rm.Rim }) root.Children.InsertAtTop(v);
+        foreach (var v in new Visual[] { rm.Title, rm.Card }) root.Children.InsertAtTop(v);
+        rm.Cur = G.Container(relative: false);
+        rm.CurL = G.Container(relative: false);
+        rm.CurR = G.Container(relative: false);
+        rm.Cur.Children.InsertAtTop(rm.CurL);
+        rm.Cur.Children.InsertAtTop(rm.CurR);
+        foreach (var v in new Visual[] { rm.Glow, rm.Line, rm.Rim }) rm.CurL.Children.InsertAtTop(v);
+        root.Children.InsertAtTop(rm.Cur);
+        root.Children.InsertAtTop(rm.Cover);   // 封面在最上面：飞行途中会掠过白卡
         _cs.Root.Children.InsertAtTop(root);
 
         // 封面：竖封面，圆角同卡片（宽 × 0.174），左半屏居中，标题在下面
@@ -96,17 +110,81 @@ public sealed partial class WallStage
         RmPaintCursor(rm);
         RmCursorTo(rm, move: false);
 
-        if (!Reduced)
+        // 封面从行里那张卡的位置起飞（那张先藏起来）
+        if (p.Cases.TryGetValue(p.Sel, out var srcCase) && p.Row != null)
         {
-            root.Opacity = 0;
-            root.StartAnimation("Opacity", CsS(1, 220, CsQuart));
-            rm.Card.Offset += new Vector3(40, 0, 0);
-            var co = rm.Card.Offset - new Vector3(40, 0, 0);
-            rm.Card.StartAnimation("Offset", CsV3(co, 320, CsQuart));
-            rm.Cover.CenterPoint = new Vector3(RmCoverW / 2, RmCoverH / 2, 0);
-            rm.Cover.Scale = new Vector3(0.92f, 0.92f, 1);
-            rm.Cover.StartAnimation("Scale", RwSpring(Vector3.One, 600));
+            var (fx, fy, fw, fh) = RwFocusRect(srcCase);
+            var off = p.Content.Offset + p.Row.Offset;
+            rm.From = srcCase.Root;
+            rm.FromCenter = new Vector3(fx + fw / 2 + off.X, fy + fh / 2 + off.Y, 0);
+            rm.FromScale = fw / RmCoverW;
         }
+        RwCursorShow(p, false);   // 行上的焦点框先收起来（封面飞走后那一格是空的）
+        if (!Reduced) RmIntro(rm);
+    }
+
+    /// <summary>
+    /// 开菜单（逐帧拆 jinyu 录的 Cocoon 视频，11-20）：
+    ///   0–230 ms 背景模糊压暗；
+    ///   0–270 ms 封面从卡片原位飞到左侧：先往上冲（越过目标高度约 1/4 行程）、放大到约 1.35 倍、斜 7°，
+    ///            再横着飞过去、缩回、反摆 4°、落定——起点在右边的先上后左，在左边的往右上走、斜向相反；
+    ///   100–200 ms 标题淡入；约 260 ms「启动」行左边冒出一对小括号；约 300 ms 白卡从 0.85 倍（左上角为锚）弹出；
+    ///   300–460 ms 右括号滑到行尾。
+    /// </summary>
+    private void RmIntro(RmState rm)
+    {
+        rm.Scrim.Opacity = 0;
+        rm.Scrim.StartAnimation("Opacity", CsS(1, 230, Bezier.EaseOut));
+        var to = rm.Cover.Offset;
+        var tc = to + new Vector3(RmCoverW / 2, RmCoverH / 2, 0);
+        var sc = rm.From != null ? rm.FromCenter : tc + new Vector3(0, 120, 0);
+        float s0 = rm.From != null ? rm.FromScale : 0.9f;
+        float dx = tc.X - sc.X, dy = tc.Y - sc.Y;
+        float lean = -MathF.Sign(dx) * MathF.Min(1, MathF.Abs(dx) / 300);
+        Vector3 At(float px, float py) => new(sc.X + dx * px - RmCoverW / 2, sc.Y + dy * py - RmCoverH / 2, 0);
+        var ease = G.Ease(new Bezier(0.33f, 0f, 0.25f, 1f));
+        var pos = G.C.CreateVector3KeyFrameAnimation();
+        pos.InsertKeyFrame(0, At(0, 0), G.Linear);
+        pos.InsertKeyFrame(0.37f, At(0.05f, 1.26f), ease);
+        pos.InsertKeyFrame(0.62f, At(0.6f, 1.08f), ease);
+        pos.InsertKeyFrame(0.85f, At(0.95f, 1.0f), ease);
+        pos.InsertKeyFrame(1, to, ease);
+        pos.Duration = Gfx.Ms(270);
+        var scale = G.C.CreateVector3KeyFrameAnimation();
+        Vector3 S(float k) => new(k, k, 1);
+        scale.InsertKeyFrame(0, S(s0), G.Linear);
+        scale.InsertKeyFrame(0.37f, S(1.35f), ease);
+        scale.InsertKeyFrame(0.62f, S(1.12f), ease);
+        scale.InsertKeyFrame(0.85f, S(1.02f), ease);
+        scale.InsertKeyFrame(1, S(1), ease);
+        scale.Duration = Gfx.Ms(270);
+        var rot = G.C.CreateScalarKeyFrameAnimation();
+        rot.InsertKeyFrame(0, 0, G.Linear);
+        rot.InsertKeyFrame(0.37f, 7 * lean, ease);
+        rot.InsertKeyFrame(0.62f, -4 * lean, ease);
+        rot.InsertKeyFrame(0.85f, -1 * lean, ease);
+        rot.InsertKeyFrame(1, 0, ease);
+        rot.Duration = Gfx.Ms(270);
+        rm.Cover.CenterPoint = new Vector3(RmCoverW / 2, RmCoverH / 2, 0);
+        rm.Cover.StartAnimation("Offset", pos);
+        rm.Cover.StartAnimation("Scale", scale);
+        rm.Cover.StartAnimation("RotationAngleInDegrees", rot);
+        if (rm.From != null) rm.From.Opacity = 0;
+        rm.Title.Opacity = 0;
+        rm.Title.StartAnimation("Opacity", CsS(1, 100, Bezier.EaseOut, 100));
+        rm.Card.CenterPoint = new Vector3(40, 40, 0);
+        rm.Card.Opacity = 0;
+        rm.Card.Scale = new Vector3(0.85f, 0.85f, 1);
+        rm.Card.StartAnimation("Opacity", CsS(1, 60, Bezier.EaseOut, 300));
+        rm.Card.StartAnimation("Scale", CsV3(Vector3.One, 120, new Bezier(0.2f, 0.9f, 0.3f, 1.1f), 300));
+        var (W, H, _, _) = RmBracketGeom();
+        rm.Cur.CenterPoint = new Vector3(RmCurPad + 30, RmCurPad + H / 2, 0);
+        rm.Cur.Opacity = 0;
+        rm.Cur.Scale = new Vector3(0.35f, 0.35f, 1);
+        rm.Cur.StartAnimation("Opacity", CsS(1, 40, Bezier.EaseOut, 260));
+        rm.Cur.StartAnimation("Scale", CsV3(Vector3.One, 90, Bezier.EaseOut, 260));
+        rm.CurR.Offset = new Vector3(-(W - 70), 0, 0);
+        rm.CurR.StartAnimation("Offset", CsV3(Vector3.Zero, 160, new Bezier(0.25f, 0.8f, 0.25f, 1f), 300));
     }
 
     private void RmClose(bool instant = false)
@@ -115,15 +193,34 @@ public sealed partial class WallStage
         rm.Closing = true;
         void Drop()
         {
+            if (rm.Root.Comment == "dropped") return;
+            rm.Root.Comment = "dropped";
             if (_cs != null) _cs.Root.Children.Remove(rm.Root);
             Images.Release(rm.CoverSurf);
             foreach (var s in new[] { rm.CardSurf, rm.TitleSurf, rm.GlowSurf, rm.LineSurf, rm.RimSurf }) s?.Dispose();
             rm.Root.Dispose();
             if (_rm == rm) _rm = null;
         }
-        if (instant || Reduced) { Drop(); return; }
+        void Restore()
+        {
+            try { if (rm.From != null) rm.From.Opacity = 1; } catch (ObjectDisposedException) { }
+            if (rm.Page.Rw is { PanelFocus: < 0, Disposed: false }) RwCursorShow(rm.Page, true);
+        }
+        if (instant || Reduced) { Restore(); Drop(); return; }
+        // 关：白卡、焦点框、标题先淡掉，封面原路飞回卡片位置，背景同时退回清晰
+        foreach (var v in new Visual[] { rm.Card, rm.Cur, rm.Title }) v.StartAnimation("Opacity", CsS(0, 100, Bezier.EaseOut));
+        rm.Scrim.StartAnimation("Opacity", CsS(0, 220, Bezier.EaseOut));
+        if (rm.From != null)
+        {
+            var back = rm.FromCenter - new Vector3(RmCoverW / 2, RmCoverH / 2, 0);
+            rm.Cover.StartAnimation("Offset", CsV3(back, 220, new Bezier(0.3f, 0f, 0.2f, 1f)));
+            rm.Cover.StartAnimation("Scale", CsV3(new Vector3(rm.FromScale, rm.FromScale, 1), 220, new Bezier(0.3f, 0f, 0.2f, 1f)));
+            rm.Cover.StartAnimation("RotationAngleInDegrees", CsS(0, 120, Bezier.EaseOut));
+            After(225, () => { Restore(); Drop(); });
+            return;
+        }
         rm.Root.StartAnimation("Opacity", CsS(0, 180, CsQuart));
-        After(200, Drop);
+        After(200, () => { Restore(); Drop(); });
     }
 
     private void RmPaintTitle(RmState rm, float y)
@@ -315,6 +412,17 @@ public sealed partial class WallStage
         ((CompositionSurfaceBrush)rm.Rim.Brush).Surface = rm.RimSurf;
         rm.Line.Brush = RwFlowBrush(rm.Page.Rw!, rm.LineSurf);
         foreach (var v in new Visual[] { rm.Glow, rm.Line, rm.Rim }) v.Size = new Vector2(sw, sh);
+        // 右半：同样三层（共用画刷），裁成右半；左半裁掉右半
+        rm.CurR.Children.RemoveAll();
+        foreach (var v in new[] { rm.Glow, rm.Line, rm.Rim })
+        {
+            var copy = G.Sprite(v.Brush, relative: false);
+            copy.Size = v.Size;
+            rm.CurR.Children.InsertAtTop(copy);
+        }
+        rm.CurL.Clip = G.C.CreateInsetClip(0, 0, sw / 2, 0);
+        rm.CurR.Clip = G.C.CreateInsetClip(sw / 2, 0, 0, 0);
+        rm.CurL.Size = rm.CurR.Size = rm.Cur.Size = new Vector2(sw, sh);
     }
 
     private void RmCursorTo(RmState rm, bool move)
@@ -322,10 +430,7 @@ public sealed partial class WallStage
         var (W, H, _, _) = RmBracketGeom();
         float rowY = RmCardY + rm.Sel * (RmRowH + RmSep);
         var to = new Vector3(RmCardX + RmCardW / 2 - W / 2 - RmCurPad, rowY + RmRowH / 2 - H / 2 - RmCurPad, 0);
-        foreach (var v in new Visual[] { rm.Glow, rm.Line, rm.Rim })
-        {
-            if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else RwJump(v, to);
-        }
+        if (move && !Reduced) rm.Cur.StartAnimation("Offset", RwSpring(to)); else RwJump(rm.Cur, to);
     }
 
     // ---------------- 输入 ----------------
