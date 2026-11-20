@@ -41,6 +41,8 @@ public sealed partial class WallStage
         public Action<int>? Step;
         /// <summary>从这一行起另开一张分组卡片。</summary>
         public bool Break;
+        /// <summary>文字编辑提交后回调（刮削游戏的搜索词）。</summary>
+        public Action<string>? Commit;
     }
 
     private sealed class RsPage
@@ -696,6 +698,27 @@ public sealed partial class WallStage
                 ds.DrawGeometry(bolt, ink, 3, RwRoundStroke);
                 break;
             }
+            case "scrape":
+            {
+                // 魔法棒：斜着的一根棒 + 右上一颗四角星、两粒小星（自动去网上把资料和图「变」出来）
+                ds.DrawLine(cx - 26, cy + 26, cx + 6, cy - 6, ink, 9, RwRoundStroke);
+                void Star(float x, float y, float r)
+                {
+                    using var pb = new CanvasPathBuilder(dev);
+                    pb.BeginFigure(x, y - r);
+                    pb.AddQuadraticBezier(new Vector2(x, y), new Vector2(x + r, y));
+                    pb.AddQuadraticBezier(new Vector2(x, y), new Vector2(x, y + r));
+                    pb.AddQuadraticBezier(new Vector2(x, y), new Vector2(x - r, y));
+                    pb.AddQuadraticBezier(new Vector2(x, y), new Vector2(x, y - r));
+                    pb.EndFigure(CanvasFigureLoop.Closed);
+                    using var g = CanvasGeometry.CreatePath(pb);
+                    ds.FillGeometry(g, ink);
+                }
+                Star(cx + 16, cy - 16, 17);
+                Star(cx - 12, cy - 22, 7);
+                Star(cx + 24, cy + 14, 6);
+                break;
+            }
             case "clock":
                 ds.DrawCircle(cx, cy, 28, ink, 6);
                 ds.DrawLine(cx, cy, cx, cy - 15, ink, 6, RwRoundStroke);
@@ -912,7 +935,7 @@ public sealed partial class WallStage
     {
         if (_rsEditing is not { } row || _rsBox == null) return;
         _rsEditing = null;
-        if (commit) { row.Value = _rsBox.Text.Trim(); Cue(Sfx.Positive); }
+        if (commit) { row.Value = _rsBox.Text.Trim(); Cue(Sfx.Positive); row.Commit?.Invoke(row.Value); }
         _rsBox.Visibility = Visibility.Collapsed;
         _rootEl.Focus(FocusState.Programmatic);
         if (_rs is { } rs) RsPaint(rs);
@@ -995,6 +1018,7 @@ public sealed partial class WallStage
         {
             new RsRow { Kind = RsKind.Nav, Icon = "info", Title = "编辑元数据", Press = () => RsPush(RsMetaPage(g)) },
             new RsRow { Kind = RsKind.Nav, Icon = "artwork", Title = "封面管理", Press = () => RsPush(RaPage(g)) },
+            new RsRow { Kind = RsKind.Nav, Icon = "scrape", Title = "刮削游戏", Press = () => RsPush(RsScrapePage(g)) },
         },
     };
 

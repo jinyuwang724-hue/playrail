@@ -100,7 +100,11 @@ public sealed partial class WallStage
             Move(Direction.Down); await Task.Delay(300); Activate(); await Still("art");
             Activate(); await Task.Delay(7000); await Still("art2");
             CsSwitchTab(1); await Still("art3");
-            await Rec("artpop", () => Back(), 800); await Rec("sheetclose", () => Back(), 600); Back(); await Task.Delay(500);
+            await Rec("artpop", () => Back(), 800);
+            // 刮削游戏：只看页面和匹配（不按开始，免得改了用户的资料）
+            Move(Direction.Down); await Task.Delay(300); Activate(); await Task.Delay(5000); await Still("scrape");
+            Back(); await Task.Delay(500);
+            await Rec("sheetclose", () => Back(), 600); Back(); await Task.Delay(500);
             // 游戏配置：小黄鸭、功耗档位
             if (_rm == null) { CsGameSettings(); await Task.Delay(600); }
             Move(Direction.Down); await Task.Delay(250); Move(Direction.Down); await Task.Delay(250); Activate(); await Task.Delay(2500); await Still("config");
