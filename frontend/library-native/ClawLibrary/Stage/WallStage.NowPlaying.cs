@@ -42,6 +42,7 @@ public sealed partial class WallStage
 
     private void RefreshRunningGameActions(string id)
     {
+        if (_cs?.Page is { Style: HomeStyle.Row } rowPage) RwMarkRunning(rowPage);
         if (_cs?.Page is { Tab: 0 } page && page.Sel < page.Items.Count && page.Items[page.Sel] is { } selected && selected.Id == id)
         {
             page.Act = 0;
@@ -234,6 +235,14 @@ public sealed partial class WallStage
         if (_lib.ById.TryGetValue(g.Item.Id, out var same)) same.LastPlayed = now;
         try { ApplyLibrarySnapshot(_lib.Refilter()); } catch (Exception ex) { Log.Error("reorder after game", ex); }
         RefreshRunningGameActions(g.Item.Id);
+        if (CsActive && _cs?.Page is { Style: HomeStyle.Row } && !NowPlayingShown)
+        {
+            // 单行：不弹「已退出」整屏，右上角一张会话卡
+            if (!g.Ending && LibraryWindow.Foreground != _windowHandle && _window is MainWindow mw) mw.ActivateRoute("restore-library");
+            DropParkedMotion();
+            RwSessionToast(g.Item, played);
+            return;
+        }
         if (g.Ending && !NowPlayingShown)
         {
             DropParkedMotion();
@@ -282,6 +291,7 @@ public sealed partial class WallStage
         if (g.Pending) return;
         if (!SessionRunning(g)) { PollGameSession(); return; }
         if (_lm != null && !_lm.Leaving) return;
+        if (CsActive && RwFocusRunning(g)) { Log.Info($"now playing (row) {g.Item.Id}"); return; }   // 单行：不弹整屏面板，正在玩的卡做标记
         if (_prefs.NowPlaying == NowPlayingStyle.Bar) { ShowNowPlayingBar(g); return; }
         if (UnparkNowPlaying(g)) { Log.Info($"now playing panel {g.Item.Id} (kept)"); return; }
         StartLaunchMotion(g.Item, TileShowing(g.Item.Id), LmMode.Playing);
@@ -579,9 +589,10 @@ public sealed partial class WallStage
     /// </summary>
     private bool InterceptLaunchWhilePlaying(LibraryItem item)
     {
-        if (_game is not { } g) return false;
+        if (_game is not { } g || _rqBypass) return false;
         if (!g.Pending && !SessionRunning(g)) { PollGameSession(); return _game != null && InterceptLaunchWhilePlaying(item); }
         if (item.Id == g.Item.Id) { ResumeGame(g); return true; }
+        if (CsActive && _cs?.Page is { Style: HomeStyle.Row } rp && !g.Pending) { RqShow(rp, g, item); return true; }   // 单行：「切换游戏」小窗
         StartLaunchMotion(g.Item, TileShowing(g.Item.Id), LmMode.Playing);
         if (_lm != null) { _lm.Note = $"先退出「{g.Item.Title}」再启动「{item.Title}」"; _lm.Btn = 1; PaintLaunchCopy(_lm); }
         return true;

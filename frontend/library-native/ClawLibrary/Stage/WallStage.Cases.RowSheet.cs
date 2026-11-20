@@ -1131,6 +1131,8 @@ public sealed partial class WallStage
             }
             if (page.Sel < page.Rows.Count && page.Rows[page.Sel] is { Step: { } step } srow && srow.Kind is RsKind.Pick or RsKind.Toggle or RsKind.Order)
             {
+                // 来源排序：已经是第一（→）或最后（←）就挪不动——只给一声碰壁，不重画、不动画
+                if (srow.Kind == RsKind.Order && (dir == Direction.Right ? !srow.CanUp : !srow.CanDown)) { Cue(Sfx.Bump); return; }
                 Cue(Sfx.Nav, pan: dir == Direction.Left ? -0.4f : 0.4f);
                 bool wasOn = srow.IsOn?.Invoke() == true;
                 step(dir == Direction.Left ? -1 : 1);

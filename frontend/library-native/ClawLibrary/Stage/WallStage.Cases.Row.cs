@@ -843,6 +843,7 @@ public sealed partial class WallStage
                 else c.Root.Offset = off;
             }
         }
+        RwMarkRunning(p);
         // 不调整叠放顺序：放大 1.15 后每边只多出 21，卡距 50 碰不到邻居；把卡从树上摘下再挂回会打断它的动画（连按时卡片停在半路或消失）
         // 焦点框：中心对准焦点卡中心
         if (p.Rw is { } rw)
@@ -998,6 +999,11 @@ public sealed partial class WallStage
     }
 
     private void RwLayoutGrid(CsPage p, bool animate, bool entry = false)
+    {
+        try { RwLayoutGridCore(p, animate, entry); } finally { RwMarkRunning(p); }
+    }
+
+    private void RwLayoutGridCore(CsPage p, bool animate, bool entry)
     {
         int n = p.Items.Count;
         if (n == 0) { RwCursorShow(p, false); return; }

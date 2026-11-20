@@ -181,10 +181,21 @@ public sealed partial class WallStage
             float x = 6 + s * (iw + 6), y = 7;
             ds.FillRoundedRectangle(x, y, iw, ih, ih / 2, ih / 2, Color.FromArgb(255, 0xCC, 0xCD, 0xD2));
             var ink = on ? Color.FromArgb(255, 0x1E, 0x1E, 0x24) : Color.FromArgb(255, 0xA8, 0xAA, 0xB0);
-            // 十字键
+            // 十字键：整个十字淡灰，要按的那一臂（↓ 按钮是左、↑ 按钮是右）深色并带小三角，提示按十字键的左 / 右
             float dx = x + 34, dy = y + ih / 2;
-            ds.FillRoundedRectangle(dx - 15, dy - 5.5f, 30, 11, 3, 3, ink);
-            ds.FillRoundedRectangle(dx - 5.5f, dy - 15, 11, 30, 3, 3, ink);
+            var faint = Color.FromArgb(255, 0xA8, 0xAA, 0xB0);
+            ds.FillRoundedRectangle(dx - 16, dy - 6, 32, 12, 3, 3, faint);
+            ds.FillRoundedRectangle(dx - 6, dy - 16, 12, 32, 3, 3, faint);
+            float side = s == 0 ? -1 : 1;
+            ds.FillRoundedRectangle(side < 0 ? dx - 16 : dx + 4, dy - 6, 12, 12, 3, 3, ink);
+            using (var tp = new CanvasPathBuilder(dev))
+            {
+                float tx = dx + side * 10;
+                tp.BeginFigure(tx + side * 3, dy); tp.AddLine(tx - side * 2, dy - 4); tp.AddLine(tx - side * 2, dy + 4);
+                tp.EndFigure(CanvasFigureLoop.Closed);
+                using var tri = CanvasGeometry.CreatePath(tp);
+                ds.FillGeometry(tri, Color.FromArgb(255, 0xF2, 0xF2, 0xF4));
+            }
             // 箭头
             float ax = x + iw - 34, d = s == 0 ? 1 : -1;
             using var pb = new CanvasPathBuilder(dev);

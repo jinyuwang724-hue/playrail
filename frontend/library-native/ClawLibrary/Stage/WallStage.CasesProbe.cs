@@ -144,6 +144,24 @@ public sealed partial class WallStage
             for (int i = 0; i < 3; i++) { Move(Direction.Down); await Task.Delay(250); }
             Activate(); await Still("config-power");
             Back(); await Task.Delay(400); Back(); await Task.Delay(400); Back(); await Task.Delay(600);
+            // 正在玩（只录界面，不按强制退出）：拿焦点卡假装在跑（进程借资源管理器），X 退出小窗，B；→ 再 A 切换小窗，B；最后会话卡
+            if (_cs?.Page is { Style: HomeStyle.Row, Tab: 0 } rp && rp.Sel < rp.Items.Count && System.Diagnostics.Process.GetProcessesByName("explorer").FirstOrDefault() is { } shell)
+            {
+                var item = rp.Items[rp.Sel];
+                _game = new GameSession { Item = item, Source = SessionSource.Window, Pending = false, Pid = shell.Id, ProcessStart = shell.StartTime, Started = DateTime.Now.AddMinutes(-39) };
+                RwMarkRunning(rp);
+                await Still("running");
+                await Rec("quitopen", () => RwQuitFocused(), 600); await Still("quit");
+                Back(); await Task.Delay(500);
+                Move(Direction.Right); await Task.Delay(500);
+                await Rec("switchopen", Activate, 600); await Still("switch");
+                Back(); await Task.Delay(500);
+                Move(Direction.Left); await Task.Delay(400);
+                _game = null;
+                RwMarkRunning(rp);
+                await Rec("toast", () => RwSessionToast(item, TimeSpan.FromMinutes(39)), 900);
+                await Task.Delay(4500);
+            }
         }
         catch (Exception ex) { Log.Error("recrow", ex); }
         if (_cs != null && style != HomeStyle.Row) { SaveUi(_prefs with { Home = style }); CsMorphStyle(); }

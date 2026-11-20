@@ -85,7 +85,7 @@ public sealed partial class WallStage
             if (!on)
                 After(ms + 30, () =>
                 {
-                    if (_rm != null || rw.Disposed) return;   // 又开了菜单
+                    if (_rm != null || _rq != null || rw.Disposed) return;   // 又开了菜单 / 退出小窗
                     try
                     {
                         rw.Ui.Effect = null;

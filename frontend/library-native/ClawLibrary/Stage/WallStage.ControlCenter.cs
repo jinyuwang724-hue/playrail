@@ -449,6 +449,7 @@ public sealed partial class WallStage
         if (_qsOpen) { if (_networkKeyboard) NetworkKey("⌫"); return; }
         if (!_ccOpen && _expandedKey is { } key && _tiles.TryGetValue(key, out var tile) && RunningGame(tile.Shown) is { } running)
         { _ = ForceQuitAsync(running); return; }
+        if (!_ccOpen && CsActive && (_rq != null || RwQuitFocused())) return;   // 单行：焦点卡正在跑 → 退出游戏小窗
         if (!_ccOpen) ToggleLibraryRail();
     }
 
