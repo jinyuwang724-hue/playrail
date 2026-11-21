@@ -14,6 +14,8 @@ public sealed unsafe class GamepadPoller : IDisposable
 {
     private const double RepeatFirstMs = 320;
     private const double RepeatMs = 110;
+    /// <summary>界面要求的连发间隔（0 = 默认 110 ms）：单行首页右侧栏的滑块 75 ms。</summary>
+    public static volatile int RepeatOverrideMs;
     private const double StickDead = 0.35;
     private const double PanDead = 0.14;
     /// <summary>右摇杆推满时的平移速度（屏幕 px/s）。</summary>
@@ -243,7 +245,7 @@ public sealed unsafe class GamepadPoller : IDisposable
     {
         if (!active) { _held.Remove(d); return; }
         if (!_held.TryGetValue(d, out long next)) { Post(() => _stage.Move(d)); _held[d] = now + (long)RepeatFirstMs; }
-        else if (now >= next) { Post(() => _stage.Move(d)); _held[d] = now + (long)RepeatMs; }
+        else if (now >= next) { Post(() => _stage.Move(d)); int o = RepeatOverrideMs; _held[d] = now + (o > 0 ? o : (long)RepeatMs); }
     }
 
     /// <summary>测试用：模拟按下一个键，走和真手柄完全相同的投递路径（Post 到 UI 线程）。</summary>

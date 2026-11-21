@@ -515,6 +515,7 @@ public sealed partial class WallStage
     private void CsSwitchTab(int delta)
     {
         if (_rs != null) { RsTab(delta); return; }
+        if (SpSwitchTab(delta)) return;   // 单行：RB 开 / 关右侧栏，LB 不响应
         if (_cs == null || _csInsert != null || _rm != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) CsCloseSearch();
         var tabs = CsTabsShown();
@@ -1403,6 +1404,7 @@ public sealed partial class WallStage
     {
         if (_cs?.Page is not { } p || _csInsert != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) { Cue(Sfx.None); return; }
+        if (SpOpenNow) { SpMove(dir); return; }
         if (_rq != null) { Cue(Sfx.Bump); return; }
         if (_rs != null) { RsMove(dir); return; }
         if (_rm != null) { RmMove(dir); return; }
@@ -1571,6 +1573,7 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return;
         if (_csInsert != null) { Cue(Sfx.None); return; }
         if (_csSearchOpen) { if (_csSearchBox?.Text.Trim().Length > 0) CsSubmitSearch(); else CsFocusSearchBox(); return; }
+        if (SpOpenNow) { SpActivate(); return; }
         if (_rq != null) { RqActivate(); return; }
         if (_rs != null) { RsActivate(); return; }
         if (_rm != null) { RmActivate(); return; }
@@ -1622,6 +1625,7 @@ public sealed partial class WallStage
         if (_cs?.Page is not { } p) return false;
         if (_csInsert != null) { CsInsertBack(); return true; }
         if (_csSearchOpen) { CsCloseSearch(); return true; }
+        if (SpOpenNow) { SpBack(); return true; }
         if (_rq != null) return RqBack();
         if (_rs != null) return RsBack();
         if (_rm != null) return RmBack();
@@ -1642,6 +1646,7 @@ public sealed partial class WallStage
     private void CsGameSettings()
     {
         if (_csInsert != null) return;
+        if (SpOpenNow) { Cue(Sfx.None); return; }
         if (_cs?.Page is { Style: HomeStyle.Row } rp) { if (_rq != null) RqY(); else if (_rs != null) RsSave(); else if (_rm != null) RmActivateY(); else RmShow(rp); return; }
         var g = CsSpotItem();
         if (g == null) { Cue(Sfx.Bump); return; }
@@ -1705,7 +1710,7 @@ public sealed partial class WallStage
     private bool CsClick(double sx, double sy)
     {
         if (_cs?.Page is not { } p) return false;
-        if (_rm != null || _rs != null || _rq != null) return true;   // 菜单 / 二级页开着：点到后面的卡片不算
+        if (_rm != null || _rs != null || _rq != null || SpOpenNow) return true;   // 菜单 / 二级页开着：点到后面的卡片不算
         if (_csInsert != null) { if (_csInsert.Done) { } return true; }
         var (x, y) = CsLocal(sx, sy);
         if (_csSearchOpen && y >= CatTop) { CsCloseSearch(); return true; }
@@ -1798,7 +1803,7 @@ public sealed partial class WallStage
     private void CsDrag(double dx, double dy)
     {
         if (_cs?.Page is not { } p || _csInsert != null) return;
-        if (_rm != null || _rs != null || _rq != null) return;   // 游戏菜单 / 二级页开着：后面的卡片不跟手指滑
+        if (_rm != null || _rs != null || _rq != null || SpOpenNow) return;   // 游戏菜单 / 二级页开着：后面的卡片不跟手指滑
         float k = _cs.K;
         float lx = (float)(dx / k), ly = (float)(dy / k);
         if (_csDragAxis == 0) _csDragAxis = Math.Abs(lx) >= Math.Abs(ly) ? 1 : 2;

@@ -83,6 +83,11 @@ public static class LineIcons
         Paths["qam.quit"] = "M7 7l10 10 M17 7L7 17";
         Paths["qam.l"] = "M15 5l-7 7 7 7";
         Paths["qam.r"] = "M9 5l7 7-7 7";
+        // 单行首页右侧栏（11-21 定稿原型）：性能显示、设置齿轮、低亮度、无波纹音量
+        Paths["sp.osd"] = "M4 20V10 M10 20V4 M16 20v-7 M22 20v-4";
+        Paths["sp.gear"] = "M12 9a3 3 0 1 0 0 6a3 3 0 1 0 0-6z M12 2.5v3 M12 18.5v3 M2.5 12h3 M18.5 12h3 M5.3 5.3l2.1 2.1 M16.6 16.6l2.1 2.1 M5.3 18.7l2.1-2.1 M16.6 7.4l2.1-2.1";
+        Paths["sp.sunlo"] = "M12 10a3 3 0 1 0 0 6a3 3 0 1 0 0-6z M5 17h14 M12 6v1.5 M6.5 9.5l1 1 M17.5 9.5l-1 1";
+        Paths["sp.vol0"] = "M4 10h3l5-4v12l-5-4H4z";
         Paths["qs.mode"] ="M5,4 H19 A2,2 0 0 1 21,6 V14 A2,2 0 0 1 19,16 H5 A2,2 0 0 1 3,14 V6 A2,2 0 0 1 5,4 Z M8 20h8M12 16v4";
     }
 

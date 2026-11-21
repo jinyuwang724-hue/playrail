@@ -509,10 +509,13 @@ public sealed partial class WallStage
     }
 
     /// <summary>一张分组卡片：#F7F8FA 圆角面、上浅下深的描边、底部内阴影和下方一圈很淡的投影；组内行间 4 px 分隔线。</summary>
-    private void RsPaintGroup(CanvasDrawingSession ds, float y0, float y1, List<float> seps)
+    private void RsPaintGroup(CanvasDrawingSession ds, float y0, float y1, List<float> seps) => RsPaintGroupAt(ds, RsListX, RsListW, y0, y1, seps);
+
+    /// <summary>同一张分组卡片，任意横向位置 / 宽度（右侧栏的功耗 / 选项卡片也用它）。</summary>
+    private void RsPaintGroupAt(CanvasDrawingSession ds, float x, float w, float y0, float y1, List<float> seps, float sepH = RsSep)
     {
         var dev = ds.Device;
-        float x = RsListX, w = RsListW, r = RsGroupR;
+        float r = RsGroupR;
         {
             float h = y1 - y0;
             using (var cl = new CanvasCommandList(dev))
@@ -529,7 +532,7 @@ public sealed partial class WallStage
                 // 底边往里 26 px 微微压暗
                 using var shade = new CanvasLinearGradientBrush(dev, Color.FromArgb(0, 0, 0, 0), Color.FromArgb(14, 0, 0, 0)) { StartPoint = new Vector2(0, y1 - 26), EndPoint = new Vector2(0, y1) };
                 ds.FillRectangle(x, y1 - 26, w, 26, shade);
-                foreach (var sy in seps) ds.FillRectangle(x, sy, w, RsSep, RsLine);
+                foreach (var sy in seps) ds.FillRectangle(x, sy, w, sepH, RsLine);
                 ds.DrawLine(x + r, y0 + 1, x + w - r, y0 + 1, Color.FromArgb(255, 0xFF, 0xFF, 0xFF), 1.5f);
             }
             using var edge = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xE8, 0xE9, 0xEC), Color.FromArgb(255, 0xBC, 0xBD, 0xC1)) { StartPoint = new Vector2(0, y0), EndPoint = new Vector2(0, y1) };
@@ -758,21 +761,8 @@ public sealed partial class WallStage
             case RsKind.Pick:
             {
                 // 下拉框：白色胶囊、一圈很淡的投影和细描边，当前值、右边小三角（Cocoon 的「Android (None) ▾」）
-                string val = row.Value ?? "";
-                float px = 1340, pw = 436, ph = 84, py = cy - ph / 2;
-                RsSoftShadow(ds, px, py + 3, pw, ph, ph / 2, 6, 0.14f);
-                ds.FillRoundedRectangle(px, py, pw, ph, ph / 2, ph / 2, Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
-                ds.DrawRoundedRectangle(px + 0.5f, py + 0.5f, pw - 1, ph - 1, ph / 2, ph / 2, Color.FromArgb(255, 0xEC, 0xED, 0xF0), 1);
-                using var vf = new CanvasTextFormat { FontFamily = RmFont(val), FontSize = 36, FontWeight = RsWt(val), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
-                ds.DrawText(val, new Windows.Foundation.Rect(px + 30, py, pw - 90, ph), RmInk, vf);
                 bool open = row.OpenSel >= 0 && row.Options is { Length: > 0 };
-                using var pb = new CanvasPathBuilder(ds.Device);
-                if (open) { pb.BeginFigure(px + pw - 50, cy + 4); pb.AddLine(px + pw - 36, cy + 4); pb.AddLine(px + pw - 43, cy - 5); }   // 展开时三角朝上
-                else { pb.BeginFigure(px + pw - 50, cy - 5); pb.AddLine(px + pw - 36, cy - 5); pb.AddLine(px + pw - 43, cy + 4); }
-                pb.EndFigure(CanvasFigureLoop.Closed);
-                using var tri = CanvasGeometry.CreatePath(pb);
-                ds.FillGeometry(tri, open ? RmInk : RsSub);
-                ds.DrawGeometry(tri, open ? RmInk : RsSub, 3, RwRoundStroke);
+                RsPaintPickPill(ds, 1340, cy - 42, 436, 84, row.Value ?? "", open, 36);
                 if (open) RsPaintOptions(ds, row, y);
                 break;
             }
@@ -789,27 +779,58 @@ public sealed partial class WallStage
     /// 展开的下拉：胶囊下面一张白色圆角卡片（投影、细描边），一项一行，行间细线；
     /// 单选：当前值用强调色字；多选：右边一个勾（选中是紫色渐变圆 + 白勾，没选是灰圈），焦点那一行垫淡紫底（照 Cocoon 视频）。
     /// </summary>
+    /// <summary>下拉框的胶囊：白底、很淡的投影和细描边，当前值，右边小三角（展开时朝上）。右侧栏的选项行也用这一个。</summary>
+    private void RsPaintPickPill(CanvasDrawingSession ds, float px, float py, float pw, float ph, string val, bool open, float fontSize, bool text = true)
+    {
+        float cy = py + ph / 2, k = ph / 84;
+        RsSoftShadow(ds, px, py + 3 * k, pw, ph, ph / 2, 6 * k, 0.14f);
+        ds.FillRoundedRectangle(px, py, pw, ph, ph / 2, ph / 2, Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
+        ds.DrawRoundedRectangle(px + 0.5f, py + 0.5f, pw - 1, ph - 1, ph / 2, ph / 2, Color.FromArgb(255, 0xEC, 0xED, 0xF0), 1);
+        if (text) RsPaintPickText(ds, px, py, pw, ph, val, fontSize);
+        float tx = px + pw - 43 * k, a = 7 * k, b = 4.5f * k;
+        using var pb = new CanvasPathBuilder(ds.Device);
+        if (open) { pb.BeginFigure(tx - a, cy + b); pb.AddLine(tx + a, cy + b); pb.AddLine(tx, cy - b); }   // 展开时三角朝上
+        else { pb.BeginFigure(tx - a, cy - b); pb.AddLine(tx + a, cy - b); pb.AddLine(tx, cy + b); }
+        pb.EndFigure(CanvasFigureLoop.Closed);
+        using var tri = CanvasGeometry.CreatePath(pb);
+        ds.FillGeometry(tri, open ? RmInk : RsSub);
+        ds.DrawGeometry(tri, open ? RmInk : RsSub, 3 * k, RwRoundStroke);
+    }
+
+    private static void RsPaintPickText(CanvasDrawingSession ds, float px, float py, float pw, float ph, string val, float fontSize)
+    {
+        float k = ph / 84;
+        using var vf = new CanvasTextFormat { FontFamily = RmFont(val), FontSize = fontSize, FontWeight = RsWt(val), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
+        ds.DrawText(val, new Windows.Foundation.Rect(px + 30 * k, py, pw - 90 * k, ph), RmInk, vf);
+    }
+
     private void RsPaintOptions(CanvasDrawingSession ds, RsRow row, float y)
     {
-        var opts = row.Options!;
         var (x0, y0, w, _) = RsOptRect(y, 0);
-        float h = opts.Length * RsOptH;
-        RsSoftShadow(ds, x0, y0 + 5, w, h, 30, 8, 0.18f);
-        using var card = CanvasGeometry.CreateRoundedRectangle(ds.Device, x0, y0, w, h, 30, 30);
+        RsPaintOptionCard(ds, row, x0, y0, w, RsOptH, 36);
+    }
+
+    /// <summary>展开的选项卡片（任意位置 / 行高 / 字号）：二级页和右侧栏共用。</summary>
+    private void RsPaintOptionCard(CanvasDrawingSession ds, RsRow row, float x0, float y0, float w, float optH, float fontSize)
+    {
+        var opts = row.Options!;
+        float h = opts.Length * optH, cr = MathF.Min(30, optH * 0.4f);
+        RsSoftShadow(ds, x0, y0 + 5, w, h, cr, 8, 0.18f);
+        using var card = CanvasGeometry.CreateRoundedRectangle(ds.Device, x0, y0, w, h, cr, cr);
         ds.FillGeometry(card, Color.FromArgb(255, 0xFC, 0xFC, 0xFD));
         int cur = row.Current?.Invoke() ?? -1;
         using (ds.CreateLayer(1, card))
             for (int k = 0; k < opts.Length; k++)
             {
-                float oy = y0 + k * RsOptH;
-                if (row.Multi && k == row.OpenSel) ds.FillRectangle(x0, oy, w, RsOptH, Color.FromArgb(255, 0xEC, 0xE6, 0xFF));
+                float oy = y0 + k * optH;
+                if (row.Multi && k == row.OpenSel) ds.FillRectangle(x0, oy, w, optH, Color.FromArgb(255, 0xEC, 0xE6, 0xFF));
                 if (k > 0) ds.FillRectangle(x0 + 28, oy - 1, w - 56, 2, Color.FromArgb(255, 0xE6, 0xE7, 0xEA));
                 bool sel = !row.Multi && k == cur;
-                using var tf = new CanvasTextFormat { FontFamily = RmFont(opts[k]), FontSize = 36, FontWeight = RsWt(opts[k]), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
-                ds.DrawText(opts[k], new Windows.Foundation.Rect(x0 + 30, oy, w - (row.Multi ? 110 : 60), RsOptH), sel ? Color.FromArgb(255, 0x4F, 0x9D, 0xF2) : RmInk, tf);
+                using var tf = new CanvasTextFormat { FontFamily = RmFont(opts[k]), FontSize = fontSize, FontWeight = RsWt(opts[k]), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
+                ds.DrawText(opts[k], new Windows.Foundation.Rect(x0 + 30 * fontSize / 36, oy, w - (row.Multi ? 110 : 60), optH), sel ? Color.FromArgb(255, 0x4F, 0x9D, 0xF2) : RmInk, tf);
                 if (row.Multi)
                 {
-                    float cx = x0 + w - 52, ccy = oy + RsOptH / 2;
+                    float cx = x0 + w - 52, ccy = oy + optH / 2;
                     if (row.Checked?.Invoke(k) == true)
                     {
                         RsSoftShadow(ds, cx - 21, ccy - 21 + 2, 42, 42, 21, 3, 0.2f);
@@ -824,7 +845,7 @@ public sealed partial class WallStage
                     else ds.DrawCircle(cx, ccy, 19, Color.FromArgb(255, 0xB4, 0xB6, 0xBC), 3.5f);
                 }
             }
-        ds.DrawRoundedRectangle(x0 + 0.5f, y0 + 0.5f, w - 1, h - 1, 30, 30, Color.FromArgb(255, 0xE6, 0xE7, 0xEA), 1);
+        ds.DrawRoundedRectangle(x0 + 0.5f, y0 + 0.5f, w - 1, h - 1, cr, cr, Color.FromArgb(255, 0xE6, 0xE7, 0xEA), 1);
     }
 
     /// <summary>一圈很淡的投影（下拉框胶囊、开关圆钮）。</summary>

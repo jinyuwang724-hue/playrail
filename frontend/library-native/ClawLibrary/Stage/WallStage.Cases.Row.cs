@@ -125,6 +125,7 @@ public sealed partial class WallStage
         rw.Tick.Tick += (_, _) => RwTick(page);
         rw.Tick.Start();
         RwTick(page);
+        After(1500, () => SpPrewarm(page));   // 右侧栏先在后台搭好（按 R1 时不用现画）
     }
 
     private void RwDispose(CsPage page)
