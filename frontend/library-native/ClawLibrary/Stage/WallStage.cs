@@ -1453,7 +1453,7 @@ public sealed partial class WallStage : IDisposable
                     case VirtualKey.V: PadView(); break;
                     case VirtualKey.X: PadX(); break;
                     case VirtualKey.R: ToggleReducedMotion(); break;
-            case VirtualKey.L: ToggleLights(); break;
+            case VirtualKey.L: ToggleLights(); break; case VirtualKey.T: PadRT(); break;
                     default: return;
                 }
                 break;

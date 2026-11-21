@@ -39,7 +39,7 @@ public sealed partial class WallStage
         {
             if (_cs != null && _prefs.Home != HomeStyle.Row) { SaveUi(_prefs with { Home = HomeStyle.Row }); CsMorphStyle(); await Task.Delay(1500); }
             await Still("home");
-            await Rec("open", () => { SwitchTab(1); return Task.CompletedTask; }, 600);
+            await Rec("open", () => { PadRT(); return Task.CompletedTask; }, 600);
             await Still("panel");
             await Rec("tiles", () => Keys((Direction.Right, 260), (Direction.Right, 260), (Direction.Down, 300), (Direction.Left, 260)), 400);
             await Rec("rows", () => Keys((Direction.Down, 320), (Direction.Down, 320), (Direction.Down, 320), (Direction.Down, 320), (Direction.Up, 320)), 400);
@@ -61,12 +61,30 @@ public sealed partial class WallStage
             await Rec("sub", async () => { Activate(); await Task.Delay(500); await Keys((Direction.Down, 300)); Activate(); await Task.Delay(500); }, 300);
             await Still("sub-armed");
             await Rec("subback", () => { Back(); return Task.CompletedTask; }, 500);
-            await Rec("close", () => { SwitchTab(1); return Task.CompletedTask; }, 500);
+            await Rec("close", () => { PadRT(); return Task.CompletedTask; }, 500);
             // 打断：开到一半又关、关到一半又开
-            await Rec("interrupt", async () => { SwitchTab(1); await Task.Delay(70); SwitchTab(1); await Task.Delay(60); SwitchTab(1); }, 600);
+            await Rec("interrupt", async () => { PadRT(); await Task.Delay(70); PadRT(); await Task.Delay(60); PadRT(); }, 600);
             await Still("reopened");
             Back(); await Task.Delay(600);
             await Still("closed");
+            // LB / RB 恢复切页签：RB 到 Steam，LB 回主页
+            await Rec("tabs", async () => { SwitchTab(1); await Task.Delay(900); SwitchTab(-1); }, 900);
+            await Task.Delay(800);
+            // Wi-Fi 子页（真实扫描，只读）+ 密码输入卡（假网络，录屏模式下连接直接返回「密码不对」）
+            PadRT(); await Task.Delay(700);
+            Move(Direction.Right); await Task.Delay(150); Move(Direction.Left); await Task.Delay(300);
+            Activate(); await Task.Delay(4000);
+            await Still("wifi");
+            if (_sp is { } sp)
+            {
+                var fake = new ClawLibrary.Data.QamWireless.Entry("probe", "Playrail-Test", "", "qam.wifi", false, false, Secured: true);
+                await Rec("pwopen", () => { SpEditBegin(sp, fake); return Task.CompletedTask; }, 600);
+                if (_rsBox != null) _rsBox.Text = "12345678";
+                await Rec("pwfail", () => { Activate(); return Task.CompletedTask; }, 1400);
+                await Still("pw-error");
+                await Rec("pwcancel", () => { Back(); return Task.CompletedTask; }, 500);
+            }
+            Back(); await Task.Delay(400); PadRT(); await Task.Delay(600);
         }
         catch (Exception ex) { Log.Error("recside", ex); }
         _spDry = false;

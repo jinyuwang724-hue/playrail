@@ -16,6 +16,7 @@ public sealed unsafe class GamepadPoller : IDisposable
     private const double RepeatMs = 110;
     /// <summary>界面要求的连发间隔（0 = 默认 110 ms）：单行首页右侧栏的滑块 75 ms。</summary>
     public static volatile int RepeatOverrideMs;
+    private bool _rtDown;
     private const double StickDead = 0.35;
     private const double PanDead = 0.14;
     /// <summary>右摇杆推满时的平移速度（屏幕 px/s）。</summary>
@@ -194,6 +195,7 @@ public sealed unsafe class GamepadPoller : IDisposable
         lock (_gate) _last = default;
         _held.Clear();
         _prev = 0;
+        _rtDown = false;
         Smooth(Vector2.Zero, dt);
     }
 
@@ -220,6 +222,10 @@ public sealed unsafe class GamepadPoller : IDisposable
         if (Edge(Menu)) Post(_stage.ToggleControlCenter);
         if (Edge(X)) Post(_stage.PadX);
         if (Edge(Back)) Post(_stage.PadView);
+        // RT：按下沿触发一次；按下要过 160、松开要回到 60 以下才算松（半按抖动不反复触发）
+        bool rt = _rtDown ? g.RightTrigger > 60 : g.RightTrigger > 160;
+        if (rt && !_rtDown) Post(_stage.PadRT);
+        _rtDown = rt;
         _prev = b;
         // 右摇杆：死区外按平方曲线给速度，再用与滚轮同一类的指数平滑追上去
         static double Shape(double v) => Math.Abs(v) < PanDead ? 0 : Math.Sign(v) * Math.Pow((Math.Abs(v) - PanDead) / (1 - PanDead), 2);

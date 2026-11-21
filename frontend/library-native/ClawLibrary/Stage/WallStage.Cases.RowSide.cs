@@ -106,14 +106,25 @@ public sealed partial class WallStage
 
     // ---------------- 入口（R1 / 点胶囊） ----------------
 
-    /// <summary>LB / RB 在单行首页：RB 开 / 关右侧栏，LB 不响应。处理了返回 true。</summary>
+    /// <summary>LB / RB：侧栏开着时不响应（关着时照旧切 主页 / Steam / 本地）。处理了返回 true。</summary>
     private bool SpSwitchTab(int delta)
     {
-        if (_cs?.Page is not { Style: HomeStyle.Row } p || _csInsert != null || _rm != null || _rs != null || _rq != null) return false;
-        if (delta < 0) { Cue(Sfx.None); return true; }
-        if (SpOpenNow) SpClose(); else SpOpen(p);
+        if (!SpOpenNow) return false;
+        Cue(Sfx.None);
         return true;
     }
+
+    /// <summary>RT（右扳机，11-21 jinyu：侧栏用 RT 唤出）：单行首页开 / 关右侧栏。</summary>
+    public void PadRT() => WithCue(Sfx.None, () =>
+    {
+        if (_wsOpen || _qsOpen || _ob != null || _ccOpen) return;
+        if (ConsumeScreensaverWake()) return;
+        MarkInput();
+        if (MorphIntercept()) return;
+        if (!CsActive || _cs?.Page is not { Style: HomeStyle.Row } p || _csInsert != null || _csSearchOpen || _rm != null || _rs != null || _rq != null) return;
+        if (_spEdit != null) return;
+        if (SpOpenNow) SpClose(); else SpOpen(p);
+    });
 
     private float SpPillLeft()
     {
@@ -193,6 +204,7 @@ public sealed partial class WallStage
     private void SpClose(bool instant = false)
     {
         if (_sp is not { Open: true } sp) return;
+        if (_spEdit != null) SpEditEnd(sp);
         Cue(Sfx.MenuOut);
         sp.Open = false;
         int gen = ++sp.Gen;
@@ -937,6 +949,7 @@ public sealed partial class WallStage
     private void SpMove(Direction dir)
     {
         if (_sp is not { Open: true } sp) { Cue(Sfx.None); return; }
+        if (_spEdit != null) { Cue(Sfx.None); return; }
         int dx = dir == Direction.Left ? -1 : dir == Direction.Right ? 1 : 0, dy = dir == Direction.Up ? -1 : dir == Direction.Down ? 1 : 0;
         if (sp.Drop_ >= 0)
         {
@@ -1001,6 +1014,7 @@ public sealed partial class WallStage
     private void SpActivate()
     {
         if (_sp is not { Open: true } sp) { Cue(Sfx.None); return; }
+        if (_spEdit != null) { Cue(Sfx.None); SpEditCommit(); return; }
         if (sp.Drop_ >= 0)
         {
             int i = sp.Drop_, sel = sp.DropSel;
@@ -1020,6 +1034,7 @@ public sealed partial class WallStage
     private void SpBack()
     {
         if (_sp is not { Open: true } sp) return;
+        if (_spEdit != null) { Cue(Sfx.Back); SpEditCancel(); return; }
         if (sp.Drop_ >= 0) { Cue(Sfx.Back); SpDropClose(sp, animate: true); return; }
         if (sp.SubPage != null) { Cue(Sfx.Back); SpSubLeave(sp); return; }
         SpClose();
@@ -1140,7 +1155,8 @@ public sealed partial class WallStage
                 rows.Add(("toggle", "qam.wifi", "Wi-Fi", "", true, _spWifi == true));
                 if (_spWifi == true)
                     foreach (var n in _spNets.Take(10))
-                        rows.Add(("net:" + n.Id, "qam.wifi", n.Name, n.Connected ? "已连接" : n.Saved ? "已保存" : n.Secured ? "lock" : "", false, n.Connected));
+                        rows.Add(("net:" + n.Id, $"sig:{Math.Clamp(n.Signal, 0, 4)}", n.Name,
+                            _spConnecting == n.Id ? "正在连接…" : n.Connected ? "已连接" : n.Saved ? "已保存" : n.Secured ? "lock" : "", false, n.Connected));
                 break;
             case "bt":
                 rows.Add(("toggle", "qam.bt", "蓝牙", "", true, _spBt == true));
@@ -1176,7 +1192,8 @@ public sealed partial class WallStage
                 float y = SpSubY + i * SpSubRowH, cy = y + SpSubRowH / 2;
                 bool armed = sp.Armed == rid;
                 var ink = armed ? RmRed : RmInk;
-                QsIcon(ds, icon, SpBX + 24, cy, 36, armed ? RmRed : SpMute, 2);
+                if (icon.StartsWith("sig:")) SpSignal(ds, SpBX + 24, cy, int.Parse(icon[4..]));
+                else QsIcon(ds, icon, SpBX + 24, cy, 36, armed ? RmRed : SpMute, 2);
                 string label = armed ? "再按一次" + name : name;
                 using (var nf = new CanvasTextFormat { FontFamily = RmFont(label), FontSize = 25, FontWeight = RsWt(label, 500), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
                     ds.DrawText(label, new Windows.Foundation.Rect(SpBX + 62, y, toggle ? 520 : 470, SpSubRowH), ink, nf);
@@ -1219,13 +1236,24 @@ public sealed partial class WallStage
             case "wifi" when row.Id.StartsWith("net:"):
             {
                 var e = _spNets.FirstOrDefault(n => "net:" + n.Id == row.Id);
-                if (e == null || e.Connected) { Cue(Sfx.Bump); return; }
-                if (e.Secured && !e.Saved) { Cue(Sfx.Bump); Toast($"「{e.Name}」需要密码：在系统设置里连接"); SystemInfo.Open("ms-settings:network-wifi"); return; }
+                if (e == null || e.Connected || _spConnecting != null) { Cue(Sfx.Bump); return; }
+                // 企业网络（802.1X，要账号 / 证书）：侧栏里不做，交给系统设置
+                if (e.Network?.SecuritySettings.NetworkAuthenticationType is Windows.Networking.Connectivity.NetworkAuthenticationType.Rsna or Windows.Networking.Connectivity.NetworkAuthenticationType.Wpa or Windows.Networking.Connectivity.NetworkAuthenticationType.Ihv && !e.Saved)
+                { Cue(Sfx.Bump); Toast($"「{e.Name}」是企业网络：在系统设置里连接"); SystemInfo.Open("ms-settings:network-wifi"); return; }
+                if (e.Secured && !e.Saved) { SpEditBegin(sp, e); return; }
                 Cue(Sfx.Activate);
+                _spConnecting = e.Id;
+                SpBuildSub(sp); SpPaintSub(sp);
                 _ = Task.Run(async () =>
                 {
-                    try { await QamWireless.Connect(e, null); } catch (Exception ex) { _dq.TryEnqueue(() => Toast($"没有连上「{e.Name}」：{ex.Message}")); }
-                    _dq.TryEnqueue(() => { if (_sp == sp && sp.SubPage == "wifi") _ = SpScanWifi(sp); });
+                    var st = Windows.Devices.WiFi.WiFiConnectionStatus.UnspecifiedFailure;
+                    try { st = _spDry ? Windows.Devices.WiFi.WiFiConnectionStatus.Success : await QamWireless.Connect(e, null); } catch (Exception ex) { Log.Warn($"side panel wifi connect: {ex.Message}"); }
+                    _dq.TryEnqueue(() =>
+                    {
+                        _spConnecting = null;
+                        if (st != Windows.Devices.WiFi.WiFiConnectionStatus.Success) Toast($"没有连上「{e.Name}」");
+                        if (_sp == sp && sp.SubPage == "wifi") { SpBuildSub(sp); SpPaintSub(sp); _ = SpScanWifi(sp); }
+                    });
                 });
                 return;
             }
@@ -1285,6 +1313,107 @@ public sealed partial class WallStage
         catch (Exception ex) { Log.Warn($"side panel bluetooth: {ex.Message}"); }
         if (_sp != sp || sp.SubPage != "bt") return;
         SpBuildSub(sp); SpPaintSub(sp);
+    }
+
+    /// <summary>信号强度：四根由短到长的竖条，亮几根看格数。</summary>
+    private static void SpSignal(CanvasDrawingSession ds, float cx, float cy, int bars)
+    {
+        for (int i = 0; i < 4; i++)
+        {
+            float h = 8 + i * 6, x = cx - 14 + i * 8;
+            ds.FillRoundedRectangle(x, cy + 13 - h, 5, h, 2.5f, 2.5f, i < bars ? SpTileInk : Color.FromArgb(255, 0xC9, 0xCB, 0xD2));
+        }
+    }
+
+    // ---------------- Wi-Fi 密码（复用二级页的输入卡 + 系统触摸键盘） ----------------
+
+    private sealed class SpEditState { public required QamWireless.Entry Net; public string? Note; public bool Err, Busy; }
+    private SpEditState? _spEdit;
+    private string? _spConnecting;
+
+    private Visual[] SpEditFade(SpState sp) => new Visual[] { sp.Panel };
+
+    private void SpEditBegin(SpState sp, QamWireless.Entry e)
+    {
+        RsEnsureBox();
+        var ed = new SpEditState { Net = e };
+        _spEdit = ed;
+        Cue(Sfx.Activate);
+        EdShowCard(sp.Root, SpEditFade(sp), e.Name);
+        var box = _rsBox!;
+        var o = _cs!.Root.Offset;
+        float k = _cs.K;
+        box.Text = "";
+        box.AcceptsReturn = false;
+        box.TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap;
+        box.FontSize = Math.Max(12, 44 * k);
+        box.Width = (RsFieldW - 70) * k;
+        box.Height = (RsFieldH - 40) * k;
+        Microsoft.UI.Xaml.Controls.Canvas.SetLeft(box, o.X + (RsFieldX + 35) * k);
+        Microsoft.UI.Xaml.Controls.Canvas.SetTop(box, o.Y + (RsFieldY + 20) * k);
+        box.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+        FocusTextBox(box, () => _spEdit == ed);
+        Log.Info("side panel wifi password");
+    }
+
+    private void SpEditRepaint(SpState sp, SpEditState ed) => EdShowCard(sp.Root, SpEditFade(sp), ed.Net.Name, ed.Note, ed.Err, animate: false);
+
+    /// <summary>A / 回车 / 点 ▶✓：连接（WinRT WiFiAdapter.ConnectAsync + 密码，系统自己建 WPA2 / WPA3 个人版配置）。失败留在输入卡上可以重输。</summary>
+    private void SpEditCommit()
+    {
+        if (_spEdit is not { Busy: false } ed || _sp is not { } sp || _rsBox == null) return;
+        string pwd = _rsBox.Text;
+        if (pwd.Length < 8) { Cue(Sfx.Bump); ed.Note = "至少 8 位"; ed.Err = true; SpEditRepaint(sp, ed); return; }
+        Cue(Sfx.Activate);
+        ed.Busy = true; ed.Note = "正在连接…"; ed.Err = false;
+        SpEditRepaint(sp, ed);
+        _ = Task.Run(async () =>
+        {
+            var st = Windows.Devices.WiFi.WiFiConnectionStatus.UnspecifiedFailure;
+            try
+            {
+                if (_spDry) { await Task.Delay(900); st = Windows.Devices.WiFi.WiFiConnectionStatus.InvalidCredential; }
+                else st = await QamWireless.Connect(ed.Net, pwd);
+            }
+            catch (Exception ex) { Log.Warn($"side panel wifi password connect: {ex.Message}"); }
+            Log.Info($"side panel wifi connect {st}");
+            _dq.TryEnqueue(() =>
+            {
+                if (_spEdit != ed || _sp != sp) return;
+                ed.Busy = false;
+                if (st == Windows.Devices.WiFi.WiFiConnectionStatus.Success)
+                {
+                    Cue(Sfx.Positive);
+                    SpEditEnd(sp);
+                    if (sp.SubPage == "wifi") _ = SpScanWifi(sp);
+                    return;
+                }
+                Cue(Sfx.Error);
+                ed.Err = true;
+                ed.Note = st switch
+                {
+                    Windows.Devices.WiFi.WiFiConnectionStatus.InvalidCredential => "密码不对",
+                    Windows.Devices.WiFi.WiFiConnectionStatus.Timeout => "连接超时",
+                    Windows.Devices.WiFi.WiFiConnectionStatus.NetworkNotAvailable => "找不到这个网络",
+                    _ => "没连上",
+                };
+                SpEditRepaint(sp, ed);
+                _rsBox?.SelectAll();
+            });
+        });
+    }
+
+    private void SpEditCancel()
+    {
+        if (_sp is { } sp) SpEditEnd(sp);
+    }
+
+    private void SpEditEnd(SpState sp)
+    {
+        _spEdit = null;
+        if (_rsBox != null) { _rsBox.Text = ""; _rsBox.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed; }
+        _rootEl.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
+        EdHideCard(sp.Root, SpEditFade(sp));
     }
 
     // ---------------- 下拉 ----------------
@@ -1613,6 +1742,14 @@ public sealed partial class WallStage
     {
         if (!CsActive || _cs?.Page is not { Style: HomeStyle.Row } page || _csInsert != null || _rm != null || _rs != null || _rq != null) return false;
         var (x, y) = CsLocal(pt.Position.X, pt.Position.Y);
+        if (_spEdit != null)
+        {
+            // 输入卡开着：左上 ✕ 取消、右上 ▶✓ 连接，别处不响应（输入框自己接触摸）
+            if (y >= 40 && y <= 134 && x >= 50 && x <= 200) WithCue(Sfx.Back, SpEditCancel);
+            else if (y >= 40 && y <= 134 && x >= 1720 && x <= 1870) WithCue(Sfx.None, SpEditCommit);
+            e.Handled = true;
+            return true;
+        }
         if (_sp is not { Open: true } sp)
         {
             if (x < SpPillLeft() || x > SpR || y < SpT || y > SpT + SpH0) return false;

@@ -1368,7 +1368,12 @@ public sealed partial class WallStage
     }
 
     /// <summary>输入卡：投影、#FAFAFA 圆角面、两个胶囊、标题、浅灰渐变输入框；列表和面板淡下去。</summary>
-    private void RsShowEditPanel(RsState rs, string title)
+    private void RsShowEditPanel(RsState rs, string title) => EdShowCard(rs.Root, RsEditFade(rs), title);
+
+    private static Visual[] RsEditFade(RsState rs) => new Visual[] { rs.Body, rs.Sheet, rs.Glow, rs.Line, rs.Line2, rs.Rim };
+
+    /// <summary>输入卡（二级页的文字输入、右侧栏的 Wi-Fi 密码共用）：画在 parent 里，fade 里的层淡下去；note = 标题右边一行状态（连接中 / 出错红字）；animate = false 只重画不重做入场。</summary>
+    private void EdShowCard(ContainerVisual parent, Visual[] fade, string title, string? note = null, bool err = false, bool animate = true)
     {
         var dev = G.Device;
         float R = CsRaster, pad = 40, w = RsEdW + pad * 2, h = RsEdH + pad * 2;
@@ -1393,6 +1398,9 @@ public sealed partial class WallStage
             }
             using (var f = new CanvasTextFormat { FontFamily = RmFont(title), FontSize = 48, FontWeight = RsWt(title), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
                 ds.DrawText(title, new Windows.Foundation.Rect(212, 50, 1200, 74), RmInk, f);
+            if (note is { Length: > 0 })
+                using (var nf = new CanvasTextFormat { FontFamily = RmFont(note), FontSize = 34, FontWeight = RsWt(note, 500), HorizontalAlignment = CanvasHorizontalAlignment.Right, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
+                    ds.DrawText(note, new Windows.Foundation.Rect(1100, 50, 600, 74), err ? RmRed : RsSub, nf);
             // 右上：紫胶囊里 ▶（确认键）+ 白色对勾圆
             RsSoftShadow(ds, 1734, 58, 126, 70, 35, 9, 0.45f);
             using (var br = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0x8A, 0x7B, 0xFF), Color.FromArgb(255, 0x7A, 0x3C, 0xFF)) { StartPoint = new Vector2(1730, 50), EndPoint = new Vector2(1864, 124) })
@@ -1415,16 +1423,18 @@ public sealed partial class WallStage
             using (var field = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xF2, 0xF3, 0xF6), Color.FromArgb(255, 0xE1, 0xE2, 0xE8)) { StartPoint = new Vector2(0, RsFieldY), EndPoint = new Vector2(0, RsFieldY + RsFieldH) })
                 ds.FillRoundedRectangle(RsFieldX, RsFieldY, RsFieldW, RsFieldH, 48, 48, field);
         }
-        if (_rsEdPanel == null || _rsEdPanel.Parent != rs.Root)
+        if (_rsEdPanel == null || _rsEdPanel.Parent != parent)
         {
+            if (_rsEdPanel != null) _rsEdPanel.IsVisible = false;
             _rsEdPanel = G.Sprite(G.C.CreateSurfaceBrush(_rsEdSurf), relative: false);
-            rs.Root.Children.InsertAtTop(_rsEdPanel);
+            parent.Children.InsertAtTop(_rsEdPanel);
         }
         _rsEdPanel.Size = new Vector2(w, h);
         _rsEdPanel.Offset = new Vector3(RsEdX - pad, RsEdY - pad, 0);
         _rsEdPanel.CenterPoint = new Vector3(w / 2, pad + 60, 0);
         _rsEdPanel.IsVisible = true;
-        foreach (var v in new Visual[] { rs.Body, rs.Sheet, rs.Glow, rs.Line, rs.Line2, rs.Rim }) v.StartAnimation("Opacity", CsS(0, Reduced ? 1 : 120, Bezier.EaseOut));
+        if (!animate) return;
+        foreach (var v in fade) v.StartAnimation("Opacity", CsS(0, Reduced ? 1 : 120, Bezier.EaseOut));
         if (!Reduced)
         {
             _rsEdPanel.Opacity = 0;
@@ -1434,12 +1444,14 @@ public sealed partial class WallStage
         }
     }
 
-    private void RsHideEditPanel(RsState? rs)
+    private void RsHideEditPanel(RsState? rs) => EdHideCard(rs?.Root, rs == null ? Array.Empty<Visual>() : RsEditFade(rs));
+
+    private void EdHideCard(ContainerVisual? parent, Visual[] fade)
     {
         if (_rsEdPanel == null) return;
         var panel = _rsEdPanel;
-        if (rs == null || panel.Parent != rs.Root) { panel.IsVisible = false; return; }
-        foreach (var v in new Visual[] { rs.Body, rs.Sheet, rs.Glow, rs.Line, rs.Line2, rs.Rim }) v.StartAnimation("Opacity", CsS(1, Reduced ? 1 : 140, Bezier.EaseOut));
+        if (parent == null || panel.Parent != parent) { panel.IsVisible = false; return; }
+        foreach (var v in fade) v.StartAnimation("Opacity", CsS(1, Reduced ? 1 : 140, Bezier.EaseOut));
         panel.StartAnimation("Opacity", CsS(0, Reduced ? 1 : 100, Bezier.EaseOut));
     }
 
@@ -1475,6 +1487,7 @@ public sealed partial class WallStage
         foreach (var key in new[] { "TextControlForeground", "TextControlForegroundPointerOver", "TextControlForegroundFocused" }) _rsBox.Resources[key] = ink;
         _rsBox.KeyDown += (_, e) =>
         {
+            if (_spEdit != null && e.Key is Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Escape) { e.Handled = true; if (e.Key == Windows.System.VirtualKey.Enter) SpEditCommit(); else SpEditCancel(); return; }
             if (e.Key == Windows.System.VirtualKey.Enter && _rsEditing is { Multiline: false }) { e.Handled = true; RsEndEdit(commit: true); }
             else if (e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; RsEndEdit(commit: false); }
         };
