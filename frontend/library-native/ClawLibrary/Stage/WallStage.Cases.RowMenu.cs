@@ -536,7 +536,14 @@ public sealed partial class WallStage
         var (W, H, _, _) = RmBracketGeom();
         float rowY = RmCardY + rm.Sel * (RmRowH + RmSep);
         var to = new Vector3(RmCardX + RmCardW / 2 - W / 2 - RmCurPad, rowY + RmRowH / 2 - H / 2 - RmCurPad, 0);
-        if (move && !Reduced) rm.Cur.StartAnimation("Offset", RwSpring(to)); else RwJump(rm.Cur, to);
+        float dy = to.Y - rm.Cur.Offset.Y;
+        if (move && !Reduced)
+        {
+            rm.Cur.StartAnimation("Offset", RwSpring(to));
+            rm.Cur.CenterPoint = new Vector3(rm.Cur.Size.X / 2, rm.Cur.Size.Y / 2, 0);
+            RsStretch(rm.Cur, dy, H);   // 行间移动先拉长再缩回
+        }
+        else RwJump(rm.Cur, to);
     }
 
     // ---------------- 输入 ----------------

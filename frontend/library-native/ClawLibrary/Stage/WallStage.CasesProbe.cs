@@ -89,14 +89,15 @@ public sealed partial class WallStage
             }
             else CsGameSettings();
             await Still("menu");
-            Move(Direction.Down); await Task.Delay(250); Move(Direction.Down); await Still("menu2");
+            await Rec("menumove", () => Move(Direction.Down), 400); Move(Direction.Down); await Still("menu2");
             // 菜单里再按 Y 进编辑；A 进编辑元数据，往下走几行；B 一路退回
             await Rec("editopen", CsGameSettings, 1300); await Still("edit");
             await Rec("metapush", Activate, 900); await Still("meta");
             // 文字输入：标题这一行按 A，录输入卡出现，B 取消（不改资料）
             await Rec("editfield", Activate, 700); await Still("field");
             Back(); await Task.Delay(500);
-            for (int i = 0; i < 6; i++) { Move(Direction.Down); await Task.Delay(220); }
+            await Rec("sheetmove", () => Move(Direction.Down), 400);
+            for (int i = 0; i < 5; i++) { Move(Direction.Down); await Task.Delay(220); }
             await Still("meta2");
             // 退回编辑 → 封面管理：A 到 SteamGridDB 取图，切到背景页签
             await Rec("pop", () => Back(), 800);

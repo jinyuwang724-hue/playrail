@@ -1091,11 +1091,30 @@ public sealed partial class WallStage
                 else v.Scale = Vector3.One;
             }
         }
+        bool morphing = MathF.Abs(rs.Glow.Scale.X - 1) > 0.001f;
+        float dy = to.Y - rs.Glow.Offset.Y;
         foreach (var v in new Visual[] { rs.Glow, rs.Line, rs.Line2, rs.Rim })
         {
             if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else RwJump(v, to);
+            if (move && !Reduced && !morphing) RsStretch(v, dy, H);
             v.Opacity = show ? 1 : 0;
         }
+    }
+
+    /// <summary>
+    /// 行间移动时焦点框先拉长再缩回（Cocoon：括号像橡皮筋一样被拽过去）：竖向放大到 1 + 行程 / 高度 × 0.35（最多 1.45），
+    /// 约 70 ms 到最长、220 ms 回到原样；锚点在中心，和位置弹簧一起走。
+    /// </summary>
+    private void RsStretch(Visual v, float dy, float h)
+    {
+        if (MathF.Abs(dy) < 1 || h <= 0) return;
+        float k = 1 + MathF.Min(0.45f, MathF.Abs(dy) / h * 0.35f);
+        var a = G.C.CreateVector3KeyFrameAnimation();
+        a.InsertKeyFrame(0, Vector3.One, G.Linear);
+        a.InsertKeyFrame(0.3f, new Vector3(1, k, 1), G.Ease(new Bezier(0.3f, 0f, 0.4f, 1f)));
+        a.InsertKeyFrame(1, Vector3.One, G.Ease(new Bezier(0.22f, 1f, 0.36f, 1f)));
+        a.Duration = TimeSpan.FromMilliseconds(230);
+        v.StartAnimation("Scale", a);
     }
 
     // ---------------- 输入 ----------------
