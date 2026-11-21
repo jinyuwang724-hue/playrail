@@ -85,6 +85,7 @@ public sealed partial class WallStage
         public int Polls;
         public float ActShown = -1;
         public bool CurShown, StaticMuted, PadMouse;
+        public int OsdLevel = -1;
         public readonly string?[] PickText = new string?[3];
         public List<(string Id, string Icon, string Title, string Right, bool Toggle, bool On)> SubRows = new();
     }
@@ -291,8 +292,7 @@ public sealed partial class WallStage
         props.InsertScalar("foc", 0);
         props.InsertColor("c0", Color.FromArgb(0, 110, 110, 116));
         props.InsertColor("c1", Color.FromArgb(247, 0xF4, 0xF5, 0xF8));
-        var fillBrush = G.C.CreateColorBrush(Color.FromArgb(0, 110, 110, 116));
-        var fill = G.Sprite(fillBrush, relative: false);
+        var fill = G.Sprite(SpPanelBrush(), relative: false);
         fill.Offset = new Vector3(SpL1, SpT, 0);
         fill.Size = new Vector2(SpR - SpL1, SpH1);
         var sp = new SpState
@@ -300,10 +300,10 @@ public sealed partial class WallStage
             Root = root, Panel = panel, Body = body, Sub = sub, Fill = fill, Status = Sp(), Static = Sp(), PwText = Sp(), PwChev = Sp(),
             Glow = Sp(), Line = Sp(), Line2 = Sp(), Rim = Sp(), Drop = Sp(), P = props, Page = p, L0 = l0,
         };
-        // 底色跟着横向展开的进度从灰（透明）渐到白 97 %
-        var color = G.C.CreateExpressionAnimation($"ColorLerpRGB(p.c0, p.c1, Clamp((p.l0 - p.l) / (p.l0 - {F(SpL1)}), 0, 1))");
-        color.SetReferenceParameter("p", props);
-        fillBrush.StartAnimation("Color", color);
+        // 底色跟着横向展开的进度从胶囊的灰磨砂（就是下面首页那块胶囊）淡到面板色
+        var prog = G.C.CreateExpressionAnimation($"Clamp((p.l0 - p.l) / (p.l0 - {F(SpL1)}), 0, 1)");
+        prog.SetReferenceParameter("p", props);
+        fill.StartAnimation("Opacity", prog);
         // 裁剪：面板的圆角矩形，左边和高度由弹簧驱动
         var geo = G.C.CreateRoundedRectangleGeometry();
         geo.CornerRadius = new Vector2(SpRad);
@@ -441,6 +441,21 @@ public sealed partial class WallStage
 
     private const float SpRollX = SpBX + SpBW - 26 - 22 - 34 - 92, SpRollY = SpGY0 + 12;
 
+    /// <summary>
+    /// 面板底色（Cocoon 视频逐像素取，不是纯白）：竖向渐变，上 #FAFAFA → 中 #F6F7FA → 下 #F2F6FA，略偏冷；
+    /// 底边往里 10 px 压暗到 #E7EAF1。视频里的 y 换到我们的面板：中段多出来的 120 加在中间。
+    /// </summary>
+    private CompositionLinearGradientBrush SpPanelBrush()
+    {
+        static Color C(int rgb) => Color.FromArgb(255, (byte)(rgb >> 16), (byte)(rgb >> 8 & 0xFF), (byte)(rgb & 0xFF));
+        var g = G.C.CreateLinearGradientBrush();
+        g.StartPoint = new Vector2(0, 0); g.EndPoint = new Vector2(0, 1);
+        float H = SpH1;
+        foreach (var (y, c) in new (float, int)[] { (0, 0xFAFAFA), (60 - SpT, 0xFAFAFA), (400 - SpT, 0xF6F7FA), (600 - SpT + 120, 0xF6F7FA), (1000 - SpT + 120, 0xF2F6FA), (H - 10, 0xF2F6FA), (H, 0xE7EAF1) })
+            g.ColorStops.Add(G.C.CreateColorGradientStop(Math.Clamp(y / H, 0, 1), C(c)));
+        return g;
+    }
+
     private CompositionLinearGradientBrush SpVGrad(Color a, Color b)
     {
         var g = G.C.CreateLinearGradientBrush();
@@ -550,7 +565,7 @@ public sealed partial class WallStage
     {
         "wifi" => _spWifi == true,
         "bt" => _spBt == true,
-        "osd" => Bool(_spDraft?["osd"]?["enabled"]),
+        "osd" => SpOsdLevel() > 0,
         "pad" => !_spMouse,
         _ => false,
     };
@@ -559,6 +574,7 @@ public sealed partial class WallStage
     {
         var (id, icon) = SpTiles[i];
         if (id == "pad" && _spMouse) icon = "qam.mouse";
+        if (id == "osd") icon = $"sp.osd{SpOsdLevel()}";
         var t = sp.Tiles[id];
         float pad = 24, c = pad + SpTile / 2;
         using (var ds = CanvasComposition.CreateDrawingSession(t.SOff))
@@ -566,7 +582,7 @@ public sealed partial class WallStage
             ds.Clear(Colors.Transparent);
             ds.Transform = Matrix3x2.CreateScale(CsRaster);
             SpShadow(ds, pad, pad + 5, SpTile, SpTile, SpTile / 2, 6, Color.FromArgb(31, 30, 30, 50));
-            ds.FillCircle(c, c, SpTile / 2, Color.FromArgb(255, 0xFB, 0xFB, 0xFD));
+            ds.FillCircle(c, c, SpTile / 2, Color.FromArgb(255, 0xF5, 0xF6, 0xF9));   // 关着的开关底（Cocoon 视频取色）
             ds.DrawCircle(c, c, SpTile / 2 - 0.75f, Color.FromArgb(150, 255, 255, 255), 1.5f);
             QsIcon(ds, icon, c, c, 46, SpTileInk, 2.2f);
         }
@@ -592,6 +608,9 @@ public sealed partial class WallStage
             else { on.StopAnimation("Opacity"); on.Opacity = want; }
         }
     }
+
+    /// <summary>当前性能显示档位：0 关，1 简洁，2 标准，3 详细，4 完整。</summary>
+    private int SpOsdLevel() => Bool(_spDraft?["osd"]?["enabled"]) ? Math.Clamp((int)SpNum(_spDraft?["osd"], "level", 1), 1, 4) : 0;
 
     private int SpLevel(int k)
     {
@@ -795,7 +814,7 @@ public sealed partial class WallStage
         l.Add(("s:bri", 2, SpBX, SpBriY, SpBW, SpSlH, "c"));
         l.Add(("s:vol", 3, SpBX, SpVolY, SpBW, SpSlH, "c"));
         l.Add(("m:pw", 4, SpBX, SpGY0, SpBW, SpPwH, "none"));
-        for (int i = 0; i < 3; i++) l.Add(($"o:{SpPicks[i]}", 5 + i, SpBX, SpPickY(i), SpBW, SpPickRowH, "row"));
+        for (int i = 0; i < 3; i++) l.Add(($"o:{SpPicks[i]}", 5 + i, SpBX, SpPickY(i), SpBW, SpPickRowH, "c"));
         return l;
     }
 
@@ -958,7 +977,7 @@ public sealed partial class WallStage
             if (to < 0 || to >= n) { Cue(Sfx.Bump); return; }
             sp.DropSel = to;
             CuePan(0.4f);
-            SpCursorRect(sp, SpPickX, SpDropY(sp) + to * SpOptH, SpPickW, SpOptH, "opt", move: true);
+            SpCursorRect(sp, SpPickX, SpDropY(sp) + to * SpOptH, SpPickW, SpOptH, "c", move: true);
             return;
         }
         var items = SpItems(sp);
@@ -1061,13 +1080,15 @@ public sealed partial class WallStage
                 return;
             case "osd":
             {
+                // A 按顺序换档：关 → 简洁 → 标准 → 详细 → 完整 → 关（和设置里 / 快捷面板同一组档位）
                 if (_spDraft is not { } d) { Cue(Sfx.Bump); return; }
                 if (d["osd"] is not JsonObject osd) { osd = new JsonObject(); d["osd"] = osd; }
-                bool next = !Bool(osd["enabled"]);
-                osd["enabled"] = next;
-                if (next && SpNum(osd, "level") <= 0) osd["level"] = 1;
-                Cue(next ? Sfx.ToggleOn : Sfx.ToggleOff);
+                int next = (SpOsdLevel() + 1) % 5;
+                osd["enabled"] = next > 0;
+                if (next > 0) osd["level"] = next;
+                Cue(next > 0 ? Sfx.ToggleOn : Sfx.ToggleOff);
                 SpQueue("save_power", JsonValue.Create(0), d.DeepClone());
+                SpPaintTile(sp, Array.FindIndex(SpTiles, e => e.Id == "osd"));
                 SpApplyTiles(sp, animate: true);
                 return;
             }
@@ -1084,9 +1105,10 @@ public sealed partial class WallStage
                 return;
             }
             case "gear":
+                // 系统设置（11-21 jinyu：不是 Playrail 设置）
                 Cue(Sfx.Activate);
                 SpClose(instant: true);
-                OpenSettingsFromLibrary();
+                SystemInfo.Open("ms-settings:");
                 return;
             case "shot":
                 SpClose(instant: true);
@@ -1490,7 +1512,7 @@ public sealed partial class WallStage
             sp.Drop.StartAnimation("Scale", CsV3(Vector3.One, 160, ease));
         }
         SpPaintPickBg(sp, i);
-        SpCursorRect(sp, SpPickX, y0 + sp.DropSel * SpOptH, SpPickW, SpOptH, "opt", move: true);
+        SpCursorRect(sp, SpPickX, y0 + sp.DropSel * SpOptH, SpPickW, SpOptH, "c", move: true);
     }
 
     private void SpDropClose(SpState sp, bool animate)
@@ -1736,6 +1758,7 @@ public sealed partial class WallStage
         bool muted = Bool(_spState?["system"]?["muted"]);
         if (first || muted != sp.StaticMuted) { sp.StaticMuted = muted; SpPaintStatic(sp); }
         if (first || _spMouse != sp.PadMouse) { sp.PadMouse = _spMouse; SpPaintTile(sp, Array.FindIndex(SpTiles, e => e.Id == "pad")); }
+        if (first || SpOsdLevel() != sp.OsdLevel) { sp.OsdLevel = SpOsdLevel(); SpPaintTile(sp, Array.FindIndex(SpTiles, e => e.Id == "osd")); }
         SpApplyTiles(sp, animate: !first);
         SpApplySliders(sp, animate: !first);
         int tdp = SpTdpNow();

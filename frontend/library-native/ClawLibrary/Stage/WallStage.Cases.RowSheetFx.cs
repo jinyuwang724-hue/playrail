@@ -84,7 +84,7 @@ public sealed partial class WallStage
     /// <summary>
     /// 宽焦点框（一整行宽）的流光。卡片上的流光是渐变方向绕中心转，套到 1700×156 的框上就成了左右两块整体换色。
     /// 照 Cocoon 改成沿周长：周长上 s 处的颜色 = 混色(0.5 + 0.5·cos 2π(s − φ))，φ 随时间走；
-    /// 速度和卡片一样（约 0.78 px/ms：卡片周长 1400 走 1.8 s），所以宽框一圈要 4–5 秒，两端颜色慢慢流过去。
+    /// 转速全局统一（11-21 jinyu）：和首页游戏卡片同一个绝对周期 RwPeriodMs（1.8 s 一圈），不按周长算——小框不会转得更快。
     /// 每一半括号用一个竖向渐变，上 / 中 / 下三个色标各按自己在周长上的位置做颜色关键帧动画。
     /// </summary>
     private CompositionMaskBrush RsPerimFlow(CompositionDrawingSurface mask, float W, float H, float r, bool right)
@@ -99,7 +99,7 @@ public sealed partial class WallStage
         var grad = G.C.CreateLinearGradientBrush();
         grad.StartPoint = new Vector2(0.5f, 0);
         grad.EndPoint = new Vector2(0.5f, 1);
-        double ms = P / 0.78;
+        double ms = RwPeriodMs;
         for (int i = 0; i < 3; i++)
         {
             var stop = G.C.CreateColorGradientStop(i / 2f, At(s[i], 0));

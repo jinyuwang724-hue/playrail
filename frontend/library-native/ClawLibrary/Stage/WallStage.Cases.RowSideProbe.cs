@@ -39,8 +39,15 @@ public sealed partial class WallStage
         {
             if (_cs != null && _prefs.Home != HomeStyle.Row) { SaveUi(_prefs with { Home = HomeStyle.Row }); CsMorphStyle(); await Task.Delay(1500); }
             await Still("home");
+            await Rec("flow-card", () => Task.CompletedTask, 2000);
             await Rec("open", () => { PadRT(); return Task.CompletedTask; }, 600);
             await Still("panel");
+            // 流光转速：开关上的括号静止录 2 s（和首页卡片那段对比）
+            await Rec("flow-tile", () => Task.CompletedTask, 2000);
+            // 性能显示：A 五下走完 关→简洁→标准→详细→完整→（回到原档）
+            await Keys((Direction.Right, 250), (Direction.Right, 400));
+            await Rec("osd", async () => { for (int i = 0; i < 5; i++) { Activate(); await Task.Delay(500); } }, 300);
+            await Keys((Direction.Left, 250), (Direction.Left, 400));
             await Rec("tiles", () => Keys((Direction.Right, 260), (Direction.Right, 260), (Direction.Down, 300), (Direction.Left, 260)), 400);
             await Rec("rows", () => Keys((Direction.Down, 320), (Direction.Down, 320), (Direction.Down, 320), (Direction.Down, 320), (Direction.Up, 320)), 400);
             // 功耗：连按（110 ms 一下，模拟按住）加 4 W 再减 2 W
