@@ -107,6 +107,22 @@ public sealed partial class WallStage
             await Rec("artpop", () => Back(), 800);
             // 刮削游戏：只看页面和匹配（不按开始，免得改了用户的资料）
             Move(Direction.Down); await Task.Delay(300); Activate(); await Task.Delay(5000); await Still("scrape");
+            if (_rs is { } prs)
+            {
+                // 刮削进度页：只用 LaunchBox 的资料假装刮到（只读，不写游戏库），看两种状态
+                var fake = new ScState { Busy = true, Step = 4, Status = "正在取 SteamGridDB 的图" };
+                await LaunchBoxDb.EnsureAsync(_ => { });
+                if (LaunchBoxDb.Find(new[] { prs.Item.Title, "Wuthering Waves" }, null) is { } lbg)
+                {
+                    fake.Got = new() { ["title"] = lbg.Name, ["developer"] = lbg.Developer ?? "", ["publisher"] = lbg.Publisher ?? "", ["released"] = lbg.Date ?? "", ["genre"] = lbg.Genres ?? "", ["description"] = lbg.Overview ?? "" };
+                    foreach (var (k, v) in lbg.Images) fake.ArtUrl[k] = v;
+                }
+                await Rec("progress", () => RsPush(ScProgressPage(fake, prs.Item)), 900);
+                await Task.Delay(3000); await Still("progress2");
+                fake.Busy = false; fake.Done = true; fake.Step = ScSteps; fake.Status = "完成 · 资料 5 项 · 图片 3 张"; fake.Wrote = new() { "p", "logo" };
+                RsPaintSoon(); await Still("progress3");
+                RsPop(); await Task.Delay(500);
+            }
             // 下拉框：刮削方式展开（录下展开和焦点框收到选项），看一眼，B 收起
             Move(Direction.Down); await Task.Delay(300);
             await Rec("dropopen", Activate, 700); await Still("drop");

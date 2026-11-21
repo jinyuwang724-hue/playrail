@@ -77,6 +77,9 @@ public sealed partial class WallStage
         public Action<CanvasDrawingSession>? PaintHeaderExtra;
         /// <summary>Y 不是「保存并退出」而是一个动作（刮削页的 Y ▶ 开始）：右上胶囊画成三角，按了不退页。</summary>
         public Action? YAction;
+        /// <summary>进行中锁住：B 不退（刮削进度页）；NoY = 右上不画 Y 胶囊。</summary>
+        public Func<bool>? Lock;
+        public bool NoY;
         /// <summary>展开着的下拉是第几行（-1 = 没有），焦点在它的第几个选项。</summary>
         public int Open = -1, OptSel;
     }
@@ -355,7 +358,7 @@ public sealed partial class WallStage
                     ds.FillRectangle(RsX, RsY, RsW, RsTop - 6 - RsY, fade);
                 }
             }
-            RsPaintPills(ds, page.YAction != null);
+            RsPaintPills(ds, page.YAction != null, page.NoY);
             page.PaintHeaderExtra?.Invoke(ds);
         }
         rs.Groups.IsVisible = false;
@@ -609,7 +612,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>左上「B ←」灰胶囊、右上「Y ✓」紫胶囊（带一圈紫色投影）。</summary>
-    private void RsPaintPills(CanvasDrawingSession ds, bool play = false)
+    private void RsPaintPills(CanvasDrawingSession ds, bool play = false, bool noY = false)
     {
         var dev = ds.Device;
         ds.FillRoundedRectangle(134, 104, 134, 74, 37, 37, Color.FromArgb(255, 0xE2, 0xE3, 0xE7));
@@ -623,6 +626,7 @@ public sealed partial class WallStage
             using var arrow = CanvasGeometry.CreatePath(pb);
             ds.DrawGeometry(arrow, RmInk, 7, RwRoundStroke);
         }
+        if (noY) return;
         using (var cl = new CanvasCommandList(dev))
         {
             using (var s = cl.CreateDrawingSession()) { s.Transform = ds.Transform; s.FillRoundedRectangle(1656, 112, 126, 70, 35, 35, Color.FromArgb(255, 0x7A, 0x3C, 0xFF)); }
@@ -1299,6 +1303,7 @@ public sealed partial class WallStage
         if (_rsEditing != null) { RsEndEdit(commit: false); return true; }
         if (rs.Stack[^1] is { Open: >= 0 } openPage) { Cue(Sfx.Back); RsCloseDrop(rs, openPage); return true; }
         var page = rs.Stack[^1];
+        if (page.Lock?.Invoke() == true) { Cue(Sfx.Bump); return true; }
         if (page.Dirty?.Invoke() == true && !rs.DiscardArmed)
         {
             rs.DiscardArmed = true;

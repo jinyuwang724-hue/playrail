@@ -34,13 +34,49 @@ public sealed partial class WallStage
         public CompositionDrawingSurface? CardSurf;
         public LoadedImageSurface? IconSurf, Icon2Surf;
         public bool Busy, Failed, Closing;
+        /// <summary>按内容量出来的卡片高度、说明文字底边（切换游戏的说明可能一行也可能三行）。</summary>
+        public float H, TextBottom;
     }
 
     private RqState? _rq;
     /// <summary>「直接启动」：这一次启动不拦（两个游戏同时开着）。</summary>
     private bool _rqBypass;
 
-    private const float RqW = 920, RqQuitH = 656, RqSwitchH = 840, RqIcon = 200, RqPad = 40;
+    // 竖版封面 200×300（游戏库自己的封面，不裁成方形）；卡片宽 920，高按内容量
+    private const float RqW = 920, RqCoverW = 200, RqCoverH = 300, RqCoverY = 148, RqPad = 40, RqTextW = 800, RqBtnH = 112;
+
+    /// <summary>
+    /// 排版：标题栏 37–111；封面 148–448；切换游戏时说明文字从 492 起（36 号，行距 1.3，最宽 800），
+    /// 下面 28 的空再一行灰色提示，再空 36 是按钮，按钮下边距 40。退出游戏没有说明，提示直接在封面下面。
+    /// </summary>
+    private (float H, float TextBottom) RqMeasure(RqState rq)
+    {
+        float y = RqCoverY + RqCoverH + 44;
+        if (rq.Next != null)
+        {
+            using var lay = RqTextLayout(G.Device, rq);
+            y += (float)lay.LayoutBounds.Height;
+            y += 28;
+        }
+        float textBottom = y;
+        float warnBottom = y + 44;
+        return (warnBottom + 36 + RqBtnH + 40, textBottom);
+    }
+
+    private static string RqSwitchText(RqState rq) => $"「{rq.Running.Item.Title}」还在运行。先退出它再启动「{rq.Next!.Title}」，或者直接启动，两个游戏同时开着。";
+
+    private static CanvasTextLayout RqTextLayout(ICanvasResourceCreator dev, RqState rq)
+    {
+        string a = rq.Running.Item.Title, b = rq.Next!.Title, text = RqSwitchText(rq);
+        using var tf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 36, FontWeight = new Windows.UI.Text.FontWeight(400), HorizontalAlignment = CanvasHorizontalAlignment.Center, WordWrapping = CanvasWordWrapping.Wrap };
+        var lay = new CanvasTextLayout(dev, text, tf, RqTextW, 400);
+        lay.SetFontWeight(1, a.Length, new Windows.UI.Text.FontWeight(600));
+        int bi = text.IndexOf(b, a.Length + 2, StringComparison.Ordinal);
+        if (bi >= 0) lay.SetFontWeight(bi, b.Length, new Windows.UI.Text.FontWeight(600));
+        lay.LineSpacingMode = CanvasLineSpacingMode.Proportional;
+        lay.LineSpacing = 1.3f;
+        return lay;
+    }
     private static readonly Color RqGreenA = Color.FromArgb(255, 0x72, 0xE0, 0x96), RqGreenB = Color.FromArgb(255, 0x0E, 0xCB, 0xAA);
     private static readonly Color RqBadge = Color.FromArgb(255, 0xF2, 0x56, 0x6E);
 
@@ -146,9 +182,11 @@ public sealed partial class WallStage
         if (rq.Icon2 != null) root.Children.InsertAtTop(rq.Icon2);
         _cs.Root.Children.InsertAtTop(root);
         RwBackdropFx(p, true, Reduced ? 1 : 230);
-        float h = next == null ? RqQuitH : RqSwitchH, x0 = (CsW - RqW) / 2, y0 = (CsH - h) / 2;
-        RqPlaceIcon(rq.Icon, ref rq.IconSurf, running.Item, next == null ? x0 + RqW / 2 - RqIcon / 2 : x0 + 163, y0 + 165);
-        if (rq.Icon2 != null) RqPlaceIcon(rq.Icon2, ref rq.Icon2Surf, next!, x0 + 560, y0 + 165);
+        (rq.H, rq.TextBottom) = RqMeasure(rq);
+        float h = rq.H, x0 = (CsW - RqW) / 2, y0 = (CsH - h) / 2;
+        // 退出：封面居中；切换：两张封面各在中线左右 200，中间是箭头
+        RqPlaceIcon(rq.Icon, ref rq.IconSurf, running.Item, next == null ? x0 + RqW / 2 - RqCoverW / 2 : x0 + RqW / 2 - 200 - RqCoverW / 2, y0 + RqCoverY);
+        if (rq.Icon2 != null) RqPlaceIcon(rq.Icon2, ref rq.Icon2Surf, next!, x0 + RqW / 2 + 200 - RqCoverW / 2, y0 + RqCoverY);
         RqPaint(rq);
         if (Reduced) return;
         scrim.Opacity = 0;
@@ -170,24 +208,24 @@ public sealed partial class WallStage
         float R = CsRaster;
         if (RqArt(g) is { } art)
         {
-            surf = Images.AcquireReuse(art, (int)Math.Ceiling(RqIcon * R), (int)Math.Ceiling(RqIcon * 1.5f * R));
+            surf = Images.AcquireReuse(art, (int)Math.Ceiling(RqCoverW * R), (int)Math.Ceiling(RqCoverH * R));
             var b = G.C.CreateSurfaceBrush(surf);
             b.Stretch = CompositionStretch.UniformToFill;
             v.Brush = b;
         }
         else v.Brush = G.Solid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0));
-        v.Size = new Vector2(RqIcon, RqIcon);
+        v.Size = new Vector2(RqCoverW, RqCoverH);
         v.Offset = new Vector3(x, y, 0);
         var rr = G.C.CreateRoundedRectangleGeometry();
-        rr.Size = new Vector2(RqIcon, RqIcon);
-        rr.CornerRadius = new Vector2(RqIcon * RwRound);
+        rr.Size = new Vector2(RqCoverW, RqCoverH);
+        rr.CornerRadius = new Vector2(RqCoverW * RwRound);
         v.Clip = G.C.CreateGeometricClip(rr);
     }
 
     private void RqPaint(RqState rq)
     {
         bool sw = rq.Next != null;
-        float h = sw ? RqSwitchH : RqQuitH, x0 = (CsW - RqW) / 2, y0 = (CsH - h) / 2;
+        float h = rq.H, x0 = (CsW - RqW) / 2, y0 = (CsH - h) / 2;
         float R = CsRaster, w = RqW + RqPad * 2, hh = h + RqPad * 2;
         rq.CardSurf ??= G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(hh * R));
         using (var ds = CanvasComposition.CreateDrawingSession(rq.CardSurf))
@@ -200,26 +238,19 @@ public sealed partial class WallStage
             string title = sw ? "切换游戏" : "退出游戏";
             using (var tf = new CanvasTextFormat { FontFamily = RmFont(title), FontSize = 48, FontWeight = RsWt(title), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
                 ds.DrawText(title, new Windows.Foundation.Rect(192, 37, 600, 74), RmInk, tf);
-            float y;
+            // 封面下的投影（封面本身是单独的精灵）
+            foreach (float cx in sw ? new[] { RqW / 2 - 200, RqW / 2 + 200 } : new[] { RqW / 2 })
+                RsSoftShadow(ds, cx - RqCoverW / 2, RqCoverY + 8, RqCoverW, RqCoverH, RqCoverW * RwRound, 12, 0.28f);
             if (sw)
             {
-                RqArrow(ds, RqW / 2, 165 + RqIcon / 2);
-                string a = rq.Running.Item.Title, b = rq.Next!.Title;
-                string text = $"「{a}」正在运行。先退出它再启动「{b}」，或者直接启动，让两个游戏同时开着。";
-                using var tf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 38, FontWeight = new Windows.UI.Text.FontWeight(400), HorizontalAlignment = CanvasHorizontalAlignment.Center, WordWrapping = CanvasWordWrapping.Wrap };
-                using var lay = new CanvasTextLayout(ds.Device, text, tf, RqW - 74, 300);
-                lay.SetFontWeight(1, a.Length, new Windows.UI.Text.FontWeight(700));
-                lay.SetFontWeight(text.IndexOf(b, a.Length + 2, StringComparison.Ordinal), b.Length, new Windows.UI.Text.FontWeight(700));
-                lay.LineSpacingMode = CanvasLineSpacingMode.Proportional;
-                lay.LineSpacing = 1.25f;
-                ds.DrawTextLayout(lay, 37, 420, RmInk);
-                y = 420 + (float)lay.LayoutBounds.Height + 50;
+                RqArrow(ds, RqW / 2, RqCoverY + RqCoverH / 2);
+                using var lay = RqTextLayout(ds.Device, rq);
+                ds.DrawTextLayout(lay, (RqW - RqTextW) / 2, RqCoverY + RqCoverH + 44, RmInk);
             }
-            else y = 448;
             string warn = rq.Failed ? "没能结束游戏，可以再试一次" : "未保存的进度会丢失";
-            using (var wf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 34, FontWeight = new Windows.UI.Text.FontWeight(400), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
-                ds.DrawText(warn, new Windows.Foundation.Rect(0, y - 30, RqW, 60), rq.Failed ? RmRed : RmInk, wf);
-            float by = h - 37 - 112;
+            using (var wf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 32, FontWeight = new Windows.UI.Text.FontWeight(500), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
+                ds.DrawText(warn, new Windows.Foundation.Rect(0, rq.TextBottom, RqW, 44), rq.Failed ? RmRed : RsSub, wf);
+            float by = h - 40 - RqBtnH;
             if (sw)
             {
                 RqButton(ds, 37, by, 404, "Y", "直接启动", green: false, busy: false);

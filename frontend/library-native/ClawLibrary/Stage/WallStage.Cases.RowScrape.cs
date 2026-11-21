@@ -40,6 +40,11 @@ public sealed partial class WallStage
         public string Status = "";
         public string? Query;
         public Dictionary<string, string> Got = new();
+        /// <summary>进度页：第几步（共 ScSteps 步）、每种图刮到的地址（预览用）、哪几种写进去了、结束了没有。</summary>
+        public int Step;
+        public Dictionary<string, string> ArtUrl = new();
+        public HashSet<string> Wrote = new();
+        public bool Done;
     }
 
     private static readonly (string Kind, string Title)[] ScArtKinds = { ("p", "封面"), ("hero", "背景"), ("logo", "标志"), ("header", "横封面") };
@@ -103,7 +108,8 @@ public sealed partial class WallStage
     {
         var s = new ScState();
         var page = new RsPage { Title = "刮削游戏", TitleIcon = "scrape", Build = () => ScRows(s, g) };
-        page.YAction = () => { if (!s.Busy && s.D != null) _ = ScRun(s, g); else Cue(Sfx.Bump); };
+        // Y ▶：进下一步——刮削进度页（Cocoon：Y 就是开始，页面底下不另放「开始」）
+        page.YAction = () => { if (!s.Busy && s.D != null) { Cue(Sfx.Activate); RsPush(ScProgressPage(s, g)); _ = ScRun(s, g); } else Cue(Sfx.Bump); };
         _ = ScLoad(s, g);
         return page;
     }
@@ -174,18 +180,6 @@ public sealed partial class WallStage
             ToggleOpt = i => { if (!p.ArtTypes.Remove(ScArtKinds[i].Kind)) p.ArtTypes.Add(ScArtKinds[i].Kind); Save(); },
         });
         if (p.Art) ScSourceRows(rows, p.ArtSrc, p);
-        rows.Add(new RsRow
-        {
-            Kind = RsKind.Action, Break = true, Icon = "scrape", Title = s.Busy ? "正在刮削…" : "开始刮削", Value = s.Status,
-            Press = () => { if (!s.Busy && s.D != null) _ = ScRun(s, g); },
-        });
-        bool first = true;
-        foreach (var (key, title, _) in RsMetaFields)
-            if (s.Got.TryGetValue(key, out var v) && v.Length > 0)
-            {
-                rows.Add(new RsRow { Kind = RsKind.Info, Break = first, Title = title, Value = v });
-                first = false;
-            }
         return rows;
     }
 
@@ -329,9 +323,11 @@ public sealed partial class WallStage
     {
         var p = ScLoadPrefs();
         var d = s.D!;
-        s.Busy = true;
-        void Say(string msg) { s.Status = msg; _dq.TryEnqueue(RsRefresh); }
-        Say("开始");
+        s.Busy = true; s.Done = false; s.Step = 0;
+        s.Got = new(); s.ArtUrl = new(); s.Wrote = new();
+        void Say(string msg) { s.Status = msg; _dq.TryEnqueue(RsPaintSoon); }
+        void Next(string msg) { s.Step++; Say(msg); }
+        Say("正在准备");
         var fails = new List<string>();
         string? appid = d.SteamAppId;
         var match = d.Match >= 0 && d.Match < d.Matches.Count ? d.Matches[d.Match] : null;
@@ -348,7 +344,7 @@ public sealed partial class WallStage
         Dictionary<string, string>? steam = null;
         if (appid != null)
         {
-            Say("正在读 Steam 商店");
+            Next("正在读 Steam 商店");
             if (metaOn("steam")) { steam = await ScFetchSteam(appid, p.En ? "english" : "schinese"); if (steam == null) fails.Add("Steam 商店"); }
             var en = p.En && steam != null ? steam : await ScFetchSteam(appid, "english");
             Name(en?.GetValueOrDefault("title"));
@@ -357,7 +353,7 @@ public sealed partial class WallStage
         LbGame? lb = null;
         if (metaOn("launchbox") || artOn("launchbox"))
         {
-            if (!LaunchBoxDb.Indexed) Say("第一次用 LaunchBox：下载资料库（约 110 MB）");
+            Next(LaunchBoxDb.Indexed ? "正在查 LaunchBox" : "第一次用 LaunchBox：下载资料库（约 110 MB）");
             if (await LaunchBoxDb.EnsureAsync(Say)) lb = LaunchBoxDb.Find(names, appid);
             else fails.Add("LaunchBox");
         }
@@ -365,15 +361,17 @@ public sealed partial class WallStage
         IgdbGame? ig = null;
         if ((metaOn("igdb") || artOn("igdb")) && p.IgdbReady)
         {
-            Say("正在查 IGDB");
+            Next("正在查 IGDB");
             try { ig = await Igdb.FindAsync(p.IgdbId, p.IgdbSecret, names, appid); }
             catch (Exception ex) { Log.Warn($"igdb: {ex.Message}"); fails.Add(ex.Message); }
         }
 
         // ---- 资料：每一项按来源顺序取第一个有值的 ----
         int metaN = 0;
+        s.Step = 3;
         if (p.Meta)
         {
+            Next("正在整理资料");
             Dictionary<string, string>? Of(string id) => id switch
             {
                 "steam" => steam,
@@ -386,6 +384,7 @@ public sealed partial class WallStage
                 foreach (var (id, on) in p.MetaSrc)
                     if (on && Of(id) is { } m && m.GetValueOrDefault(key) is { Length: > 0 } v) { got[key] = v; break; }
             s.Got = got;
+            _dq.TryEnqueue(RsPaintSoon);
             var saved = RwMetaOf(g);
             var manual = (saved.TryGetValue(RwManualKey, out var mk) ? mk.Split(',', StringSplitOptions.RemoveEmptyEntries) : Array.Empty<string>()).ToHashSet();
             var next = new Dictionary<string, string>(saved);
@@ -412,14 +411,15 @@ public sealed partial class WallStage
         {
             try
             {
+                s.Step = 4;
                 var keepPick = d.Pick.ToDictionary(kv => kv.Key, kv => kv.Value);
                 var kinds = ScArtKinds.Where(k => p.Mode == 0 || p.ArtTypes.Contains(k.Kind)).Select(k => k.Kind)
                     .Where(k => p.Mode == 2 || keepPick.GetValueOrDefault(k, -1) < 0).ToList();
-                if (kinds.Count > 0)
                 {
-                    if (artOn("steam") && appid != null) { Say("正在取 Steam 官方图"); await AgLoadOfficial(d); }
+                    if (artOn("steam") && appid != null) { Next("正在取 Steam 官方图"); await AgLoadOfficial(d); }
                     if (artOn("sgdb") && match != null) { Say("正在取 SteamGridDB 的图"); await AgLoadCandidates(d, match); foreach (var kv in keepPick) d.Pick[kv.Key] = kv.Value; }
-                    foreach (var kind in kinds)
+                    // 每种图都选出一张给进度页预览；要写的那几种再存进去
+                    foreach (var (kind, _) in ScArtKinds)
                     {
                         string? url = null;
                         foreach (var (id, on) in p.ArtSrc)
@@ -436,11 +436,15 @@ public sealed partial class WallStage
                             if (url != null) break;
                         }
                         if (url == null) continue;
+                        s.ArtUrl[kind] = url;
+                        _dq.TryEnqueue(RsPaintSoon);
+                        if (!kinds.Contains(kind)) continue;
                         if (!d.Cands.TryGetValue(kind, out var list)) d.Cands[kind] = list = new();
                         int at = list.FindIndex(x => x.Url == url);
                         if (at < 0) { list.Add((url, url)); at = list.Count - 1; }
                         d.Pick[kind] = at;
                         AgEmbedSave(d, kind);
+                        s.Wrote.Add(kind);
                         artN++;
                     }
                 }
@@ -457,7 +461,15 @@ public sealed partial class WallStage
             : lb == null && ig == null && steam == null ? "哪个来源都没找到这款游戏"
             : "没有要补的";
         Cue(parts.Count > 0 ? Sfx.Positive : fails.Count > 0 ? Sfx.Error : Sfx.Bump);
-        if (artN > 0) Toast($"「{g.Title}」的图在后台换上了");
+        // 进度页停一下给人看结果，再自己退回设置页
+        s.Done = true; s.Step = ScSteps;
+        RsPaintSoon();
+        var done = s;
+        After(1600, () =>
+        {
+            if (_rs is { } rs && rs.Stack.Count > 0 && rs.Stack[^1].Title == "正在刮削" && done.Done) { Cue(Sfx.Back); RsPop(); }
+            Toast(done.Status + (artN > 0 ? " · 图片在后台换上" : ""));
+        });
         RsRefresh();
     }
 
