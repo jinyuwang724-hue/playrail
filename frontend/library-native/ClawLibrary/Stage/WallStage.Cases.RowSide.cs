@@ -1333,26 +1333,61 @@ public sealed partial class WallStage
 
     private Visual[] SpEditFade(SpState sp) => new Visual[] { sp.Panel };
 
+    /// <summary>Wi-Fi 密码用的输入框：样式照二级页输入框（透明底、无边框、深色字），只是字遮成圆点，不带显示密码按钮。</summary>
+    private Microsoft.UI.Xaml.Controls.PasswordBox? _spPw;
+
+    private Microsoft.UI.Xaml.Controls.PasswordBox SpEnsurePw()
+    {
+        if (_spPw != null) return _spPw;
+        var box = new Microsoft.UI.Xaml.Controls.PasswordBox
+        {
+            MinHeight = 0,
+            BorderThickness = new Microsoft.UI.Xaml.Thickness(0),
+            Padding = new Microsoft.UI.Xaml.Thickness(0),
+            VerticalContentAlignment = Microsoft.UI.Xaml.VerticalAlignment.Center,
+            RequestedTheme = Microsoft.UI.Xaml.ElementTheme.Light,
+            PasswordRevealMode = Microsoft.UI.Xaml.Controls.PasswordRevealMode.Hidden,
+            Visibility = Microsoft.UI.Xaml.Visibility.Collapsed,
+        };
+        var bg = new Microsoft.UI.Xaml.Media.SolidColorBrush(Color.FromArgb(0, 0xFF, 0xFF, 0xFF));
+        var ink = new Microsoft.UI.Xaml.Media.SolidColorBrush(RmInk);
+        foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundPointerOver", "TextControlBackgroundFocused" }) box.Resources[key] = bg;
+        foreach (var key in new[] { "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused" }) box.Resources[key] = new Microsoft.UI.Xaml.Media.SolidColorBrush(Colors.Transparent);
+        foreach (var key in new[] { "TextControlForeground", "TextControlForegroundPointerOver", "TextControlForegroundFocused" }) box.Resources[key] = ink;
+        box.KeyDown += (_, e) =>
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter) { e.Handled = true; SpEditCommit(); }
+            else if (e.Key == Windows.System.VirtualKey.Escape) { e.Handled = true; SpEditCancel(); }
+        };
+        box.GotFocus += (_, _) => ShowTouchKeyboard();
+        box.LostFocus += (_, _) => HideTouchKeyboardSoon();
+        box.PasswordChanging += (s, e) => { if (e.IsContentChanging && s.FocusState != Microsoft.UI.Xaml.FocusState.Unfocused) SoundFx.Play(Sfx.Typing); };
+        _rootEl.Overlay.Children.Add(box);
+        return _spPw = box;
+    }
+
     private void SpEditBegin(SpState sp, QamWireless.Entry e)
     {
-        RsEnsureBox();
+        var box = SpEnsurePw();
         var ed = new SpEditState { Net = e };
         _spEdit = ed;
         Cue(Sfx.Activate);
         EdShowCard(sp.Root, SpEditFade(sp), e.Name);
-        var box = _rsBox!;
         var o = _cs!.Root.Offset;
         float k = _cs.K;
-        box.Text = "";
-        box.AcceptsReturn = false;
-        box.TextWrapping = Microsoft.UI.Xaml.TextWrapping.NoWrap;
+        box.Password = "";
         box.FontSize = Math.Max(12, 44 * k);
         box.Width = (RsFieldW - 70) * k;
         box.Height = (RsFieldH - 40) * k;
         Microsoft.UI.Xaml.Controls.Canvas.SetLeft(box, o.X + (RsFieldX + 35) * k);
         Microsoft.UI.Xaml.Controls.Canvas.SetTop(box, o.Y + (RsFieldY + 20) * k);
         box.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
-        FocusTextBox(box, () => _spEdit == ed);
+        _dq.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        {
+            if (_spEdit != ed) return;
+            (_window as MainWindow)?.RequestTextInputFocus();
+            box.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
+        });
         Log.Info("side panel wifi password");
     }
 
@@ -1361,8 +1396,8 @@ public sealed partial class WallStage
     /// <summary>A / 回车 / 点 ▶✓：连接（WinRT WiFiAdapter.ConnectAsync + 密码，系统自己建 WPA2 / WPA3 个人版配置）。失败留在输入卡上可以重输。</summary>
     private void SpEditCommit()
     {
-        if (_spEdit is not { Busy: false } ed || _sp is not { } sp || _rsBox == null) return;
-        string pwd = _rsBox.Text;
+        if (_spEdit is not { Busy: false } ed || _sp is not { } sp || _spPw == null) return;
+        string pwd = _spPw.Password;
         if (pwd.Length < 8) { Cue(Sfx.Bump); ed.Note = "至少 8 位"; ed.Err = true; SpEditRepaint(sp, ed); return; }
         Cue(Sfx.Activate);
         ed.Busy = true; ed.Note = "正在连接…"; ed.Err = false;
@@ -1398,7 +1433,7 @@ public sealed partial class WallStage
                     _ => "没连上",
                 };
                 SpEditRepaint(sp, ed);
-                _rsBox?.SelectAll();
+                if (_spPw != null) { _spPw.Focus(Microsoft.UI.Xaml.FocusState.Programmatic); _spPw.SelectAll(); }
             });
         });
     }
@@ -1411,7 +1446,7 @@ public sealed partial class WallStage
     private void SpEditEnd(SpState sp)
     {
         _spEdit = null;
-        if (_rsBox != null) { _rsBox.Text = ""; _rsBox.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed; }
+        if (_spPw != null) { _spPw.Password = ""; _spPw.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed; }
         _rootEl.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
         EdHideCard(sp.Root, SpEditFade(sp));
     }

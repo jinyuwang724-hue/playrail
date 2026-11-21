@@ -79,7 +79,7 @@ public sealed partial class WallStage
             {
                 var fake = new ClawLibrary.Data.QamWireless.Entry("probe", "Playrail-Test", "", "qam.wifi", false, false, Secured: true);
                 await Rec("pwopen", () => { SpEditBegin(sp, fake); return Task.CompletedTask; }, 600);
-                if (_rsBox != null) _rsBox.Text = "12345678";
+                if (_spPw != null) _spPw.Password = "12345678";
                 await Rec("pwfail", () => { Activate(); return Task.CompletedTask; }, 1400);
                 await Still("pw-error");
                 await Rec("pwcancel", () => { Back(); return Task.CompletedTask; }, 500);
