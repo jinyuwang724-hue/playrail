@@ -81,9 +81,9 @@ public sealed partial class WallStage
         public readonly SpriteVisual?[] PickCur = new SpriteVisual?[3];
         public readonly CompositionDrawingSurface?[] PickBgSurf = new CompositionDrawingSurface?[3];
         public string StatusKey = "";
-        public Microsoft.UI.Dispatching.DispatcherQueueTimer? Tick, Chase;
+        public Microsoft.UI.Dispatching.DispatcherQueueTimer? Tick;
         public int Polls;
-        public float ActShown = -1;
+        public string? PwSubDrawn;
         public bool CurShown, StaticMuted, PadMouse;
         public int OsdLevel = -1;
         public readonly string?[] PickText = new string?[3];
@@ -211,7 +211,7 @@ public sealed partial class WallStage
         int gen = ++sp.Gen;
         GamepadPoller.RepeatOverrideMs = 0;
         SpDropClose(sp, animate: false);
-        sp.Tick?.Stop(); sp.Chase?.Stop();
+        sp.Tick?.Stop();
         SpCursorShow(sp, false, 60);
         if (sp.Page.Rw is { PanelFocus: < 0 }) RwCursorShow(sp.Page, true);
         if (instant || Reduced) { SpHide(sp); return; }
@@ -224,7 +224,7 @@ public sealed partial class WallStage
         if (_sp is not { } sp) return;
         _sp = null;
         GamepadPoller.RepeatOverrideMs = 0;
-        sp.Tick?.Stop(); sp.Chase?.Stop();
+        sp.Tick?.Stop();
         try
         {
             _cs?.Root.Children.Remove(sp.Root);
@@ -639,13 +639,35 @@ public sealed partial class WallStage
         return n is JsonValue v && (v.TryGetValue(out double d) || (v.TryGetValue(out int i) && (d = i) == i) || (v.TryGetValue(out long l) && (d = l) == l)) ? d : fallback;
     }
 
+    /// <summary>功耗采样（后台每秒一次）：灰字显示最近约 10 秒的平均值，整数（11-22 jinyu：不要瞬时值、不要小数）。跨开关面板保留，打开时直接用。</summary>
+    private readonly Queue<(long T, double W)> _spPwSamples = new();
+    private const long SpPwWindowMs = 10_000;
+
+    private void SpPowerSample()
+    {
+        double w = SpNum(_spState, "power.actual.package", -1);
+        if (w < 0) return;
+        long now = Environment.TickCount64;
+        _spPwSamples.Enqueue((now, w));
+        while (_spPwSamples.Count > 1 && now - _spPwSamples.Peek().T > SpPwWindowMs) _spPwSamples.Dequeue();
+    }
+
+    /// <summary>窗口内的平均；窗口里没有新采样（面板关了很久）就用最近那一个，不先显示空。</summary>
+    private double? SpPowerAvg()
+    {
+        if (_spPwSamples.Count == 0) return null;
+        long now = Environment.TickCount64;
+        var recent = _spPwSamples.Where(s => now - s.T <= SpPwWindowMs).ToList();
+        return recent.Count > 0 ? recent.Average(s => s.W) : _spPwSamples.Last().W;
+    }
+
     private string SpPwSub()
     {
         string who = _spGame?.Title ?? "全局";
         if (who.Length > 12) who = who[..11] + "…";
         double act = SpNum(_spState, "power.actual.package", -1), temp = SpNum(_spState, "power.live.cpuTemp", -1);
         var parts = new List<string> { who };
-        if (act >= 0) parts.Add($"实际 {(_sp?.ActShown >= 0 ? _sp!.ActShown : act):0.0} W");
+        if (SpPowerAvg() is double avg) parts.Add($"平均 {avg:0} W");
         if (temp > 0) parts.Add($"{temp:0} °C");
         return string.Join(" · ", parts);
     }
@@ -1699,6 +1721,7 @@ public sealed partial class WallStage
             if (await _agent.Call("widget_state") is JsonObject s && _spWrites?.IsBusy != true && (_spWrites?.Revision ?? 0) == rev && _spDrag == null)
             {
                 _spState = (JsonObject)s.DeepClone();
+                SpPowerSample();
                 _spDraft = s["power"]?["settings"]?.DeepClone() as JsonObject;
             }
             if (first || sp.Polls % 3 == 0)
@@ -1771,23 +1794,9 @@ public sealed partial class WallStage
         }
         if (sp.Drop_ < 0) for (int i = 0; i < 3; i++) SpSetPickVal(sp, i, 0);
         if (sp.SubPage is "wifi" or "bt" && sp.SubRows.Count > 0 && sp.SubRows[0].On != (sp.SubPage == "wifi" ? _spWifi == true : _spBt == true)) { SpBuildSub(sp); SpPaintSub(sp); }
-        // 实际功耗：显示值慢慢追上读数
-        float act = (float)SpNum(_spState, "power.actual.package", -1);
-        if (sp.ActShown < 0 || act < 0) { sp.ActShown = act; SpPaintPwText(sp); return; }
-        if (MathF.Abs(act - sp.ActShown) < 0.05f) { SpPaintPwText(sp); return; }
-        if (sp.Chase == null)
-        {
-            sp.Chase = _dq.CreateTimer();
-            sp.Chase.Interval = TimeSpan.FromMilliseconds(50);
-            sp.Chase.Tick += (t, _) =>
-            {
-                float target = (float)SpNum(_spState, "power.actual.package", sp.ActShown);
-                sp.ActShown += (target - sp.ActShown) * 0.15f;
-                if (MathF.Abs(target - sp.ActShown) < 0.05f) { sp.ActShown = target; t.Stop(); }
-                if (_sp == sp) SpPaintPwText(sp); else t.Stop();
-            };
-        }
-        sp.Chase.Start();
+        // 平均功耗（整数）：变了才重画
+        string sub = SpPwSub();
+        if (sub != sp.PwSubDrawn) { sp.PwSubDrawn = sub; SpPaintPwText(sp); }
     }
 
     // ---------------- 触控 / 鼠标 ----------------
