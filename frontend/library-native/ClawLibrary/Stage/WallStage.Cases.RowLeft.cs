@@ -324,7 +324,8 @@ public sealed partial class WallStage
     {
         Log.Info($"left panel → {id}");
         LsClose(instant: false);
-        _ccLight = true;   // 浅色皮（WallStage.LightPages.cs）
+        _ccLight = true;   // Cocoon 样式页面（WallStage.CocoonPages.cs）
+        CpReset();
         OpenControlCenter(quiet: true);
         LtApplyBg();
         _lsFrom = id;

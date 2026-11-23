@@ -353,6 +353,7 @@ public sealed partial class WallStage
     private void PaintDs()
     {
         if (_ds == null) return;
+        if (CpPaint()) return;   // 从左侧栏进来：Cocoon 样式（WallStage.CocoonPages.cs）
         float k = _ccK, raster = k * Chrome.Dpi;
         float h = RowsHeight(_dsRows), vh = PerfViewH;
         using (var tl = TextKit.Layout(G.Device, "显示与声音", TextKit.Ui(700), 24, 400, CanvasHorizontalAlignment.Left))
@@ -374,8 +375,6 @@ public sealed partial class WallStage
         CcSet(_dsLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintDsLeft(ds, vh)));
         _dsLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _dsLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
-        LtCard(_ds, 0, PerfLeftX - 22, PerfTop - 22, PerfLeftW + 44, PerfViewH + 44);
-        LtCard(_ds, 1, PerfRightX - 4, PerfTop - 22, PerfRightW + 30, PerfViewH + 44);
     }
 
     /// <summary>

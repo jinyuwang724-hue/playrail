@@ -51,13 +51,12 @@ public sealed partial class WallStage
     private void RowFocusFx(SpriteVisual list, List<PerfRow> rows, int focus, float listWidth, float raster, bool numbers = false, bool leadingNotes = true)
     {
         var fx = FxFor(list);
-        if (focus < 0 || focus >= rows.Count || rows[focus].Section || rows[focus].Skip) { fx.Hide(); LtFocus(list, 0, 0, 0, 0, false); return; }
+        if (focus < 0 || focus >= rows.Count || rows[focus].Section || rows[focus].Skip) { fx.Hide(); return; }
         float k = _ccK;
         if (list.Parent?.Clip is InsetClip ic) { ic.LeftInset = -28 * k; ic.RightInset = -28 * k; }
         float top = 0;
         for (int i = 0; i < focus; i++) top += rows[i].Section ? PerfSecH : PerfRowH;
         const float padL = 18, padR = 16, inset = 2;
-        if (LtFocus(list, padL, top + inset, listWidth + padR - padL, PerfRowH - 2 * inset, true)) { fx.Hide(false); LtWidenClip(list); return; }
         fx.To(padL, top + inset, listWidth + padR - padL, PerfRowH - 2 * inset, 12, k, false);
     }
 }

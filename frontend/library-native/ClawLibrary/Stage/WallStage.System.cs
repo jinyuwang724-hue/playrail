@@ -593,6 +593,7 @@ public sealed partial class WallStage
     private void PaintSy()
     {
         if (_sy == null) return;
+        if (CpPaint()) return;   // 从左侧栏进来：Cocoon 样式（WallStage.CocoonPages.cs）
         float k = _ccK, raster = k * Chrome.Dpi;
         float h = RowsHeight(_syRows), vh = PerfViewH;
         using (var tl = TextKit.Layout(G.Device, _syUpdatesOpen ? "系统 · 更新" : "系统", TextKit.Ui(700), 24, 600, CanvasHorizontalAlignment.Left))
@@ -613,8 +614,6 @@ public sealed partial class WallStage
         CcSet(_syLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintSyLeft(ds, vh)));
         _syLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _syLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
-        LtCard(_sy, 0, PerfLeftX - 22, PerfTop - 22, PerfLeftW + 44, PerfViewH + 44);
-        LtCard(_sy, 1, PerfRightX - 4, PerfTop - 22, PerfRightW + 30, PerfViewH + 44);
     }
 
     /// <summary>左栏只放读数，和显示与声音页左栏一个写法：「电池」标题 + 电量、一根电量条、下面几行；「版本」「设备」各一组。</summary>

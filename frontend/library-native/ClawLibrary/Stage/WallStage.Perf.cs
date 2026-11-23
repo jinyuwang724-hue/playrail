@@ -501,6 +501,7 @@ public sealed partial class WallStage
     private void PaintPerf()
     {
         if (_perf == null) return;
+        if (CpPaint()) return;   // 从左侧栏进来：Cocoon 样式（WallStage.CocoonPages.cs）
         float k = _ccK, raster = k * Chrome.Dpi;
         float h = PerfListHeight(), vh = PerfViewH;
         // 标题：和控制中心的「控制中心」同一个位置、同一个字
@@ -523,8 +524,6 @@ public sealed partial class WallStage
         CcSet(_perfLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintPerfLeft(ds, vh)));
         _perfLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _perfLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
-        LtCard(_perf, 0, PerfLeftX - 22, PerfTop - 22, PerfLeftW + 44, PerfViewH + 44);
-        LtCard(_perf, 1, PerfRightX - 4, PerfTop - 22, PerfRightW + 30, PerfViewH + 44);
     }
 
     /// <summary>

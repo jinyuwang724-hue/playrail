@@ -37,23 +37,38 @@ public sealed partial class WallStage
             await Rec("open", () => { PadView(); return Task.CompletedTask; }, 900);
             await Still("panel");
             await Rec("rows", () => Keys((Direction.Down, 300), (Direction.Down, 300), (Direction.Down, 300), (Direction.Up, 300), (Direction.Up, 300), (Direction.Up, 300)), 400);
-            await Rec("page", () => { Activate(); return Task.CompletedTask; }, 900);
+            // 安全：只在侧栏开着时按 A（侧栏关着时 A 会启动首页焦点游戏）；退回侧栏用 Back，看到侧栏就停
+            async Task<bool> ToPanel()
+            {
+                for (int i = 0; i < 6 && !LsOpenNow; i++) { if (!_ccOpen) break; Back(); await Task.Delay(500); }
+                await Task.Delay(600);
+                return LsOpenNow;
+            }
+            async Task Open(int n)
+            {
+                if (!LsOpenNow) return;
+                for (int i = 0; i < 6; i++) { Move(Direction.Up); await Task.Delay(120); }
+                for (int i = 0; i < n; i++) { Move(Direction.Down); await Task.Delay(200); }
+                if (LsOpenNow) Activate();
+            }
+            if (!LsOpenNow) throw new InvalidOperationException("panel not open");
+            await Rec("page", () => Open(0), 1100);
             await Still("perf");
-            await Keys((Direction.Down, 400), (Direction.Down, 400));
-            await Still("perf-focus");
-            await Rec("pageback", () => { Back(); return Task.CompletedTask; }, 1000);
+            await Rec("perf-cat", () => Keys((Direction.Down, 500), (Direction.Down, 500), (Direction.Up, 500), (Direction.Up, 500)), 400);
+            await Rec("perf-in", () => Keys((Direction.Right, 500), (Direction.Down, 500)), 400);
+            await Still("perf-row");
+            await Rec("pageback", async () => { await ToPanel(); }, 300);
             await Still("back-panel");
             foreach (var (n, name) in new[] { (2, "disp"), (3, "sys"), (4, "set") })
             {
-                for (int i = 0; i < 6; i++) { Move(Direction.Up); await Task.Delay(120); }
-                for (int i = 0; i < n; i++) { Move(Direction.Down); await Task.Delay(200); }
-                Activate(); await Task.Delay(1200);
+                if (!LsOpenNow) break;
+                await Open(n); await Task.Delay(1300);
                 await Still(name);
-                Move(Direction.Down); await Task.Delay(400); Move(Direction.Down); await Task.Delay(400);
+                Move(Direction.Right); await Task.Delay(400); Move(Direction.Down); await Task.Delay(400); Move(Direction.Down); await Task.Delay(400);
                 await Still(name + "-focus");
-                for (int i = 0; i < 4; i++) { Back(); await Task.Delay(500); if (LsOpenNow) break; }
-                await Task.Delay(600);
+                if (!await ToPanel()) break;
             }
+            if (!LsOpenNow) throw new InvalidOperationException("lost the panel");
             await Rec("close", () => { PadView(); return Task.CompletedTask; }, 500);
             await Rec("menu", () => { ToggleControlCenter(); return Task.CompletedTask; }, 700);
             await Still("menu");

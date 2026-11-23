@@ -1153,6 +1153,7 @@ public sealed partial class WallStage
     private void PaintSt()
     {
         if (_st == null) return;
+        if (CpPaint()) return;   // 从左侧栏进来：Cocoon 样式（WallStage.CocoonPages.cs）
         var stSw = System.Diagnostics.Stopwatch.StartNew();
         float k = _ccK, raster = k * Chrome.Dpi;
         float h = RowsHeight(_stRows), vh = PerfViewH;
@@ -1181,11 +1182,9 @@ public sealed partial class WallStage
         if (_stZone == 0)
         {
             float top = PerfSecH + _stCat * StCatH;
-            if (LtFocus(_stLeft, StGutter - 18, top + 2, lw - 10 + 18, StCatH - 4, true)) navFx.Hide(false);
-            else navFx.To(StGutter - 18, top + 2, lw - 10 + 18, StCatH - 4, 12, k, false);
+            navFx.To(StGutter - 18, top + 2, lw - 10 + 18, StCatH - 4, 12, k, false);
         }
-        else { navFx.Hide(); LtFocus(_stLeft, 0, 0, 0, 0, false); }
-        LtCard(_st, 1, StRightX - 4, PerfTop - 22, StRightW + 30, PerfViewH + 44);
+        else navFx.Hide();
         PaintGsOverlay(k, raster);
         if (stSw.ElapsedMilliseconds > 40) Log.Info($"settings paint {stSw.ElapsedMilliseconds}ms (cat {_stCat}, {_stRows.Count} rows, {h:F0}px)");
     }
