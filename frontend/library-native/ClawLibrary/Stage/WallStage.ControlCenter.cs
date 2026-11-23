@@ -41,7 +41,9 @@ public sealed partial class WallStage
     private const double CcScrollMs = 350, CcCloseMs = 280;
     private static readonly Bezier CcScrollEase = new(0.42f, 0f, 0.58f, 1f);
     private static readonly Bezier CcCloseEase = new(0.4f, 0f, 0.2f, 1f);
-    private static readonly Color CcText = Gfx.Rgba(0xf4, 0xf4, 0xf5);
+    private static readonly Color CcWhite = Gfx.Rgba(0xf4, 0xf4, 0xf5);
+    /// <summary>控制中心的字色：平时白字；从左侧栏进的浅色页面（_ccLight）是墨色。</summary>
+    private Color CcText => _ccLight ? LtInk : CcWhite;
     private static readonly Color CcSecondary = Gfx.Rgba(0x71, 0x71, 0x7a);
     private const string CcIconFont = "Segoe Fluent Icons";
     private const string CcMonoFont = "Cascadia Mono";
@@ -312,6 +314,8 @@ public sealed partial class WallStage
     private void HideControlCenter()
     {
         if (_cc == null) return;
+        _ccLight = false;
+        LtApplyBg();
         ClosePerf(instant: true);
         CloseGamepad(instant: true);
         CloseDisplay(instant: true);

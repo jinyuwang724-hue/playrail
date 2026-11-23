@@ -397,8 +397,8 @@ public sealed partial class WallStage
     /// <summary>SteamOS 式的焦点：控件外面一圈柔和的白光（两层渐淡），不画硬边框。</summary>
     private static void ObGlow(CanvasDrawingSession ds, float x, float y, float w, float h, float r)
     {
-        ds.DrawRoundedRectangle(x - 8, y - 8, w + 16, h + 16, r + 8, r + 8, Gfx.WithAlpha(CcText, 0.07), 10);
-        ds.DrawRoundedRectangle(x - 3.5f, y - 3.5f, w + 7, h + 7, r + 3.5f, r + 3.5f, Gfx.WithAlpha(CcText, 0.22), 4);
+        ds.DrawRoundedRectangle(x - 8, y - 8, w + 16, h + 16, r + 8, r + 8, Gfx.WithAlpha(CcWhite, 0.07), 10);
+        ds.DrawRoundedRectangle(x - 3.5f, y - 3.5f, w + 7, h + 7, r + 3.5f, r + 3.5f, Gfx.WithAlpha(CcWhite, 0.22), 4);
     }
 
     /// <summary>

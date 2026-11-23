@@ -1181,9 +1181,11 @@ public sealed partial class WallStage
         if (_stZone == 0)
         {
             float top = PerfSecH + _stCat * StCatH;
-            navFx.To(StGutter - 18, top + 2, lw - 10 + 18, StCatH - 4, 12, k, false);
+            if (LtFocus(_stLeft, StGutter - 18, top + 2, lw - 10 + 18, StCatH - 4, true)) navFx.Hide(false);
+            else navFx.To(StGutter - 18, top + 2, lw - 10 + 18, StCatH - 4, 12, k, false);
         }
-        else navFx.Hide();
+        else { navFx.Hide(); LtFocus(_stLeft, 0, 0, 0, 0, false); }
+        LtCard(_st, 1, StRightX - 4, PerfTop - 22, StRightW + 30, PerfViewH + 44);
         PaintGsOverlay(k, raster);
         if (stSw.ElapsedMilliseconds > 40) Log.Info($"settings paint {stSw.ElapsedMilliseconds}ms (cat {_stCat}, {_stRows.Count} rows, {h:F0}px)");
     }

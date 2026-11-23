@@ -374,6 +374,8 @@ public sealed partial class WallStage
         CcSet(_dsLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintDsLeft(ds, vh)));
         _dsLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _dsLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
+        LtCard(_ds, 0, PerfLeftX - 22, PerfTop - 22, PerfLeftW + 44, PerfViewH + 44);
+        LtCard(_ds, 1, PerfRightX - 4, PerfTop - 22, PerfRightW + 30, PerfViewH + 44);
     }
 
     /// <summary>

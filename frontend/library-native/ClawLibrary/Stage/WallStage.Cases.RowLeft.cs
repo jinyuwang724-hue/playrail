@@ -1,9 +1,9 @@
 // 「单行」首页的左侧栏 = 控制中心（11-24 jinyu 定稿，画布「控制中心 · 全新设计」第三轮）。
 // 照 jinyu 录的 Cocoon 侧栏视频量的尺寸和节奏（只取数值和行为，没有用 Cocoon 的代码或素材）：
 //   面板贴左、上、下三边，宽 672（屏宽 35 %），只有右边两角圆角；行数均分整个高度，行间浅分隔线。
-//   行尾记号：⊙ = 打开全屏页，▸ = 在侧栏里换一层（电源）。
+//   行尾记号 ⊙ = 打开全屏页（11-24 jinyu：电源项和它的子列表不要）。
 //   View 打开：面板从左滑入 200 ms，首页压暗 + 组件层模糊；各行从上到下依次淡入右移 14 px（间隔 55 ms），
-//   全部到位后焦点框浮现（按下到落定约 0.6 s）。换一层：旧行淡掉，新列表同样逐行进场。
+//   全部到位后焦点框浮现（按下到落定约 0.6 s）。
 //   进全屏页：侧栏滑出，游戏库淡出、页面进场；页面里按 B 退回侧栏（焦点停在刚才那一项），再按 B 回首页。
 using System.Numerics;
 using ClawLibrary.Data;
@@ -26,12 +26,10 @@ public sealed partial class WallStage
     private static readonly Color LsScrim = Color.FromArgb(140, 24, 24, 28);
     private static readonly Color LsSep = Color.FromArgb(255, 0xE6, 0xE7, 0xEA), LsGrey = Color.FromArgb(255, 0x8E, 0x90, 0x98);
 
-    private static readonly (string Id, string Label, bool Page)[] LsMain =
+    private static readonly (string Id, string Label)[] LsMain =
     {
-        ("perf", "性能", true), ("pad", "手柄", true), ("disp", "显示与声音", true), ("sys", "系统", true),
-        ("set", "设置", true), ("shot", "相册", true), ("pwr", "电源", false),
+        ("perf", "性能"), ("pad", "手柄"), ("disp", "显示与声音"), ("sys", "系统"), ("set", "设置"), ("shot", "相册"),
     };
-    private static readonly (string Id, string Label)[] LsPower = { ("sleep", "睡眠"), ("hibernate", "休眠"), ("restart", "重启"), ("shutdown", "关机") };
 
     private sealed class LsState
     {
@@ -40,9 +38,7 @@ public sealed partial class WallStage
         public CurSet Cur = null!;
         public required CsPage Page;
         public readonly List<(SpriteVisual V, CompositionDrawingSurface S)> Rows = new();
-        public bool Sub;
-        public int Focus, SubFocus;
-        public string? Armed;
+        public int Focus;
         public bool Open = true;
         public int Gen;
     }
@@ -53,8 +49,7 @@ public sealed partial class WallStage
     private (uint Id, string What, double X0, double Y0)? _lsTouch;
 
     private bool LsOpenNow => _ls is { Open: true };
-    private int LsCount(LsState ls) => ls.Sub ? LsPower.Length : LsMain.Length;
-    private float LsRowH(LsState ls) => CsH / LsCount(ls);
+    private static float LsRowH => CsH / LsMain.Length;
 
     // ---------------- 入口 ----------------
 
@@ -182,8 +177,8 @@ public sealed partial class WallStage
     {
         foreach (var r in ls.Rows) { ls.List.Children.Remove(r.V); r.S.Dispose(); r.V.Dispose(); }
         ls.Rows.Clear();
-        int n = LsCount(ls);
-        float h = LsRowH(ls);
+        int n = LsMain.Length;
+        float h = LsRowH;
         for (int i = 0; i < n; i++)
         {
             var v = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
@@ -200,21 +195,15 @@ public sealed partial class WallStage
     private void LsPaintRow(LsState ls, int i)
     {
         var (_, s) = ls.Rows[i];
-        float h = LsRowH(ls), cy = h / 2;
-        string id, label;
-        bool page = false, sub = false;
-        if (ls.Sub) { (id, label) = LsPower[i]; }
-        else { (id, label, page) = LsMain[i]; sub = !page; }
-        bool armed = ls.Sub && ls.Armed == id;
-        if (armed) label = "再按一次" + label;
+        float h = LsRowH, cy = h / 2;
+        var (id, label) = LsMain[i];
         using var ds = CanvasComposition.CreateDrawingSession(s);
         ds.Clear(Colors.Transparent);
         ds.Transform = Matrix3x2.CreateScale(CsRaster);
         ds.Antialiasing = CanvasAntialiasing.Antialiased;
-        LsIcon(ds, id, 74, cy, armed);
+        LsIcon(ds, id, 74, cy);
         using (var f = new CanvasTextFormat { FontFamily = RmFont(label), FontSize = 36, FontWeight = RsWt(label, 600), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
-            ds.DrawText(label, new Windows.Foundation.Rect(134, 0, 440, h), armed ? RmRed : RmInk, f);
-        if (page)
+            ds.DrawText(label, new Windows.Foundation.Rect(134, 0, 440, h), RmInk, f);
         {
             // ⊙：灰圆底 + 白色三角（打开全屏页）
             ds.FillCircle(612, cy, 17, LsGrey);
@@ -223,23 +212,14 @@ public sealed partial class WallStage
             using var tri = CanvasGeometry.CreatePath(pb);
             ds.FillGeometry(tri, Color.FromArgb(255, 0xF4, 0xF4, 0xF6));
         }
-        else if (sub)
-        {
-            // ▸：在侧栏里换一层
-            using var pb = new CanvasPathBuilder(ds.Device);
-            pb.BeginFigure(606, cy - 9); pb.AddLine(618, cy); pb.AddLine(606, cy + 9); pb.EndFigure(CanvasFigureLoop.Closed);
-            using var tri = CanvasGeometry.CreatePath(pb);
-            ds.FillGeometry(tri, RmInk);
-        }
-        if (i < LsCount(ls) - 1) ds.FillRectangle(0, h - 3, LsW, 3, LsSep);
+        if (i < LsMain.Length - 1) ds.FillRectangle(0, h - 3, LsW, 3, LsSep);
     }
 
-    /// <summary>行首的贴纸图标：主题色渐变填充 + 白描边（同游戏菜单 RmIcon 的画法）；确认中的电源项是红色。</summary>
-    private void LsIcon(CanvasDrawingSession ds, string id, float cx, float cy, bool danger)
+    /// <summary>行首的贴纸图标：主题色渐变填充 + 白描边（同游戏菜单 RmIcon 的画法）。</summary>
+    private void LsIcon(CanvasDrawingSession ds, string id, float cx, float cy)
     {
         var dev = ds.Device;
-        using var fill = danger ? new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xFF, 0x7A, 0x84), RmRed) { StartPoint = new Vector2(0, cy - 24), EndPoint = new Vector2(0, cy + 24) }
-                                : new CanvasLinearGradientBrush(dev, RwC1, RwC2) { StartPoint = new Vector2(0, cy - 24), EndPoint = new Vector2(0, cy + 24) };
+        using var fill = new CanvasLinearGradientBrush(dev, RwC1, RwC2) { StartPoint = new Vector2(0, cy - 24), EndPoint = new Vector2(0, cy + 24) };
         using var geo = LsIconGeo(dev, id).Transform(Matrix3x2.CreateTranslation(cx, cy));
         RwSticker(ds, geo, 9);
         ds.FillGeometry(geo, fill);
@@ -255,14 +235,6 @@ public sealed partial class WallStage
         for (int k = 2; k < xy.Length; k += 2) pb.AddLine(xy[k], xy[k + 1]);
         pb.EndFigure(CanvasFigureLoop.Closed);
         return CanvasGeometry.CreatePath(pb);
-    }
-
-    /// <summary>电源符号：开口朝上的圆环 + 竖线。</summary>
-    private static CanvasGeometry LsPowerGeo(ICanvasResourceCreator dev)
-    {
-        var ring = CanvasGeometry.CreateCircle(dev, 0, 2, 19).Stroke(7);
-        var ringCut = LsCut(ring, LsPoly(dev, 0, 2, -14, -30, 14, -30));
-        return LsUnion(ringCut, CanvasGeometry.CreateRoundedRectangle(dev, -3.5f, -24, 7, 25, 3.5f, 3.5f));
     }
 
     /// <summary>图标形状（以 0,0 为中心、约 48 × 48）。</summary>
@@ -302,24 +274,12 @@ public sealed partial class WallStage
                     g = LsUnion(g, CanvasGeometry.CreateRoundedRectangle(dev, -5, -24, 10, 12, 3, 3).Transform(Matrix3x2.CreateRotation(k * MathF.PI / 4)));
                 return LsCut(g, CanvasGeometry.CreateCircle(dev, 0, 0, 7));
             }
-            case "shot":   // 相册：相框挖出山和太阳
+            default:   // shot：相册，相框挖出山和太阳
             {
                 var g = CanvasGeometry.CreateRoundedRectangle(dev, -24, -18, 48, 36, 8, 8);
                 g = LsCut(g, LsPoly(dev, -17, 12, -5, -3, 4, 8, 10, 2, 18, 12));
                 return LsCut(g, CanvasGeometry.CreateCircle(dev, 9, -7, 4.5f));
             }
-            case "sleep":   // 月亮
-                return LsCut(CanvasGeometry.CreateCircle(dev, 0, 0, 20), CanvasGeometry.CreateCircle(dev, 10, -8, 16));
-            case "hibernate":   // 月亮 + 一颗星
-                return LsUnion(LsCut(CanvasGeometry.CreateCircle(dev, -3, 3, 18), CanvasGeometry.CreateCircle(dev, 7, -5, 14)), CanvasGeometry.CreateCircle(dev, 15, -15, 4.5f));
-            case "restart":   // 环形箭头
-            {
-                var ring = CanvasGeometry.CreateCircle(dev, 0, 0, 18).Stroke(7);
-                var cut = LsCut(ring, LsPoly(dev, 0, 0, 30, -30, 30, -4));
-                return LsUnion(cut, LsPoly(dev, 8, -25, 26, -15, 10, -6));
-            }
-            default:   // pwr / shutdown
-                return LsPowerGeo(dev);
         }
     }
 
@@ -327,91 +287,35 @@ public sealed partial class WallStage
 
     private void LsFocus(LsState ls, bool move)
     {
-        int i = ls.Sub ? ls.SubFocus : ls.Focus;
-        float h = LsRowH(ls);
+        int i = ls.Focus;
+        float h = LsRowH;
         CurTo(ls.Cur, 16, i * h + 16, LsW - 32, h - 32, 8, 34, move);
     }
 
     private void LsMove(Direction dir)
     {
         if (_ls is not { Open: true } ls) { Cue(Sfx.None); return; }
-        if (dir == Direction.Left && ls.Sub) { Cue(Sfx.Back); LsSubLeave(ls); return; }
         if (dir == Direction.Right) { LsActivate(); return; }
         if (dir == Direction.Left) { Cue(Sfx.Bump, pan: 0.2f); return; }
-        int d = dir == Direction.Up ? -1 : 1, n = LsCount(ls), cur = ls.Sub ? ls.SubFocus : ls.Focus, to = cur + d;
+        int d = dir == Direction.Up ? -1 : 1, n = LsMain.Length, to = ls.Focus + d;
         if (to < 0 || to >= n) { Cue(Sfx.Bump, pan: 0.5f); return; }
         CuePan(0.3f);
-        if (ls.Sub) { ls.SubFocus = to; if (ls.Armed != null) { int a = Array.FindIndex(LsPower, e => e.Id == ls.Armed); ls.Armed = null; if (a >= 0) LsPaintRow(ls, a); } }
-        else ls.Focus = to;
+        ls.Focus = to;
         LsFocus(ls, move: true);
     }
 
     private void LsActivate()
     {
         if (_ls is not { Open: true } ls) { Cue(Sfx.None); return; }
-        if (!ls.Sub)
-        {
-            var (id, _, page) = LsMain[ls.Focus];
-            if (!page) { Cue(Sfx.MenuIn); LsSubEnter(ls); return; }
-            Cue(Sfx.ModalShow);
-            LsGo(ls, id);
-            return;
-        }
-        var (pid, _) = LsPower[ls.SubFocus];
-        if (pid != "sleep" && ls.Armed != pid)
-        {
-            int old = ls.Armed == null ? -1 : Array.FindIndex(LsPower, e => e.Id == ls.Armed);
-            ls.Armed = pid;
-            Cue(Sfx.ModalShow);
-            if (old >= 0) LsPaintRow(ls, old);
-            LsPaintRow(ls, ls.SubFocus);
-            return;
-        }
-        Cue(Sfx.Activate);
-        Log.Info($"left panel power: {pid}");
-        LsClose(instant: true);
-        if (Program.Args.Contains("--power-dry")) return;
-        nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);
-        After(300, () =>
-        {
-            switch (pid)
-            {
-                case "sleep": SystemInfo.Sleep(hwnd); break;
-                case "hibernate": SystemInfo.Hibernate(); break;
-                case "restart": _ = CcRequestAnimatedPower("restart"); break;
-                case "shutdown": _ = CcRequestAnimatedPower("shutdown"); break;
-            }
-        });
+        Cue(Sfx.ModalShow);
+        LsGo(ls, LsMain[ls.Focus].Id);
     }
 
     private void LsBack()
     {
-        if (_ls is not { Open: true } ls) return;
-        if (ls.Sub) { Cue(Sfx.Back); LsSubLeave(ls); return; }
+        if (_ls is not { Open: true }) return;
         LsClose();
     }
-
-    /// <summary>换一层：旧行淡掉（60 ms），新列表逐行进场，焦点框等进场完再落到当前项上。</summary>
-    private void LsSwap(LsState ls, bool sub)
-    {
-        CurShow(ls.Cur, false, 50);
-        int gen = ++ls.Gen;
-        foreach (var r in ls.Rows) r.V.StartAnimation("Opacity", CsS(0, 60, Bezier.EaseOut));
-        After(Reduced ? 1 : 70, () =>
-        {
-            if (_ls != ls || ls.Gen != gen || !ls.Open) return;
-            ls.Sub = sub;
-            ls.Armed = null;
-            LsBuildRows(ls);
-            LsFocus(ls, move: false);
-            if (Reduced) { CurShow(ls.Cur, true, 1); return; }
-            double last = LsStagger(ls, 0);
-            CurShow(ls.Cur, true, 160, last);
-        });
-    }
-
-    private void LsSubEnter(LsState ls) { ls.SubFocus = 0; LsSwap(ls, true); }
-    private void LsSubLeave(LsState ls) => LsSwap(ls, false);
 
     // ---------------- 全屏页 ----------------
 
@@ -420,7 +324,9 @@ public sealed partial class WallStage
     {
         Log.Info($"left panel → {id}");
         LsClose(instant: false);
+        _ccLight = true;   // 浅色皮（WallStage.LightPages.cs）
         OpenControlCenter(quiet: true);
+        LtApplyBg();
         _lsFrom = id;
         switch (id)
         {
@@ -492,11 +398,11 @@ public sealed partial class WallStage
             if (t.X0 - x > 80) WithCue(Sfx.None, () => LsClose());   // 向左划 = 收起
             return true;
         }
-        int i = (int)Math.Floor(y / LsRowH(ls));
-        if (i < 0 || i >= LsCount(ls)) return true;
+        int i = (int)Math.Floor(y / LsRowH);
+        if (i < 0 || i >= LsMain.Length) return true;
         WithCue(Sfx.Nav, () =>
         {
-            if (ls.Sub) ls.SubFocus = i; else ls.Focus = i;
+            ls.Focus = i;
             LsFocus(ls, move: true);
             LsActivate();
         });

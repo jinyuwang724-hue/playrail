@@ -52,7 +52,7 @@ public sealed partial class WallStage
     private static readonly string[] PowerModes = { "autotdp", "auto", "manual" };
     private static readonly string[] PowerModeNames = { "Auto", "按电源", "手动" };
     /// <summary>强调色跟着背景的主题色走（当前游戏封面的代表色），背景还没取到色时用 folia 的橙。</summary>
-    private Color PerfAccent => FixedAccent ?? _ccBack?.Accent ?? Gfx.Rgba(0xfd, 0x8a, 0x5a);
+    private Color PerfAccent => _ccLight ? LtAccent : FixedAccent ?? _ccBack?.Accent ?? Gfx.Rgba(0xfd, 0x8a, 0x5a);
 
     private AgentClient? _agentClient;
     private AgentClient? _agent
@@ -523,6 +523,8 @@ public sealed partial class WallStage
         CcSet(_perfLeft, CcDraw(PerfLeftW, vh, raster, ds => PaintPerfLeft(ds, vh)));
         _perfLeft.Size = new Vector2(PerfLeftW * k, vh * k);
         _perfLeft.Offset = new Vector3(PerfLeftX * k, PerfTop * k, 0);
+        LtCard(_perf, 0, PerfLeftX - 22, PerfTop - 22, PerfLeftW + 44, PerfViewH + 44);
+        LtCard(_perf, 1, PerfRightX - 4, PerfTop - 22, PerfRightW + 30, PerfViewH + 44);
     }
 
     /// <summary>
@@ -647,7 +649,7 @@ public sealed partial class WallStage
                     x -= width;
                     float textX = x + (width - widths[j]) / 2;
                     bool on = j == r.Choice;
-                    var col = on ? (f ? fg : Gfx.WithAlpha(fg, 0.92)) : Gfx.WithAlpha(fg, 0.38);
+                    var col = on ? (_ccLight && !ink ? PerfAccent : f ? fg : Gfx.WithAlpha(fg, 0.92)) : Gfx.WithAlpha(fg, 0.38);
                     PText(ds, r.Choices[j], fui, 17, Gfx.WithAlpha(col, a), textX, cy, widths[j] + 4);
                     if (on) ds.FillRectangle(textX, cy + 13, widths[j], 2, Gfx.WithAlpha(col, a));
                     targets?.Add(new(i, SettingsTargetKind.Choice, x, y, width, PerfRowH, j));
@@ -816,7 +818,7 @@ public sealed partial class WallStage
             }
             else
             {
-                ds.FillCircle(px, py, 4, Theme.Bg);
+                ds.FillCircle(px, py, 4, _ccLight ? Microsoft.UI.Colors.White : Theme.Bg);
                 ds.DrawCircle(px, py, 4, Gfx.WithAlpha(CcText, alphaCurve), 1.6f);
             }
         }

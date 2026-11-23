@@ -1,4 +1,4 @@
-// 左侧栏的录屏自测（--state=recleft）：View 打开、上下走、电源子列表（只按一次，不会真的关机）、进性能页再退回侧栏、关闭、≡ 开游戏菜单。
+// 左侧栏的录屏自测（--state=recleft）：View 打开、上下走、进性能 / 显示与声音 / 系统 / 设置（浅色皮）再退回侧栏、关闭、≡ 开游戏菜单。
 // 帧存到 %LOCALAPPDATA%\ClawLibrary\rec\left-*。
 using ClawLibrary.Engine;
 
@@ -36,16 +36,24 @@ public sealed partial class WallStage
             await Still("home");
             await Rec("open", () => { PadView(); return Task.CompletedTask; }, 900);
             await Still("panel");
-            await Rec("rows", () => Keys((Direction.Down, 300), (Direction.Down, 300), (Direction.Down, 300), (Direction.Up, 300)), 400);
-            for (int i = 0; i < 6; i++) { Move(Direction.Down); await Task.Delay(180); }
-            await Rec("sub", async () => { Activate(); await Task.Delay(700); await Keys((Direction.Down, 300), (Direction.Down, 300)); Activate(); }, 500);
-            await Still("sub-armed");
-            await Rec("subback", () => { Back(); return Task.CompletedTask; }, 700);
-            for (int i = 0; i < 6; i++) { Move(Direction.Up); await Task.Delay(180); }
+            await Rec("rows", () => Keys((Direction.Down, 300), (Direction.Down, 300), (Direction.Down, 300), (Direction.Up, 300), (Direction.Up, 300), (Direction.Up, 300)), 400);
             await Rec("page", () => { Activate(); return Task.CompletedTask; }, 900);
             await Still("perf");
+            await Keys((Direction.Down, 400), (Direction.Down, 400));
+            await Still("perf-focus");
             await Rec("pageback", () => { Back(); return Task.CompletedTask; }, 1000);
             await Still("back-panel");
+            foreach (var (n, name) in new[] { (2, "disp"), (3, "sys"), (4, "set") })
+            {
+                for (int i = 0; i < 6; i++) { Move(Direction.Up); await Task.Delay(120); }
+                for (int i = 0; i < n; i++) { Move(Direction.Down); await Task.Delay(200); }
+                Activate(); await Task.Delay(1200);
+                await Still(name);
+                Move(Direction.Down); await Task.Delay(400); Move(Direction.Down); await Task.Delay(400);
+                await Still(name + "-focus");
+                for (int i = 0; i < 4; i++) { Back(); await Task.Delay(500); if (LsOpenNow) break; }
+                await Task.Delay(600);
+            }
             await Rec("close", () => { PadView(); return Task.CompletedTask; }, 500);
             await Rec("menu", () => { ToggleControlCenter(); return Task.CompletedTask; }, 700);
             await Still("menu");
