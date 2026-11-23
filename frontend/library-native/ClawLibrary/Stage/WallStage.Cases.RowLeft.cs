@@ -37,7 +37,7 @@ public sealed partial class WallStage
     {
         public required ContainerVisual Root, Panel, List;
         public required SpriteVisual Scrim, Bg;
-        public required CurSet Cur;
+        public CurSet Cur = null!;
         public required CsPage Page;
         public readonly List<(SpriteVisual V, CompositionDrawingSurface S)> Rows = new();
         public bool Sub;
@@ -103,9 +103,11 @@ public sealed partial class WallStage
         list.Size = new Vector2(LsW, CsH);
         panel.Children.InsertAtTop(bg);
         panel.Children.InsertAtTop(list);
-        var ls = new LsState { Root = root, Panel = panel, List = list, Scrim = scrim, Bg = bg, Cur = CurNew(panel), Page = p, Focus = Math.Clamp(focus, 0, LsMain.Length - 1) };
+        var ls = new LsState { Root = root, Panel = panel, List = list, Scrim = scrim, Bg = bg, Cur = null!, Page = p, Focus = Math.Clamp(focus, 0, LsMain.Length - 1) };
         root.Children.InsertAtTop(scrim);
         root.Children.InsertAtTop(panel);
+        // 焦点框不放进面板的裁剪里：括号和光晕可以压到面板右边外面（视频里就是这样）
+        ls.Cur = CurNew(root);
         _cs.Root.Children.InsertAtTop(root);
         _ls = ls;
         LsBuildRows(ls);
@@ -327,7 +329,7 @@ public sealed partial class WallStage
     {
         int i = ls.Sub ? ls.SubFocus : ls.Focus;
         float h = LsRowH(ls);
-        CurTo(ls.Cur, 16, i * h + 12, LsW - 32, h - 24, 8, 34, move);
+        CurTo(ls.Cur, 16, i * h + 16, LsW - 32, h - 32, 8, 34, move);
     }
 
     private void LsMove(Direction dir)
