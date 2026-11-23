@@ -1483,6 +1483,7 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         MarkInput();
+        if (!_wsOpen && _ob == null && !_qsOpen && !_ccOpen && LsPointerDown(e, pt)) return;   // 单行首页左侧栏
         if (!_wsOpen && _ob == null && !_qsOpen && !_ccOpen && SpPointerDown(e, pt)) return;   // 单行首页右侧栏
         if (!_wsOpen && _ob == null && !_qsOpen && _ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx && !TouchNavigationHit(pt.Position.X, pt.Position.Y))
         {
@@ -1581,6 +1582,7 @@ public sealed partial class WallStage : IDisposable
             e.Handled = true;
             return;
         }
+        if (LsPointerUp(e)) return;
         if (SpPointerUp(e)) return;
         if (_edge is { } edge && edge.id == e.Pointer.PointerId)
         {
@@ -1644,6 +1646,7 @@ public sealed partial class WallStage : IDisposable
         _screensaverWakePointers.Remove(e.Pointer.PointerId);
         _pagePointer.Cancel(e.Pointer.PointerId);
         SpPointerUp(e, canceled: true);
+        LsPointerUp(e, canceled: true);
         SettingsPointerCancel(e.Pointer.PointerId);
         if (_drag?.id == e.Pointer.PointerId) _drag = null;
         if (_edge?.id == e.Pointer.PointerId) _edge = null;

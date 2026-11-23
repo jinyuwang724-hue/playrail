@@ -253,7 +253,7 @@ public sealed partial class WallStage
     private void CloseSettingsPage(bool instant = false)
     {
         if (!_stOpen || _st == null) return;
-        if (!instant) Cue(Sfx.ModalHide);
+        if (!instant) { Cue(Sfx.ModalHide); LsPageClosed(); }
         if (_agOpen) { _agOpen = false; _agDraft = null; AgHideBox(); if (_ag != null) _ag.IsVisible = false; }
         _stOpen = false;
         GsArtReset();

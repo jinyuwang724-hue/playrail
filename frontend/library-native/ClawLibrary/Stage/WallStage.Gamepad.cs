@@ -178,7 +178,7 @@ public sealed partial class WallStage
     private void CloseGamepad(bool instant = false)
     {
         if (!_gpOpen || _gp == null) return;
-        if (!instant) Cue(Sfx.ModalHide);
+        if (!instant) { Cue(Sfx.ModalHide); LsPageClosed(); }
         _gpOpen = false;
         SettingsResetPointer();
         _gpEditing = false;

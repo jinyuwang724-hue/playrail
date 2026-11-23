@@ -66,7 +66,7 @@ public sealed partial class WallStage
     private void CloseDisplay(bool instant = false)
     {
         if (!_dsOpen || _ds == null) return;
-        if (!instant) Cue(Sfx.ModalHide);
+        if (!instant) { Cue(Sfx.ModalHide); LsPageClosed(); }
         _dsOpen = false;
         SettingsResetPointer();
         _dsTimer?.Stop();

@@ -68,7 +68,7 @@ public sealed partial class WallStage
         /// <summary>展开着的下拉是第几个选项行（-1 = 没有），焦点在哪个选项、向上还是向下展开。</summary>
         public int Drop_ = -1, DropSel;
         public bool DropUp;
-        public float CurW, CurH, CurR;
+        public CurSet? CurS;
         public CompositionDrawingSurface? StatusSurf, StaticSurf, PwTextSurf, PwChevSurf, SubSurf, DropSurf;
         public readonly Dictionary<string, (SpriteVisual Off, SpriteVisual On, CompositionDrawingSurface SOff, CompositionDrawingSurface SOn)> Tiles = new();
         public readonly SpriteVisual[] Knob = new SpriteVisual[2], Fill_ = new SpriteVisual[2];
@@ -120,6 +120,7 @@ public sealed partial class WallStage
     {
         if (_wsOpen || _qsOpen || _ob != null || _ccOpen) return;
         if (ConsumeScreensaverWake()) return;
+        if (LsOpenNow) { Cue(Sfx.Bump); return; }
         MarkInput();
         if (MorphIntercept()) return;
         if (!CsActive || _cs?.Page is not { Style: HomeStyle.Row } p || _csInsert != null || _csSearchOpen || _rm != null || _rs != null || _rq != null) return;
@@ -860,43 +861,15 @@ public sealed partial class WallStage
         foreach (var v in SpCursorVis(sp)) { v.StopAnimation("Opacity"); v.StartAnimation("Opacity", CsS(on ? 1 : 0, Math.Max(1, ms), Bezier.EaseOut, delay)); }
     }
 
-    private readonly Dictionary<string, (CompositionDrawingSurface Glow, CompositionDrawingSurface Line, CompositionDrawingSurface Rim, float Raster, CompositionBrush L1, CompositionBrush L2)> _spCurCache = new();
-
-    /// <summary>
-    /// 括号到一个方框：c 样式外扩 12、圆角 = 高的一半（圆开关上是四段弧，滑块行两端弯成半圆）；row 外扩 8、圆角 42；opt 外扩 8、圆角 30。
-    /// 尺寸变了按新尺寸重画，从旧大小弹过去（同二级页 RsCursorTo）；尺寸不变时位置弹簧 + 橡皮筋（同首页 / 二级页）。
-    /// </summary>
+    /// <summary>括号到一个方框：c 样式外扩 12、圆角 = 高的一半；row 外扩 8、圆角 42；opt 外扩 8、圆角 30。实现在共用的 CurTo（WallStage.Cursor.cs）。</summary>
     private void SpCursorRect(SpState sp, float x, float y, float w, float h, string kind, bool move)
     {
         float pad = kind == "c" ? 12 : 8;
-        float W = w + pad * 2, H = h + pad * 2, r = kind == "c" ? H / 2 : kind == "opt" ? 30 : 42;
-        float sw = W + RmCurPad * 2, sh = H + RmCurPad * 2;
-        var to = new Vector3(x + w / 2 - sw / 2, y + h / 2 - sh / 2, 0);
-        bool resize = MathF.Abs(sp.CurW - W) > 0.5f || MathF.Abs(sp.CurH - H) > 0.5f || MathF.Abs(sp.CurR - r) > 0.5f;
-        if (resize)
-        {
-            float ow = sp.CurW, oh = sp.CurH;
-            var oldCenter = new Vector3(sp.Glow.Offset.X + (ow + RmCurPad * 2) / 2, sp.Glow.Offset.Y + (oh + RmCurPad * 2) / 2, 0);
-            SpPaintCursor(sp, W, H, r);
-            foreach (var v in SpCursorVis(sp))
-            {
-                v.StopAnimation("Offset");
-                v.Offset = ow > 0 ? oldCenter - new Vector3(sw / 2, sh / 2, 0) : to;
-                if (move && !Reduced && ow > 0)
-                {
-                    v.Scale = new Vector3((ow + RmCurPad * 2) / sw, (oh + RmCurPad * 2) / sh, 1);
-                    v.StartAnimation("Scale", RwSpring(Vector3.One));
-                }
-                else { v.StopAnimation("Scale"); v.Scale = Vector3.One; }
-            }
-        }
-        float dx = to.X - sp.Glow.Offset.X, dy = to.Y - sp.Glow.Offset.Y;
-        foreach (var v in SpCursorVis(sp))
-        {
-            if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else RwJump(v, to);
-            if (move && !Reduced && !resize) SpStretch(v, dx, dy, W, H);
-        }
+        float r = kind == "c" ? (h + pad * 2) / 2 : kind == "opt" ? 30 : 42;
+        CurTo(SpCur(sp), x, y, w, h, pad, r, move);
     }
+
+    private CurSet SpCur(SpState sp) => sp.CurS ??= new CurSet { Glow = sp.Glow, Line = sp.Line, Line2 = sp.Line2, Rim = sp.Rim };
 
     /// <summary>橡皮筋：沿移动方向先拉长再缩回（同二级页 RsStretch，横向移动拉宽）。</summary>
     private void SpStretch(Visual v, float dx, float dy, float w, float h)
@@ -935,54 +908,6 @@ public sealed partial class WallStage
             }
         }
         return RwBracketPath(dev, segs);
-    }
-
-    private void SpPaintCursor(SpState sp, float W, float H, float r)
-    {
-        sp.CurW = W; sp.CurH = H; sp.CurR = r;
-        float R = CsRaster, sw = W + RmCurPad * 2, sh = H + RmCurPad * 2;
-        string key = $"{W:0.#}x{H:0.#}r{r:0.#}";
-        if (!_spCurCache.TryGetValue(key, out var c) || c.Raster != R)
-        {
-            int pw = (int)Math.Ceiling(sw * R), ph = (int)Math.Ceiling(sh * R);
-            var dev = G.Device;
-            using var path = SpBracketPath(dev, W, H, r, RmCurPad);
-            var glow = G.Surface(pw, ph);
-            using (var ds = CanvasComposition.CreateDrawingSession(glow))
-            {
-                ds.Clear(Colors.Transparent);
-                using var cl = new CanvasCommandList(ds);
-                using (var s = cl.CreateDrawingSession()) { s.Transform = Matrix3x2.CreateScale(R); s.DrawGeometry(path, RwC2, RwSw * 2, RwRoundStroke); }
-                using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 7 * RwDp * R / 2, BorderMode = EffectBorderMode.Soft };
-                ds.DrawImage(blur);
-            }
-            var rim = G.Surface(pw, ph);
-            using (var ds = CanvasComposition.CreateDrawingSession(rim))
-            {
-                ds.Clear(Colors.Transparent);
-                ds.Transform = Matrix3x2.CreateScale(R);
-                using var outer = path.Stroke(RwSw + 2 * RwDp, RwRoundStroke);
-                using var inner = path.Stroke(MathF.Max(0.1f, RwSw - 2 * RwDp), RwRoundStroke);
-                using var ring = outer.CombineWith(inner, Matrix3x2.Identity, CanvasGeometryCombine.Exclude);
-                ds.FillGeometry(ring, Color.FromArgb(102, 0xfa, 0xfa, 0xfa));
-            }
-            var line = G.Surface(pw, ph);
-            using (var ds = CanvasComposition.CreateDrawingSession(line))
-            {
-                ds.Clear(Colors.Transparent);
-                ds.Transform = Matrix3x2.CreateScale(R);
-                ds.DrawGeometry(path, Colors.White, RwSw, RwRoundStroke);
-            }
-            c = (glow, line, rim, R, RsPerimFlow(line, W, H, r, right: false), RsPerimFlow(line, W, H, r, right: true));
-            _spCurCache[key] = c;
-        }
-        ((CompositionSurfaceBrush)sp.Glow.Brush).Surface = c.Glow;
-        ((CompositionSurfaceBrush)sp.Rim.Brush).Surface = c.Rim;
-        sp.Line.Brush = c.L1;
-        sp.Line2.Brush = c.L2;
-        sp.Line.Clip = G.C.CreateInsetClip(0, 0, sw / 2, 0);
-        sp.Line2.Clip = G.C.CreateInsetClip(sw / 2, 0, 0, 0);
-        foreach (var v in SpCursorVis(sp)) { v.Size = new Vector2(sw, sh); v.CenterPoint = new Vector3(sw / 2, sh / 2, 0); }
     }
 
     // ---------------- 输入 ----------------

@@ -163,8 +163,10 @@ public sealed partial class WallStage
         if (_ccOpen) { CloseControlCenter(); return; }
         // 快设键按下时偶尔还带一个「菜单」：紧跟在快设后面的那个不开控制中心
         if (NowMs - _quickKeyAt < 1000) { Log.Info("menu ignored: right after the quick key"); return; }
+        if (LsMenuKey()) return;   // 单行首页：≡ = 游戏菜单（控制中心在左侧栏，View 唤出）
         _menuCcAt = NowMs;
         SpClose(instant: true);
+        LsClose(instant: true);
         OpenControlCenter();
     });
 
@@ -278,6 +280,7 @@ public sealed partial class WallStage
         if (!_wsStandalone) CloseSwitcher(instant: true);
         _stFromLibrary = false;
         _shFromLibrary = false;
+        _lsFrom = null;
         _ccOpen = false;
         int v = ++_ccVersion;
         _ccTimer?.Stop();
@@ -433,6 +436,7 @@ public sealed partial class WallStage
         if (_ob != null) return;
         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShToggleFilter(); return; }
         if (_qsOpen) return;
+        if (LsView()) return;   // 单行首页：View 开 / 关左侧栏（控制中心）
         ToggleHud();
     }
 
@@ -448,7 +452,7 @@ public sealed partial class WallStage
         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShX(); return; }
         if (_ccOpen && _wsOpen) { MarkInput(); WsCloseFocused(); return; }
         if (_qsOpen) { if (_networkKeyboard) NetworkKey("⌫"); return; }
-        if (SpOpenNow && !_ccOpen) return;   // 单行首页右侧栏开着
+        if ((SpOpenNow || LsOpenNow) && !_ccOpen) return;   // 单行首页侧栏开着
         if (!_ccOpen && _expandedKey is { } key && _tiles.TryGetValue(key, out var tile) && RunningGame(tile.Shown) is { } running)
         { _ = ForceQuitAsync(running); return; }
         if (!_ccOpen && CsActive && (_rq != null || RwQuitFocused())) return;   // 单行：焦点卡正在跑 → 退出游戏小窗

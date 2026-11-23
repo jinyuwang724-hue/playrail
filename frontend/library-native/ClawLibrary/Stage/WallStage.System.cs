@@ -75,7 +75,7 @@ public sealed partial class WallStage
     private void CloseSystem(bool instant = false)
     {
         if (!_syOpen || _sy == null) return;
-        if (!instant) Cue(Sfx.ModalHide);
+        if (!instant) { Cue(Sfx.ModalHide); LsPageClosed(); }
         _syOpen = false;
         _syUpdatesOpen = false;
         SettingsResetPointer();

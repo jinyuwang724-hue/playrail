@@ -120,7 +120,7 @@ public sealed partial class WallStage
     private void ClosePerf(bool instant = false)
     {
         if (!_perfOpen || _perf == null) return;
-        if (!instant) Cue(Sfx.ModalHide);
+        if (!instant) { Cue(Sfx.ModalHide); LsPageClosed(); }
         _perfOpen = false;
         SettingsResetPointer();
         _perfCurveEdit = false;
