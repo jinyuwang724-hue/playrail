@@ -23,7 +23,7 @@ public sealed partial class WallStage
 {
     // ---------------- 几何（首页的 1920×1200 设计单位） ----------------
     private const float CpTop = 150, CpBottom = 1186, CpLeftX = 24, CpLeftW = 584, CpListX = 636, CpListW = 1240;
-    private const float CpRowH = 112, CpRowSubH = 140, CpSep = 4, CpGap = 30, CpLabelH = 62;
+    private const float CpRowH = 112, CpRowSubH = 140, CpRowSliderH = 160, CpSep = 4, CpGap = 36;
     private static readonly Color CpAccentInk = Color.FromArgb(255, 0x7A, 0x4C, 0xFF);
 
     private sealed class CpView
@@ -74,25 +74,9 @@ public sealed partial class WallStage
             return l;
         }
         for (int i = 0; i < rows.Count; i++)
-            if (rows[i].Section) l.Add((rows[i].Title, CpCatSub(rows[i].Title), i));
+            if (rows[i].Section) l.Add((rows[i].Title, null, i));   // 11-25 jinyu：分类只显示名字，不带实时读数
         if (l.Count == 0) l.Add((CpTitle, null, -1));
         return l;
-    }
-
-    /// <summary>分类下面那行灰色读数（只在选中时显示）：取原来左栏里最要紧的一个数。</summary>
-    private string? CpCatSub(string cat)
-    {
-        try
-        {
-            switch (cat)
-            {
-                case "功耗": return Num(_perfView?["actual"]?["package"]) is double p ? $"{p:0.0} W" : null;
-                case "风扇": return Num(_perfView?["fan"]?["rpm1"]) is double r ? $"{r:0} RPM" : null;
-                case "CPU": return _cpuFreq?.Mhz is double mhz ? $"{mhz / 1000:0.00} GHz" : null;
-            }
-        }
-        catch { }
-        return null;
     }
 
     /// <summary>当前选中的分类（性能类页面：焦点行所在的分组）。</summary>
@@ -225,34 +209,22 @@ public sealed partial class WallStage
                 ds.DrawText(sub, CpLeftX + 126, y + slot * 0.5f + 6, RsSub, sf);
             }
         }
-        // 性能 / 显示与声音 / 系统：分类下面一张白卡放原来左栏的实时读数（图表、电量…），按剩下的高度画、超出的裁掉
+        // 性能 / 显示与声音 / 系统：分类下面一张白卡放实时读数（WallStage.CocoonPanels.cs）
         if (!CpSectioned) return;
         float top = CpTop + cats.Count * slot + 24, bottom = CpBottom;
         if (bottom - top < 220) return;
         using var card = CanvasGeometry.CreateRoundedRectangle(ds.Device, CpLeftX, top, CpLeftW, bottom - top, 30, 30);
         RsSoftShadow(ds, CpLeftX, top + 4, CpLeftW, bottom - top, 30, 8, 0.12f);
         ds.FillGeometry(card, Color.FromArgb(255, 0xFB, 0xFB, 0xFC));
-        using (ds.CreateLayer(1, card))
-        {
-            var t = ds.Transform;
-            float s = 1.5f, pad = 36;
-            ds.Transform = Matrix3x2.CreateScale(s) * Matrix3x2.CreateTranslation(CpLeftX + pad, top + pad) * t;
-            float hh = (bottom - top - pad * 2) / s;
-            // 原来的左栏是 348 宽（页面单位）；这里横向用满卡片
-            if (_perfOpen) PaintPerfLeft(ds, hh);
-            else if (_dsOpen) PaintDsLeft(ds, hh);
-            else if (_syOpen) PaintSyLeft(ds, hh);
-            ds.Transform = t;
-        }
+        using (ds.CreateLayer(1, card)) CpPanel(ds, CpLeftX, top, CpLeftW, bottom - top, cats[sel].Name);
         ds.DrawRoundedRectangle(CpLeftX + 0.5f, top + 0.5f, CpLeftW - 1, bottom - top - 1, 30, 30, Color.FromArgb(255, 0xEC, 0xED, 0xF0), 1);
     }
 
     /// <summary>排右列：每行的 y、高、灰色说明；遇到分组标题（设置页）留出标题高度、另起一张卡片。</summary>
-    private List<(int I, float Y, float H, string? Sub)> CpLayout(List<PerfRow> rows, List<int> vis, out List<(float Y0, float Y1, List<float> Seps)> groups, out List<(string T, float Y)> labels)
+    private List<(int I, float Y, float H, string? Sub)> CpLayout(List<PerfRow> rows, List<int> vis, out List<(float Y0, float Y1, List<float> Seps)> groups)
     {
         var lay = new List<(int, float, float, string?)>();
         groups = new();
-        labels = new();
         float y = 0;
         bool open = false;
         foreach (int i in vis)
@@ -260,13 +232,12 @@ public sealed partial class WallStage
             var r = rows[i];
             if (r.Section)
             {
+                // 11-25 jinyu：不要「开机」「打开游戏库时」这类小标题，分组之间只留一段空隙，靠卡片本身分开
                 if (open) { y += CpGap; open = false; }
-                labels.Add((r.Title, y));
-                y += CpLabelH;
                 continue;
             }
             string? sub = CpSub(r);
-            float h = sub != null ? CpRowSubH : CpRowH;
+            float h = CpIsSlider(r) ? CpRowSliderH : sub != null ? CpRowSubH : CpRowH;
             if (!open) { groups.Add((y, y + h, new List<float>())); open = true; }
             else { var g = groups[^1]; g.Seps.Add(y - CpSep); groups[^1] = (g.Y0, y + h, g.Seps); }
             lay.Add((i, y, h, sub));
@@ -277,7 +248,7 @@ public sealed partial class WallStage
 
     private void CpPaintList(CpView v, List<PerfRow> rows, List<int> vis)
     {
-        v.Lay = CpLayout(rows, vis, out var groups, out var labels);
+        v.Lay = CpLayout(rows, vis, out var groups);
         float H = v.Lay.Count == 0 ? 200 : v.Lay[^1].Y + v.Lay[^1].H;
         v.ListH = H;
         float pad = 16;
@@ -286,11 +257,6 @@ public sealed partial class WallStage
         ds.Transform = Matrix3x2.CreateTranslation(pad, pad) * Matrix3x2.CreateScale(CsRaster);
         ds.Antialiasing = CanvasAntialiasing.Antialiased;
         foreach (var (y0, y1, seps) in groups) RsPaintGroupAt(ds, 0, CpListW, y0, y1, seps);
-        foreach (var (t, y) in labels)
-        {
-            using var f = new CanvasTextFormat { FontFamily = RmFont(t), FontSize = 28, FontWeight = RsWt(t, 500), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
-            ds.DrawText(t, new Windows.Foundation.Rect(30, y, 900, CpLabelH), RsSub, f);
-        }
         if (v.Lay.Count == 0)
         {
             using var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 32, VerticalAlignment = CanvasVerticalAlignment.Center };
@@ -304,8 +270,14 @@ public sealed partial class WallStage
         float cy = y + h / 2, R = CpListW - 34, tx = 44 + r.Indent * 1.5f;
         using var layer = r.Disabled ? ds.CreateLayer(0.4f) : null;
         if (r.Changed) ds.FillCircle(24, cy, 6, CpAccentInk);
-        float right = CpIsSlider(r) ? R - 640 : CpIsPick(r) ? R - 420 : CpIsToggle(r) ? R - 150 : R - 380;
-        if (sub != null)
+        float right = CpIsSlider(r) ? R : CpIsPick(r) ? R - 420 : CpIsToggle(r) ? R - 150 : R - 380;
+        if (CpIsSlider(r))
+        {
+            // 两层（Cocoon「Highlight thickness」）：上面标题，下面「数值 − 轨道 +」；左边留给图标
+            using var tf = new CanvasTextFormat { FontFamily = RmFont(r.Title), FontSize = 36, FontWeight = RsWt(r.Title), WordWrapping = CanvasWordWrapping.NoWrap };
+            ds.DrawText(r.Title, new Windows.Foundation.Rect(tx, y + 18, R - tx, 52), RmInk, tf);
+        }
+        else if (sub != null)
         {
             using (var tf = new CanvasTextFormat { FontFamily = RmFont(r.Title), FontSize = 36, FontWeight = RsWt(r.Title), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
                 ds.DrawText(r.Title, new Windows.Foundation.Rect(tx, y + 20, right - tx, 52), RmInk, tf);
@@ -342,12 +314,13 @@ public sealed partial class WallStage
         }
         else if (CpIsSlider(r))
         {
-            // 「数值 − 轨道 +」（Cocoon 的 Highlight thickness）
+            // 下层：「数值 − 轨道 +」
             float frac = Math.Clamp((r.Number - r.Minimum) / (float)Math.Max(1, r.Maximum - r.Minimum), 0, 1);
-            float x1 = R - 70, x0 = R - 470;
-            using (var vf = new CanvasTextFormat { FontFamily = RmFont(r.Value), FontSize = 32, FontWeight = RsWt(r.Value, 500), HorizontalAlignment = CanvasHorizontalAlignment.Right, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
-                ds.DrawText(r.Value, new Windows.Foundation.Rect(R - 760, y, 200, h), RsSub, vf);
-            ds.FillRoundedRectangle(R - 542, cy - 4, 32, 8, 4, 4, RmInk);
+            var (mx, x0, x1, px) = CpSliderX(tx, R);
+            cy = y + h - 44;
+            using (var vf = new CanvasTextFormat { FontFamily = RmFont(r.Value), FontSize = 30, FontWeight = RsWt(r.Value, 500), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
+                ds.DrawText(r.Value, new Windows.Foundation.Rect(tx, cy - 24, mx - tx - 20, 48), RsSub, vf);
+            ds.FillRoundedRectangle(mx - 16, cy - 4, 32, 8, 4, 4, RmInk);
             ds.FillRoundedRectangle(x0, cy - 5, x1 - x0, 10, 5, 5, Color.FromArgb(255, 0xDC, 0xDC, 0xE3));
             if (frac > 0)
             {
@@ -358,8 +331,8 @@ public sealed partial class WallStage
             RsSoftShadow(ds, kx - 24, cy - 24 + 3, 48, 48, 24, 5, 0.3f);
             using (var kb = new CanvasLinearGradientBrush(ds.Device, Color.FromArgb(255, 0x9A, 0x9C, 0xFF), Color.FromArgb(255, 0x6F, 0x3C, 0xFF)) { StartPoint = new Vector2(kx - 16, cy - 24), EndPoint = new Vector2(kx + 16, cy + 24) })
                 ds.FillCircle(kx, cy, 24, kb);
-            ds.FillRoundedRectangle(R - 16, cy - 4, 32, 8, 4, 4, RmInk);
-            ds.FillRoundedRectangle(R - 4, cy - 16, 8, 32, 4, 4, RmInk);
+            ds.FillRoundedRectangle(px - 16, cy - 4, 32, 8, 4, 4, RmInk);
+            ds.FillRoundedRectangle(px - 4, cy - 16, 8, 32, 4, 4, RmInk);
         }
         else if (r.Numeric)
         {
@@ -373,7 +346,7 @@ public sealed partial class WallStage
         else
         {
             bool nav = r.Press != null || r.Secondary != null;
-            string v = r.Value;
+            string v = r.Value.TrimEnd('›', ' ');   // 原来值里自带的 › 不要（行尾已经有 ▸）
             if (v.Length > 0)
             {
                 using var vf = new CanvasTextFormat { FontFamily = RmFont(v), FontSize = 32, FontWeight = RsWt(v, 500), HorizontalAlignment = CanvasHorizontalAlignment.Right, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
@@ -389,6 +362,9 @@ public sealed partial class WallStage
             }
         }
     }
+
+    /// <summary>滑块下层的横向位置（列表内坐标）：− 的中心、轨道两端、+ 的中心。</summary>
+    private static (float Minus, float X0, float X1, float Plus) CpSliderX(float tx, float R) => (tx + 170, tx + 222, R - 64, R - 16);
 
     private static float CpTextW(CanvasDrawingSession ds, string s, float size)
     {
@@ -761,8 +737,9 @@ public sealed partial class WallStage
             float R = CpListX + CpListW - 34;
             if (CpIsSlider(r) && !r.Disabled)
             {
-                float x0 = R - 470, x1 = R - 70;
-                if (x >= R - 560 && x < x0 - 10) { CpStep(r, -1); return; }
+                var (smx, sx0, sx1, _) = CpSliderX(44 + r.Indent * 1.5f, CpListW - 34);
+                float x0 = CpListX + sx0, x1 = CpListX + sx1;
+                if (x >= CpListX + smx - 40 && x < x0 - 10) { CpStep(r, -1); return; }
                 if (x > x1 + 10) { CpStep(r, 1); return; }
                 if (x >= x0 - 10 && x <= x1 + 10 && r.SetNumber != null)
                 {

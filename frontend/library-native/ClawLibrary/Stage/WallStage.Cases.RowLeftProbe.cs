@@ -54,7 +54,9 @@ public sealed partial class WallStage
             if (!LsOpenNow) throw new InvalidOperationException("panel not open");
             await Rec("page", () => Open(0), 1100);
             await Still("perf");
-            await Rec("perf-cat", () => Keys((Direction.Down, 500), (Direction.Down, 500), (Direction.Up, 500), (Direction.Up, 500)), 400);
+            await Rec("perf-cat", () => Keys((Direction.Down, 500), (Direction.Down, 500)), 400);
+            await Still("perf-fan");
+            await Keys((Direction.Up, 400), (Direction.Up, 400));
             await Rec("perf-in", () => Keys((Direction.Right, 500), (Direction.Down, 500)), 400);
             await Still("perf-row");
             await Rec("pageback", async () => { await ToPanel(); }, 300);
