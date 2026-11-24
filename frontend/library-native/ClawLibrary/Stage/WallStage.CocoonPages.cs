@@ -46,7 +46,8 @@ public sealed partial class WallStage
     private int _cpDrop = -1, _cpDropSel;
     private (uint Id, double X0, double Y0, float Scroll0, bool Drag)? _cpTouch;
 
-    private bool CpActive => _ccLight && _ccOpen && (_perfOpen || _dsOpen || _syOpen || _stOpen) && !GsOverlay;
+    // 添加 / 编辑本地游戏页（_agOpen）是盖在设置页上的独立页面，输入归它自己
+    private bool CpActive => _ccLight && _ccOpen && (_perfOpen || _dsOpen || _syOpen || _stOpen) && !GsOverlay && !_agOpen;
     private bool CpSectioned => _perfOpen || _dsOpen || _syOpen;
     private int CpZone => _stOpen ? _stZone : _cpZone;
 
