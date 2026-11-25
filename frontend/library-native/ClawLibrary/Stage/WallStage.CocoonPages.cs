@@ -30,13 +30,16 @@ public sealed partial class WallStage
     private sealed class CpView
     {
         public required ContainerVisual Root, ListBox;
-        public required SpriteVisual Bg, Head, Left, Sel, List, Press, Toast;
+        public required SpriteVisual Bg, Head, Left, List, Press, Toast;
+        /// <summary>左列每个分类的「选中样子」，各在各的位置，换分类时交叉淡入淡出。</summary>
+        public required ContainerVisual Sel;
+        public readonly List<SpriteVisual> Items = new();
+        public readonly List<CompositionDrawingSurface> ItemS = new();
+        public int SelOn = -1;
         public required CurSet Cur;
-        public CompositionDrawingSurface? HeadS, LeftS, SelS, ListS, ToastS;
+        public CompositionDrawingSurface? HeadS, LeftS, ListS, ToastS;
         public string SelKey = "";
         public int LastCat = -1;
-        public long CatAt;
-        public bool ListPending;
         public string HeadKey = "", LeftKey = "", ListKey = "";
         public float Scroll, ListH;
         /// <summary>手指拖过列表：先不自动滚回焦点行。</summary>
@@ -48,6 +51,7 @@ public sealed partial class WallStage
     }
 
     private readonly Dictionary<ContainerVisual, CpView> _cpViews = new();
+    private CpView? _cpCompView;
     /// <summary>性能 / 显示与声音 / 系统：0 = 焦点在左列分类，1 = 在右列（设置页用它自己的 _stZone）。</summary>
     private int _cpZone;
     /// <summary>展开着的下拉：哪一行、焦点在第几个选项（-1 = 没有）。</summary>
@@ -55,7 +59,7 @@ public sealed partial class WallStage
 
     // 添加 / 编辑本地游戏页（_agOpen）是盖在设置页上的独立页面，输入归它自己
     private bool CpActive => _ccLight && _ccOpen && (_perfOpen || _dsOpen || _syOpen || _stOpen) && !GsOverlay && !_agOpen;
-    private bool CpSectioned => _perfOpen || _dsOpen || _syOpen;
+    private bool CpSectioned => _perfOpen || _dsOpen || _syOpen || _cpComp == "disp";   // 组合页两边用同一个行高，跨过去时左列不跳
     private int CpZone => _stOpen ? _stZone : _cpZone;
 
     private ContainerVisual? CpHost => _perfOpen ? _perf : _dsOpen ? _ds : _syOpen ? _sy : _stOpen ? _st : null;
@@ -64,7 +68,7 @@ public sealed partial class WallStage
     private string? _cpComp;
 
     /// <summary>页面刚打开：焦点从左列开始（Cocoon 进设置页时停在第一个分类）。</summary>
-    private void CpReset() { _cpZone = 0; _cpComp = null; _cpDrop = -1; _cpTouchMode = false; foreach (var v in _cpViews.Values) { v.Scroll = 0; v.Manual = false; v.OffsetInit = false; v.HeadKey = v.LeftKey = v.ListKey = v.SelKey = ""; v.LastCat = -1; v.Sel.IsVisible = false; v.Cur.Shown = false; foreach (var c in v.Cur.All) { c.StopAnimation("Opacity"); c.Opacity = 0; } } }
+    private void CpReset() { _cpZone = 0; _cpComp = null; _cpDrop = -1; _cpTouchMode = false; foreach (var v in _cpViews.Values) { v.Scroll = 0; v.Manual = false; v.OffsetInit = false; v.HeadKey = v.LeftKey = v.ListKey = v.SelKey = ""; v.LastCat = -1; v.SelOn = -1; v.Sel.IsVisible = false; v.Cur.Shown = false; foreach (var c in v.Cur.All) { c.StopAnimation("Opacity"); c.Opacity = 0; } } }
 
     // ---------------- 行的分类 / 种类 ----------------
 
@@ -176,7 +180,17 @@ public sealed partial class WallStage
 
     private CpView CpEnsure(ContainerVisual host)
     {
-        if (_cpViews.TryGetValue(host, out var v)) { host.Children.Remove(v.Root); host.Children.InsertAtTop(v.Root); return v; }
+        // 显示与声音（组合页）底下在显示页和设置页之间换：两边共用同一套画面（左列、选中卡、焦点框都不重来），
+        // 只把它挪到当前页面下面 —— 以前各用各的，跨过「声音与反馈 / Magpie」时焦点框重新弹出、选中卡跳一下
+        if (_cpComp == "disp" && _cpCompView is { } cv && (!_cpViews.TryGetValue(host, out var own) || own != cv))
+        {
+            if (own != null) host.Children.Remove(own.Root);
+            (cv.Root.Parent as ContainerVisual)?.Children.Remove(cv.Root);
+            host.Children.InsertAtTop(cv.Root);
+            _cpViews[host] = cv;
+            return cv;
+        }
+        if (_cpViews.TryGetValue(host, out var v)) { (v.Root.Parent as ContainerVisual)?.Children.Remove(v.Root); host.Children.InsertAtTop(v.Root); if (_cpComp == "disp") _cpCompView = v; return v; }
         SpriteVisual Sp() => G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
         var root = G.Container(relative: false);
         root.Size = new Vector2(CsW, CsH);
@@ -192,7 +206,7 @@ public sealed partial class WallStage
         // 按下反馈：列表里那一行压一层淡灰（跟着列表滚，所以放在列表精灵里）
         var press = G.Sprite(G.Solid(Color.FromArgb(18, 30, 30, 60)), relative: false);
         press.Opacity = 0;
-        v = new CpView { Root = root, ListBox = box, Bg = bg, Head = Sp(), Left = Sp(), Sel = Sp(), List = Sp(), Press = press, Toast = Sp(), Cur = null! };
+        v = new CpView { Root = root, ListBox = box, Bg = bg, Head = Sp(), Left = Sp(), Sel = G.Container(relative: false), List = Sp(), Press = press, Toast = Sp(), Cur = null! };
         box.Children.InsertAtTop(v.List);
         v.List.Children.InsertAtTop(press);
         foreach (var x in new Visual[] { bg, v.Head, v.Left, v.Sel, box }) root.Children.InsertAtTop(x);
@@ -201,6 +215,7 @@ public sealed partial class WallStage
         root.Children.InsertAtTop(v.Toast);
         host.Children.InsertAtTop(root);
         _cpViews[host] = v;
+        if (_cpComp == "disp") _cpCompView = v;
         return v;
     }
 
@@ -210,10 +225,12 @@ public sealed partial class WallStage
     /// </remarks>
     private bool CpPaint()
     {
-        foreach (var (h, cv) in _cpViews) cv.Root.IsVisible = _ccLight && h == CpHost;
+        foreach (var cv in _cpViews.Values) cv.Root.IsVisible = false;
+        if (_ccLight && CpHost is { } ch && _cpViews.TryGetValue(ch, out var shown)) shown.Root.IsVisible = true;
         if (!CpActive || CpHost is not { } host) return false;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         try { return CpPaintCore(host); }
+        catch (Exception ex) { Log.Error("cp paint", ex); throw; }
         finally { double ms = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds; if (ms > 12) Log.Info($"cp paint {ms:0} ms"); }
     }
 
@@ -232,22 +249,16 @@ public sealed partial class WallStage
         string leftKey = $"{CpTitle}|{string.Join(",", cats.Select(c => c.Name))}|{CpPanelKey(cats[cat].Name)}";
         if (leftKey != v.LeftKey) { v.LeftKey = leftKey; CpPaintLeft(v, cats, cat); }
         CpPaintSel(v, cats, cat);
-        if (cat != v.LastCat) { v.LastCat = cat; v.CatAt = NowMs; }
+        // 换了分类：照 Cocoon，右列立刻换成新分类的内容、回到顶上（不延后、不做过渡）。
+        // 以前连按时右列要停 140 ms 才重画：这段时间里焦点框和左列已经到了新分类，右列还是旧内容，看着就是错位 + 一卡
+        v.LastCat = cat;
         var vis = CpVisible(rows, cats, cat);
         string listKey = CpListKey(rows, vis);
         if (listKey != v.ListKey)
         {
-            // 连按换分类时右列先不重画，停下 140 ms 再画（不然每一步都重画整列卡片，按键就跟不上）
-            if (CpZone == 0 && v.ListKey.Length > 0 && NowMs - v.CatAt < 140)
-            {
-                if (!v.ListPending) { v.ListPending = true; After(150, () => { v.ListPending = false; if (CpActive) CpRepaint(); }); }
-            }
-            else
-            {
-                v.Lay = CpLayout(rows, vis, out var groups);
-                v.ListKey = listKey;
-                CpPaintList(v, rows, groups);
-            }
+            v.Lay = CpLayout(rows, vis, out var groups);
+            v.ListKey = listKey;
+            CpPaintList(v, rows, groups);
         }
         else v.Lay = CpLayout(rows, vis, out _);
         CpScrollAndFocus(v, rows, cats, cat);
@@ -361,33 +372,58 @@ public sealed partial class WallStage
         return lay;
     }
 
-    /// <summary>选中的分类：一张白卡 + 紫色图标和名字，单独一层，换分类时弹簧滑到新位置。</summary>
+    /// <summary>
+    /// 选中的分类（照 Cocoon 设置页左栏）：每个分类自己一张「选中样子」（白卡 + 紫色图标和名字），固定在自己的位置上，
+    /// 换分类时旧的淡出、新的淡入（Cocoon：settingsNavSelectedProgress，临界阻尼弹簧 stiffness 1500，约 150 ms），
+    /// 不滑动 —— 连按时不会出现「新名字先画在旧位置再滑过去」的错位；移动感只交给焦点框（它自己弹簧过去）。
+    /// </summary>
     private void CpPaintSel(CpView v, List<(string Name, string? Sub, int First)> cats, int sel)
     {
         if (sel < 0 || sel >= cats.Count || v.Slot <= 0) { v.Sel.IsVisible = false; return; }
-        float slot = v.Slot, pad = 30, w = CpLeftW + pad * 2, h = slot + pad * 2;
-        var to = new Vector3(CpLeftX - pad, CpTop + sel * slot - pad, 0);
-        string key = $"{cats[sel].Name}|{slot}";
+        float slot = v.Slot, pad = 30, w = CpLeftW + pad * 2, h = slot + pad * 2, R = CsRaster;
+        string key = $"{string.Join(",", cats.Select(c => c.Name))}|{slot}|{R}";
         if (key != v.SelKey)
         {
             v.SelKey = key;
-            float R = CsRaster;
+            v.Sel.Children.RemoveAll();
+            foreach (var s in v.ItemS) s.Dispose();
+            v.ItemS.Clear(); v.Items.Clear();
             int pw = (int)Math.Ceiling(w * R), ph = (int)Math.Ceiling(h * R);
-            if (v.SelS == null || (int)v.SelS.Size.Width != pw || (int)v.SelS.Size.Height != ph) { v.SelS?.Dispose(); v.SelS = G.Surface(pw, ph); ((CompositionSurfaceBrush)v.Sel.Brush).Surface = v.SelS; }
-            v.Sel.Size = new Vector2(w, h);
-            using var ds = CanvasComposition.CreateDrawingSession(v.SelS);
-            ds.Clear(Colors.Transparent);
-            ds.Transform = Matrix3x2.CreateScale(R);
-            ds.Antialiasing = CanvasAntialiasing.Antialiased;
-            CpCard(ds, pad, pad + 4, CpLeftW, slot - 8, null, MathF.Min(30, (slot - 8) / 2));
-            float cy = pad + slot / 2, k = MathF.Min(1, slot / 124);
-            CpIcon(ds, cats[sel].Name, pad + 64, cy, CpAccentInk, 0.82f * k);
-            string name = cats[sel].Name;
-            using var f = new CanvasTextFormat { FontFamily = RmFont(name), FontSize = slot >= 100 ? 38 : 32, FontWeight = RsWt(name), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
-            ds.DrawText(name, new Windows.Foundation.Rect(pad + 126, pad, CpLeftW - 150, slot), CpAccentInk, f);
+            for (int i = 0; i < cats.Count; i++)
+            {
+                var surf = G.Surface(pw, ph);
+                var sp = G.Sprite(G.C.CreateSurfaceBrush(surf), relative: false);
+                sp.Size = new Vector2(w, h);
+                sp.Offset = new Vector3(CpLeftX - pad, CpTop + i * slot - pad, 0);
+                sp.Opacity = 0;
+                using (var ds = CanvasComposition.CreateDrawingSession(surf))
+                {
+                    ds.Clear(Colors.Transparent);
+                    ds.Transform = Matrix3x2.CreateScale(R);
+                    ds.Antialiasing = CanvasAntialiasing.Antialiased;
+                    CpCard(ds, pad, pad + 4, CpLeftW, slot - 8, null, MathF.Min(30, (slot - 8) / 2));
+                    float cy = pad + slot / 2, k = MathF.Min(1, slot / 124);
+                    CpIcon(ds, cats[i].Name, pad + 64, cy, CpAccentInk, 0.82f * k);
+                    string name = cats[i].Name;
+                    using var f = new CanvasTextFormat { FontFamily = RmFont(name), FontSize = slot >= 100 ? 38 : 32, FontWeight = RsWt(name), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
+                    ds.DrawText(name, new Windows.Foundation.Rect(pad + 126, pad, CpLeftW - 150, slot), CpAccentInk, f);
+                }
+                v.Sel.Children.InsertAtTop(sp);
+                v.Items.Add(sp); v.ItemS.Add(surf);
+            }
+            v.SelOn = -1;
         }
-        if (!v.Sel.IsVisible || v.Sel.Offset == Vector3.Zero || Reduced) { v.Sel.IsVisible = true; RwJump(v.Sel, to); }
-        else if (Vector3.Distance(v.Sel.Offset, to) > 0.5f) v.Sel.StartAnimation("Offset", RwSpring(to, 900));
+        bool snap = !v.Sel.IsVisible || v.SelOn < 0 || Reduced;
+        v.Sel.IsVisible = true;
+        if (sel == v.SelOn) return;
+        for (int i = 0; i < v.Items.Count; i++)
+        {
+            float to = i == sel ? 1 : 0;
+            var it = v.Items[i];
+            if (snap) { it.StopAnimation("Opacity"); it.Opacity = to; }
+            else if (i == sel || i == v.SelOn || it.Opacity > 0.001f) it.StartAnimation("Opacity", CsS(to, 150, Bezier.EaseOut));
+        }
+        v.SelOn = sel;
     }
 
     private static float CpBaseH(PerfRow r, string? sub) => CpIsSlider(r) ? CpRowSliderH : sub != null ? CpRowSubH : CpRowH;
@@ -572,7 +608,8 @@ public sealed partial class WallStage
             if (top < target) target = top;
             target = Math.Clamp(target, 0, max);
         }
-        if (!v.OffsetInit) { v.OffsetInit = true; v.Scroll = target; v.List.Offset = new Vector3(CpListX - 16, CpTop - 16 - target, 0); }
+        // 直接写 Offset 会被还在走的滚动弹簧盖掉（上一个分类滚到一半时换分类，新内容就停在旧的滚动位置上）：用 RwJump
+        if (!v.OffsetInit) { v.OffsetInit = true; v.Scroll = target; RwJump(v.List, new Vector3(CpListX - 16, CpTop - 16 - target, 0)); }
         else if (MathF.Abs(target - v.Scroll) > 0.5f)
         {
             v.Scroll = target;
