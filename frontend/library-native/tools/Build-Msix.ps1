@@ -12,35 +12,28 @@ $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $msvc = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory | Sort-Object Name | Select-Object -Last 1
 $env:PATH = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;$($msvc.FullName)\bin\Hostx64\x64;$env:PATH"
 
-# Payload (first-run components + ClawShell for game mode) is git-ignored, so a worktree checkout has
-# almost none of it. Fill missing files from the main checkout's Payload (never overwrite or delete),
-# then refuse to package if a key file is still missing: without Payload\shell\ClawShell.exe the
-# library hides every game-mode entry (ShellMode.Available), and the first-run setup can't install.
+# Payload (first-run components) is git-ignored, so a worktree checkout has almost none of it. Fill
+# missing files from the main checkout's Payload (never overwrite or delete), then refuse to package
+# if a key file is still missing: the first-run setup can't install without them.
 $payload = [IO.Path]::GetFullPath((Join-Path $here '..\ClawLibrary\Payload'))
 $common = (& git -C $here rev-parse --path-format=absolute --git-common-dir 2>$null)
 if ($common) {
     $mainPayload = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $common) 'frontend\library-native\ClawLibrary\Payload'))
     if ($mainPayload -ne $payload -and (Test-Path -LiteralPath $mainPayload)) {
-        robocopy $mainPayload $payload /E /XC /XN /XO /NFL /NDL /NJH /NJS /NP | Out-Null
+        robocopy $mainPayload $payload /E /XC /XN /XO /XD shell /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -ge 8) { throw "payload sync from $mainPayload failed ($LASTEXITCODE)" }
         "payload: filled missing files from $mainPayload"
     }
 }
-$required = 'shell\ClawShell.exe', 'session\ClawGameSession.exe', 'Install-Components.ps1', 'pawnio\PawnIO_setup.exe',
+$required = 'session\ClawGameSession.exe', 'Install-Components.ps1', 'pawnio\PawnIO_setup.exe',
     'agent\agent.zip', 'agent\version.txt', 'fan\ClawFanService.exe', 'fan\IntelMSR.bin',
     'sleep\Install-SleepAnimation.ps1', 'sleep\app\ClawSleepAnimation.exe', 'sleep\app\enhanced-bundle.json'
 $missing = @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $payload $_)) })
 if (-not (Get-ChildItem -LiteralPath (Join-Path $payload 'widget') -Filter *.msix -ErrorAction SilentlyContinue)) { $missing += 'widget\*.msix' }
 if ($missing.Count) { throw "Payload incomplete, not packaging (run tools\Stage-OobePayload.ps1): $($missing -join ', ')" }
-# The shell launcher must be the version in native\ClawShell: 0.1.232/0.1.233 shipped a stale 1.0.1 that
-# overwrote the installed 1.0.9 (keep-explorer game mode silently gone). Program.Version is stamped as file version.
-$shellSource = [IO.Path]::GetFullPath((Join-Path $here '..\..\..\native\ClawShell\Program.cs'))
-$shellWant = [regex]::Match([IO.File]::ReadAllText($shellSource), 'const string Version = "([\d.]+)"').Groups[1].Value
-$shellHave = (Get-Item -LiteralPath (Join-Path $payload 'shell\ClawShell.exe')).VersionInfo.FileVersion
-if (-not $shellWant -or $shellHave -ne $shellWant) {
-    throw "Payload\shell\ClawShell.exe is '$shellHave' but native\ClawShell is '$shellWant'; run tools\Build-ClawShell.ps1 -Out `"$payload\shell`" -NoTests (and copy it to the main checkout's Payload)"
-}
-"shell: ClawShell $shellHave"
+# Game mode (ClawShell) was removed in 2026-11: never ship a stale shell launcher left in Payload.
+$stale = Join-Path $payload 'shell'
+if (Test-Path -LiteralPath $stale) { Remove-Item -LiteralPath $stale -Recurse -Force; "payload: removed stale shell" }
 
 dotnet publish $proj -c Release -p:Platform=x64 -r win-x64 -p:GenerateAppxPackageOnBuild=true -p:AppxPackageSigningEnabled=true `
     -p:PackageCertificateThumbprint=$($cert.Thumbprint) -p:AppxBundle=Never -p:AppxPackageDir=$out
@@ -61,5 +54,4 @@ if ($Install) {
     $process = Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList $arguments -WindowStyle Hidden -PassThru -Wait
     if ($process.ExitCode -ne 0) { throw "Backend setup failed ($($process.ExitCode)). See $homePath\setup\status-$run.json." }
 }
-
 

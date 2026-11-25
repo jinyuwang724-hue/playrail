@@ -18,7 +18,7 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $bios = Get-ItemProperty 'HKLM:\HARDWARE\DESCRIPTION\System\BIOS'
 $isClaw = $bios.SystemManufacturer -match 'Micro-Star|^MSI' -and $bios.SystemProductName -match 'Claw'
 $fullInstall = -not $Steps
-$order = @('fonts', 'pawnio', 'agent', 'sleep', 'fan', 'widget', 'edge-swipe', 'shell')
+$order = @('fonts', 'pawnio', 'agent', 'sleep', 'fan', 'widget')
 if ($fullInstall) {
     $requested = @($order | Where-Object { $isClaw -or $_ -notin 'pawnio', 'fan' })
 } else {
@@ -39,8 +39,6 @@ function Assert-Payload {
         sleep = @('sleep\Install-SleepAnimation.ps1', 'sleep\app\ClawSleepAnimation.exe', 'sleep\app\enhanced-bundle.json')
         fan = @('fan\ClawFanService.exe', 'fan\IntelMSR.bin')
         pawnio = @('pawnio\PawnIO_setup.exe')
-        'edge-swipe' = @('shell\ClawShell.exe')
-        shell = @('shell\ClawShell.exe')
     }
     foreach ($step in $selected) {
         foreach ($file in $files[$step]) {
@@ -459,66 +457,7 @@ function Install-SleepStep {
     return 'installed'
 }
 
-function Install-EdgeSwipeStep {
-    $taskName = 'GameModeEdgeSwipe'
-    $folder = Join-Path $env:ProgramFiles 'ClawToolbox\GameModeEdgeSwipe'
-    $source = Join-Path $payload 'shell\ClawShell.exe'
-    $version = (Get-Item -LiteralPath $source).VersionInfo.FileVersion
-    $hash = (Get-FileHash -LiteralPath $source).Hash
-    $binary = Join-Path $folder "ClawShell-$version-$($hash.Substring(0, 12)).exe"
-    $task = Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue
-    if ($task -and $task.Actions.Execute -eq $binary -and (Test-Path -LiteralPath $binary) -and
-        (Get-FileHash -LiteralPath $binary).Hash -eq $hash -and
-        (Get-ScheduledTaskInfo -TaskPath $taskPath -TaskName $taskName).LastTaskResult -eq 0) { return 'kept' }
-    Protect-Folder $folder
-    Copy-Item -LiteralPath $source -Destination $binary -Force
-    $action = New-ScheduledTaskAction -Execute $binary -Argument 'edge-apply $(Arg0)'
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserSid
-    $principal = New-ScheduledTaskPrincipal -UserId $UserSid -LogonType Interactive -RunLevel Highest
-    $settings = New-ScheduledTaskSettingsSet -MultipleInstances Queue -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 1)
-    $oldTask = if ($task) { Export-ScheduledTask -TaskPath $taskPath -TaskName $taskName }
-    try {
-        Register-ScheduledTask -TaskPath $taskPath -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
-        $started = (Get-Date).AddSeconds(-1)
-        Start-ScheduledTask -TaskPath $taskPath -TaskName $taskName
-        $until = (Get-Date).AddSeconds(30)
-        do {
-            Start-Sleep -Milliseconds 250
-            $info = Get-ScheduledTaskInfo -TaskPath $taskPath -TaskName $taskName
-            if ($info.LastRunTime -ge $started -and (Get-ScheduledTask -TaskPath $taskPath -TaskName $taskName).State -eq 'Ready') {
-                if ($info.LastTaskResult -ne 0) { throw "Edge swipe task exited with $($info.LastTaskResult)." }
-                return 'installed'
-            }
-        } while ((Get-Date) -lt $until)
-        throw 'Edge swipe task did not complete.'
-    } catch {
-        $failure = $_
-        try {
-            Stop-ScheduledTask -TaskPath $taskPath -TaskName $taskName -ErrorAction SilentlyContinue
-            Restore-Task $taskName $oldTask
-        } catch { throw "Edge swipe update failed: $failure. Task rollback failed: $_" }
-        throw $failure
-    }
-}
 
-function Install-ShellStep {
-    $stable = Join-Path $AgentHome 'shell\ClawShell.exe'
-    # Game mode installs its shell on first use. For existing users, stage the new
-    # shell at the path Winlogon already uses and let the current session exit normally.
-    if (-not (Test-Path -LiteralPath $stable -PathType Leaf)) { return 'available on first use' }
-    Assert-LocalPath $stable
-    $source = Join-Path $payload 'shell\ClawShell.exe'
-    if ((Get-FileHash -LiteralPath $stable).Hash -eq (Get-FileHash -LiteralPath $source).Hash) { return 'kept' }
-    $staged = $stable + '.' + [guid]::NewGuid().ToString('N') + '.new'
-    $backup = Join-Path (Split-Path -Parent $stable) "ClawShell.old-$([DateTime]::UtcNow.Ticks)"
-    try {
-        Copy-Item -LiteralPath $source -Destination $staged
-        [IO.File]::Replace($staged, $stable, $backup)
-    } finally {
-        if ([IO.File]::Exists($staged)) { [IO.File]::Delete($staged) }
-    }
-    return 'updated for the next shell start'
-}
 
 $lock = [Threading.Mutex]::new($false, 'Global\ClawToolbox.BackendSetup')
 $locked = $false
@@ -547,8 +486,6 @@ try {
                 'fonts' { Install-FontsStep }
                 'agent' { Install-AgentStep }
                 'sleep' { Install-SleepStep }
-                'edge-swipe' { Install-EdgeSwipeStep }
-                'shell' { Install-ShellStep }
                 'pawnio' { Install-PawnIOStep }
                 'fan' {
                     if ($status.agent.state -eq 'failed' -or $status.pawnio.state -eq 'failed') {

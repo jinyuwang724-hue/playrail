@@ -7,7 +7,7 @@ namespace ClawLibrary.Data;
 internal static class ToolboxActivation
 {
     public static bool IsRoute(string route) => route is "library" or "control-center"
-        or "restore-library" or "restore-control-center" or "minimize-library" or "minimize-control-center" or "window-switcher";
+        or "restore-library" or "restore-control-center" or "minimize-library" or "minimize-control-center";
     public static string Target(string route) => route.StartsWith("restore-", StringComparison.Ordinal) ? route[8..]
         : route.StartsWith("minimize-", StringComparison.Ordinal) ? route[9..] : route;
     public static bool ShouldMinimize(string route, bool? xboxFse, bool? steamBigPicture) =>
@@ -24,22 +24,6 @@ internal static class ToolboxActivation
 
 internal static class ToolboxWindow
 {
-    /// <summary>
-    /// 全屏体验主页选了「Steam 大屏幕」时：游戏库被当主页打开（普通启动、全屏体验里），就打开 Steam 大屏幕、自己收起来。
-    /// 用 claw-library:// 打开（Claw 键、控制中心）不算，照常显示，所以游戏库和设置还能进得去。
-    /// </summary>
-    public static bool SteamHomeRedirect(string route, nint window)
-    {
-        if (!Stage.ShellMode.GameMode) return false;
-        if (route != "activate" || XboxFseActive() != true) return false;
-        if (!ClawLibrary.Stage.UiPrefs.Load().FseSteam) return false;
-        try { Process.Start(new ProcessStartInfo("steam://open/bigpicture") { UseShellExecute = true }); }
-        catch (Exception ex) { Log.Warn($"steam home: {ex.Message}"); return false; }
-        Minimize(window);
-        Log.Info("home → Steam Big Picture");
-        return true;
-    }
-
     [DllImport("api-ms-win-gaming-experience-l1-1-0.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsGamingFullScreenExperienceActive();

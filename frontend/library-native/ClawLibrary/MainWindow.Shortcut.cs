@@ -23,7 +23,6 @@ public sealed partial class MainWindow
         _shortcutWindow.RememberReturnWindow(previous);
         Activated += (_, e) =>
         {
-            if (_overlayActive) return;
             if (e.WindowActivationState == WindowActivationState.Deactivated)
             {
                 // Foreground may still be in transit during deactivation: re-check once the switch has settled.
@@ -52,7 +51,7 @@ public sealed partial class MainWindow
     }
 
     /// <summary>A game (or Steam's install dialog) is about to open: let it come in front of the library.</summary>
-    internal void HandOffForeground() { ReleaseOverlay(); _shortcutWindow?.HandOffForeground(); }
+    internal void HandOffForeground() => _shortcutWindow?.HandOffForeground();
 
     private void StopShortcutTimers()
     {
@@ -71,8 +70,6 @@ public sealed partial class MainWindow
         var entrance = _shortcutMotion.Show(initial, visible, _shortcutWindow?.IsForeground == true);
         // 游戏中唤出：直接是「正在游戏」画面，不做从透明开始的进场（透明那几帧露出的是窗口黑底）
         if (entrance == ShortcutEntrance.Reveal && _stage?.NowPlayingShown == true) { _shortcutMotion.Cancel(); entrance = ShortcutEntrance.None; }
-        // 快捷设置：第一帧就是游戏画面（缩略图）+ 面板自己滑进来，也不做整窗淡入
-        if (entrance is ShortcutEntrance.Reveal or ShortcutEntrance.KeepCurrent && _stage?.SpecialSurfaceOpen == true) { _shortcutMotion.Cancel(); entrance = ShortcutEntrance.None; }
         int motionVersion = _shortcutMotion.Version;
         CancelShortcutTransition();
         _shortcutInTray = false;
@@ -89,7 +86,7 @@ public sealed partial class MainWindow
             visual.StopAnimation("Opacity"); visual.StopAnimation("Scale");
             visual.Opacity = 0; visual.Scale = new Vector3(1.02f, 1.02f, 1);
         }
-        RestoreOrdinaryPresenter();
+        _shortcutWindow?.EnsureFullscreenBounds();
         if (!initial) RestoreShortcutContent(route);
         nint previous = LibraryWindow.Foreground;
         bool started = entrance is ShortcutEntrance.None or ShortcutEntrance.KeepCurrent;
@@ -99,13 +96,6 @@ public sealed partial class MainWindow
             started = true;
             Log.Info($"shortcut show mode={entrance} version={motionVersion}");
             AnimateShortcut(true, entrance == ShortcutEntrance.Reveal, motionVersion, () => { });
-        }
-        if (_overlayActive)
-        {
-            _shortcutWindow?.ShowOverlay();
-            if (!started) AnimateShortcut(true, entrance == ShortcutEntrance.Reveal, motionVersion, () => { });
-            Log.Info($"shortcut shown without activation target={_overlayTarget}");
-            return;
         }
         TryShortcutFocus();
         StartWhenForeground();
@@ -150,12 +140,8 @@ public sealed partial class MainWindow
         Log.Info($"shortcut foreground={active} hwnd={hwnd} current={LibraryWindow.Foreground}");
     }
 
-    /// <summary>快捷设置收起后：窗口照 Claw 键收起游戏库那样退下去（游戏已经回到前台）。</summary>
-    internal void HideAfterQuickPanel() => EndSpecialSurface();
-
     private void HideShortcutWindow()
     {
-        if (Stage.ShellMode.GameMode && !_desktopHandoff) { CancelShortcutTransition(); CompleteShortcutHide(); return; }
         if (_shortcutHiding)
         {
             ShowShortcutWindow("restore-" + ToolboxActivation.Target(_pendingRoute));
@@ -164,7 +150,7 @@ public sealed partial class MainWindow
         CancelShortcutTransition(); _shortcutHiding = true;
         int version = _shortcutVersion;
         int motionVersion = _shortcutMotion.Hide();
-        if (!_overlayActive && _shortcutWindow?.IsForeground != true)
+        if (_shortcutWindow?.IsForeground != true)
         {
             _shortcutMotion.Cancel(); _stage?.EndShortcutSoftFocus();
             CompleteShortcutHide(); return;
@@ -178,8 +164,6 @@ public sealed partial class MainWindow
 
     private void CompleteShortcutHide(bool returnToPrevious = true)
     {
-        if (Stage.ShellMode.GameMode && !_desktopHandoff) { ParkGameShell(returnToPrevious); return; }
-        _surfaceSession = false;
         _shortcutMotion.Cancel();
         bool returnFocus = returnToPrevious && _shortcutWindow?.IsForeground == true;
         _shortcutHiding = true;
@@ -192,14 +176,13 @@ public sealed partial class MainWindow
         if (tray) AppWindow.Hide();
         else ToolboxWindow.Minimize(WinRT.Interop.WindowNative.GetWindowHandle(this));
         _stage?.SuspendToTray();
-        ReleaseOverlay();
         _shortcutHiding = false;
         ResetShortcutVisual();
         _shortcutWindow?.ReturnToPreviousWindow(returnFocus);
         Log.Info(tray ? "library hidden to tray" : "library tray unavailable; minimized");
     }
 
-    private void AnimateShortcut(bool show, bool entrance, int version, Action completed, bool gameReveal = false)
+    private void AnimateShortcut(bool show, bool entrance, int version, Action completed)
     {
         if (!_shortcutMotion.IsCurrent(version)) return;
         var visual = ElementCompositionPreview.GetElementVisual(_root);
@@ -212,14 +195,12 @@ public sealed partial class MainWindow
         visual.CenterPoint = new Vector3((float)_root.ActualWidth / 2, (float)_root.ActualHeight / 2, 0);
         // Folia softFocus.ts: a full-size layer resolves from soft focus; on
         // departure it drifts slightly forward. No exposed/shrinking edges.
-        var easing = gameReveal
-            ? compositor.CreateCubicBezierEasingFunction(new Vector2(.22f, .55f), new Vector2(.35f, 1))
-            : show
+        var easing = show
             ? compositor.CreateCubicBezierEasingFunction(new Vector2(.16f, 1), new Vector2(.3f, 1))
             : compositor.CreateCubicBezierEasingFunction(new Vector2(.4f, 0), new Vector2(1, 1));
         double slow = 1;
         if (Program.Args.FirstOrDefault(a => a.StartsWith("--shortcut-slow=")) is { } arg && double.TryParse(arg[16..], out double factor)) slow = Math.Clamp(factor, 1, 4);
-        double duration = (gameReveal ? 850 : show ? 520 : 360) * slow;
+        double duration = (show ? 520 : 360) * slow;
         var batch = compositor.CreateScopedBatch(CompositionBatchTypes.Animation);
         var fade = compositor.CreateScalarKeyFrameAnimation();
         fade.Duration = TimeSpan.FromMilliseconds(duration);
@@ -253,8 +234,6 @@ public sealed partial class MainWindow
 
     private void DisposeShortcutWindow()
     {
-        _gameShellTimer?.Stop();
-        ReleaseOverlay();
         _shortcutClosed = true; _shortcutMotion.Cancel(); CancelShortcutTransition();
         _stage?.EndShortcutSoftFocus(); _shortcutWindow?.Dispose();
     }

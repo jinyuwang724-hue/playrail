@@ -135,7 +135,7 @@ class DispatchTests(unittest.IsolatedAsyncioTestCase):
         command = {"type": "system", "action": "gamebar"}
         physical = {"type": "mapped_action", "source": "QS", "scope": "general", "command": command}
         with patch.object(service._buttons_module, "toolbox_context", return_value={"xboxFse": True}):
-            for metadata in ({}, {"gesture": "short", "gameMode": False}, {"gesture": "long", "gameMode": False}):
+            for metadata in ({}, {"gesture": "short"}, {"gesture": "long"}):
                 self.calls.clear()
                 result = await self.s._execute_mapping({**physical, **metadata})
                 self.assertEqual(result["windowRoute"], "fse-task-view")

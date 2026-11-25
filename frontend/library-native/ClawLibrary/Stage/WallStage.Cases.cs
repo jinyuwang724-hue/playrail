@@ -1,7 +1,7 @@
 // 卡盒版游戏库（docs/library-cases/spec.md）：顶部标签 首页 / 全部 N / Steam N / 本地 N；
 // 首页两种样式——展架（底部一排卡盒，选中的放大）和叠放（一摞卡盒）；分类页上面一排散放的卡带，下面 7 列卡盒网格。
 // 坐标按 1920×1200 逻辑像素写，整层按屏幕缩放。墙（WallStage.cs）还在下面照常维护焦点、控制中心形变等，只是藏起来。
-// 输入走墙的同一条链：Move / Activate / Back / SwitchTab / PadY / ClickAt / PanBy 在快捷面板、控制中心之后交给这里。
+// 输入走墙的同一条链：Move / Activate / Back / SwitchTab / PadY / ClickAt / PanBy 在控制中心之后交给这里。
 //
 // 展架的思路借鉴 Selene（https://github.com/mattxslv/Selene，Playnite 全屏主题，MIT，Copyright (c) 2026 Matthew Silva）：
 // 底部一排封面，选中的更大，背景是这款游戏的横幅图。只借了思路，没有用它的代码。

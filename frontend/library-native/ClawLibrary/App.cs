@@ -61,7 +61,6 @@ public sealed partial class App : Application, Microsoft.UI.Xaml.Markup.IXamlMet
             initial.Route = initial.Route.Replace(ViaShell, "");
             _window = new MainWindow(initial.Route, initial.ReturnWindow);
             _window.Activate();
-            ToolboxWindow.SteamHomeRedirect(initial.Route, WinRT.Interop.WindowNative.GetWindowHandle(_window));
             var dq = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
             Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += (_, activation) =>
             {
@@ -101,7 +100,6 @@ public sealed partial class App : Application, Microsoft.UI.Xaml.Markup.IXamlMet
         if (data is Windows.ApplicationModel.Activation.IProtocolActivatedEventArgs protocol && protocol.Uri.Scheme == "claw-library")
             return ((ToolboxActivation.IsRoute(protocol.Uri.Host) ? protocol.Uri.Host : "activate") + (protocol.Uri.Query.Contains("via=shell") ? ViaShell : ""),
                 ToolboxActivation.ReturnWindow(protocol.Uri.Query));
-        if (data is Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch && launch.Arguments == "--game-shell") return ("game-shell", 0);
         return ("activate", 0);
     }
 
@@ -149,7 +147,6 @@ public sealed partial class MainWindow : Window
 
         InitializeShortcutWindow(returnWindow);
         _shortcutWindow?.EnsureFullscreenBounds();
-        InitializeGameShell();
 
         try
         {
@@ -160,7 +157,6 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { Log.Warn($"tray init: {ex.Message}"); }
         AppWindow.Closing += (_, e) =>
         {
-            if (Stage.ShellMode.GameMode && !_desktopHandoff) { e.Cancel = true; RestoreGameShell(_shortcutWindow?.IsForeground == true); return; }
             if (!_exiting && UiPrefs.Load().BackgroundRun && _tray?.EnsureIcon() == true)
             {
                 e.Cancel = true;
@@ -176,7 +172,6 @@ public sealed partial class MainWindow : Window
                 _stage.StartupShieldRequested = _pendingRoute == "activate" && !Program.Args.Any(a => a.StartsWith("--state="));   // 录屏 / 测试状态：窗口不在前台，盖板会一直等
                 _stage.Start();
                 _shortcutWindow?.EnsureFullscreenBounds();
-                _stage.After(1500, _stage.WarmQuickPanel);
                 if (_pendingRoute != "activate") ActivateRoute(_pendingRoute, returnWindow);
                 else _stage.ActivateShortcut("library");
             }
@@ -185,7 +180,7 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) => { DisposeShortcutWindow(); _tray?.Dispose(); _stage?.Dispose(); Log.Info("closed"); };
     }
 
-    public void ExitLibrary() { if (Stage.ShellMode.GameMode) { RestoreGameShell(true); return; } _exiting = true; Close(); }
+    public void ExitLibrary() { _exiting = true; Close(); }
 
     public void RunInBackground()
     {
@@ -212,30 +207,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         if (viaShell) Log.Info($"shell switch arrived ({route}) cloaked={ToolboxWindow.ShellCloaked(hwnd)}");
-        if (ToolboxWindow.SteamHomeRedirect(route, hwnd)) return;
-        // 快速设置键（后台的 controlCenter 动作）= 快捷设置面板：开着就收起，游戏库在前台时直接在它上面开
-        bool quick = ToolboxActivation.Target(route) == "control-center";
-        bool switcher = ToolboxActivation.Target(route) == "window-switcher";
-        if (switcher)
-        {
-            _pendingRoute = "window-switcher";
-            _stage?.OpenSwitcherShortcut();
-            ShowShortcutWindow(route);
-            return;
-        }
-        // 长按开的切换器还开着（或正在进场）时再短按快设：是想关掉它，不是要开快设面板
-        if (quick) _stage?.NoteQuickKey();
-        if (quick && _stage?.SwitcherBusy == true) { _stage.SwitcherBackFromQuickKey(); return; }
-        if (quick) _stage?.SetSpecialInput(true);
-        else if (_stage?.SwitcherOpen == true) _stage.CloseSwitcherForRoute();
-        if (quick && _stage?.QuickPanelOpen == true) { _stage.CloseQuickPanel(); return; }
-        if (!quick && _stage?.QuickPanelOpen == true) _stage.CloseQuickPanel(hideWindow: false, instant: true);
-        if (quick && AppWindow.IsVisible && !ToolboxWindow.IsIconic(hwnd) && route.StartsWith("minimize-", StringComparison.Ordinal))
-        {
-            _stage?.OpenQuickPanel(0);
-            return;
-        }
-        if (_overlayActive && !quick && route.StartsWith("minimize-", StringComparison.Ordinal)) { HideShortcutWindow(); return; }
+
         if (AppWindow.IsVisible && !ToolboxWindow.IsIconic(hwnd) && route.StartsWith("minimize-", StringComparison.Ordinal) &&
             ToolboxActivation.ShouldMinimize(route, ToolboxWindow.XboxFseActive(), ToolboxWindow.SteamBigPictureOpen()))
         {
@@ -249,44 +221,17 @@ public sealed partial class MainWindow : Window
         _pendingRoute = ToolboxActivation.Target(route);
         // 游戏在跑：窗口出来之前先把「正在游戏」画面放上，进场动画带的就是它，不会先闪一下墙面
         if (_pendingRoute is "activate" or "library") _stage?.NowPlayingBeforeShow();
-        else if (quick) _stage?.OpenQuickPanel(returnWindow);   // 窗口出来之前先铺好游戏画面和面板
         else _stage?.NowPlayingYield();   // Claw 键唤控制中心：正在游戏画面让开，不挡控制中心也不抢它的按键
-        // 面板有自己的窗口：游戏库主窗口不出来（游戏一直在前台）
-        if (quick && _stage?.QuickPanelOwnWindow == true) return;
-        if (quick) { ShowAfterFrames(route, 1); return; }
         ShowShortcutWindow(route);
-    }
-
-    /// <summary>
-    /// 快捷设置：先让面板和游戏画面画上两帧再把窗口拿到前台。直接拿到前台的话，DWM 先显示窗口上一次的内容（墙面），闪一两帧。
-    /// </summary>
-    private void ShowAfterFrames(string route, int frames)
-    {
-        int revision = _routeRevision;
-        bool shown = false;
-        void Show()
-        {
-            if (shown) return;
-            shown = true;
-            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= OnFrame;
-            if (revision == _routeRevision && _stage?.QuickPanelOpen == true) ShowShortcutWindow(route);
-        }
-        void OnFrame(object? s, object e) { if (--frames <= 0) Show(); }
-        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += OnFrame;
-        // 藏着的窗口可能不出帧：最多等 100 ms
-        var timer = DispatcherQueue.CreateTimer();
-        timer.IsRepeating = false; timer.Interval = TimeSpan.FromMilliseconds(100);
-        timer.Tick += (_, _) => { timer.Stop(); Show(); };
-        timer.Start();
     }
 
     private void RestoreShortcutContent(string route)
     {
         if (!AppWindow.IsVisible) AppWindow.Show(false);
         _stage?.ResumeFromTray();
-        if (!_overlayActive) ToolboxWindow.Restore(WinRT.Interop.WindowNative.GetWindowHandle(this));
-        if (_stage?.SpecialSurfaceOpen != true && !ToolboxActivation.PreservePage(route)) _stage?.ActivateShortcut(_pendingRoute);
-        if (!_overlayActive) _root.Focus(FocusState.Programmatic);
+        ToolboxWindow.Restore(WinRT.Interop.WindowNative.GetWindowHandle(this));
+        if (!ToolboxActivation.PreservePage(route)) _stage?.ActivateShortcut(_pendingRoute);
+        _root.Focus(FocusState.Programmatic);
     }
 }
 

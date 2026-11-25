@@ -63,7 +63,7 @@ public sealed partial class WallStage
         foreach (var (id, glyph, label) in new[]
         {
             ("power", "", "电源"), ("files", "", "文件管理器"), ("browser", "", "浏览器"),
-            ("windows", "", "窗口"), ("addgame", "", "添加游戏"), ("settings", "", "设置"), ("avatar", "", ""),
+            ("addgame", "", "添加游戏"), ("settings", "", "设置"), ("avatar", "", ""),
         })
             _ccDock.Add(CcMakeButton(id, glyph, label, _ccChrome));
         _ccPowerLayer = G.Container();
@@ -75,7 +75,6 @@ public sealed partial class WallStage
         if (caps.Hibernate) items.Add(("hibernate", CcSnowflake, "休眠"));
         items.Add(("restart", "", "重启"));
         items.Add(("shutdown", "", "关机"));
-        if (ShellMode.Available) items.Add(("mode", "", "切换到桌面"));
         foreach (var (id, glyph, label) in items) _ccPower.Add(CcMakeButton(id, glyph, label, _ccPowerLayer));
     }
 
@@ -83,7 +82,7 @@ public sealed partial class WallStage
     private static readonly Dictionary<string, string> CcChromeDesc = new()
     {
         ["power"] = "睡眠、休眠、重启、关机", ["files"] = "打开资源管理器", ["browser"] = "打开默认浏览器",
-        ["windows"] = "切换和关闭打开的窗口", ["addgame"] = "把本地游戏加进游戏库", ["settings"] = "游戏库和工具箱的设置", ["avatar"] = "打开 Windows 设置",
+        ["addgame"] = "把本地游戏加进游戏库", ["settings"] = "游戏库和工具箱的设置", ["avatar"] = "打开 Windows 设置",
         ["sleep"] = "关屏，进入低电量待机", ["hibernate"] = "保存现场后断电，下次开机原样恢复",
         ["restart"] = "立即重启", ["shutdown"] = "立即关机",
     };
@@ -464,7 +463,6 @@ public sealed partial class WallStage
     private void CcPowerShow(bool show, bool instant = false)
     {
         _ccPowerOpen = show;
-        if (show) CcUpdateModeButton();
         int v = ++_ccPowerVersion;
         if (instant || Reduced)
         {
@@ -566,7 +564,6 @@ public sealed partial class WallStage
         if (_syOpen) { SyBack(); return true; }
         if (_stOpen) { StBack(); return true; }
         if (_shOpen) { ShBack(); return true; }
-        if (_wsOpen) { WsBack(); return true; }
         if (_ccZone == CcZone.Power) { CcPowerClose(); return true; }
         if (_ccZone == CcZone.Dock) { _ccZone = CcZone.Row; CcChromeFocus(); return true; }
         return false;
@@ -600,25 +597,12 @@ public sealed partial class WallStage
                 CcChromeFocus();
                 break;
             case "files":
-                // 游戏模式没有 explorer：从游戏库（应用包）里直接起 explorer 会让它跑在包里，先切到桌面
-                if (ShellMode.Available && !ShellMode.ExplorerRunning())
-                {
-                    _ = ShellMode.Run("to-desktop").ContinueWith(t => _dq.TryEnqueue(() =>
-                    {
-                        if (t.Result == 0) SystemInfo.Open("explorer.exe"); else Toast(ShellMode.Why());
-                    }));
-                    Toast("正在切换到桌面…");
-                    break;
-                }
                 SystemInfo.Open("explorer.exe");
                 Toast("正在打开文件管理器");
                 break;
             case "browser":
                 _ = Task.Run(SystemInfo.OpenBrowser);
                 Toast("正在打开浏览器");
-                break;
-            case "windows":
-                OpenSwitcher();
                 break;
             case "addgame":
                 _ = AddGameFromLibrary();
@@ -647,7 +631,6 @@ public sealed partial class WallStage
     private void CcRunPower(string id)
     {
         var item = _ccPower.First(p => p.Id == id);
-        if (id == "mode") { _ = CcSwitchMode(); CcPowerShow(false); _ccZone = CcZone.Dock; _ccDockFocus = 0; CcChromeFocus(); return; }
         if (id is not ("restart" or "shutdown")) Toast($"正在{item.Label}…");
         Log.Info($"control center power: {id}");
         if (Program.Args.Contains("--power-dry")) return;

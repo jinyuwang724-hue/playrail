@@ -422,7 +422,6 @@ public sealed partial class WallStage
             // desktop-mode restore owned by this library window.
             ++_gpHoldVersion;
             _gpDesktopHeld = _gpDesktopNoticePending = false;
-            _qsPadMode = Str(mode["chosen"]) ?? Str(mode["mode"]) ?? _qsPadMode;   // 快捷面板的手柄 / 键鼠磁贴跟着变
             if (_windowActive && Str(mode["mode"]) == "desktop") After(250, () => { if (_windowActive) _ = GpCheckDesktopMode(); });
             _pad?.RequestRescan();
         });

@@ -12,7 +12,6 @@ public sealed partial class WallStage
     private readonly TouchPointerGesture _pagePointer = new();
     private TouchSurface _settingsTouchSurface;
     private string? _settingsTouchKey;
-    private string? _quickTouchId;
     private SpriteVisual? _touchNavigation;
     private int _touchNavigationMode = -1;
     private float _touchNavigationScale;
@@ -24,9 +23,7 @@ public sealed partial class WallStage
     {
         get
         {
-            if (_wsOpen) return new(6, _wsFocus, _wsCards.Count);
             if (_ob != null) return new(1, (int)_obStep, _obLang);
-            if (_qsOpen) return new(2, QsRowsStyle ? 1 : 0, _qsVersion);
             if (_lm is { Leaving: false }) return new(3);
             if (_agOpen) return new(4, (int)_agPage * 100 + _agTab, _agOffKind == null ? 0 : 1);
             if (_shOpen) return new(5, _shTab * 4 + (_shViewer ? 1 : 0) + (_shFilterOpen ? 2 : 0), (int)_shStyle + _shVersion * 10, _shViewer ? ShViewerShot()?.Path : null);
@@ -52,9 +49,8 @@ public sealed partial class WallStage
     private float TouchScale => Math.Min((float)View.Width / 1280, (float)View.Height / 800);
     // 0 = hidden, 2 = home control-centre menu. Child pages have no added back button.
     private int TouchNavigationMode => _stack.Count == 0 || _startupShield?.IsVisible == true ? 0
-        : _wsOpen ? 0
         : _ob != null ? 0
-        : _qsOpen || _lm is { Leaving: false } ? 0
+        : _lm is { Leaving: false } ? 0
         : 0;   // 游戏库左上角的三道杠去掉了（≡ 键照旧打开控制中心）
 
     private bool TouchFilterHit(double x, double y) => _shOpen && !_shViewer
@@ -105,7 +101,7 @@ public sealed partial class WallStage
 
     private bool UseSettingsPointer(double x, double y)
     {
-        if (!SettingsPageOpen || _agOpen || _shOpen || _wsOpen || GsArtMode || TouchNavigationHit(x, y)) return false;
+        if (!SettingsPageOpen || _agOpen || _shOpen || GsArtMode || TouchNavigationHit(x, y)) return false;
         if (!GsPadMapMode) return true;
         // Embedded controller diagram and the settings above it have separate hit maps.
         return x / _ccK < StRightX || SettingsTargetAt(x, y) != null;

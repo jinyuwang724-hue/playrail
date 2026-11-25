@@ -347,8 +347,7 @@ function Measure-FrameProbe([string]$Phase) {
 
 $useBatteryWmi = [bool](Get-CimInstance -Namespace root/wmi -ClassName BatteryStatus -ErrorAction SilentlyContinue)
 $null = Read-State
-$shellState = Get-Content -LiteralPath (Join-Path $homePath 'shell\state.json') -Raw | ConvertFrom-Json
-if ($shellState.mode -ne 'desktop' -or -not (Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -eq $session)) {
+if (-not (Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -eq $session)) {
     throw 'Run the measurement in Windows desktop mode.'
 }
 if (Get-Process ClawSleepAnimation -ErrorAction SilentlyContinue) {
@@ -361,10 +360,6 @@ $libraryForeground = $initialLibrary -and ([ClawMeasurement]::ForegroundPid() -e
 $initialWindow = if ($initialLibrary) { $initialLibrary.MainWindowHandle } else { [IntPtr]::Zero }
 $wasMinimized = $initialWindow -ne [IntPtr]::Zero -and [ClawMeasurement]::IsIconic($initialWindow)
 $screensaverEnabled = [IO.File]::Exists($preferences) -and [IO.File]::ReadAllText($preferences) -match '(?im)^screensaver=True(?=\r?$)'
-$watchPath = Join-Path $homePath 'shell\ClawShell.exe'
-$watch = Get-CimInstance Win32_Process -Filter "Name='ClawShell.exe' AND SessionId=$session" |
-    Where-Object { $_.ExecutablePath -eq $watchPath -and $_.CommandLine -match '\s+watch\s*$' } |
-    Select-Object -First 1
 @{
     version="$($package.Version)"
     scope=if ($OsdOnly) { "Optimized OSD on/off/on with game library closed at $DisplayHz Hz and $DisplayBrightness% brightness" }
@@ -384,7 +379,6 @@ $cover.Bounds = [Windows.Forms.Screen]::PrimaryScreen.Bounds
 $cover.BackColor = [Drawing.Color]::FromArgb(38,38,38)
 $cover.TopMost = $true
 $cover.ShowInTaskbar = $false
-$watchStopped = $false
 $agentStopped = $false
 $libraryChanged = $false
 $agentGate = $null
@@ -588,12 +582,6 @@ try {
     $cover.Show()
     [ClawMeasurement]::Focus($cover.Handle)
     Wait-For 'the cover window in the foreground' { [ClawMeasurement]::ForegroundPid() -eq $PID }
-    if ($watch) {
-        $watchProcess = Get-Process -Id $watch.ProcessId -ErrorAction Stop
-        Stop-Process -InputObject $watchProcess
-        $watchStopped = $true
-        if (-not $watchProcess.WaitForExit(10000)) { throw 'The desktop-mode watcher did not exit.' }
-    }
     # The scheduled task permits parallel launches. Let any pending instances
     # time out before joining the mutex queue for the baseline.
     Wait-For 'duplicate Agent launches to drain' {
@@ -623,7 +611,6 @@ try {
     Wait-For 'the Agent to answer' { try { [bool](Invoke-Agent agent_info) } catch { $false } } 50
     $activeAgent = Invoke-Agent agent_info
     $agentStopped = $false
-    if ($watchStopped) { Start-Process -FilePath $watchPath -ArgumentList 'watch' -WindowStyle Hidden; $watchStopped = $false }
     [ClawMeasurement]::Focus($cover.Handle)
     Measure-Phase 'B' { -not (Get-Library) -and $cover.Visible -and (Get-Process -Id $activeAgent.pid -ErrorAction SilentlyContinue) }
 
@@ -665,10 +652,6 @@ try {
     if ($agentStopped) {
         try { Start-ScheduledTask -TaskPath '\ClawToolbox\' -TaskName Agent }
         catch { Write-Warning "Could not restore the Agent: $_" }
-    }
-    if ($watchStopped) {
-        try { Start-Process -FilePath $watchPath -ArgumentList 'watch' -WindowStyle Hidden }
-        catch { Write-Warning "Could not restore the desktop watcher: $_" }
     }
     if ($libraryChanged) {
         try {

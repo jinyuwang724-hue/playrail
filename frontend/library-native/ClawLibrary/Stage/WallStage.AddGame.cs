@@ -280,7 +280,7 @@ public sealed partial class WallStage
         _stSecretBox ??= CreateSecretBox();
         _stSecretBox.Password = "";
         PositionInlineInput(_stSecretBox, done);
-        _dq.TryEnqueue(() => { if (_stSecretBox.Visibility == Visibility.Visible) { (_window as MainWindow)?.RequestTextInputFocus(); _stSecretBox.Focus(FocusState.Programmatic); } });
+        _dq.TryEnqueue(() => { if (_stSecretBox.Visibility == Visibility.Visible) { _stSecretBox.Focus(FocusState.Programmatic); } });
     }
 
     // All settings inputs share the existing inline editor's type, colours and placement.
@@ -374,13 +374,6 @@ public sealed partial class WallStage
             _kbPending = false;
             // TabTip 是开关：上次是我们打开的、还没收（InputPane 坏了时看不出它在不在），再按一次反而把它关了
             if (!TextInputFocused() || TouchKeyboard.Visible(hwnd) || TouchKeyboard.OpenedByUs) return;
-            // 游戏模式没有 explorer，系统触摸键盘（TextInputHost）不在：用经典屏幕键盘 osk
-            if (ShellMode.Available && !ShellMode.ExplorerRunning())
-            {
-                if (System.Diagnostics.Process.GetProcessesByName("osk").Length == 0) SystemInfo.Open("osk.exe");
-                Log.Info("touch keyboard: game mode, opening osk");
-                return;
-            }
             Log.Info($"touch keyboard: system pane {(asked ? "did not show" : "refused")}, opening TabTip");
             if (TouchKeyboard.Toggle()) TouchKeyboard.OpenedByUs = true;
         });
@@ -408,7 +401,7 @@ public sealed partial class WallStage
         _dq.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
             if (!stillWanted() || box.Visibility != Visibility.Visible) return;
-            (_window as MainWindow)?.RequestTextInputFocus();
+           
             box.Focus(FocusState.Programmatic);
             box.SelectAll();
         });

@@ -185,7 +185,7 @@ public sealed partial class WallStage
         Log.Info("recrow done");
     }
 
-    /// <summary>--state=recstatus：原分辨率静帧核对顶栏 / 状态栏 / 竖条 / 快捷面板的对齐（中英混排基线、电池和数字等高）。</summary>
+    /// <summary>--state=recstatus：原分辨率静帧核对顶栏 / 状态栏 / 竖条的对齐（中英混排基线、电池和数字等高）。</summary>
     internal async Task RecStatusAsync()
     {
         await Task.Delay(2500);
@@ -219,13 +219,10 @@ public sealed partial class WallStage
             if (_cs != null) { SwitchTab(1); await Still("all"); for (int i = 0; i < 3; i++) { Move(Direction.Up); await Task.Delay(300); } await Still("recent"); Back(); }
             if (_cs != null) { Style(HomeStyle.Wall); await Still("wall"); }
             ToggleControlCenter(); await Still("cc");
-            // 游戏模式入口：电源菜单里的「切换到桌面 / 游戏模式」、设置 › 通用的游戏模式开关（包里要有 Payload\shell\ClawShell.exe）
-            Log.Info($"recstatus shell mode available={ShellMode.Available}");
             CcPowerShow(true); await Still("cc-power"); CcPowerShow(false);
             _stCat = 0; OpenSettingsPage(); await Still("settings-general"); CloseSettingsPage(true);
             ToggleControlCenter();
             await Task.Delay(800);
-            OpenQuickPanel(0); await Still("quick"); CloseQuickPanel(hideWindow: false, instant: true);
         }
         catch (Exception ex) { Log.Error("recstatus", ex); }
         if (_cs != null) { SaveUi(_prefs with { Home = style }); CsMorphStyle(); }

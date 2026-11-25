@@ -55,7 +55,7 @@ public sealed partial class WallStage
             if (back) { BrowseFromNowPlaying(); return true; }
             if (dir is Direction.Left or Direction.Right)
             {
-                int next = Math.Clamp(_lm.Btn + (dir == Direction.Left ? -1 : 1), 0, 3);
+                int next = Math.Clamp(_lm.Btn + (dir == Direction.Left ? -1 : 1), 0, 2);
                 if (next != _lm.Btn) { _lm.Btn = next; PaintLaunchCopy(_lm); } else Cue(Sfx.Bump);
             }
             if (activate) NowPlayingPress(_lm.Btn);
@@ -288,7 +288,7 @@ public sealed partial class WallStage
             float y = buttons ? ch - 110 : ch - 64;   // 状态行基线之上是标题区
             if (buttons)
             {
-                string[] labels = { "继续游戏", "", "游戏库", "窗口" };
+                string[] labels = { "继续游戏", "", "游戏库" };
                 float bx = 0; lm.Buttons.Clear();
                 for (int i = 0; i < labels.Length; i++)
                 {
@@ -409,7 +409,7 @@ public sealed partial class WallStage
         {
             if (e.WindowActivationState != Microsoft.UI.Xaml.WindowActivationState.Deactivated) { MaybeShowNowPlaying(); return; }
             // Restoring the library can briefly dispatch deactivation before it takes foreground.
-            if ((_window as MainWindow)?.WindowSwitchInFlight != true) _nowPlayingDismissed = false;
+            _nowPlayingDismissed = false;
             HideNowPlayingBar();
             // 前台可能还在切换途中：稍等再看是谁
             After(120, LaunchForegroundChanged);

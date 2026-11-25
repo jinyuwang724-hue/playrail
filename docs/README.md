@@ -7,10 +7,9 @@
 | 功能 | 文档 | 源码入口 |
 | --- | --- | --- |
 | 游戏库、控制中心、设置 | [游戏库](library/) · [原生界面开发记录](native-library/README.md) | [ClawLibrary](../frontend/library-native/ClawLibrary/) |
-| 游戏内快捷面板、无线连接、窗口切换 | [快捷面板](quick-access/) · [验证记录](../frontend/QAM/verification-0.1.245.md) | [快捷面板窗口](../frontend/library-native/ClawLibrary/QamWindow.cs) |
 | 功耗、风扇、帧率、性能显示、缩放 | [性能与画面](performance/) | [功耗助手](../native/ClawPower.cs) · [性能叠加层](../native/PerformanceOverlay.cs) |
 | 手柄、特殊键和键鼠映射 | [输入](input/) · [Steam Input 参考](steam-input-mapping/) | [原生输入层](../native/InputLayer/) · [按键路由](../native/ClawRouter.cs) |
-| 游戏模式、睡眠、显示和声音 | [系统](system/) | [ClawShell](../native/ClawShell/) · [睡眠组件](../native/SleepAnimation/) |
+| 睡眠、显示和声音 | [系统](system/) | [睡眠组件](../native/SleepAnimation/) |
 | Xbox Game Bar 小组件 | [Game Bar](gamebar/) | [小组件源码](../native/GameBarWidget/) |
 | Steam、Decky 与其他平台服务 | [平台集成](integrations/) | [插件与后台 Agent](../plugin/) |
 | 设计规范、界面文案、项目展示 | [界面设计](design/) · [README 截图](screenshots/) | [品牌素材](../assets/branding/) |

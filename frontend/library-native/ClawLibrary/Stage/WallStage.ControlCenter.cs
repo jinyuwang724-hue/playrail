@@ -30,6 +30,7 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
+    private bool _ccFadeClose;
     // folia 的数值（设计 px，1920×1200 下 1 px = 1 物理像素）
     private const float CcCardW = 312, CcGap = 48, CcPad = 16, CcImgRadius = 8, CcRadius = 12;
     private const float CcTextTop = 8, CcTitleLh = 20, CcSecondLh = 16, CcSummaryLh = 14;
@@ -156,17 +157,13 @@ public sealed partial class WallStage
     /// <summary>≡：墙上 = 打开控制中心（出场形变），控制中心里 = 关掉。</summary>
     public void ToggleControlCenter() => WithCue(Sfx.None, () =>
     {
-        if (_wsOpen) { WsBack(); return; }
         if (ConsumeScreensaverWake()) return;
         if (_ob != null) return;
         if (_backgroundSettingsOpen) CloseBackgroundSettings();
         MarkInput();
         if (MorphIntercept()) return;
         if (_ccOpen) { CloseControlCenter(); return; }
-        // 快设键按下时偶尔还带一个「菜单」：紧跟在快设后面的那个不开控制中心
-        if (NowMs - _quickKeyAt < 1000) { Log.Info("menu ignored: right after the quick key"); return; }
         if (LsMenuKey()) return;   // 单行首页：≡ = 游戏菜单（控制中心在左侧栏，View 唤出）
-        _menuCcAt = NowMs;
         SpClose(instant: true);
         LsClose(instant: true);
         OpenControlCenter();
@@ -241,14 +238,7 @@ public sealed partial class WallStage
         _ccTimer ??= CcMakeTimer();
         _ccTimer.Start();
 
-        if (quiet && _ccKeepWall)
-        {
-            // 长按快设直接进「窗口」页：墙不藏（游戏库那张卡的实时画面就是它），控制中心整层淡进来盖在墙上
-            foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 0; }
-            _top.Children.Remove(_cc); _top.Children.InsertAbove(_cc, _root);   // 控制中心平时在墙下面（墙淡掉露出它）；这回盖在墙上面
-            _cc.StartAnimation("Opacity", G.Scalar(0, 1, Reduced ? 1 : 240, EaseOutCss));
-        }
-        else if (quiet)
+        if (quiet)
         {
             foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 0; }
             double ms = Reduced ? 1 : 240;
@@ -279,7 +269,6 @@ public sealed partial class WallStage
         CloseSystem(instant: true);
         CloseSettingsPage(instant: true);
         CloseShots(instant: true);
-        if (!_wsStandalone) CloseSwitcher(instant: true);
         _stFromLibrary = false;
         _shFromLibrary = false;
         _lsFrom = null;
@@ -288,22 +277,9 @@ public sealed partial class WallStage
         _ccTimer?.Stop();
         _root.StopAnimation("Opacity");
         _root.IsVisible = true;
-        bool instant = _ccInstantClose; _ccInstantClose = false;
-        bool fade = _ccFadeClose, keptWall = _ccKeepWall; _ccFadeClose = _ccKeepWall = false;
-        if (keptWall)
-        {
-            // 墙一直在下面：控制中心整层淡出就露出来，不走形变
-            double fms = Reduced || instant ? 1 : CcCloseMs;
-            _root.Opacity = 1;
-            _cc.StopAnimation("Opacity");
-            _cc.StartAnimation("Opacity", G.Scalar(1, 0, fms, CcCloseEase));
-            After(fms + 10, () => { if (v == _ccVersion) HideControlCenter(); });
-            UpdateBackdropRunning();
-            Log.Info("control center close (fade)");
-            return;
-        }
-        if (_ccFocus == 0 && _ccZone == CcZone.Row && !Reduced && !instant && !fade && !_ccBento && MorphEnter()) { Log.Info("control center close (morph)"); return; }
-        double ms = Reduced || instant ? 1 : CcCloseMs;
+        bool fade = _ccFadeClose; _ccFadeClose = false;
+        if (_ccFocus == 0 && _ccZone == CcZone.Row && !Reduced && !fade && !_ccBento && MorphEnter()) { Log.Info("control center close (morph)"); return; }
+        double ms = Reduced ? 1 : CcCloseMs;
         _root.Opacity = 0;
         _root.StartAnimation("Opacity", G.Scalar(0, 1, ms, CcCloseEase));   // 不再写 Opacity：动画进行中写这个属性会把动画停掉
         After(ms + 10, () => { if (v == _ccVersion) HideControlCenter(); });
@@ -323,7 +299,6 @@ public sealed partial class WallStage
         CloseSystem(instant: true);
         CloseSettingsPage(instant: true);
         CloseShots(instant: true);
-        if (!_wsStandalone) CloseSwitcher(instant: true);
         _cc.IsVisible = false;
         _top.Children.Remove(_cc); _top.Children.InsertBelow(_cc, _root);   // 放回墙下面（「窗口」页直接唤出时临时挪到了墙上面）
         foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 1; }   // 从「窗口」页直接收起时首页卡还是透明的，下次正常打开要在
@@ -354,7 +329,6 @@ public sealed partial class WallStage
         if (_syOpen) { SyMove(dir); return; }
         if (_stOpen) { StMove(dir); return; }
         if (_shOpen) { ShMove(dir); return; }
-        if (_wsOpen) { WsMove(dir); return; }
         if (_ccBento && _ccZone == CcZone.Row && CcBentoMove(dir)) return;
         if (CcChromeMove(dir)) return;
         if (dir is not (Direction.Left or Direction.Right)) return;
@@ -383,7 +357,6 @@ public sealed partial class WallStage
         if (_syOpen) { SyActivate(); return; }
         if (_stOpen) { StActivate(); return; }
         if (_shOpen) { ShActivate(); return; }
-        if (_wsOpen) { WsActivate(); return; }
         if (CcChromeActivate()) return;
         if (_ccBento && _ccFocus > 0 && !_ccBentoGoing && CcBentoActivate(() => { _ccBentoGoing = true; try { CcActivate(); } finally { _ccBentoGoing = false; } })) return;
         var b = _ccBlocks[_ccFocus];
@@ -417,7 +390,6 @@ public sealed partial class WallStage
     /// <summary>Y：各设置页保留自己的操作；控制中心切换卡片样式；游戏库仅为已展开游戏打开设置。</summary>
     public void PadY()
     {
-        if (_wsOpen) { return; }
         if (ConsumeScreensaverWake()) return;
         MarkInput();
         if (_ob != null) return;
@@ -425,8 +397,6 @@ public sealed partial class WallStage
         if (_ccOpen && _agOpen) { AgY(); return; }
         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
         if (_ccOpen && _stOpen) { StResetFocused(); return; }
-        if (_qsOpen) return;
-        if (_ccOpen && _wsOpen) return;
         if (_ccOpen && _shOpen) { ShY(); return; }
         if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
         if (_ccOpen) return;   // 控制中心样式跟着主题走（11-25），Y 不再切
@@ -437,12 +407,10 @@ public sealed partial class WallStage
     /// <summary>View：截图页里 = 按游戏筛选；其余照旧开关性能读数。</summary>
     public void PadView()
     {
-        if (_wsOpen) { return; }
         if (ConsumeScreensaverWake()) return;
         MarkInput();
         if (_ob != null) return;
         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShToggleFilter(); return; }
-        if (_qsOpen) return;
         if (LsView()) return;   // 单行首页：View 开 / 关左侧栏（控制中心）
         ToggleHud();
     }
@@ -450,15 +418,12 @@ public sealed partial class WallStage
     /// <summary>X：游戏库显示 / 隐藏竖条；其他页面保留各自的操作。</summary>
     public void PadX()
     {
-        if (_wsOpen) { WsCloseFocused(); return; }
         if (ConsumeScreensaverWake()) return;
         MarkInput();
         if (_ob != null) return;
         if (_ccOpen && _agOpen) { MarkInput(); AgX(); return; }
         if (_ccOpen && _gpOpen) { MarkInput(); GpPadButton(isY: false); return; }
         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShX(); return; }
-        if (_ccOpen && _wsOpen) { MarkInput(); WsCloseFocused(); return; }
-        if (_qsOpen) { if (_networkKeyboard) NetworkKey("⌫"); return; }
         if ((SpOpenNow || LsOpenNow) && !_ccOpen) return;   // 单行首页侧栏开着
         if (!_ccOpen && _expandedKey is { } key && _tiles.TryGetValue(key, out var tile) && RunningGame(tile.Shown) is { } running)
         { _ = ForceQuitAsync(running); return; }
@@ -483,7 +448,6 @@ public sealed partial class WallStage
     {
         if (_agOpen) { AgClick(sx, sy); return; }
         if (_shOpen) { ShClick(sx, sy); return; }
-        if (_wsOpen) { WsClick(sx, sy); return; }
         if (_stOpen && GsOverlayClick(sx, sy)) return;
         if (_stOpen && StCategoryClick(sx, sy)) return;
         if (_dsOpen || _syOpen || _stOpen || _perfOpen || _gpOpen) { SettingsClick(sx, sy); return; }

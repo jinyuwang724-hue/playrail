@@ -50,7 +50,7 @@ public sealed partial class WallStage
     private static readonly (string Id, string Icon)[] SpTiles =
     {
         ("wifi", "qam.wifi"), ("bt", "qam.bt"), ("osd", "sp.osd"), ("pad", "qam.pad"), ("gear", "sp.gear"),
-        ("shot", "qam.shot"), ("kbd", "qam.kbd"), ("win", "qam.win"), ("desk", "qam.desk"), ("pwr", "qam.off"),
+        ("shot", "qam.shot"), ("kbd", "qam.kbd"), ("pwr", "qam.off"),
     };
     private static readonly string[] SpPicks = { "fps", "res", "hz" };
 
@@ -118,7 +118,7 @@ public sealed partial class WallStage
     /// <summary>RT（右扳机，11-21 jinyu：侧栏用 RT 唤出）：单行首页开 / 关右侧栏。</summary>
     public void PadRT() => WithCue(Sfx.None, () =>
     {
-        if (_wsOpen || _qsOpen || _ob != null || _ccOpen) return;
+        if (_ob != null || _ccOpen) return;
         if (ConsumeScreensaverWake()) return;
         if (LsOpenNow) { Cue(Sfx.Bump); return; }
         MarkInput();
@@ -551,7 +551,7 @@ public sealed partial class WallStage
             foreach (var (cx, icon) in new[] { (SpBX + 38, k == 0 ? "sp.sunlo" : muted ? "qam.mute" : "sp.vol0"), (SpBX + SpBW - 38, k == 0 ? "qam.sun" : "qam.vol") })
             {
                 ds.FillCircle(cx, cy, 38, Color.FromArgb(255, 0xE8, 0xE8, 0xEE));
-                QsIcon(ds, icon, cx, cy, 34, SpTileInk, 2);
+                SpIcon(ds, icon, cx, cy, 34, SpTileInk, 2);
             }
             ds.FillRoundedRectangle(SpTrackX0, cy - 4, SpTrackW, 8, 4, 4, Color.FromArgb(255, 0xDC, 0xDC, 0xE3));
         }
@@ -585,7 +585,7 @@ public sealed partial class WallStage
             SpShadow(ds, pad, pad + 5, SpTile, SpTile, SpTile / 2, 6, Color.FromArgb(31, 30, 30, 50));
             ds.FillCircle(c, c, SpTile / 2, Color.FromArgb(255, 0xF5, 0xF6, 0xF9));   // 关着的开关底（Cocoon 视频取色）
             ds.DrawCircle(c, c, SpTile / 2 - 0.75f, Color.FromArgb(150, 255, 255, 255), 1.5f);
-            QsIcon(ds, icon, c, c, 46, SpTileInk, 2.2f);
+            SpIcon(ds, icon, c, c, 46, SpTileInk, 2.2f);
         }
         using (var ds = CanvasComposition.CreateDrawingSession(t.SOn))
         {
@@ -594,7 +594,7 @@ public sealed partial class WallStage
             SpShadow(ds, pad, pad + 6, SpTile, SpTile, SpTile / 2, 8, Color.FromArgb(89, 115, 64, 255));
             using var br = new CanvasLinearGradientBrush(ds.Device, SpOn1, SpOn2) { StartPoint = new Vector2(pad + 20, pad), EndPoint = new Vector2(pad + SpTile - 20, pad + SpTile) };
             ds.FillCircle(c, c, SpTile / 2, br);
-            QsIcon(ds, icon, c, c, 46, Colors.White, 2.2f);
+            SpIcon(ds, icon, c, c, 46, Colors.White, 2.2f);
         }
     }
 
@@ -695,8 +695,8 @@ public sealed partial class WallStage
         ds.Clear(Colors.Transparent);
         ds.Transform = Matrix3x2.CreateTranslation(-x0, -y0) * Matrix3x2.CreateScale(CsRaster);
         float cy = SpRollY + 36;
-        QsIcon(ds, "qam.l", SpRollX - 15, cy, 22, SpOn2, 2.5f);
-        QsIcon(ds, "qam.r", SpBX + SpBW - 26 - 11, cy, 22, SpOn2, 2.5f);
+        SpIcon(ds, "qam.l", SpRollX - 15, cy, 22, SpOn2, 2.5f);
+        SpIcon(ds, "qam.r", SpBX + SpBW - 26 - 11, cy, 22, SpOn2, 2.5f);
     }
 
     private CompositionDrawingSurface SpTextSurf(string text, float w, float h, float size, string font, ushort weight, Color c, bool right, out Vector2 dim)
@@ -1031,7 +1031,7 @@ public sealed partial class WallStage
                 return;
             case "osd":
             {
-                // A 按顺序换档：关 → 简洁 → 标准 → 详细 → 完整 → 关（和设置里 / 快捷面板同一组档位）
+                // A 按顺序换档：关 → 简洁 → 标准 → 详细 → 完整 → 关（和设置里同一组档位）
                 if (_spDraft is not { } d) { Cue(Sfx.Bump); return; }
                 if (d["osd"] is not JsonObject osd) { osd = new JsonObject(); d["osd"] = osd; }
                 int next = (SpOsdLevel() + 1) % 5;
@@ -1051,7 +1051,7 @@ public sealed partial class WallStage
                 SpPaintTile(sp, Array.FindIndex(SpTiles, e => e.Id == "pad"));
                 SpApplyTiles(sp, animate: true);
                 SpQueue("set_gamepad_mode", JsonValue.Create(toMouse ? "desktop" : "xinput"));
-                // 切成键鼠后手柄不再驱动界面：面板收起（同游戏模式快捷面板）
+                // 切成键鼠后手柄不再驱动界面：面板收起
                 if (toMouse) After(260, () => SpClose());
                 return;
             }
@@ -1073,15 +1073,6 @@ public sealed partial class WallStage
             case "kbd":
                 SpClose(instant: true);
                 SpQueue("toggle_keyboard");
-                return;
-            case "win":
-                SpClose(instant: true);
-                OpenSwitcherShortcut();
-                return;
-            case "desk":
-                if (!ShellMode.Available) { Cue(Sfx.Bump); return; }
-                SpClose(instant: true);
-                _ = CcSwitchMode();
                 return;
         }
     }
@@ -1166,7 +1157,7 @@ public sealed partial class WallStage
                 bool armed = sp.Armed == rid;
                 var ink = armed ? RmRed : RmInk;
                 if (icon.StartsWith("sig:")) SpSignal(ds, SpBX + 24, cy, int.Parse(icon[4..]));
-                else QsIcon(ds, icon, SpBX + 24, cy, 36, armed ? RmRed : SpMute, 2);
+                else SpIcon(ds, icon, SpBX + 24, cy, 36, armed ? RmRed : SpMute, 2);
                 string label = armed ? "再按一次" + name : name;
                 using (var nf = new CanvasTextFormat { FontFamily = RmFont(label), FontSize = 25, FontWeight = RsWt(label, 500), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
                     ds.DrawText(label, new Windows.Foundation.Rect(SpBX + 62, y, toggle ? 520 : 470, SpSubRowH), ink, nf);
@@ -1178,7 +1169,7 @@ public sealed partial class WallStage
                     RsSoftShadow(ds, (on ? tx + tw - 25 : tx + 25) - 18, cy - 18 + 2, 36, 36, 18, 3, 0.22f);
                     ds.FillCircle(on ? tx + tw - 25 : tx + 25, cy, 18, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
                 }
-                else if (right == "lock") QsIcon(ds, "qam.lock", SpBX + SpBW - 24, cy, 26, SpMute, 2);
+                else if (right == "lock") SpIcon(ds, "qam.lock", SpBX + SpBW - 24, cy, 26, SpMute, 2);
                 else if (right.Length > 0)
                 {
                     using var rf = new CanvasTextFormat { FontFamily = RmFont(right), FontSize = 22, FontWeight = RsWt(right, 500), HorizontalAlignment = CanvasHorizontalAlignment.Right, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
@@ -1358,7 +1349,6 @@ public sealed partial class WallStage
         _dq.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
             if (_spEdit != ed) return;
-            (_window as MainWindow)?.RequestTextInputFocus();
             box.Focus(Microsoft.UI.Xaml.FocusState.Programmatic);
         });
         Log.Info("side panel wifi password");

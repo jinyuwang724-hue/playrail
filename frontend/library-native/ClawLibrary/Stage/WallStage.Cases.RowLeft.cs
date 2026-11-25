@@ -56,7 +56,7 @@ public sealed partial class WallStage
     /// <summary>View：单行首页开 / 关左侧栏。处理了返回 true（别的页面 View 照旧）。</summary>
     private bool LsView()
     {
-        if (_ccOpen || _wsOpen || _qsOpen || _ob != null) return false;
+        if (_ccOpen || _ob != null) return false;
         if (!CsActive || _cs?.Page is not { Style: HomeStyle.Row } p) return false;
         if (LsOpenNow) { LsClose(); return true; }
         if (_csInsert != null || _csSearchOpen || _rm != null || _rs != null || _rq != null || SpOpenNow || _spEdit != null) { Cue(Sfx.Bump); return true; }
@@ -340,7 +340,7 @@ public sealed partial class WallStage
         }
     }
 
-    private bool LsAnyPageOpen => _perfOpen || _gpOpen || _dsOpen || _syOpen || _stOpen || _shOpen || _agOpen || _wsOpen;
+    private bool LsAnyPageOpen => _perfOpen || _gpOpen || _dsOpen || _syOpen || _stOpen || _shOpen || _agOpen;
 
     /// <summary>页面（非瞬时）关掉时调：从侧栏进来的页面退到底 = 收起控制中心、回到侧栏。</summary>
     private void LsPageClosed()

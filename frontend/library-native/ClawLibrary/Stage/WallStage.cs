@@ -284,8 +284,7 @@ public sealed partial class WallStage : IDisposable
 
     private bool IsForeground()
     {
-        if (_qsOpen && QuickPanelOwnWindow) return true;   // 快捷面板（自己的不激活窗口）开着：游戏在前台，手柄归面板
-        return (_window as MainWindow)?.AcceptsGamepad != false && !ToolboxWindow.IsIconic(_windowHandle) && (GetForegroundWindow() == _windowHandle || (_window as MainWindow)?.OverlayAcceptsGamepad == true);
+        return (_window as MainWindow)?.AcceptsGamepad != false && !ToolboxWindow.IsIconic(_windowHandle) && (GetForegroundWindow() == _windowHandle);
     }
 
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
@@ -639,7 +638,7 @@ public sealed partial class WallStage : IDisposable
         double dt = _lastFrame == 0 ? 16 : Math.Min(50, now - _lastFrame);
         _lastFrame = now;
         _pad?.ApplyPan(this);
-        if (_ccOpen || _wsOpen || _qsOpen || CsActive) { PanVelocity = Vector2.Zero; _glide = Vector2.Zero; }
+        if (_ccOpen || CsActive) { PanVelocity = Vector2.Zero; _glide = Vector2.Zero; }
         var v = PanVelocity + _glide;
         if (v.X != 0 || v.Y != 0)
         {
@@ -674,7 +673,7 @@ public sealed partial class WallStage : IDisposable
     {
         if (ConsumeScreensaverWake()) return;
         if (_backgroundSettingsOpen) return;
-        if (_ccOpen || _wsOpen || _qsOpen || MorphBusy) return;
+        if (_ccOpen || MorphBusy) return;
         if (CsActive) { MarkInput(); CsDrag(dx, dy); return; }
         MarkInput();
         Sync();
@@ -811,8 +810,6 @@ public sealed partial class WallStage : IDisposable
         if (ConsumeScreensaverWake()) return;
         MarkInput();
         NavHaptic(dir switch { Direction.Up => "moveUp", Direction.Down => "moveDown", Direction.Left => "moveLeft", _ => "moveRight" });
-        if (_wsOpen) { WsMove(dir); return; }
-        if (_qsOpen) { QsMove(dir); return; }
         if (_ob != null) { ObMove(dir); return; }
         if (LaunchMotionIntercept(false, dir)) { if (_lm?.Mode != LmMode.Playing) Cue(Sfx.None); return; }
         if (MorphIntercept()) return;
@@ -834,14 +831,11 @@ public sealed partial class WallStage : IDisposable
     /// <summary>A：游戏卡展开聚焦卡；聚焦卡上再按 = 启动；集合卡 = 进入。</summary>
     public void Activate() => WithCue(Sfx.Activate, () =>
     {
-        if (!_wsOpen && NowMs < _wsLibraryConfirmUntil) { Cue(Sfx.None); return; }
         // 屏保里按 A：回到首页并选中屏幕上那款（只唤醒，不启动）
         if (_screensaverActive && CsSaverWakeWithGame()) return;
         if (ConsumeScreensaverWake()) return;
         MarkInput();
         NavHaptic("confirm");
-        if (_wsOpen) { WsActivate(); return; }
-        if (_qsOpen) { QsActivate(); return; }
         if (_ob != null) { ObActivate(); return; }
         if (LaunchMotionIntercept(false, activate: true)) { if (_lm?.Mode != LmMode.Playing) Cue(Sfx.None); return; }
         if (MorphIntercept()) return;
@@ -927,8 +921,6 @@ public sealed partial class WallStage : IDisposable
         if (ConsumeScreensaverWake()) return;
         MarkInput();
         NavHaptic("back");
-        if (_wsOpen) { WsBack(); return; }
-        if (_qsOpen) { QsBack(); return; }
         if (_ob != null) { ObBack(); return; }
         if (LaunchMotionIntercept(true)) return;
         if (MorphIntercept()) return;
@@ -1152,7 +1144,7 @@ public sealed partial class WallStage : IDisposable
     }
 
     /// <summary>LB / RB：首页换页签，整墙出场 → 入场。</summary>
-    public void SwitchTab(int delta) => WithCue(Sfx.Tab, () => { if (_wsOpen) { WsMove(delta < 0 ? Direction.Left : Direction.Right); return; } if (_qsOpen) { Cue(Sfx.None); QsTab(delta); return; } if (_ob != null || LaunchMotionIntercept(false)) { Cue(Sfx.None); return; } SwitchTabCore(delta); });
+    public void SwitchTab(int delta) => WithCue(Sfx.Tab, () => { if (_ob != null || LaunchMotionIntercept(false)) { Cue(Sfx.None); return; } SwitchTabCore(delta); });
 
     private void SwitchTabCore(int delta)
     {
@@ -1299,11 +1291,8 @@ public sealed partial class WallStage : IDisposable
     /// <summary>鼠标：点卡 = 聚焦并激活。</summary>
     public void ClickAt(double sx, double sy)
     {
-        if (!_wsOpen && NowMs < _wsLibraryConfirmUntil) return;
         if (ConsumeScreensaverWake()) return;
         MarkInput();
-        if (_wsOpen) { WsClick(sx, sy); return; }
-        if (_qsOpen) { QsClick(sx, sy); return; }   // 快设面板开着：只有面板能点，左上角的触摸导航和墙都点不到
         if (TouchNavigationClick(sx, sy)) return;
         if (_ob != null) { ObClick(sx, sy); return; }
         // 启动 / 正在游戏画面开着：点它自己的按钮，别的地方吞掉（以前会点穿到下面的墙，点到这款游戏的卡就反复「继续游戏」）
@@ -1401,8 +1390,7 @@ public sealed partial class WallStage : IDisposable
             if (ConsumeScreensaverWake()) { e.Handled = true; return; }
             MarkInput();
             var p = e.GetCurrentPoint(_rootEl).Properties;
-            if (_qsOpen) { e.Handled = true; return; }   // 快设面板开着：滚轮不滚下面的墙
-            if (SettingsPageOpen && !_agOpen && !_shOpen && !_wsOpen && !GsArtMode)
+            if (SettingsPageOpen && !_agOpen && !_shOpen && !GsArtMode)
             {
                 if (!p.IsHorizontalMouseWheel) SettingsWheel(p.MouseWheelDelta);
                 e.Handled = true;
@@ -1432,7 +1420,7 @@ public sealed partial class WallStage : IDisposable
         if (_screensaverWakeKey != null) { e.Handled = true; return; }
         if (ConsumeScreensaverWake()) { _screensaverWakeKey = e.Key; e.Handled = true; return; }
         MarkInput();
-        if (!_wsOpen && !_qsOpen && e.OriginalSource is Microsoft.UI.Xaml.Controls.TextBox) return;   // 搜索框里打字不当快捷键
+        if (e.OriginalSource is Microsoft.UI.Xaml.Controls.TextBox) return;   // 搜索框里打字不当快捷键
         bool repeat = e.KeyStatus.RepeatCount > 1 || e.KeyStatus.WasKeyDown;
         switch (e.Key)
         {
@@ -1484,10 +1472,10 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         MarkInput();
-        if (!_wsOpen && _ob == null && !_qsOpen && CpPointerDown(e, pt)) return;   // Cocoon 样式页面
-        if (!_wsOpen && _ob == null && !_qsOpen && !_ccOpen && LsPointerDown(e, pt)) return;   // 单行首页左侧栏
-        if (!_wsOpen && _ob == null && !_qsOpen && !_ccOpen && SpPointerDown(e, pt)) return;   // 单行首页右侧栏
-        if (!_wsOpen && _ob == null && !_qsOpen && _ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx && !TouchNavigationHit(pt.Position.X, pt.Position.Y))
+        if (_ob == null && CpPointerDown(e, pt)) return;   // Cocoon 样式页面
+        if (_ob == null && !_ccOpen && LsPointerDown(e, pt)) return;   // 单行首页左侧栏
+        if (_ob == null && !_ccOpen && SpPointerDown(e, pt)) return;   // 单行首页右侧栏
+        if (_ob == null && _ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx && !TouchNavigationHit(pt.Position.X, pt.Position.Y))
         {
             MarkInput();
             _edge = (pt.Position.X, pt.Position.Y, pt.PointerId);
@@ -1497,7 +1485,7 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         // 添加游戏页叠在设置页上面：它的点按、拖动走下面通用那条（AgClick），不能让设置页的手势接走
-        if (!_wsOpen && _ob == null && !_qsOpen && _lm is not { Leaving: false } && UseSettingsPointer(pt.Position.X, pt.Position.Y))
+        if (_ob == null && _lm is not { Leaving: false } && UseSettingsPointer(pt.Position.X, pt.Position.Y))
         {
             e.Handled = true;
             if ((!pt.IsInContact && !pt.Properties.IsLeftButtonPressed) || pt.Properties.IsRightButtonPressed || pt.Properties.IsMiddleButtonPressed) return;
@@ -1510,15 +1498,12 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         if (!_pagePointer.Begin(pt.PointerId, pt.Position.X, pt.Position.Y, PointerSurface)) return;
-        var quickSlider = _qsOpen ? QsDirectSliderAt(pt.Position.X / QsK, pt.Position.Y / QsK) : null;
-        _quickTouchId = quickSlider ?? (_qsOpen ? QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id : null);
         _shFilterDragRemainder = 0;
         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, 0, 0, 0, pt.PointerId);
         _dragFrom = (pt.Position.X, pt.Position.Y);
         CsDragEnd();
         _glide = Vector2.Zero;
         if (!_rootEl.CapturePointer(e.Pointer)) { _pagePointer.Reset(); _drag = null; return; }
-        if (quickSlider != null) { QsSetFocus(quickSlider); QsTouchDrag(quickSlider, pt.Position.X); }
         _rootEl.Focus(FocusState.Pointer);
         e.Handled = true;
     }
@@ -1560,17 +1545,9 @@ public sealed partial class WallStage : IDisposable
         double dt = Math.Max(1, (pt.Timestamp - d.t) / 1000.0);
         double moved = Math.Max(d.moved, Math.Max(Math.Abs(pt.Position.X - _dragFrom.x), Math.Abs(pt.Position.Y - _dragFrom.y)));
         _drag = (pt.Position.X, pt.Position.Y, pt.Timestamp, dx / dt * 1000, dy / dt * 1000, moved, d.id);
-        if (_qsOpen && QsDirectSliderAt(_dragFrom.x / QsK, _dragFrom.y / QsK) == _quickTouchId && _quickTouchId != null)
-        {
-            QsTouchDrag(_quickTouchId, pt.Position.X);
-            e.Handled = true;
-            return;
-        }
         if (intent != TouchResult.Tap)
         {
-            if (_wsOpen) { }
-            else if (_qsOpen) { if (intent == TouchResult.Horizontal && _quickTouchId == "tdp") QsTouchDrag(_quickTouchId, pt.Position.X); }
-            else if (_ob != null || _lm is { Leaving: false } || _searchOpen || _backgroundSettingsOpen || TouchNavigationHit(_dragFrom.x, _dragFrom.y)) { }
+            if (_ob != null || _lm is { Leaving: false } || _searchOpen || _backgroundSettingsOpen || TouchNavigationHit(_dragFrom.x, _dragFrom.y)) { }
             else if (_ccOpen) { if (intent == TouchResult.Vertical) CcDrag(dx, dy); }
             else PanBy(dx, dy);
         }
@@ -1616,19 +1593,6 @@ public sealed partial class WallStage : IDisposable
         _rootEl.ReleasePointerCapture(e.Pointer);
         e.Handled = true;
         if (result is TouchResult.None or TouchResult.Canceled) return;
-        if (_wsOpen)
-        {
-            if (result == TouchResult.Tap) WsClick(pt.Position.X, pt.Position.Y);
-            else if (result == TouchResult.Horizontal) WsMove(pt.Position.X < _dragFrom.x ? Direction.Right : Direction.Left);
-            return;
-        }
-        if (_qsOpen)
-        {
-            if (_quickTouchId != null && QsDirectSliderAt(_dragFrom.x / QsK, _dragFrom.y / QsK) == _quickTouchId)
-                QsTouchDrag(_quickTouchId, pt.Position.X);
-            else if (result == TouchResult.Tap && _quickTouchId == QsTouchItemAt(pt.Position.X, pt.Position.Y)?.Id) ClickAt(pt.Position.X, pt.Position.Y);
-            return;
-        }
         if (result == TouchResult.Tap) { ClickAt(pt.Position.X, pt.Position.Y); return; }
         if (_ob != null || _lm is { Leaving: false } || _searchOpen || _backgroundSettingsOpen || TouchNavigationHit(_dragFrom.x, _dragFrom.y)) return;
         if (_ccOpen) { if (result == TouchResult.Horizontal) CcSwipe(pt.Position.X - _dragFrom.x, pt.Position.Y - _dragFrom.y); return; }
@@ -1682,9 +1646,6 @@ public sealed partial class WallStage : IDisposable
         _pagePointer.Reset();
         DisposeStartupReadiness();
         DisposeShortcutMotion();
-        CloseSpecialSurfaces();
-        foreach (var session in _networkBtSessions.Values) session.Dispose();
-        _networkBtSessions.Clear();
         _servicesDisposed = true;
         _connectCancel?.Cancel();
         _steamCloudLifetime.Cancel();
@@ -1703,12 +1664,6 @@ public sealed partial class WallStage : IDisposable
         _ccBack?.Dispose();
         foreach (var timer in _pendingTimers) timer.Stop();
         _pendingTimers.Clear();
-
-        // The prewarmed QAM is a separate WinUI window. Release it on real exit so
-        // the process cannot keep receiving activations after the main window closes.
-        var quickPanel = _qsWin;
-        _qsWin = null;
-        quickPanel?.Win.Close();
     }
 
     // 给自动测试用

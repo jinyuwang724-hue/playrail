@@ -35,8 +35,6 @@ public sealed record UiPrefs
     public bool SteamInstalledOnly { get; init; }
     public bool SourceXbox { get; init; } = true;
     public bool PreloadSteam { get; init; } = true;
-    /// <summary>游戏模式窗口管理（试验）：新窗口铺满、最小化或关掉就回游戏库，窗口变化即时处理。</summary>
-    public bool WindowManager { get; init; }
     public bool BackgroundRun { get; init; } = true;
     public bool SourceShortcuts { get; init; } = true;
     public AfterLaunch AfterLaunch { get; init; }
@@ -118,7 +116,6 @@ public sealed record UiPrefs
                     "steamInstalledOnly" when bool.TryParse(v, out var b) => p with { SteamInstalledOnly = b },
                     "sourceXbox" when bool.TryParse(v, out var b) => p with { SourceXbox = b },
                     "preloadSteam" when bool.TryParse(v, out var b) => p with { PreloadSteam = b },
-                    "windowManager" when bool.TryParse(v, out var b) => p with { WindowManager = b },
                     "backgroundRun" when bool.TryParse(v, out var b) => p with { BackgroundRun = b },
                     "sourceShortcuts" when bool.TryParse(v, out var b) => p with { SourceShortcuts = b },
                     "afterLaunch" when Enum.TryParse<AfterLaunch>(v, out var e) && Enum.IsDefined(e) => p with { AfterLaunch = e },
@@ -166,7 +163,7 @@ public sealed record UiPrefs
                 $"screensaverIdleSeconds={ScreensaverIdleSeconds}", $"screensaverIntervalSeconds={ScreensaverIntervalSeconds}",
                 $"tabOrder={string.Join(',', TabOrder)}", $"tabsHidden={string.Join(',', TabsHidden)}", $"showHidden={ShowHiddenGames}",
                 $"sourceSteam={SourceSteam}", $"steamInstalledOnly={SteamInstalledOnly}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}", $"nowPlaying={NowPlaying}",
-                $"sourceXbox={SourceXbox}", $"preloadSteam={PreloadSteam}", $"windowManager={WindowManager}", $"backgroundRun={BackgroundRun}",
+                $"sourceXbox={SourceXbox}", $"preloadSteam={PreloadSteam}", $"backgroundRun={BackgroundRun}",
                 $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
                 $"soundTheme={SoundTheme}", $"musicEnabled={MusicEnabled}", $"musicVolume={MusicVolume}", $"musicTrack={MusicTrack}", $"musicLoop={MusicLoop}",
                 $"lightsOn={LightsOn}", $"posterTint={PosterTint}", $"posterTintCustom={PosterTintCustom}", $"posterTintColor={PosterTintColor}", $"posterTintIntensity={PosterTintIntensity}", $"oobe={Oobe}", $"lang={Lang}", $"homeStyle={Home}", $"insertSound={InsertSound}",
