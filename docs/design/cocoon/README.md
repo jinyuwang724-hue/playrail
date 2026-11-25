@@ -26,6 +26,8 @@
 | 文档 | 内容与用途 |
 | --- | --- |
 | [tokens.json](tokens.json) | **单一事实源（W3C DTCG 格式）**：完整机器可读的设计令牌（色彩、材质渐变、字体与字重规则、间距、圆角、阴影、括号焦点公式参数、弹簧刚度与动效时长），供多端代码生成器、Style Dictionary 或 AI 编码助手直接消费。 |
+| [preview.html](preview.html) | **交互式活规范预览（浏览器直接打开）**：基于生成的 `tokens.css` 与同心四角括号焦点引擎搭建，支持键盘方向键 / 手柄导航与触控实测全部基础控件、双栏页面、左右抽屉和焦点算法实验室。 |
+| [Build-CocoonTokens.mjs](../../../tools/Build-CocoonTokens.mjs) | **多端 Token 生成器**：从 `tokens.json` 一键生成 C#（[CocoonTokens.g.cs](../../../frontend/cocoon-ui/Tokens/CocoonTokens.g.cs)）、CSS/Tailwind（[tokens.css](../../../packages/cocoon-tokens/dist/tokens.css) / [tailwind.preset.js](../../../packages/cocoon-tokens/dist/tailwind.preset.js)）、Kotlin Compose 与 Flutter Dart 令牌文件。 |
 | [foundations.md](foundations.md) | **基础视觉规范**：设计坐标系与 `dp` 换算、完整色彩语义表、4 种核心表面材质、中英混排字重规范（防中文合成加粗发糊）、圆角同心法则、投影与凹槽分隔规范。 |
 | [motion-and-focus.md](motion-and-focus.md) | **动效物理与焦点引擎规范**：临界阻尼弹簧数学定义与多端参数换算、四角括号与断开圆环的逐公式几何算法、全局统一 `1.8 s` 周长流光、橡皮筋形变、二级页分层入场与抽屉双段展开编排、降低动态效果降级规则。 |
 | [components.md](components.md) | **完整组件库目录与规格**：覆盖基础控件（11 个）、数据可视化组件（4 个）与页面/容器模板（6 个）的尺寸解剖、状态机、Props 数据契约与交互细节。 |

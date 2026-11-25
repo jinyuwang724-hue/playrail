@@ -1,0 +1,14 @@
+{
+  "name": "@cocoon-design/tokens",
+  "version": "1.0.0-draft",
+  "description": "Cross-platform Design Tokens for the Cocoon Design System (CSS, Tailwind, C#, Kotlin, Dart).",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./css": "./dist/tokens.css",
+    "./tailwind": "./dist/tailwind.preset.js"
+  },
+  "license": "MIT"
+}

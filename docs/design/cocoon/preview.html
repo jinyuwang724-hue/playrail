@@ -1,0 +1,2127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cocoon Design System — 交互式规范与组件预览</title>
+  <link rel="stylesheet" href="../../../packages/cocoon-tokens/dist/tokens.css" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-tap-highlight-color: transparent; }
+
+    html, body {
+      min-height: 100vh;
+      background: var(--cocoon-grad-page);
+      color: var(--cocoon-color-neutral-ink-primary);
+      font-family: var(--cocoon-font-sans);
+      font-weight: var(--cocoon-weight-cjk);
+      overflow-x: hidden;
+    }
+
+    body.reduced-motion *, body.reduced-motion *::before, body.reduced-motion *::after {
+      transition-duration: 1ms !important;
+      animation-duration: 1ms !important;
+    }
+
+    /* ---------- Top Toolbar (Preview Harness) ---------- */
+    .harness-bar {
+      position: sticky;
+      top: 0;
+      z-index: 60;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 24px;
+      background: rgba(239, 239, 244, 0.82);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid rgba(196, 197, 204, 0.55);
+    }
+
+    .harness-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .harness-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--cocoon-grad-accent);
+      box-shadow: 0 0 10px rgba(128, 55, 255, 0.5);
+    }
+
+    .harness-title {
+      font-size: 16px;
+      font-weight: var(--cocoon-weight-latin-title);
+      letter-spacing: -0.01em;
+    }
+
+    .harness-ver {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--cocoon-color-surface-tile-well);
+      color: var(--cocoon-color-neutral-ink-secondary);
+      font-weight: 600;
+    }
+
+    .harness-tabs {
+      display: flex;
+      gap: 6px;
+      padding: 4px;
+      border-radius: 999px;
+      background: rgba(226, 227, 234, 0.9);
+      border: 1px solid rgba(196, 197, 204, 0.6);
+    }
+
+    .harness-tab {
+      border: 0;
+      background: transparent;
+      color: var(--cocoon-color-neutral-ink-secondary);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 7px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
+    }
+
+    .harness-tab.is-active {
+      background: #FFFFFF;
+      color: var(--cocoon-color-brand-accent-ink);
+      box-shadow: var(--cocoon-shadow-pill);
+    }
+
+    .harness-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .mode-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: #FFFFFF;
+      border: 1px solid var(--cocoon-color-surface-pill-border);
+      box-shadow: var(--cocoon-shadow-pill);
+      color: var(--cocoon-color-neutral-ink-primary);
+      cursor: pointer;
+    }
+
+    .mode-pill .indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--cocoon-color-neutral-ink-placeholder);
+    }
+
+    .mode-pill.is-gamepad .indicator {
+      background: var(--cocoon-color-brand-accent-ink);
+      box-shadow: 0 0 8px rgba(122, 76, 255, 0.7);
+    }
+
+    .hint-kbd {
+      font-size: 12px;
+      color: var(--cocoon-color-neutral-ink-secondary);
+    }
+
+    /* ---------- Shared Cocoon Primitives ---------- */
+    .stage-wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px 24px 64px;
+      transition: filter 230ms ease;
+    }
+
+    .stage-wrap.is-blurred {
+      filter: blur(8px);
+    }
+
+    .tab-pane { display: none; }
+    .tab-pane.is-active { display: block; }
+
+    /* Capsules */
+    .cocoon-capsule {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      height: 42px;
+      padding: 0 16px 0 8px;
+      border-radius: 999px;
+      border: 0;
+      font-family: inherit;
+      cursor: pointer;
+      transition: transform 120ms ease;
+    }
+    .cocoon-capsule:active { transform: scale(0.97); }
+
+    .cocoon-capsule-back {
+      background: var(--cocoon-color-surface-back-pill);
+      color: var(--cocoon-color-neutral-ink-primary);
+    }
+
+    .cocoon-capsule-back .keycap {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--cocoon-color-neutral-ink-placeholder);
+      color: var(--cocoon-color-surface-drawer-top);
+      font-family: var(--cocoon-font-latin);
+      font-weight: 700;
+      font-size: 12.5px;
+      display: grid;
+      place-items: center;
+    }
+
+    .cocoon-capsule-action {
+      background: var(--cocoon-grad-pill-action);
+      color: var(--cocoon-color-neutral-ink-on-dark);
+      box-shadow: var(--cocoon-shadow-primary-glow);
+    }
+
+    .cocoon-capsule-action .keycap {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--cocoon-color-brand-pill-badge-light);
+      color: var(--cocoon-color-brand-accent-ink);
+      font-family: var(--cocoon-font-latin);
+      font-weight: 700;
+      font-size: 12.5px;
+      display: grid;
+      place-items: center;
+    }
+
+    /* Two-Column Page Layout */
+    .two-col-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    .two-col-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .two-col-title {
+      font-size: var(--cocoon-text-page-title);
+      font-weight: var(--cocoon-weight-cjk);
+      letter-spacing: -0.02em;
+      color: var(--cocoon-color-neutral-ink-primary);
+    }
+
+    .two-col-grid {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    @media (max-width: 860px) {
+      .two-col-grid { grid-template-columns: 1fr; }
+    }
+
+    /* Left Nav */
+    .left-nav-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 16px;
+    }
+
+    .nav-cat {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      height: 68px;
+      padding: 0 22px;
+      border-radius: var(--cocoon-radius-card);
+      cursor: pointer;
+      color: var(--cocoon-color-neutral-ink-primary);
+    }
+
+    .nav-cat-bg {
+      position: absolute;
+      inset: 0;
+      border-radius: var(--cocoon-radius-card);
+      opacity: 0;
+      transition: opacity 150ms ease-out;
+      pointer-events: none;
+    }
+
+    .nav-cat.is-selected .nav-cat-bg {
+      opacity: 1;
+    }
+
+    .nav-cat-content {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-size: 21px;
+      transition: color 150ms ease-out;
+    }
+
+    .nav-cat.is-selected .nav-cat-content {
+      color: var(--cocoon-color-brand-accent-ink);
+    }
+
+    /* Left Telemetry Card */
+    .telemetry-card {
+      padding: 18px;
+    }
+
+    .rings-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .ring-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .ring-caption {
+      font-size: 16px;
+      color: var(--cocoon-color-neutral-ink-primary);
+    }
+
+    .bars-well {
+      background: var(--cocoon-color-surface-tile-well);
+      border-radius: var(--cocoon-radius-tile-well);
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+
+    .bars-row {
+      display: grid;
+      grid-template-columns: repeat(30, 1fr);
+      gap: 3px;
+      height: 76px;
+      align-items: end;
+    }
+
+    .bar-slot {
+      height: 100%;
+      background: var(--cocoon-color-surface-bar-track);
+      border-radius: 999px;
+      display: flex;
+      align-items: flex-end;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      width: 100%;
+      border-radius: 999px;
+      background: linear-gradient(0deg, var(--cocoon-color-brand-accent-end), var(--cocoon-color-brand-accent-start));
+      transition: height 180ms ease-out;
+    }
+
+    .chips-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .metric-chip {
+      height: 36px;
+      border-radius: 999px;
+      background: var(--cocoon-color-surface-tile-well);
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .metric-chip.is-wide { grid-column: 1 / -1; }
+
+    .metric-chip-label {
+      font-size: var(--cocoon-text-chip-label);
+      color: var(--cocoon-color-neutral-ink-secondary);
+      white-space: nowrap;
+    }
+
+    .metric-chip-val {
+      font-size: var(--cocoon-text-chip-value);
+      font-family: var(--cocoon-font-latin);
+      font-weight: 600;
+      color: var(--cocoon-color-neutral-ink-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Right Settings Groups */
+    .groups-col {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .group-card {
+      overflow: visible;
+    }
+
+    .setting-row {
+      position: relative;
+      padding: 0 24px;
+      transition: background-color 160ms ease;
+    }
+
+    .setting-row.is-pressed {
+      background-color: var(--cocoon-color-surface-press-overlay);
+    }
+
+    .setting-row.is-disabled {
+      opacity: 0.4;
+    }
+
+    .setting-row-main {
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 0;
+    }
+
+    .setting-row-main.has-sub {
+      min-height: 80px;
+    }
+
+    .row-text {
+      min-width: 0;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .row-title {
+      font-size: var(--cocoon-text-row-title);
+      color: var(--cocoon-color-neutral-ink-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .row-changed-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--cocoon-color-brand-accent-ink);
+      flex-shrink: 0;
+    }
+
+    .row-sub {
+      font-size: var(--cocoon-text-row-sub);
+      color: var(--cocoon-color-neutral-ink-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Toggle Switch */
+    .cocoon-toggle {
+      position: relative;
+      width: 68px;
+      height: 43px;
+      border-radius: 999px;
+      background: var(--cocoon-color-surface-toggle-off);
+      box-shadow: inset 0 0 0 2.3px var(--cocoon-color-neutral-ink-placeholder);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: box-shadow 150ms ease;
+    }
+
+    .cocoon-toggle-fill {
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      background: var(--cocoon-grad-accent);
+      opacity: 0;
+      transition: opacity 150ms ease-out;
+    }
+
+    .cocoon-toggle-knob {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      width: 31px;
+      height: 31px;
+      border-radius: 50%;
+      background: var(--cocoon-color-neutral-ink-on-dark);
+      box-shadow: var(--cocoon-shadow-toggle-knob);
+      transition: transform 150ms var(--cocoon-ease-slide-out);
+    }
+
+    .cocoon-toggle.is-on {
+      box-shadow: none;
+    }
+
+    .cocoon-toggle.is-on .cocoon-toggle-fill {
+      opacity: 1;
+    }
+
+    .cocoon-toggle.is-on .cocoon-toggle-knob {
+      transform: translateX(25px);
+    }
+
+    /* Inline Dropdown */
+    .pick-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      width: 228px;
+      flex-shrink: 0;
+    }
+
+    .pick-pill {
+      width: 100%;
+      height: 46px;
+      padding: 0 16px;
+      border-radius: 999px;
+      background: var(--cocoon-color-surface-pill-white);
+      border: 1px solid var(--cocoon-color-surface-pill-border);
+      box-shadow: var(--cocoon-shadow-pill);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+      font-size: var(--cocoon-text-row-value);
+      color: var(--cocoon-color-neutral-ink-primary);
+    }
+
+    .pick-chevron {
+      transition: transform 150ms ease;
+      color: var(--cocoon-color-neutral-ink-secondary);
+    }
+    .pick-pill.is-open .pick-chevron {
+      transform: rotate(180deg);
+      color: var(--cocoon-color-neutral-ink-primary);
+    }
+
+    .option-card {
+      width: 100%;
+      margin-top: 8px;
+      margin-bottom: 12px;
+      border-radius: var(--cocoon-radius-card);
+      background: var(--cocoon-color-surface-option-card);
+      border: 1px solid var(--cocoon-color-surface-divider-subtle);
+      box-shadow: var(--cocoon-shadow-option-card);
+      overflow: hidden;
+      display: none;
+    }
+    .option-card.is-open { display: block; }
+
+    .option-item {
+      height: 50px;
+      padding: 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: var(--cocoon-text-dropdown-option);
+      color: var(--cocoon-color-neutral-ink-primary);
+      cursor: pointer;
+      position: relative;
+    }
+
+    .option-item + .option-item::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 16px;
+      right: 16px;
+      height: 1px;
+      background: var(--cocoon-color-surface-divider-subtle);
+    }
+
+    .option-item.is-selected {
+      color: var(--cocoon-color-semantic-selected-option);
+    }
+
+    .option-item.is-multi-active {
+      background: var(--cocoon-color-brand-selection-tint);
+    }
+
+    .multi-check {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      border: 2px solid #B4B6BC;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+    }
+    .multi-check.is-checked {
+      border: 1.5px solid var(--cocoon-color-neutral-ink-on-dark);
+      background: var(--cocoon-grad-accent);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+
+    /* Slider Row */
+    .slider-row-box {
+      padding: 12px 0 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .slider-controls {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .slider-val-text {
+      min-width: 72px;
+      font-size: var(--cocoon-text-slider-value);
+      color: var(--cocoon-color-neutral-ink-secondary);
+      font-family: var(--cocoon-font-latin);
+    }
+
+    .slider-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 0;
+      background: transparent;
+      color: var(--cocoon-color-neutral-ink-primary);
+      font-size: 20px;
+      font-weight: 700;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    .slider-track {
+      position: relative;
+      flex: 1;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--cocoon-color-surface-slider-track);
+      cursor: pointer;
+      touch-action: none;
+    }
+
+    .slider-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      border-radius: 999px;
+      background: var(--cocoon-grad-accent-x);
+      pointer-events: none;
+    }
+
+    .slider-thumb {
+      position: absolute;
+      top: 50%;
+      width: 27px;
+      height: 27px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      background: linear-gradient(135deg, var(--cocoon-color-brand-knob-start), var(--cocoon-color-brand-knob-end));
+      box-shadow: var(--cocoon-shadow-slider-thumb);
+      pointer-events: none;
+    }
+
+    /* Stepper Pill */
+    .stepper-pill {
+      min-width: 140px;
+      height: 43px;
+      padding: 0 14px;
+      border-radius: 999px;
+      background: var(--cocoon-color-surface-stepper-pill);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: var(--cocoon-text-slider-value);
+      color: var(--cocoon-color-neutral-ink-primary);
+    }
+
+    .stepper-btn {
+      border: 0;
+      background: transparent;
+      color: var(--cocoon-color-neutral-ink-primary);
+      font-size: 18px;
+      font-weight: 800;
+      cursor: pointer;
+      padding: 2px 6px;
+    }
+
+    /* Order Row Pill */
+    .order-pill {
+      height: 46px;
+      padding: 0 14px;
+      border-radius: 999px;
+      background: var(--cocoon-color-surface-toggle-off);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: width 150ms var(--cocoon-ease-slide-out);
+    }
+    .order-sub-btn {
+      height: 36px;
+      padding: 0 12px;
+      border-radius: 999px;
+      border: 0;
+      background: #CCCDD2;
+      color: var(--cocoon-color-neutral-ink-primary);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .order-sub-btn:disabled {
+      color: var(--cocoon-color-neutral-ink-disabled);
+      cursor: default;
+    }
+
+    /* Child collapsible */
+    .child-rows-wrap {
+      overflow: hidden;
+      transition: max-height 170ms var(--cocoon-ease-slide-out), opacity 140ms ease;
+      max-height: 200px;
+      opacity: 1;
+    }
+    .child-rows-wrap.is-collapsed {
+      max-height: 0;
+      opacity: 0;
+    }
+
+    /* ---------- Tab 2: Drawers & Modals ---------- */
+    .scene-box {
+      position: relative;
+      height: 640px;
+      border-radius: var(--cocoon-radius-card);
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 20% 25%, rgba(134, 167, 253, 0.35), transparent 45%),
+        radial-gradient(circle at 80% 75%, rgba(128, 55, 255, 0.32), transparent 50%),
+        linear-gradient(135deg, #272936 0%, #191B24 100%);
+      box-shadow: var(--cocoon-shadow-dialog);
+    }
+
+    .scene-bg-ui {
+      position: absolute;
+      inset: 0;
+      padding: 20px 26px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: filter 230ms ease;
+    }
+    .scene-bg-ui.is-blurred { filter: blur(8px); }
+
+    .scene-top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .frosted-capsule {
+      height: 54px;
+      padding: 0 20px;
+      border-radius: 20px;
+      background: rgba(110, 110, 116, 0.56);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: var(--cocoon-color-neutral-ink-on-dark);
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .scene-demo-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .cover-strip {
+      display: flex;
+      gap: 18px;
+      align-items: flex-end;
+      padding: 8px 6px;
+    }
+
+    .mini-cover {
+      width: 112px;
+      height: 168px;
+      border-radius: calc(112px * 0.17391305);
+      background: linear-gradient(155deg, #4B5785, #2E2B4D);
+      border: 1px solid rgba(255,255,255,0.18);
+      display: flex;
+      align-items: flex-end;
+      padding: 12px;
+      color: #FAFAFA;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 12px 24px rgba(0,0,0,0.35);
+      transition: transform 220ms ease;
+      cursor: pointer;
+    }
+    .mini-cover.is-featured {
+      transform: scale(1.12);
+      background: linear-gradient(155deg, #6E7BE8, #632FD6);
+    }
+
+    /* Scrims */
+    .scene-scrim {
+      position: absolute;
+      inset: 0;
+      background: var(--cocoon-color-scrim-modal);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 200ms ease;
+      z-index: 10;
+    }
+    .scene-scrim.is-drawer { background: var(--cocoon-color-scrim-drawer); }
+    .scene-scrim.is-open { opacity: 1; pointer-events: auto; }
+
+    /* Right Drawer */
+    .right-drawer {
+      position: absolute;
+      top: 14px;
+      right: 18px;
+      width: 420px;
+      max-width: calc(100% - 36px);
+      height: calc(100% - 28px);
+      border-radius: var(--cocoon-radius-drawer);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      z-index: 20;
+      box-shadow: var(--cocoon-shadow-dialog);
+      transform-origin: top right;
+      transform: scale(0.32, 0.1);
+      opacity: 0;
+      pointer-events: none;
+      transition: transform 220ms var(--cocoon-ease-drawer-in), opacity 140ms ease;
+    }
+    .right-drawer.is-open {
+      transform: scale(1, 1);
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .tile-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    .circle-tile {
+      position: relative;
+      width: 66px;
+      height: 66px;
+      margin: 0 auto;
+      border-radius: 50%;
+      background: var(--cocoon-color-surface-tile-off);
+      color: var(--cocoon-color-neutral-ink-tile);
+      border: 0;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      overflow: hidden;
+    }
+    .circle-tile::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: var(--cocoon-grad-tile-on);
+      opacity: 0;
+      transition: opacity 200ms ease;
+    }
+    .circle-tile span { position: relative; z-index: 1; }
+    .circle-tile.is-on { color: var(--cocoon-color-neutral-ink-on-dark); }
+    .circle-tile.is-on::before { opacity: 1; }
+
+    .power-meter-card {
+      padding: 14px 16px;
+      border-radius: var(--cocoon-radius-card);
+      background: var(--cocoon-color-surface-group-card);
+      border: 1px solid var(--cocoon-color-surface-group-edge-top);
+      box-shadow: var(--cocoon-shadow-group-sheet);
+    }
+
+    .meter-ticks {
+      display: grid;
+      grid-template-columns: repeat(21, 1fr);
+      gap: 4px;
+      align-items: end;
+      height: 36px;
+      margin-top: 10px;
+      cursor: pointer;
+    }
+    .meter-tick {
+      height: 18px;
+      border-radius: 999px;
+      background: #D8D9E2;
+      transition: height 120ms ease, background 120ms ease;
+    }
+    .meter-tick.is-lit {
+      height: 28px;
+      background: var(--cocoon-grad-tile-on);
+    }
+    .meter-tick.is-current {
+      height: 36px;
+      background: var(--cocoon-color-brand-accent-end);
+    }
+
+    /* Left Drawer */
+    .left-drawer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 340px;
+      border-radius: 0 var(--cocoon-radius-left-drawer) var(--cocoon-radius-left-drawer) 0;
+      display: flex;
+      flex-direction: column;
+      z-index: 20;
+      box-shadow: var(--cocoon-shadow-dialog);
+      transform: translateX(-105%);
+      transition: transform 200ms var(--cocoon-ease-drawer-in);
+    }
+    .left-drawer.is-open { transform: translateX(0); }
+
+    .left-drawer-row {
+      flex: 1;
+      padding: 0 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 19px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--cocoon-color-surface-divider-subtle);
+      opacity: 0;
+      transform: translateX(-14px);
+      transition: opacity 200ms ease-out, transform 200ms var(--cocoon-ease-drawer-in);
+    }
+    .left-drawer.is-open .left-drawer-row {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    .left-drawer-row:last-child { border-bottom: 0; }
+
+    /* Confirm Dialog & Context Menu */
+    .center-modal {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%) scale(0.94);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 30;
+      transition: transform 80ms ease-out, opacity 80ms ease-out;
+    }
+    .center-modal.is-open {
+      transform: translate(-50%, -50%) scale(1);
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .confirm-card {
+      width: 460px;
+      max-width: calc(100vw - 48px);
+      border-radius: var(--cocoon-radius-dialog);
+      background: var(--cocoon-color-surface-sheet);
+      box-shadow: var(--cocoon-shadow-dialog);
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      text-align: center;
+    }
+
+    .confirm-btn-green {
+      width: 100%;
+      height: 54px;
+      border: 0;
+      border-radius: 999px;
+      background: var(--cocoon-grad-confirm);
+      color: #FFFFFF;
+      font-size: 17px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .context-card {
+      width: 340px;
+      border-radius: var(--cocoon-radius-menu-card);
+      background: var(--cocoon-color-surface-sheet);
+      box-shadow: var(--cocoon-shadow-dialog);
+      overflow: hidden;
+    }
+    .context-row {
+      height: 58px;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    .context-row + .context-row {
+      border-top: 2px solid var(--cocoon-color-surface-divider-line);
+    }
+    .context-row.is-danger { color: var(--cocoon-color-semantic-danger); }
+
+    /* ---------- Tab 3: Foundations & Focus Lab ---------- */
+    .lab-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+      gap: 20px;
+    }
+
+    .swatch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+      gap: 10px;
+    }
+
+    .swatch-item {
+      border-radius: 14px;
+      background: #FFFFFF;
+      padding: 8px;
+      border: 1px solid var(--cocoon-color-surface-pill-border);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .swatch-chip {
+      height: 44px;
+      border-radius: 10px;
+      border: 1px solid rgba(0,0,0,0.06);
+    }
+    .swatch-name { font-size: 12px; font-weight: 600; color: var(--cocoon-color-neutral-ink-primary); }
+    .swatch-hex { font-size: 11px; color: var(--cocoon-color-neutral-ink-secondary); font-family: monospace; }
+
+    .focus-lab-stage {
+      height: 220px;
+      border-radius: 20px;
+      background: var(--cocoon-color-surface-tile-well);
+      display: grid;
+      place-items: center;
+      position: relative;
+      margin: 14px 0;
+    }
+
+    .focus-lab-target {
+      background: linear-gradient(180deg, #FDFDFE, #F0F1F4);
+      border: 1px solid #D5D6DD;
+      box-shadow: var(--cocoon-shadow-pill);
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      color: var(--cocoon-color-neutral-ink-secondary);
+      transition: width 80ms ease, height 80ms ease, border-radius 80ms ease;
+    }
+
+    .lab-readout {
+      font-family: monospace;
+      font-size: 12px;
+      background: #1E1E24;
+      color: #FAFAFA;
+      padding: 10px 14px;
+      border-radius: 12px;
+      line-height: 1.6;
+    }
+
+    /* ---------- Toast Pill ---------- */
+    .toast-pill {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translate(-50%, 16px);
+      height: 48px;
+      padding: 0 24px;
+      border-radius: 999px;
+      background: var(--cocoon-color-surface-option-card);
+      box-shadow: var(--cocoon-shadow-dialog);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+      color: var(--cocoon-color-neutral-ink-primary);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 80;
+      transition: opacity 180ms ease, transform 180ms var(--cocoon-ease-slide-out);
+    }
+    .toast-pill.is-visible {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+    .toast-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--cocoon-grad-accent);
+    }
+
+    /* ---------- Concentric Bracket Focus Overlay (SVG) ---------- */
+    #cocoon-cursor-svg {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      z-index: 9999;
+      opacity: 0;
+      transition: opacity 80ms ease-out;
+    }
+    #cocoon-cursor-svg.is-visible {
+      opacity: 1;
+      transition: opacity 140ms ease-out;
+    }
+  </style>
+</head>
+<body>
+  <!-- Harness Header -->
+  <header class="harness-bar">
+    <div class="harness-brand">
+      <div class="harness-dot"></div>
+      <span class="harness-title">Cocoon Design System</span>
+      <span class="harness-ver">v1.0.0-draft · 活规范预览</span>
+    </div>
+
+    <nav class="harness-tabs" aria-label="视图切换">
+      <button class="harness-tab is-active" data-tab="page">双栏设置与性能页</button>
+      <button class="harness-tab" data-tab="drawers">侧栏与弹窗模板</button>
+      <button class="harness-tab" data-tab="lab">基础令牌与焦点实验室</button>
+    </nav>
+
+    <div class="harness-controls">
+      <button id="btn-mode" class="mode-pill" title="点击切换 手柄/键盘 焦点演示">
+        <span class="indicator"></span>
+        <span id="mode-label">触控 / 指针模式</span>
+      </button>
+      <button id="btn-reduced" class="mode-pill" title="切换 Reduced Motion 降级规则">
+        <span>降低动态效果：</span>
+        <strong id="reduced-label">关</strong>
+      </button>
+      <span class="hint-kbd">支持方向键 / Enter / Esc 与手柄导航</span>
+    </div>
+  </header>
+
+  <main id="stage-wrap" class="stage-wrap">
+    <!-- ==================== TAB 1: TWO-COLUMN PAGE ==================== -->
+    <section id="tab-page" class="tab-pane is-active">
+      <div class="two-col-header">
+        <div class="two-col-title-wrap">
+          <button class="cocoon-capsule cocoon-capsule-back" data-focusable data-radius="21" onclick="showToast('按 B ← 返回上一层')">
+            <span class="keycap">B</span>
+            <svg width="18" height="14" viewBox="0 0 18 14" fill="none">
+              <path d="M16 7H2M7 2L2 7L7 12" stroke="#1E1E24" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <h1 class="two-col-title">性能与系统设置</h1>
+        </div>
+        <button class="cocoon-capsule cocoon-capsule-action" data-focusable data-radius="21" onclick="showToast('已应用全部设置（Y ✓）')">
+          <span class="keycap">Y</span>
+          <span style="width:22px;height:22px;border-radius:50%;background:#FAFAFA;display:grid;place-items:center;">
+            <svg width="13" height="10" viewBox="0 0 13 10" fill="none">
+              <path d="M1.5 5L5 8.5L11.5 1.5" stroke="#7A4CFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+        </button>
+      </div>
+
+      <div class="two-col-grid">
+        <!-- Left Column: Navigation + Live Telemetry Card3D -->
+        <div>
+          <div class="left-nav-list" id="nav-list">
+            <div class="nav-cat is-selected" data-cat="0" data-focusable data-radius="17">
+              <div class="nav-cat-bg cocoon-card-3d"></div>
+              <div class="nav-cat-content">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>
+                <span>功耗与调度</span>
+              </div>
+            </div>
+            <div class="nav-cat" data-cat="1" data-focusable data-radius="17">
+              <div class="nav-cat-bg cocoon-card-3d"></div>
+              <div class="nav-cat-content">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12a3 3 0 1 0 0 .01V12zm0-9a4.5 4.5 0 0 1 3.8 6.9A4.5 4.5 0 0 1 21 14a4.5 4.5 0 0 1-6.9 3.8A4.5 4.5 0 0 1 10 21a4.5 4.5 0 0 1-3.8-6.9A4.5 4.5 0 0 1 3 10a4.5 4.5 0 0 1 6.9-3.8A4.5 4.5 0 0 1 12 3z"/></svg>
+                <span>风扇曲线</span>
+              </div>
+            </div>
+            <div class="nav-cat" data-cat="2" data-focusable data-radius="17">
+              <div class="nav-cat-bg cocoon-card-3d"></div>
+              <div class="nav-cat-content">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="4" width="18" height="13" rx="2.5"/><path d="M8 20h8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+                <span>显示与声音</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Left-Bottom Live Card3D Telemetry -->
+          <div class="cocoon-card-3d telemetry-card">
+            <div class="rings-row">
+              <div class="ring-box">
+                <svg id="gauge-power" width="114" height="102" viewBox="0 0 114 102"></svg>
+                <span class="ring-caption">功耗</span>
+              </div>
+              <div class="ring-box">
+                <svg id="gauge-fan" width="114" height="102" viewBox="0 0 114 102"></svg>
+                <span class="ring-caption">风扇</span>
+              </div>
+            </div>
+            <div class="bars-well">
+              <div class="bars-row" id="activity-bars"></div>
+            </div>
+            <div class="chips-grid">
+              <div class="metric-chip">
+                <span class="metric-chip-label">温度</span>
+                <span class="metric-chip-val" id="chip-temp">64 °C</span>
+              </div>
+              <div class="metric-chip">
+                <span class="metric-chip-label">CPU</span>
+                <span class="metric-chip-val" id="chip-cpu">3.45 GHz</span>
+              </div>
+              <div class="metric-chip is-wide">
+                <span class="metric-chip-label">预设</span>
+                <span class="metric-chip-val" id="chip-preset">手动 · 20 W</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Grouped Card3D Settings List -->
+        <div class="groups-col">
+          <!-- Group 1: Toggle + Collapsible Child + Dropdowns -->
+          <div class="cocoon-card-3d group-card">
+            <div class="setting-row" data-focusable data-radius="17" data-action="toggle-main">
+              <div class="setting-row-main has-sub">
+                <div class="row-text">
+                  <div class="row-title">启用性能接管</div>
+                  <div class="row-sub">写入目标 TDP 并按 5 秒滑动均值平滑显示</div>
+                </div>
+                <div class="cocoon-toggle is-on" id="toggle-power">
+                  <div class="cocoon-toggle-fill"></div>
+                  <div class="cocoon-toggle-knob"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="child-rows-wrap" id="child-power-wrap">
+              <div class="cocoon-divider-groove"></div>
+              <div class="setting-row" id="row-mode-dd" data-focusable data-radius="17" data-action="dropdown-single">
+                <div class="setting-row-main">
+                  <div class="row-text">
+                    <div class="row-title"><span class="row-changed-dot"></span>功耗模式</div>
+                  </div>
+                  <div class="pick-wrap">
+                    <div class="pick-pill" id="pill-single">
+                      <span id="pill-single-text">手动指定</span>
+                      <svg class="pick-chevron" width="12" height="8" viewBox="0 0 12 8"><path d="M2 2L6 6L10 2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+                    </div>
+                    <div class="option-card" id="opts-single">
+                      <div class="option-item" data-idx="0" data-focusable data-radius="14">Auto（目标帧率）</div>
+                      <div class="option-item" data-idx="1" data-focusable data-radius="14">按电源切换</div>
+                      <div class="option-item is-selected" data-idx="2" data-focusable data-radius="14">手动指定</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="cocoon-divider-groove"></div>
+            <div class="setting-row" data-focusable data-radius="17" data-action="slider" data-slider="tdp">
+              <div class="slider-row-box">
+                <div class="row-title">目标功耗上限</div>
+                <div class="slider-controls">
+                  <span class="slider-val-text" id="tdp-val-text">20 W</span>
+                  <button class="slider-btn" data-step="-1" aria-label="减少">−</button>
+                  <div class="slider-track" id="tdp-track" data-min="8" data-max="35" data-val="20">
+                    <div class="slider-fill" id="tdp-fill" style="width:44.4%"></div>
+                    <div class="slider-thumb" id="tdp-thumb" style="left:44.4%"></div>
+                  </div>
+                  <button class="slider-btn" data-step="1" aria-label="增加">+</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Group 2: Multi-select Dropdown + Stepper + Order Rows -->
+          <div class="cocoon-card-3d group-card">
+            <div class="setting-row" data-focusable data-radius="17" data-action="dropdown-multi">
+              <div class="setting-row-main has-sub">
+                <div class="row-text">
+                  <div class="row-title">刮削内容类型</div>
+                  <div class="row-sub">原地展开的多选卡片，焦点框直接落到选项上</div>
+                </div>
+                <div class="pick-wrap">
+                  <div class="pick-pill" id="pill-multi">
+                    <span id="pill-multi-text">已选 2 项</span>
+                    <svg class="pick-chevron" width="12" height="8" viewBox="0 0 12 8"><path d="M2 2L6 6L10 2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+                  </div>
+                  <div class="option-card" id="opts-multi">
+                    <div class="option-item is-multi-active" data-midx="0" data-focusable data-radius="14">
+                      <span>游戏简介与年份</span>
+                      <span class="multi-check is-checked">
+                        <svg width="12" height="9" viewBox="0 0 12 9" fill="none"><path d="M1.5 4.5L4.5 7.5L10.5 1.5" stroke="#FAFAFA" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      </span>
+                    </div>
+                    <div class="option-item" data-midx="1" data-focusable data-radius="14">
+                      <span>官方竖版封面</span>
+                      <span class="multi-check is-checked">
+                        <svg width="12" height="9" viewBox="0 0 12 9" fill="none"><path d="M1.5 4.5L4.5 7.5L10.5 1.5" stroke="#FAFAFA" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      </span>
+                    </div>
+                    <div class="option-item" data-midx="2" data-focusable data-radius="14">
+                      <span>横幅背景与徽标</span>
+                      <span class="multi-check"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="cocoon-divider-groove"></div>
+            <div class="setting-row" data-focusable data-radius="17" data-action="stepper">
+              <div class="setting-row-main">
+                <div class="row-text">
+                  <div class="row-title">帧率上限（RTSS）</div>
+                </div>
+                <div class="stepper-pill" id="fps-stepper">
+                  <button class="stepper-btn" data-fstep="-1">−</button>
+                  <span id="fps-val">60 FPS</span>
+                  <button class="stepper-btn" data-fstep="1">+</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="cocoon-divider-groove"></div>
+            <div class="setting-row" data-focusable data-radius="17" data-action="order" id="order-row-0">
+              <div class="setting-row-main has-sub">
+                <div class="row-text">
+                  <div class="row-title">优先来源：Steam 商店</div>
+                  <div class="row-sub">支持来源优先级排序（← / → 或点按钮调整）</div>
+                </div>
+                <div class="order-pill">
+                  <button class="order-sub-btn" onclick="swapOrder(event, -1)">✚ ↓</button>
+                  <button class="order-sub-btn" onclick="swapOrder(event, 1)" disabled>✚ ↑</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="cocoon-divider-groove"></div>
+            <div class="setting-row" data-focusable data-radius="17" data-action="toast">
+              <div class="setting-row-main">
+                <div class="row-text">
+                  <div class="row-title">测试底部胶囊提示（ToastPill）</div>
+                </div>
+                <span style="color: var(--cocoon-color-neutral-ink-secondary); font-size: 18px;">点击触发 ▸</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 2: DRAWERS & MODALS ==================== -->
+    <section id="tab-drawers" class="tab-pane">
+      <div class="scene-box" id="scene-box">
+        <div class="scene-bg-ui" id="scene-bg-ui">
+          <div class="scene-top-bar">
+            <button class="frosted-capsule" data-focusable data-radius="20" onclick="openLeftDrawer()">
+              <span>☰ 控制中心（View）</span>
+            </button>
+            <button class="frosted-capsule" data-focusable data-radius="20" onclick="openRightDrawer()">
+              <span>Wi-Fi · 84% · 17:08</span>
+            </button>
+          </div>
+
+          <div class="scene-demo-buttons">
+            <button class="cocoon-capsule cocoon-capsule-action" style="padding:0 20px;" data-focusable data-radius="21" onclick="openLeftDrawer()">打开左侧控制栏</button>
+            <button class="cocoon-capsule cocoon-capsule-action" style="padding:0 20px;" data-focusable data-radius="21" onclick="openRightDrawer()">展开右侧快捷栏</button>
+            <button class="cocoon-capsule cocoon-capsule-back" style="padding:0 20px;" data-focusable data-radius="21" onclick="openConfirm()">退出游戏确认弹窗</button>
+            <button class="cocoon-capsule cocoon-capsule-back" style="padding:0 20px;" data-focusable data-radius="21" onclick="openContext()">游戏菜单（Y）</button>
+          </div>
+
+          <div class="cover-strip">
+            <div class="mini-cover" data-focusable data-radius="19">Hollow Knight</div>
+            <div class="mini-cover is-featured" data-focusable data-radius="19">Elden Ring</div>
+            <div class="mini-cover" data-focusable data-radius="19">Hades II</div>
+            <div class="mini-cover" data-focusable data-radius="19">Balatro</div>
+          </div>
+        </div>
+
+        <div class="scene-scrim" id="scene-scrim" onclick="closeOverlays()"></div>
+
+        <!-- Left Control Drawer -->
+        <aside class="left-drawer cocoon-drawer-surface" id="left-drawer">
+          <div class="left-drawer-row" style="transition-delay:60ms" data-focusable data-radius="12" onclick="closeOverlays(); showToast('打开：性能')"><span>性能</span><span style="color:var(--cocoon-color-neutral-ink-subtle)">⊙</span></div>
+          <div class="left-drawer-row" style="transition-delay:115ms" data-focusable data-radius="12" onclick="closeOverlays(); showToast('打开：手柄')"><span>手柄</span><span style="color:var(--cocoon-color-neutral-ink-subtle)">⊙</span></div>
+          <div class="left-drawer-row" style="transition-delay:170ms" data-focusable data-radius="12" onclick="closeOverlays(); showToast('打开：显示与声音')"><span>显示与声音</span><span style="color:var(--cocoon-color-neutral-ink-subtle)">⊙</span></div>
+          <div class="left-drawer-row" style="transition-delay:225ms" data-focusable data-radius="12" onclick="closeOverlays(); showToast('打开：系统')"><span>系统</span><span style="color:var(--cocoon-color-neutral-ink-subtle)">⊙</span></div>
+          <div class="left-drawer-row" style="transition-delay:280ms" data-focusable data-radius="12" onclick="closeOverlays(); showToast('打开：设置')"><span>设置</span><span style="color:var(--cocoon-color-neutral-ink-subtle)">⊙</span></div>
+        </aside>
+
+        <!-- Right Quick Drawer -->
+        <aside class="right-drawer cocoon-drawer-surface" id="right-drawer">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <strong style="font-size:16px;">快捷面板（胶囊原位展开）</strong>
+            <button class="cocoon-capsule cocoon-capsule-back" style="height:34px;padding:0 12px;font-size:12px;" data-focusable data-radius="17" onclick="closeOverlays()">收起</button>
+          </div>
+          <div class="tile-grid">
+            <button class="circle-tile is-on" data-focusable data-radius="33" onclick="this.classList.toggle('is-on')"><span>Wi-Fi</span></button>
+            <button class="circle-tile is-on" data-focusable data-radius="33" onclick="this.classList.toggle('is-on')"><span>蓝牙</span></button>
+            <button class="circle-tile" data-focusable data-radius="33" onclick="this.classList.toggle('is-on')"><span>OSD</span></button>
+            <button class="circle-tile is-on" data-focusable data-radius="33" onclick="this.classList.toggle('is-on')"><span>手柄</span></button>
+            <button class="circle-tile" data-focusable data-radius="33" onclick="this.classList.toggle('is-on')"><span>设置</span></button>
+            <button class="circle-tile" data-focusable data-radius="33" onclick="this.classList.toggle('is-on')"><span>截图</span></button>
+            <button class="circle-tile" data-focusable data-radius="33" onclick="this.classList.toggle('is-on')"><span>键盘</span></button>
+            <button class="circle-tile" data-focusable data-radius="33" onclick="this.classList.toggle('is-on')"><span>电源</span></button>
+          </div>
+
+          <div class="power-meter-card">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-size:16px;">功耗限制</span>
+              <span style="font-size:13px;color:var(--cocoon-color-neutral-ink-secondary);" id="meter-label">Elden Ring · 平均 18 W · 20 W</span>
+            </div>
+            <div class="meter-ticks" id="meter-ticks"></div>
+          </div>
+
+          <div class="cocoon-card-3d" style="padding:12px 16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;font-size:15px;">
+              <span>刷新率</span>
+              <span style="color:var(--cocoon-color-neutral-ink-secondary)">120 Hz ▾</span>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Confirm Dialog -->
+        <div class="center-modal" id="confirm-modal">
+          <div class="confirm-card">
+            <div style="display:flex;width:100%;align-items:center;justify-content:space-between;">
+              <button class="cocoon-capsule cocoon-capsule-back" data-focusable data-radius="21" onclick="closeOverlays()"><span class="keycap">B</span><span>取消</span></button>
+              <strong style="font-size:18px;">退出游戏</strong>
+              <span style="width:60px;"></span>
+            </div>
+            <div style="width:96px;height:144px;border-radius:16px;background:linear-gradient(155deg,#6E7BE8,#632FD6);display:grid;place-items:center;color:#fff;font-weight:600;box-shadow:0 8px 18px rgba(0,0,0,0.28);">Elden Ring</div>
+            <p style="font-size:14px;color:var(--cocoon-color-neutral-ink-secondary);">未保存的游戏进度将会丢失</p>
+            <button class="confirm-btn-green" data-focusable data-radius="27" onclick="closeOverlays(); showToast('已强制退出并保存本次游玩时长')">Ⓐ 强制退出</button>
+          </div>
+        </div>
+
+        <!-- Context Menu -->
+        <div class="center-modal" id="context-modal">
+          <div class="context-card">
+            <div class="context-row" data-focusable data-radius="12" onclick="closeOverlays(); showToast('启动游戏')">启动</div>
+            <div class="context-row" data-focusable data-radius="12" onclick="closeOverlays(); showToast('打开编辑元数据')">编辑</div>
+            <div class="context-row" data-focusable data-radius="12" onclick="closeOverlays(); showToast('打开按游戏配置')">游戏配置</div>
+            <div class="context-row" data-focusable data-radius="12" onclick="closeOverlays(); showToast('在资源管理器中打开')">打开本地文件</div>
+            <div class="context-row is-danger" data-focusable data-radius="12" onclick="confirmRemove(this)">移除</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== TAB 3: FOUNDATIONS & FOCUS LAB ==================== -->
+    <section id="tab-lab" class="tab-pane">
+      <div class="lab-grid">
+        <div class="cocoon-card-3d" style="padding:20px;">
+          <h2 style="font-size:20px;margin-bottom:12px;">核心色彩令牌（tokens.json）</h2>
+          <div class="swatch-grid" id="swatch-grid"></div>
+        </div>
+
+        <div class="cocoon-card-3d" style="padding:20px;">
+          <h2 style="font-size:20px;margin-bottom:6px;">四角括号同心焦点实验室</h2>
+          <p style="font-size:13px;color:var(--cocoon-color-neutral-ink-secondary);">拖动下方滑块实时查看同心公式与纯圆退化裁切效果</p>
+
+          <div class="focus-lab-stage">
+            <div id="lab-target" class="focus-lab-target" style="width:180px;height:68px;border-radius:17px;">目标矩形</div>
+            <svg id="lab-svg" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;"></svg>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;">
+            <label style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+              <span>宽度 W: <strong id="lab-w-v">180</strong></span>
+              <input id="lab-w" type="range" min="48" max="300" value="180" style="width:65%;" />
+            </label>
+            <label style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+              <span>高度 H: <strong id="lab-h-v">68</strong></span>
+              <input id="lab-h" type="range" min="48" max="150" value="68" style="width:65%;" />
+            </label>
+            <label style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+              <span>目标圆角 R: <strong id="lab-r-v">17</strong></span>
+              <input id="lab-r" type="range" min="0" max="75" value="17" style="width:65%;" />
+            </label>
+          </div>
+
+          <div class="lab-readout" id="lab-readout" style="margin-top:12px;"></div>
+        </div>
+
+        <div class="cocoon-card-3d" style="padding:20px;">
+          <h2 style="font-size:20px;margin-bottom:12px;">中英混排字重规范</h2>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div style="padding:14px;border-radius:16px;background:var(--cocoon-color-surface-tile-well);">
+              <div style="font-size:12px;color:var(--cocoon-color-neutral-ink-secondary);margin-bottom:4px;">正确：中文 Medium (500) + Poppins SemiBold (600)</div>
+              <div style="font-size:22px;font-weight:500;">性能配置 · <span style="font-family:var(--cocoon-font-latin);font-weight:600;">20.0 W / 120 Hz</span></div>
+            </div>
+            <div style="padding:14px;border-radius:16px;background:#FDECEC;">
+              <div style="font-size:12px;color:var(--cocoon-color-semantic-danger);margin-bottom:4px;">反例：中文强制 SemiBold (600/700) 易发生合成加粗发糊</div>
+              <div style="font-size:22px;font-weight:700;">性能配置 · 20.0 W / 120 Hz</div>
+            </div>
+            <div class="cocoon-divider-groove" style="margin:4px 0;"></div>
+            <div style="font-size:13px;color:var(--cocoon-color-neutral-ink-secondary);line-height:1.6;">
+              上方分割线即为 <strong>凹槽分隔线</strong>（<code>1.5px #E1E2E7 + 1px #FFFFFF</code>），与 <code>Card3D</code> 6 层立体表面配合提供一致的触感深度。
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Toast Pill -->
+  <div class="toast-pill" id="toast-pill">
+    <span class="toast-dot"></span>
+    <span id="toast-text">已保存</span>
+  </div>
+
+  <!-- Global Concentric Bracket Focus Engine SVG Overlay -->
+  <svg id="cocoon-cursor-svg" aria-hidden="true">
+    <defs>
+      <filter id="cocoon-glow-filter" x="-40%" y="-40%" width="180%" height="180%">
+        <feGaussianBlur stdDeviation="3.5" />
+      </filter>
+      <linearGradient id="cocoon-flow-grad" gradientUnits="objectBoundingBox" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="#86A7FD" />
+        <stop offset="50%" stop-color="#826FFD" />
+        <stop offset="100%" stop-color="#8037FF" />
+      </linearGradient>
+      <mask id="cocoon-rim-mask">
+        <rect x="-2000" y="-2000" width="6000" height="6000" fill="black" />
+        <path id="cursor-rim-outer" fill="none" stroke="white" stroke-linecap="round" stroke-linejoin="round" />
+        <path id="cursor-rim-inner" fill="none" stroke="black" stroke-linecap="round" stroke-linejoin="round" />
+      </mask>
+    </defs>
+    <g id="cursor-group">
+      <path id="cursor-glow" fill="none" stroke="#8037FF" stroke-linecap="round" stroke-linejoin="round" filter="url(#cocoon-glow-filter)" opacity="0.85" />
+      <path id="cursor-rim" fill="none" stroke="rgba(250, 250, 250, 0.42)" stroke-linecap="round" stroke-linejoin="round" mask="url(#cocoon-rim-mask)" />
+      <path id="cursor-line" fill="none" stroke="url(#cocoon-flow-grad)" stroke-linecap="round" stroke-linejoin="round" />
+    </g>
+  </svg>
+
+  <script>
+    // ==================== 1. Bracket Geometry Engine (Exact Port) ====================
+    function computeBracketGeometry(w, h, targetR, dp = 1.0) {
+      const thick = 0.6;
+      const pad = Math.min(24 * dp, Math.max(5 * dp, 0.12 * Math.min(w, h))) * thick;
+      const W = w + pad * 2;
+      const H = h + pad * 2;
+      let r = targetR + pad / 2;
+
+      const mn = Math.min(W, H);
+      const sf = Math.min(1.75, Math.max(0.35, mn / (96 * dp)));
+      const gap = Math.min(14 * dp * sf, 0.36 * mn);
+      r = Math.min(r, Math.max(0, (mn - gap) / 2));
+      const leg = Math.max(0, Math.min(18 * dp * sf, (mn - 2 * r - gap) / 2));
+      const sw = 8 * dp * thick;
+      return { pad, W, H, r, sf, gap, leg, sw };
+    }
+
+    function buildBracketPathD(x0, y0, W, H, r, leg) {
+      const ptsForArc = (cx, cy, a0) => {
+        const out = [];
+        for (let i = 0; i <= 18; i++) {
+          const an = a0 + (i / 18) * (Math.PI / 2);
+          out.push([cx + r * Math.cos(an), cy + r * Math.sin(an)]);
+        }
+        return out;
+      };
+      let segs = [
+        [[x0 + W - r - leg, y0], [x0 + W - r, y0], ...ptsForArc(x0 + W - r, y0 + r, -Math.PI / 2), [x0 + W, y0 + r + leg]],
+        [[x0 + W, y0 + H - r - leg], [x0 + W, y0 + H - r], ...ptsForArc(x0 + W - r, y0 + H - r, 0), [x0 + W - r - leg, y0 + H]],
+        [[x0 + r + leg, y0 + H], [x0 + r, y0 + H], ...ptsForArc(x0 + r, y0 + H - r, Math.PI / 2), [x0, y0 + H - r - leg]],
+        [[x0, y0 + r + leg], [x0, y0 + r], ...ptsForArc(x0 + r, y0 + r, Math.PI), [x0 + r + leg, y0]]
+      ];
+      if (leg < 0.5) {
+        const trim = Math.min(6, (Math.PI * r) / 8);
+        segs = segs.map((pts) => {
+          const cum = [0];
+          for (let i = 1; i < pts.length; i++) {
+            cum[i] = cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+          }
+          const total = cum[cum.length - 1];
+          const keep = pts.filter((_, i) => cum[i] >= trim && cum[i] <= total - trim);
+          return keep.length >= 2 ? keep : pts;
+        });
+      }
+      return segs
+        .map((pts) => 'M' + pts.map((p) => `${p[0].toFixed(2)},${p[1].toFixed(2)}`).join('L'))
+        .join(' ');
+    }
+
+    // ==================== 2. Global Concentric Cursor + Spring Physics ====================
+    const cursorSvg = document.getElementById('cocoon-cursor-svg');
+    const cursorGlow = document.getElementById('cursor-glow');
+    const cursorLine = document.getElementById('cursor-line');
+    const cursorRim = document.getElementById('cursor-rim');
+    const cursorRimOuter = document.getElementById('cursor-rim-outer');
+    const cursorRimInner = document.getElementById('cursor-rim-inner');
+    const flowGrad = document.getElementById('cocoon-flow-grad');
+
+    let gamepadMode = false;
+    let reducedMotion = false;
+    let focusedEl = null;
+
+    const springState = {
+      x: 100, y: 100, w: 120, h: 48, r: 16,
+      vx: 0, vy: 0, vw: 0, vh: 0, vr: 0,
+      tx: 100, ty: 100, tw: 120, th: 48, tr: 16,
+      initialized: false
+    };
+
+    function stepSpring(val, vel, target, stiffness, dt) {
+      if (reducedMotion) return [target, 0];
+      const omega = Math.sqrt(stiffness);
+      const disp = val - target;
+      const e = Math.exp(-omega * dt);
+      const nextVal = target + (disp + (vel + omega * disp) * dt) * e;
+      const nextVel = (vel - (vel + omega * disp) * omega * dt) * e;
+      if (Math.abs(nextVal - target) < 0.05 && Math.abs(nextVel) < 0.1) return [target, 0];
+      return [nextVal, nextVel];
+    }
+
+    function setInputMode(isPad) {
+      gamepadMode = isPad;
+      const btn = document.getElementById('btn-mode');
+      const lab = document.getElementById('mode-label');
+      btn.classList.toggle('is-gamepad', isPad);
+      lab.textContent = isPad ? '手柄 / 键盘模式' : '触控 / 指针模式';
+      cursorSvg.classList.toggle('is-visible', isPad && focusedEl != null);
+    }
+
+    function focusTarget(el, instant = false) {
+      if (!el) return;
+      focusedEl = el;
+      const rect = el.getBoundingClientRect();
+      const targetR = parseFloat(el.dataset.radius || '16');
+      springState.tx = rect.left;
+      springState.ty = rect.top;
+      springState.tw = rect.width;
+      springState.th = rect.height;
+      springState.tr = targetR;
+      if (instant || !springState.initialized || reducedMotion) {
+        springState.x = springState.tx;
+        springState.y = springState.ty;
+        springState.w = springState.tw;
+        springState.h = springState.th;
+        springState.r = springState.tr;
+        springState.vx = springState.vy = springState.vw = springState.vh = springState.vr = 0;
+        springState.initialized = true;
+      }
+      if (gamepadMode) cursorSvg.classList.add('is-visible');
+      el.scrollIntoView({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' });
+    }
+
+    let lastTick = performance.now();
+    function tickAnimation(now) {
+      const dt = Math.min(0.05, Math.max(0.001, (now - lastTick) / 1000));
+      lastTick = now;
+
+      // Global 1800ms perimeter flow revolution
+      const angle = reducedMotion ? -Math.PI / 2 : -Math.PI / 2 + ((now % 1800) / 1800) * Math.PI * 2;
+      flowGrad.setAttribute('x1', (0.5 + 0.5 * Math.cos(angle)).toFixed(3));
+      flowGrad.setAttribute('y1', (0.5 + 0.5 * Math.sin(angle)).toFixed(3));
+      flowGrad.setAttribute('x2', (0.5 - 0.5 * Math.cos(angle)).toFixed(3));
+      flowGrad.setAttribute('y2', (0.5 - 0.5 * Math.sin(angle)).toFixed(3));
+
+      if (focusedEl && document.body.contains(focusedEl)) {
+        const rect = focusedEl.getBoundingClientRect();
+        springState.tx = rect.left;
+        springState.ty = rect.top;
+        springState.tw = rect.width;
+        springState.th = rect.height;
+      }
+
+      if (gamepadMode && focusedEl) {
+        const k = 600;
+        [springState.x, springState.vx] = stepSpring(springState.x, springState.vx, springState.tx, k, dt);
+        [springState.y, springState.vy] = stepSpring(springState.y, springState.vy, springState.ty, k, dt);
+        [springState.w, springState.vw] = stepSpring(springState.w, springState.vw, springState.tw, k, dt);
+        [springState.h, springState.vh] = stepSpring(springState.h, springState.vh, springState.th, k, dt);
+        [springState.r, springState.vr] = stepSpring(springState.r, springState.vr, springState.tr, k, dt);
+
+        const g = computeBracketGeometry(springState.w, springState.h, springState.r, 1.0);
+        const d = buildBracketPathD(springState.x - g.pad, springState.y - g.pad, g.W, g.H, g.r, g.leg);
+        for (const p of [cursorGlow, cursorLine, cursorRim, cursorRimOuter, cursorRimInner]) p.setAttribute('d', d);
+        cursorLine.setAttribute('stroke-width', g.sw.toFixed(2));
+        cursorGlow.setAttribute('stroke-width', (g.sw * 2).toFixed(2));
+        cursorRim.setAttribute('stroke-width', (g.sw + 2.2).toFixed(2));
+        cursorRimOuter.setAttribute('stroke-width', (g.sw + 2.2).toFixed(2));
+        cursorRimInner.setAttribute('stroke-width', Math.max(0.2, g.sw - 2.2).toFixed(2));
+      }
+
+      pollGamepad(now);
+      requestAnimationFrame(tickAnimation);
+    }
+
+    // ==================== 3. Dual-Mode Navigation (Keyboard + Gamepad + Touch) ====================
+    function getVisibleFocusables() {
+      const activeOverlays = ['confirm-modal', 'context-modal', 'right-drawer', 'left-drawer']
+        .map((id) => document.getElementById(id))
+        .filter((el) => el && el.classList.contains('is-open'));
+      const scope = activeOverlays[0] || document.querySelector('.tab-pane.is-active');
+      return Array.from(scope.querySelectorAll('[data-focusable]')).filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && el.offsetParent !== null;
+      });
+    }
+
+    function moveFocus(dir) {
+      setInputMode(true);
+      const list = getVisibleFocusables();
+      if (!list.length) return;
+      if (!focusedEl || !list.includes(focusedEl)) {
+        focusTarget(list[0], true);
+        return;
+      }
+      const cur = focusedEl.getBoundingClientRect();
+      const cx = cur.left + cur.width / 2;
+      const cy = cur.top + cur.height / 2;
+      let best = null;
+      let bestScore = Infinity;
+
+      for (const el of list) {
+        if (el === focusedEl) continue;
+        const r = el.getBoundingClientRect();
+        const ex = r.left + r.width / 2;
+        const ey = r.top + r.height / 2;
+        const dx = ex - cx;
+        const dy = ey - cy;
+
+        if (dir === 'up' && dy >= -4) continue;
+        if (dir === 'down' && dy <= 4) continue;
+        if (dir === 'left' && dx >= -4) continue;
+        if (dir === 'right' && dx <= 4) continue;
+
+        const primary = dir === 'up' || dir === 'down' ? Math.abs(dy) : Math.abs(dx);
+        const cross = dir === 'up' || dir === 'down' ? Math.abs(dx) : Math.abs(dy);
+        const score = primary + cross * 2.4;
+        if (score < bestScore) {
+          bestScore = score;
+          best = el;
+        }
+      }
+      if (best) focusTarget(best);
+    }
+
+    window.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('#btn-mode')) return;
+      setInputMode(false);
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(e.key)) {
+        if (e.target.tagName === 'INPUT') return;
+        e.preventDefault();
+      }
+      if (e.key === 'ArrowUp') moveFocus('up');
+      else if (e.key === 'ArrowDown') moveFocus('down');
+      else if (e.key === 'ArrowLeft') {
+        if (focusedEl?.dataset.action === 'slider') stepTdp(-1);
+        else if (focusedEl?.dataset.action === 'stepper') stepFps(-1);
+        else moveFocus('left');
+      } else if (e.key === 'ArrowRight') {
+        if (focusedEl?.dataset.action === 'slider') stepTdp(1);
+        else if (focusedEl?.dataset.action === 'stepper') stepFps(1);
+        else moveFocus('right');
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        setInputMode(true);
+        if (focusedEl) focusedEl.click();
+      } else if (e.key === 'Escape') {
+        setInputMode(true);
+        closeAllDropdowns();
+        closeOverlays();
+      }
+    });
+
+    let lastPadPoll = 0;
+    function pollGamepad(now) {
+      if (!navigator.getGamepads || now - lastPadPoll < 120) return;
+      const pads = navigator.getGamepads();
+      const pad = pads && pads[0];
+      if (!pad) return;
+      const b = pad.buttons;
+      if (b[12]?.pressed) { lastPadPoll = now; moveFocus('up'); }
+      else if (b[13]?.pressed) { lastPadPoll = now; moveFocus('down'); }
+      else if (b[14]?.pressed) { lastPadPoll = now; moveFocus('left'); }
+      else if (b[15]?.pressed) { lastPadPoll = now; moveFocus('right'); }
+      else if (b[0]?.pressed) { lastPadPoll = now; setInputMode(true); focusedEl?.click(); }
+      else if (b[1]?.pressed) { lastPadPoll = now; setInputMode(true); closeAllDropdowns(); closeOverlays(); }
+    }
+
+    document.getElementById('btn-mode').addEventListener('click', () => {
+      const next = !gamepadMode;
+      if (next && !focusedEl) {
+        const list = getVisibleFocusables();
+        if (list.length) focusTarget(list[0], true);
+      }
+      setInputMode(next);
+    });
+
+    document.getElementById('btn-reduced').addEventListener('click', () => {
+      reducedMotion = !reducedMotion;
+      document.body.classList.toggle('reduced-motion', reducedMotion);
+      document.getElementById('reduced-label').textContent = reducedMotion ? '开' : '关';
+    });
+
+    // ==================== 4. Tabs & Interactive Components ====================
+    document.querySelectorAll('.harness-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.harness-tab').forEach((b) => b.classList.remove('is-active'));
+        document.querySelectorAll('.tab-pane').forEach((p) => p.classList.remove('is-active'));
+        btn.classList.add('is-active');
+        document.getElementById('tab-' + btn.dataset.tab).classList.add('is-active');
+        focusedEl = null;
+        if (btn.dataset.tab === 'lab') updateFocusLab();
+      });
+    });
+
+    // Left Category Switch
+    document.querySelectorAll('.nav-cat').forEach((cat) => {
+      cat.addEventListener('click', () => {
+        document.querySelectorAll('.nav-cat').forEach((c) => c.classList.remove('is-selected'));
+        cat.classList.add('is-selected');
+      });
+    });
+
+    // Toggle + Collapsible Child
+    document.querySelector('[data-action="toggle-main"]').addEventListener('click', () => {
+      const tg = document.getElementById('toggle-power');
+      const wrap = document.getElementById('child-power-wrap');
+      const on = tg.classList.toggle('is-on');
+      wrap.classList.toggle('is-collapsed', !on);
+      showToast(on ? '已开启性能接管' : '已交还系统默认调度');
+    });
+
+    // Single Dropdown
+    function closeAllDropdowns() {
+      document.getElementById('pill-single').classList.remove('is-open');
+      document.getElementById('opts-single').classList.remove('is-open');
+      document.getElementById('pill-multi').classList.remove('is-open');
+      document.getElementById('opts-multi').classList.remove('is-open');
+    }
+
+    document.querySelector('[data-action="dropdown-single"]').addEventListener('click', (e) => {
+      const opt = e.target.closest('.option-item');
+      const pill = document.getElementById('pill-single');
+      const card = document.getElementById('opts-single');
+      if (opt) {
+        card.querySelectorAll('.option-item').forEach((o) => o.classList.remove('is-selected'));
+        opt.classList.add('is-selected');
+        document.getElementById('pill-single-text').textContent = opt.textContent;
+        pill.classList.remove('is-open');
+        card.classList.remove('is-open');
+        if (gamepadMode) focusTarget(document.getElementById('row-mode-dd'));
+        return;
+      }
+      const open = !card.classList.contains('is-open');
+      closeAllDropdowns();
+      if (open) {
+        pill.classList.add('is-open');
+        card.classList.add('is-open');
+        if (gamepadMode) focusTarget(card.querySelector('.option-item'));
+      }
+    });
+
+    // Multi Dropdown
+    const multiChecked = [true, true, false];
+    document.querySelector('[data-action="dropdown-multi"]').addEventListener('click', (e) => {
+      const opt = e.target.closest('.option-item');
+      const pill = document.getElementById('pill-multi');
+      const card = document.getElementById('opts-multi');
+      if (opt) {
+        const idx = parseInt(opt.dataset.midx, 10);
+        multiChecked[idx] = !multiChecked[idx];
+        const box = opt.querySelector('.multi-check');
+        box.classList.toggle('is-checked', multiChecked[idx]);
+        box.innerHTML = multiChecked[idx]
+          ? '<svg width="12" height="9" viewBox="0 0 12 9" fill="none"><path d="M1.5 4.5L4.5 7.5L10.5 1.5" stroke="#FAFAFA" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+          : '';
+        document.getElementById('pill-multi-text').textContent = `已选 ${multiChecked.filter(Boolean).length} 项`;
+        return;
+      }
+      const open = !card.classList.contains('is-open');
+      closeAllDropdowns();
+      if (open) {
+        pill.classList.add('is-open');
+        card.classList.add('is-open');
+      }
+    });
+
+    // Slider
+    let tdpVal = 20;
+    function setTdp(next) {
+      tdpVal = Math.min(35, Math.max(8, Math.round(next)));
+      const frac = ((tdpVal - 8) / (35 - 8)) * 100;
+      document.getElementById('tdp-val-text').textContent = `${tdpVal} W`;
+      document.getElementById('tdp-fill').style.width = `${frac}%`;
+      document.getElementById('tdp-thumb').style.left = `${frac}%`;
+      document.getElementById('chip-preset').textContent = `手动 · ${tdpVal} W`;
+    }
+    function stepTdp(d) { setTdp(tdpVal + d); }
+
+    const tdpTrack = document.getElementById('tdp-track');
+    let draggingTdp = false;
+    function updateTdpFromPointer(clientX) {
+      const r = tdpTrack.getBoundingClientRect();
+      const f = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+      setTdp(8 + f * (35 - 8));
+    }
+    tdpTrack.addEventListener('pointerdown', (e) => {
+      draggingTdp = true;
+      tdpTrack.setPointerCapture(e.pointerId);
+      updateTdpFromPointer(e.clientX);
+    });
+    tdpTrack.addEventListener('pointermove', (e) => { if (draggingTdp) updateTdpFromPointer(e.clientX); });
+    tdpTrack.addEventListener('pointerup', () => { draggingTdp = false; });
+    document.querySelectorAll('[data-step]').forEach((b) =>
+      b.addEventListener('click', (e) => { e.stopPropagation(); stepTdp(parseInt(b.dataset.step, 10)); })
+    );
+
+    // Stepper
+    const fpsChoices = ['30 FPS', '40 FPS', '60 FPS', '90 FPS', '120 FPS', '不限'];
+    let fpsIdx = 2;
+    function stepFps(d) {
+      fpsIdx = Math.min(fpsChoices.length - 1, Math.max(0, fpsIdx + d));
+      document.getElementById('fps-val').textContent = fpsChoices[fpsIdx];
+    }
+    document.querySelectorAll('[data-fstep]').forEach((b) =>
+      b.addEventListener('click', (e) => { e.stopPropagation(); stepFps(parseInt(b.dataset.fstep, 10)); })
+    );
+
+    function swapOrder(e, dir) {
+      e.stopPropagation();
+      showToast(dir < 0 ? '优先级已下移一位' : '已在首位');
+    }
+
+    document.querySelector('[data-action="toast"]').addEventListener('click', () => {
+      showToast('ToastPill：停留 2.4 秒后自动淡出');
+    });
+
+    // Toast
+    let toastTimer = null;
+    function showToast(msg) {
+      const el = document.getElementById('toast-pill');
+      document.getElementById('toast-text').textContent = msg;
+      el.classList.add('is-visible');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.classList.remove('is-visible'), 2400);
+    }
+
+    // ==================== 5. Telemetry Gauges & Fixed-Bucket Activity Bars ====================
+    function renderGauge(svgId, frac, big, unit) {
+      const svg = document.getElementById(svgId);
+      const cx = 57, cy = 54, r = 40, stroke = 11;
+      const arc = (degSweep) => {
+        const start = (135 * Math.PI) / 180;
+        const end = ((135 + degSweep) * Math.PI) / 180;
+        const x0 = cx + r * Math.cos(start), y0 = cy + r * Math.sin(start);
+        const x1 = cx + r * Math.cos(end), y1 = cy + r * Math.sin(end);
+        const large = degSweep > 180 ? 1 : 0;
+        return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+      };
+      const clamped = Math.min(1, Math.max(0.01, frac));
+      svg.innerHTML = `
+        <defs>
+          <linearGradient id="${svgId}-g" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#86A7FD"/>
+            <stop offset="100%" stop-color="#8037FF"/>
+          </linearGradient>
+        </defs>
+        <path d="${arc(270)}" fill="none" stroke="#E4E4EC" stroke-width="${stroke}" stroke-linecap="round"/>
+        <path d="${arc(270 * clamped)}" fill="none" stroke="url(#${svgId}-g)" stroke-width="${stroke}" stroke-linecap="round"/>
+        <text x="${cx}" y="${cy + 3}" text-anchor="middle" font-family="Poppins, sans-serif" font-weight="600" font-size="${big.length > 3 ? 17 : 22}" fill="#1E1E24">${big}</text>
+        <text x="${cx}" y="${cy + 21}" text-anchor="middle" font-family="Poppins, sans-serif" font-weight="500" font-size="10.5" fill="#5F6168">${unit}</text>
+      `;
+    }
+
+    // 1 Hz sampling, 5-second rolling average & 2-second fixed bucketing
+    const powerSamples = [17.4, 18.1, 19.2, 18.6, 17.9];
+    const barBuckets = Array.from({ length: 30 }, (_, i) => 12 + Math.sin(i * 0.45) * 4 + (i > 22 ? 4 : 0));
+    let sampleSeq = 0;
+
+    function updateTelemetry() {
+      const rawW = Math.max(8, Math.min(tdpVal + 2, tdpVal - 2 + (Math.random() - 0.45) * 4.5));
+      powerSamples.push(rawW);
+      if (powerSamples.length > 5) powerSamples.shift();
+      const avg5s = powerSamples.reduce((a, b) => a + b, 0) / powerSamples.length;
+
+      sampleSeq++;
+      if (sampleSeq % 2 === 1) {
+        barBuckets.shift();
+        barBuckets.push(rawW);
+      } else {
+        barBuckets[barBuckets.length - 1] = (barBuckets[barBuckets.length - 1] + rawW) / 2;
+      }
+
+      const rpm = Math.round(2950 + avg5s * 65);
+      renderGauge('gauge-power', avg5s / Math.max(tdpVal, 10), `${Math.round(avg5s)}`, 'W');
+      renderGauge('gauge-fan', rpm / 4700, `${rpm}`, 'RPM');
+
+      const barsEl = document.getElementById('activity-bars');
+      const maxBar = Math.max(tdpVal, ...barBuckets, 10);
+      barsEl.innerHTML = barBuckets
+        .map((v, i) => {
+          const pct = Math.max(10, Math.min(100, (v / maxBar) * 100));
+          const op = i === 29 ? 1 : (0.55 + (0.45 * i) / 30).toFixed(2);
+          return `<div class="bar-slot"><div class="bar-fill" style="height:${pct.toFixed(1)}%;opacity:${op};"></div></div>`;
+        })
+        .join('');
+    }
+    updateTelemetry();
+    setInterval(updateTelemetry, 1000);
+
+    // ==================== 6. Tab 2: Drawers & Modals ====================
+    function closeOverlays() {
+      document.getElementById('scene-bg-ui').classList.remove('is-blurred');
+      const scrim = document.getElementById('scene-scrim');
+      scrim.classList.remove('is-open', 'is-drawer');
+      document.getElementById('left-drawer').classList.remove('is-open');
+      document.getElementById('right-drawer').classList.remove('is-open');
+      document.getElementById('confirm-modal').classList.remove('is-open');
+      document.getElementById('context-modal').classList.remove('is-open');
+      document.querySelectorAll('.context-row.is-danger').forEach((r) => { r.dataset.armed = ''; r.textContent = '移除'; });
+    }
+
+    function openLeftDrawer() {
+      closeOverlays();
+      document.getElementById('scene-bg-ui').classList.add('is-blurred');
+      const scrim = document.getElementById('scene-scrim');
+      scrim.classList.add('is-open', 'is-drawer');
+      document.getElementById('left-drawer').classList.add('is-open');
+    }
+
+    function openRightDrawer() {
+      closeOverlays();
+      const scrim = document.getElementById('scene-scrim');
+      scrim.classList.add('is-open', 'is-drawer');
+      document.getElementById('right-drawer').classList.add('is-open');
+    }
+
+    function openConfirm() {
+      closeOverlays();
+      document.getElementById('scene-bg-ui').classList.add('is-blurred');
+      document.getElementById('scene-scrim').classList.add('is-open');
+      document.getElementById('confirm-modal').classList.add('is-open');
+    }
+
+    function openContext() {
+      closeOverlays();
+      document.getElementById('scene-bg-ui').classList.add('is-blurred');
+      document.getElementById('scene-scrim').classList.add('is-open');
+      document.getElementById('context-modal').classList.add('is-open');
+    }
+
+    function confirmRemove(row) {
+      if (!row.dataset.armed) {
+        row.dataset.armed = '1';
+        row.textContent = '再按一次确认移除';
+        return;
+      }
+      closeOverlays();
+      showToast('已从游戏库移除');
+    }
+
+    // Discrete Power Meter (21 ticks)
+    let meterVal = 12;
+    const meterEl = document.getElementById('meter-ticks');
+    function renderMeter() {
+      meterEl.innerHTML = Array.from({ length: 21 }, (_, i) => {
+        const cls = i === meterVal ? 'is-current' : i < meterVal ? 'is-lit' : '';
+        return `<div class="meter-tick ${cls}" data-m="${i}"></div>`;
+      }).join('');
+      document.getElementById('meter-label').textContent = `Elden Ring · 平均 18 W · ${10 + meterVal} W`;
+    }
+    meterEl.addEventListener('click', (e) => {
+      const t = e.target.closest('[data-m]');
+      if (!t) return;
+      meterVal = parseInt(t.dataset.m, 10);
+      renderMeter();
+    });
+    renderMeter();
+
+    // ==================== 7. Tab 3: Swatches & Focus Lab ====================
+    const swatches = [
+      ['accentStart', '#86A7FD'], ['accentEnd', '#8037FF'], ['accentInk', '#7A4CFF'],
+      ['confirmStart', '#72E096'], ['confirmEnd', '#0ECBAA'], ['danger', '#F24B5A'],
+      ['selectedOption', '#4F9DF2'], ['inkPrimary', '#1E1E24'], ['inkSecondary', '#5F6168'],
+      ['pageTop', '#EFEFF4'], ['card3dTop', '#FDFDFE'], ['card3dBottom', '#F0F1F4']
+    ];
+    document.getElementById('swatch-grid').innerHTML = swatches
+      .map(([n, hex]) => `<div class="swatch-item"><div class="swatch-chip" style="background:${hex};"></div><div class="swatch-name">${n}</div><div class="swatch-hex">${hex}</div></div>`)
+      .join('');
+
+    function updateFocusLab() {
+      const w = parseFloat(document.getElementById('lab-w').value);
+      const h = parseFloat(document.getElementById('lab-h').value);
+      const r = parseFloat(document.getElementById('lab-r').value);
+      document.getElementById('lab-w-v').textContent = w;
+      document.getElementById('lab-h-v').textContent = h;
+      document.getElementById('lab-r-v').textContent = r;
+
+      const target = document.getElementById('lab-target');
+      target.style.width = `${w}px`;
+      target.style.height = `${h}px`;
+      target.style.borderRadius = `${r}px`;
+
+      const svg = document.getElementById('lab-svg');
+      const box = svg.getBoundingClientRect();
+      const cx = (box.width || 360) / 2;
+      const cy = (box.height || 220) / 2;
+      const g = computeBracketGeometry(w, h, r, 1.0);
+      const d = buildBracketPathD(cx - g.W / 2, cy - g.H / 2, g.W, g.H, g.r, g.leg);
+      svg.innerHTML = `
+        <path d="${d}" fill="none" stroke="#8037FF" stroke-width="${g.sw * 2}" stroke-linecap="round" opacity="0.28" filter="url(#cocoon-glow-filter)"/>
+        <path d="${d}" fill="none" stroke="url(#cocoon-flow-grad)" stroke-width="${g.sw}" stroke-linecap="round" stroke-linejoin="round"/>
+      `;
+      document.getElementById('lab-readout').innerHTML =
+        `outset = ${g.pad.toFixed(2)} px &nbsp;|&nbsp; outerR = ${g.r.toFixed(2)} px &nbsp;|&nbsp; sf = ${g.sf.toFixed(2)}<br>` +
+        `gap = ${g.gap.toFixed(2)} px &nbsp;|&nbsp; leg = ${g.leg.toFixed(2)} px ${g.leg < 0.5 ? '(纯圆退化裁切)' : ''} &nbsp;|&nbsp; Sw = ${g.sw.toFixed(2)} px`;
+    }
+    ['lab-w', 'lab-h', 'lab-r'].forEach((id) => document.getElementById(id).addEventListener('input', updateFocusLab));
+
+    requestAnimationFrame(tickAnimation);
+  </script>
+</body>
+</html>

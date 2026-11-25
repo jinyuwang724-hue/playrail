@@ -1,0 +1,232 @@
+/*
+ * Cocoon Design System — CSS Custom Properties & Surface Recipes (v1.0.0-draft)
+ * Auto-generated from docs/design/cocoon/tokens.json by tools/Build-CocoonTokens.mjs.
+ * Dimensions default to dp-scaled CSS px (design px / 1.75) for standard 1x Web/Desktop screens.
+ * Override --cocoon-scale to 1.75 if rendering directly on a 1920x1200 logical canvas.
+ */
+
+:root {
+  --cocoon-scale: 1;
+  --cocoon-dp-ratio: 1.75;
+
+  /* Colors */
+  --cocoon-color-brand-accent-start: #86A7FD;
+  --cocoon-color-brand-accent-end: #8037FF;
+  --cocoon-color-brand-accent-ink: #7A4CFF;
+  --cocoon-color-brand-accent-deep: #7340FF;
+  --cocoon-color-brand-accent-soft-start: #8F8BFF;
+  --cocoon-color-brand-pill-action-start: #8A7BFF;
+  --cocoon-color-brand-pill-action-end: #7A3CFF;
+  --cocoon-color-brand-pill-badge-light: #B9A9FF;
+  --cocoon-color-brand-knob-start: #9A9CFF;
+  --cocoon-color-brand-knob-end: #6F3CFF;
+  --cocoon-color-brand-selection-tint: #ECE6FF;
+  --cocoon-color-brand-active-card-tint: rgba(165, 150, 255, 0.5882);
+  --cocoon-color-semantic-danger: #F24B5A;
+  --cocoon-color-semantic-danger-start: #FF7A84;
+  --cocoon-color-semantic-danger-badge: #F2566E;
+  --cocoon-color-semantic-confirm-start: #72E096;
+  --cocoon-color-semantic-confirm-end: #0ECBAA;
+  --cocoon-color-semantic-selected-option: #4F9DF2;
+  --cocoon-color-semantic-wifi-on-start: #8CC9F9;
+  --cocoon-color-semantic-wifi-on-end: #5BA3FF;
+  --cocoon-color-semantic-battery-normal-start: #7CD98A;
+  --cocoon-color-semantic-battery-normal-end: #0FD0B5;
+  --cocoon-color-semantic-battery-charge-start: #FFC09C;
+  --cocoon-color-semantic-battery-charge-end: #FF8A28;
+  --cocoon-color-neutral-ink-primary: #1E1E24;
+  --cocoon-color-neutral-ink-strong: #212121;
+  --cocoon-color-neutral-ink-tile: #2A2A31;
+  --cocoon-color-neutral-ink-secondary: #5F6168;
+  --cocoon-color-neutral-ink-muted: #5D5D68;
+  --cocoon-color-neutral-ink-subtle: #8E9098;
+  --cocoon-color-neutral-ink-placeholder: #9A9CA3;
+  --cocoon-color-neutral-ink-disabled: #A8AAB0;
+  --cocoon-color-neutral-ink-on-dark: #FAFAFA;
+  --cocoon-color-neutral-pure-white: #FFFFFF;
+  --cocoon-color-surface-page-top: #EFEFF4;
+  --cocoon-color-surface-page-bottom: #E2E3EA;
+  --cocoon-color-surface-sheet: #FAFAFA;
+  --cocoon-color-surface-drawer-top: #FAFAFA;
+  --cocoon-color-surface-drawer-mid: #F6F7FA;
+  --cocoon-color-surface-drawer-low: #F2F6FA;
+  --cocoon-color-surface-drawer-bottom-edge: #E7EAF1;
+  --cocoon-color-surface-card3d-top: #FDFDFE;
+  --cocoon-color-surface-card3d-bottom: #F0F1F4;
+  --cocoon-color-surface-card3d-edge-top: #F4F4F7;
+  --cocoon-color-surface-card3d-edge-bottom: #C4C5CC;
+  --cocoon-color-surface-card3d-inner-shade: rgba(20, 20, 40, 0.0627);
+  --cocoon-color-surface-group-card: #F7F8FA;
+  --cocoon-color-surface-group-edge-top: #E8E9EC;
+  --cocoon-color-surface-group-edge-bottom: #BCBDC1;
+  --cocoon-color-surface-option-card: #FCFCFD;
+  --cocoon-color-surface-pill-white: #FFFFFF;
+  --cocoon-color-surface-pill-border: #ECEDF0;
+  --cocoon-color-surface-tile-well: #F0F0F5;
+  --cocoon-color-surface-track: #E4E4EC;
+  --cocoon-color-surface-slider-track: #DCDCE3;
+  --cocoon-color-surface-bar-track: #E6E6EE;
+  --cocoon-color-surface-toggle-off: #E4E5E9;
+  --cocoon-color-surface-tile-off: #F5F6F9;
+  --cocoon-color-surface-stepper-pill: #E6E7EC;
+  --cocoon-color-surface-back-pill: #E2E3E7;
+  --cocoon-color-surface-divider-groove: #E1E2E7;
+  --cocoon-color-surface-divider-line: #E2E3E5;
+  --cocoon-color-surface-divider-subtle: #E6E7EA;
+  --cocoon-color-surface-press-overlay: rgba(30, 30, 60, 0.0706);
+  --cocoon-color-scrim-modal: rgba(35, 35, 37, 0.7608);
+  --cocoon-color-scrim-drawer: rgba(24, 24, 28, 0.549);
+  --cocoon-color-scrim-wallpaper-fallback: #1B1B22;
+  --cocoon-color-scrim-focus-rim: rgba(250, 250, 250, 0.4);
+
+  /* Typography */
+  --cocoon-font-latin: Poppins, 'Segoe UI Variable Display', Inter, system-ui, sans-serif;
+  --cocoon-font-cjk: 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif;
+  --cocoon-font-sans: var(--cocoon-font-latin), var(--cocoon-font-cjk);
+  --cocoon-weight-latin-body: 500;
+  --cocoon-weight-latin-title: 600;
+  --cocoon-weight-latin-badge: 700;
+  --cocoon-weight-latin-display: 800;
+  --cocoon-weight-cjk: 500;
+  --cocoon-weight-cjk-light: 400;
+
+  /* Type Scale (dp-scaled CSS px) */
+  --cocoon-text-page-title: calc(27.43px * var(--cocoon-scale));
+  --cocoon-text-field-value: calc(22.86px * var(--cocoon-scale));
+  --cocoon-text-row-title-sheet: calc(21.71px * var(--cocoon-scale));
+  --cocoon-text-nav-label: calc(21.71px * var(--cocoon-scale));
+  --cocoon-text-row-title: calc(20.57px * var(--cocoon-scale));
+  --cocoon-text-dropdown-option-sheet: calc(20.57px * var(--cocoon-scale));
+  --cocoon-text-dialog-body: calc(20.57px * var(--cocoon-scale));
+  --cocoon-text-row-value: calc(18.29px * var(--cocoon-scale));
+  --cocoon-text-dropdown-option: calc(18.29px * var(--cocoon-scale));
+  --cocoon-text-toast: calc(17.14px * var(--cocoon-scale));
+  --cocoon-text-gauge-caption: calc(17.14px * var(--cocoon-scale));
+  --cocoon-text-slider-value: calc(17.14px * var(--cocoon-scale));
+  --cocoon-text-drawer-title: calc(16px * var(--cocoon-scale));
+  --cocoon-text-chip-value: calc(15.43px * var(--cocoon-scale));
+  --cocoon-text-row-sub-sheet: calc(15.43px * var(--cocoon-scale));
+  --cocoon-text-row-sub: calc(14.86px * var(--cocoon-scale));
+  --cocoon-text-chip-label: calc(14.29px * var(--cocoon-scale));
+  --cocoon-text-drawer-pill: calc(13.71px * var(--cocoon-scale));
+  --cocoon-text-keycap: calc(12.57px * var(--cocoon-scale));
+
+  /* Radii (dp-scaled CSS px) */
+  --cocoon-radius-sheet: calc(36.57px * var(--cocoon-scale));
+  --cocoon-radius-dialog: calc(34.29px * var(--cocoon-scale));
+  --cocoon-radius-cover-ratio: 0.17391305;
+  --cocoon-radius-menu-card: calc(22.86px * var(--cocoon-scale));
+  --cocoon-radius-drawer: calc(20.57px * var(--cocoon-scale));
+  --cocoon-radius-left-drawer: calc(17.14px * var(--cocoon-scale));
+  --cocoon-radius-card: calc(17.14px * var(--cocoon-scale));
+  --cocoon-radius-tile-well: calc(14.86px * var(--cocoon-scale));
+  --cocoon-radius-option-focus: calc(13.71px * var(--cocoon-scale));
+  --cocoon-radius-pill: 9999px;
+
+  /* Spacing (dp-scaled CSS px) */
+  --cocoon-space-page-margin-x: calc(25.14px * var(--cocoon-scale));
+  --cocoon-space-header-top: calc(20.57px * var(--cocoon-scale));
+  --cocoon-space-content-top: calc(85.71px * var(--cocoon-scale));
+  --cocoon-space-column-gap: calc(17.14px * var(--cocoon-scale));
+  --cocoon-space-group-gap: calc(20.57px * var(--cocoon-scale));
+  --cocoon-space-group-gap-sheet: calc(18.29px * var(--cocoon-scale));
+  --cocoon-space-card-padding: calc(17.14px * var(--cocoon-scale));
+  --cocoon-space-row-padding-x: calc(25.14px * var(--cocoon-scale));
+  --cocoon-space-row-height: calc(64px * var(--cocoon-scale));
+  --cocoon-space-row-height-sub: calc(80px * var(--cocoon-scale));
+  --cocoon-space-row-height-slider: calc(91.43px * var(--cocoon-scale));
+  --cocoon-space-row-height-sheet: calc(77.71px * var(--cocoon-scale));
+  --cocoon-space-option-height: calc(50.29px * var(--cocoon-scale));
+  --cocoon-space-option-height-compact: calc(35.43px * var(--cocoon-scale));
+  --cocoon-space-divider-groove-total: calc(2.29px * var(--cocoon-scale));
+  --cocoon-space-chip-gap: calc(8px * var(--cocoon-scale));
+  --cocoon-space-scroll-safety-margin: calc(34.29px * var(--cocoon-scale));
+
+  /* Focus & Motion */
+  --cocoon-focus-stroke: calc(4.8px * var(--cocoon-scale));
+  --cocoon-focus-flow-period: 1800ms;
+  --cocoon-spring-focus-stiffness: 600;
+  --cocoon-spring-focus-damping: 48.99;
+  --cocoon-spring-row-scroll-stiffness: 1500;
+  --cocoon-spring-row-scroll-damping: 77.46;
+  --cocoon-spring-nav-selected-stiffness: 1500;
+  --cocoon-spring-nav-selected-damping: 77.46;
+  --cocoon-spring-drawer-open-x-stiffness: 4200;
+  --cocoon-spring-drawer-open-x-damping: 129.61;
+  --cocoon-spring-drawer-open-y-stiffness: 1250;
+  --cocoon-spring-drawer-open-y-damping: 70.71;
+  --cocoon-spring-drawer-close-y-stiffness: 2600;
+  --cocoon-spring-drawer-close-y-damping: 101.98;
+  --cocoon-spring-drawer-close-x-stiffness: 5200;
+  --cocoon-spring-drawer-close-x-damping: 144.22;
+  --cocoon-ease-slide-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --cocoon-ease-drawer-in: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --cocoon-ease-drawer-out: cubic-bezier(0.4, 0, 0.6, 1);
+  --cocoon-ease-stretch-peak: cubic-bezier(0.3, 0, 0.4, 1);
+  --cocoon-ease-inertia-decel: cubic-bezier(0.15, 0.7, 0.25, 1);
+  --cocoon-duration-instant: 1ms;
+  --cocoon-duration-cursor-hide: 60ms;
+  --cocoon-duration-dialog-in: 80ms;
+  --cocoon-duration-pill-expand: 150ms;
+  --cocoon-duration-toggle-slide: 150ms;
+  --cocoon-duration-nav-crossfade: 150ms;
+  --cocoon-duration-relayout-slide: 170ms;
+  --cocoon-duration-drawer-slide: 200ms;
+  --cocoon-duration-backdrop-blur: 230ms;
+  --cocoon-duration-rubberband: 230ms;
+  --cocoon-duration-toast-lifetime: 2400ms;
+
+  /* Composite Surface Gradients & Shadows */
+  --cocoon-grad-page: linear-gradient(180deg, var(--cocoon-color-surface-page-top) 0%, var(--cocoon-color-surface-page-bottom) 100%);
+  --cocoon-grad-accent: linear-gradient(135deg, var(--cocoon-color-brand-accent-start) 0%, var(--cocoon-color-brand-accent-end) 100%);
+  --cocoon-grad-accent-x: linear-gradient(90deg, var(--cocoon-color-brand-accent-start) 0%, var(--cocoon-color-brand-accent-deep) 100%);
+  --cocoon-grad-tile-on: linear-gradient(180deg, var(--cocoon-color-brand-accent-soft-start) 0%, var(--cocoon-color-brand-accent-deep) 100%);
+  --cocoon-grad-pill-action: linear-gradient(135deg, var(--cocoon-color-brand-pill-action-start) 0%, var(--cocoon-color-brand-pill-action-end) 100%);
+  --cocoon-grad-confirm: linear-gradient(180deg, var(--cocoon-color-semantic-confirm-start) 0%, var(--cocoon-color-semantic-confirm-end) 100%);
+  --cocoon-grad-card-3d: linear-gradient(180deg, var(--cocoon-color-surface-card3d-top) 0%, var(--cocoon-color-surface-card3d-bottom) 100%);
+  --cocoon-grad-drawer: linear-gradient(180deg, var(--cocoon-color-surface-drawer-top) 0%, var(--cocoon-color-surface-drawer-top) 3%, var(--cocoon-color-surface-drawer-mid) 34%, var(--cocoon-color-surface-drawer-mid) 61%, var(--cocoon-color-surface-drawer-low) 86%, var(--cocoon-color-surface-drawer-low) 99%, var(--cocoon-color-surface-drawer-bottom-edge) 100%);
+  --cocoon-shadow-card-3d: 0 7px 14px -2px rgba(0, 0, 0, 0.20), 0 1px 3px rgba(0, 0, 0, 0.10), inset 0 1.5px 0 #FFFFFF, inset 0 -12px 14px -10px rgba(20, 20, 40, 0.08);
+  --cocoon-shadow-group-sheet: 0 3px 6px rgba(0, 0, 0, 0.16);
+  --cocoon-shadow-option-card: 0 3px 8px rgba(0, 0, 0, 0.18);
+  --cocoon-shadow-dialog: 0 7px 22px rgba(0, 0, 0, 0.35);
+  --cocoon-shadow-pill: 0 2px 6px rgba(0, 0, 0, 0.14);
+  --cocoon-shadow-toggle-knob: 0 2px 4px rgba(0, 0, 0, 0.22);
+  --cocoon-shadow-slider-thumb: 0 2px 5px rgba(0, 0, 0, 0.30);
+  --cocoon-shadow-primary-glow: 0 5px 12px rgba(122, 60, 255, 0.45);
+}
+
+/* Reusable Cocoon Surface Primitives */
+.cocoon-page-canvas {
+  background: var(--cocoon-grad-page);
+  color: var(--cocoon-color-neutral-ink-primary);
+  font-family: var(--cocoon-font-sans);
+  font-weight: var(--cocoon-weight-cjk);
+}
+
+.cocoon-card-3d {
+  position: relative;
+  border-radius: var(--cocoon-radius-card);
+  background: var(--cocoon-grad-card-3d) padding-box,
+              linear-gradient(180deg, var(--cocoon-color-surface-card3d-edge-top) 0%, var(--cocoon-color-surface-card3d-edge-bottom) 100%) border-box;
+  border: 1.5px solid transparent;
+  box-shadow: var(--cocoon-shadow-card-3d);
+}
+
+.cocoon-divider-groove {
+  height: 1.5px;
+  background: var(--cocoon-color-surface-divider-groove);
+  box-shadow: 0 1px 0 var(--cocoon-color-neutral-pure-white);
+}
+
+.cocoon-drawer-surface {
+  background: var(--cocoon-grad-drawer);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --cocoon-duration-toggle-slide: 1ms;
+    --cocoon-duration-nav-crossfade: 1ms;
+    --cocoon-duration-relayout-slide: 1ms;
+    --cocoon-duration-drawer-slide: 1ms;
+  }
+}
