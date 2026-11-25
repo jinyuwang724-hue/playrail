@@ -128,7 +128,7 @@ public sealed partial class WallStage
     {
         var v = _perfView;
         var s = _perfS;
-        double? pkg = Num(v?["actual"]?["package"]);
+        double? pkg = PerfDisplayPower();
         int capW = Math.Max(Int(v?["target"]?["pl1"], 0), 1);
         double? rpm = Num(v?["fan"]?["rpm1"]);
         string fmode = Str(s?["fan"]?["mode"]) ?? "balanced";
@@ -154,20 +154,23 @@ public sealed partial class WallStage
         CpChips(ds, x, y + h - chipsH, w, new[] { ("温度", temp is double t ? $"{t:0} °C" : "—", false), ("CPU", cpu, false), ("预设", preset, true) });
     }
 
-    /// <summary>最近 60 秒的功耗：一根根圆头竖条（3DS 活动记录那种），最新的一根最亮。</summary>
+    /// <summary>最近 60 秒的功耗：一根根圆头竖条（3DS 活动记录那种），每 2 秒固定一桶、最新的一根最亮。</summary>
     private void CpPowerBars(CanvasDrawingSession ds, float x, float y, float w, float h, int capW)
     {
-        var hist = _perfPower.ToArray();
+        var hist = _perfPower.Select(s => s.W).ToArray();
         const int n = 30;
         float gap = 6, bw = (w - gap * (n - 1)) / n;
         double max = Math.Max(Math.Max(capW, hist.Length > 0 ? hist.Max() : 0), 10);
+        // 固定按采样序号每 2 秒合一根（避免每秒错位重组导致整排柱子抖动）：奇数次采样时最右一根先放 1 个采样，偶数次补齐
+        int tail = (_perfPowerSeq & 1) == 1 ? 1 : 2;
         for (int i = 0; i < n; i++)
         {
-            // 每两个采样合一根（最近 60 个采样 → 30 根）
-            int a = hist.Length - (n - i) * 2;
+            int end = i == n - 1 ? hist.Length : hist.Length - tail - (n - 2 - i) * 2;
+            int len = i == n - 1 ? tail : 2;
+            int a = end - len;
             double val = 0;
             int cnt = 0;
-            for (int j = a; j < a + 2; j++) if (j >= 0 && j < hist.Length) { val += hist[j]; cnt++; }
+            for (int j = a; j < end; j++) if (j >= 0 && j < hist.Length) { val += hist[j]; cnt++; }
             float bx = x + i * (bw + gap);
             ds.FillRoundedRectangle(bx, y, bw, h, bw / 2, bw / 2, Color.FromArgb(255, 0xE6, 0xE6, 0xEE));
             if (cnt == 0) continue;

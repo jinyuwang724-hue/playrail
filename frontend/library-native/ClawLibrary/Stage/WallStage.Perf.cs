@@ -87,7 +87,9 @@ public sealed partial class WallStage
     private JsonNode? _perfView;
     private JsonObject? _perfS;
     private readonly List<PerfRow> _perfRows = new();
-    private readonly Queue<double> _perfPower = new();
+    private readonly Queue<(long T, double W)> _perfPower = new();
+    private int _perfPowerSeq;
+    private const long PerfPowerAvgWindowMs = 5_000;
     private DispatcherQueueTimer? _perfTimer;
 
     // ---------------- 开 / 关 ----------------
@@ -170,13 +172,13 @@ public sealed partial class WallStage
     private DispatcherQueueTimer MakePerfTimer()
     {
         var t = _dq.CreateTimer();
-        t.Interval = TimeSpan.FromMilliseconds(500);
+        t.Interval = TimeSpan.FromSeconds(1);
         t.IsRepeating = true;
         t.Tick += (_, _) =>
         {
             if (!_perfOpen) return;
             // 实时 CPU 频率两秒采一次（左栏「CPU 频率」）；功耗、风扇每秒从 agent 取，取回来顺手重画
-            if (_perfTicks++ % 4 == 0) (_cpuFreq ??= new CpuFreq()).Sample();
+            if (_perfTicks++ % 2 == 0) (_cpuFreq ??= new CpuFreq()).Sample();
             _ = PerfRefresh(true);
         };
         return t;
@@ -212,12 +214,28 @@ public sealed partial class WallStage
         if (!_settingsGesture.Active && _perfEdits == _perfSavedEdits && view["settings"] is JsonObject s) _perfS = (JsonObject)s.DeepClone();
         if (!fromSave && view["actual"]?["package"] is JsonValue pv && pv.TryGetValue(out double pkg))
         {
-            _perfPower.Enqueue(pkg);
-            while (_perfPower.Count > 120) _perfPower.Dequeue();
+            _perfPower.Enqueue((Environment.TickCount64, pkg));
+            _perfPowerSeq++;
+            while (_perfPower.Count > 60) _perfPower.Dequeue();
         }
         if (!_perfOpen) return;
         BuildPerfRows();
         PaintPerf();
+    }
+
+    /// <summary>性能页显示的平滑功耗：最近 5 秒采样均值，避免瞬时功耗跳变；没有窗口内采样时退回最新读数。</summary>
+    private double? PerfDisplayPower()
+    {
+        if (_perfPower.Count > 0)
+        {
+            long now = Environment.TickCount64;
+            double sum = 0;
+            int cnt = 0;
+            foreach (var s in _perfPower)
+                if (now - s.T <= PerfPowerAvgWindowMs) { sum += s.W; cnt++; }
+            if (cnt > 0) return sum / cnt;
+        }
+        return Num(_perfView?["actual"]?["package"]);
     }
 
     /// <summary>改了设置：350 ms 内的连续改动合成一次保存。</summary>
@@ -723,10 +741,10 @@ public sealed partial class WallStage
         }
 
         // ---- 功耗 ----
-        double? pkg = Num(v?["actual"]?["package"]);
+        double? pkg = PerfDisplayPower();
         Header(0, "芯片功耗 · 最近 60 秒", pkg is double p ? $"{p:0.0} W" : "—", accent);
         float cTop = header, cH = powerH;
-        var hist = _perfPower.ToArray();
+        var hist = _perfPower.Select(x => x.W).ToArray();
         bool autoMode = Str(s?["mode"]) == "autotdp";
         int capW = Int(v?["target"]?["pl1"], 0);
         int floorW = autoMode ? Int(s?["autotdp"]?["floor"], 12) : 0;
@@ -747,7 +765,7 @@ public sealed partial class WallStage
         }
         if (hist.Length >= 2)
         {
-            float dx = W / 119f, x0 = W - (hist.Length - 1) * dx;
+            float dx = W / 59f, x0 = W - (hist.Length - 1) * dx;
             using var line = new CanvasPathBuilder(ds);
             using var area = new CanvasPathBuilder(ds);
             line.BeginFigure(x0, Y(hist[0]));

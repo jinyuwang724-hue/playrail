@@ -635,8 +635,9 @@ public sealed partial class WallStage
         if (_perfOpen)
         {
             var v = _perfView;
-            var last = _perfPower.Count > 0 ? _perfPower.Last() : 0;
-            return $"{cat}|{Num(v?["actual"]?["package"]):0.0}|{Num(v?["fan"]?["rpm1"]):0}|{Num(v?["live"]?["cpuTemp"]):0}|{_cpuFreq?.Mhz:0}|{_perfPower.Count}|{last:0.0}|{_perfCurveEdit}|{_perfPoint}|{(_perfS == null ? "" : PerfPresetText())}|{string.Join(",", PerfCurve(Str(_perfS?["fan"]?["mode"]) ?? "balanced"))}";
+            double? pkg = PerfDisplayPower();
+            var last = _perfPower.Count > 0 ? _perfPower.Last().W : 0;
+            return $"{cat}|{pkg:0}|{Num(v?["fan"]?["rpm1"]):0}|{Num(v?["live"]?["cpuTemp"]):0}|{_cpuFreq?.Mhz:0}|{_perfPowerSeq}|{last:0.0}|{_perfCurveEdit}|{_perfPoint}|{(_perfS == null ? "" : PerfPresetText())}|{string.Join(",", PerfCurve(Str(_perfS?["fan"]?["mode"]) ?? "balanced"))}";
         }
         if (_dsOpen) return _dsView?.ToJsonString() ?? "";
         if (_syOpen) { var b = SystemInfo.Battery(); return $"{b.Percent}|{b.OnAc}|{_syView?["battery"]?.ToJsonString()}"; }
