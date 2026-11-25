@@ -1028,10 +1028,10 @@ public sealed partial class WallStage
 
     private static (float W, float H, float R, float Leg) RsBracketGeom(bool option = false)
     {
-        // 整行：真半圆端头 + 20 px 中缝；下拉选项：贴着 24 px 选项卡片的同心圆角四角括号
-        float W = (option ? RsPickW : RsListW) + CurOutset * 2f;
-        float H = (option ? RsOptH : RsRowH) + CurOutset * 2f;
-        float r = option ? 24f + CurOutset : H / 2f;
+        // 整行：和分组卡片同心（卡片圆角 + 外扩）；下拉选项：和 24 圆角的选项卡片同心。几何走全局 CocoonBracketPath
+        float w = option ? RsPickW : RsListW, h = option ? RsOptH : RsRowH, o = CurOutsetFor(w, h);
+        float W = w + o * 2f, H = h + o * 2f;
+        float r = (option ? 24f : RsGroupR) + o;
         return (W, H, r, 0f);
     }
 

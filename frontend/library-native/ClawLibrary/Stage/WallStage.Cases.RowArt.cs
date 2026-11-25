@@ -227,9 +227,10 @@ public sealed partial class WallStage
     private static void RaFocusRect(CanvasDrawingSession ds, float x, float y, float w, float h, float r)
     {
         var dev = ds.Device;
-        float W = w + CurOutset * 2f, H = h + CurOutset * 2f;
-        float rr = Math.Clamp(r, 0f, MathF.Min(w, h) / 2f) + CurOutset;
-        using var path = CocoonBracketPath(dev, W, H, rr, x - CurOutset, y - CurOutset);
+        float o = CurOutsetFor(w, h);
+        float W = w + o * 2f, H = h + o * 2f;
+        float rr = Math.Clamp(r, 0f, MathF.Min(w, h) / 2f) + o;
+        using var path = CocoonBracketPath(dev, W, H, rr, x - o, y - o);
         using (var glow = new CanvasCommandList(dev))
         {
             using (var g = glow.CreateDrawingSession()) { g.Transform = ds.Transform; g.DrawGeometry(path, CurGlowColor, RwSw * 2, RwRoundStroke); }

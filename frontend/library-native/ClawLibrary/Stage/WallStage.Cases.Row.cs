@@ -644,54 +644,6 @@ public sealed partial class WallStage
 
     private const float RwCurPad = 44;   // 精灵四周给光晕留的边
 
-    /// <summary>四个括号的采样点：(x, y, 周长位置 s)，s 从上边中点顺时针。</summary>
-    private static (List<List<Vector3>> Segs, float P) RwBracketPoints(float cw, float ch)
-    {
-        var (W, H, _, r, leg) = RwBracketGeom(cw, ch);
-        return RwBracketPointsRaw(W, H, r, leg, RwCurPad, RwCurPad);
-    }
-
-    /// <summary>任意矩形的四角括号采样点（菜单行、按钮也用这一套）：W×H 是线的中心框，r 圆角，leg 直腿长。</summary>
-    private static (List<List<Vector3>> Segs, float P) RwBracketPointsRaw(float W, float H, float r, float leg, float x0, float y0)
-    {
-        float sx = W - 2 * r, sy = H - 2 * r, q = MathF.PI * r / 2, P = 2 * sx + 2 * sy + 4 * q;
-        List<Vector3> Line(float ax, float ay, float bx, float by, float s0, float len)
-        {
-            int n = Math.Max(2, (int)MathF.Ceiling(len / 3)); var a = new List<Vector3>();
-            for (int i = 0; i <= n; i++) { float t = i / (float)n; a.Add(new Vector3(ax + (bx - ax) * t, ay + (by - ay) * t, s0 + len * t)); }
-            return a;
-        }
-        List<Vector3> Arc(float cx, float cy, float a0, float s0)
-        {
-            var a = new List<Vector3>();
-            for (int i = 0; i <= 24; i++) { float t = i / 24f, an = a0 + t * MathF.PI / 2; a.Add(new Vector3(cx + r * MathF.Cos(an), cy + r * MathF.Sin(an), s0 + q * t)); }
-            return a;
-        }
-        float top = sx / 2;
-        var segs = new List<List<Vector3>>();
-        float s = top - leg;
-        segs.Add([.. Line(x0 + W - r - leg, y0, x0 + W - r, y0, s, leg), .. Arc(x0 + W - r, y0 + r, -MathF.PI / 2, top), .. Line(x0 + W, y0 + r, x0 + W, y0 + r + leg, top + q, leg)]);
-        s = top + q + sy - leg;
-        segs.Add([.. Line(x0 + W, y0 + H - r - leg, x0 + W, y0 + H - r, s, leg), .. Arc(x0 + W - r, y0 + H - r, 0, s + leg), .. Line(x0 + W - r, y0 + H, x0 + W - r - leg, y0 + H, s + leg + q, leg)]);
-        s = top + 2 * q + sy + sx - leg;
-        segs.Add([.. Line(x0 + r + leg, y0 + H, x0 + r, y0 + H, s, leg), .. Arc(x0 + r, y0 + H - r, MathF.PI / 2, s + leg), .. Line(x0, y0 + H - r, x0, y0 + H - r - leg, s + leg + q, leg)]);
-        s = top + 3 * q + 2 * sy + sx - leg;
-        segs.Add([.. Line(x0, y0 + r + leg, x0, y0 + r, s, leg), .. Arc(x0 + r, y0 + r, MathF.PI, s + leg), .. Line(x0 + r, y0, x0 + r + leg, y0, (s + leg + q) % P, leg)]);
-        return (segs, P);
-    }
-
-    private static CanvasGeometry RwBracketPath(ICanvasResourceCreator dev, List<List<Vector3>> segs)
-    {
-        using var pb = new CanvasPathBuilder(dev);
-        foreach (var sg in segs)
-        {
-            pb.BeginFigure(sg[0].X, sg[0].Y);
-            for (int i = 1; i < sg.Count; i++) pb.AddLine(sg[i].X, sg[i].Y);
-            pb.EndFigure(CanvasFigureLoop.Open);
-        }
-        return CanvasGeometry.CreatePath(pb);
-    }
-
     private static readonly CanvasStrokeStyle RwRoundStroke = new() { StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round, LineJoin = CanvasLineJoin.Round };
 
     /// <summary>光晕（2 倍线宽、第二色、模糊 7 dp）和边光（沿线的外轮廓再描 2 dp，#FAFAFA 40 %）：不随时间变，画一次。</summary>
@@ -703,8 +655,8 @@ public sealed partial class WallStage
         var (W, H, _, _, _) = RwBracketGeom(rw.CardW, rw.CardH);
         float sw = W + RwCurPad * 2, shh = H + RwCurPad * 2;
         int pw = (int)Math.Ceiling(sw * R), ph = (int)Math.Ceiling(shh * R);
-        var (segs, _) = RwBracketPoints(rw.CardW, rw.CardH);
-        using var path = RwBracketPath(dev, segs);
+        var (bw, bh, _, br, _) = RwBracketGeom(rw.CardW, rw.CardH);
+        using var path = CocoonBracketPath(dev, bw, bh, br, RwCurPad);   // 全局同一份括号几何
         rw.GlowSurf ??= G.Surface(pw, ph);
         using (var ds = CanvasComposition.CreateDrawingSession(rw.GlowSurf))
         {
@@ -1076,15 +1028,8 @@ public sealed partial class WallStage
         var dev = G.Device;
         float R = CsRaster, S = RwRingSize, c = S / 2;
         int px = (int)Math.Ceiling(S * R);
-        using var pb = new CanvasPathBuilder(dev);
-        for (int k = 0; k < 4; k++)
-        {
-            float mid = MathF.PI / 4 + k * MathF.PI / 2, half = RwRingSpan * MathF.PI / 360;
-            pb.BeginFigure(c + RwRingR * MathF.Cos(mid - half), c + RwRingR * MathF.Sin(mid - half));
-            pb.AddArc(new Vector2(c + RwRingR * MathF.Cos(mid + half), c + RwRingR * MathF.Sin(mid + half)), RwRingR, RwRingR, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
-            pb.EndFigure(CanvasFigureLoop.Open);
-        }
-        using var path = CanvasGeometry.CreatePath(pb);
+        // 面板图标的圆环：圆形容器，走全局括号几何（正圆 = 四段对称的弧）
+        using var path = CocoonBracketPath(dev, 2 * RwRingR, 2 * RwRingR, RwRingR, c - RwRingR);
         rw.RGlowSurf ??= G.Surface(px, px);
         using (var ds = CanvasComposition.CreateDrawingSession(rw.RGlowSurf))
         {

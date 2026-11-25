@@ -562,6 +562,7 @@ public static class Bench
                 case "recstatus": await s.RecStatusAsync(); break;
                 case "recrow": await s.RecRowAsync(); break;
                 case "recside": await s.RecSideAsync(); break;
+                case "reccur": await s.RecCurAsync(); break;
                 case "recleft": await s.RecLeftAsync(); break;
                 case "recset": await s.RecSetAsync(); break;
                 case "recflick": await s.RecFlickAsync(); break;

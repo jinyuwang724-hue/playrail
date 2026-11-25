@@ -470,11 +470,12 @@ public sealed partial class WallStage
     private const float RmCurPad = 44;
 
     /// <summary>
-    /// 行的四角括号（Cocoon 整行焦点）：统一紧凑外扩 CurOutset，整行用真半圆端头 + 左右中缝 20 px。
+    /// 行的四角括号：外扩按行的大小统一取，圆角 = 白卡圆角 + 外扩（和卡片同心），几何走全局 CocoonBracketPath。
     /// </summary>
     private static (float W, float H, float R, float Leg) RmBracketGeom()
     {
-        float W = RmCardW + CurOutset * 2f, H = RmRowH + CurOutset * 2f, r = H / 2f;
+        float o = CurOutsetFor(RmCardW, RmRowH);
+        float W = RmCardW + o * 2f, H = RmRowH + o * 2f, r = RmCardR + o;
         return (W, H, r, 0f);
     }
 
