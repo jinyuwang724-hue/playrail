@@ -14,7 +14,7 @@ internal sealed class LibraryWindow : IDisposable
     private uint _overlayPid;
     private Windows.Graphics.RectInt32 _overlayBounds;
     private uint _returnPid;
-    private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center", "window-switcher", "game-shell", "keep-game-shell", "game-shell-reveal"];
+    private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center", "window-switcher"];
 
     public LibraryWindow(nint window, Action<string, nint> activate)
     {
@@ -100,28 +100,6 @@ internal sealed class LibraryWindow : IDisposable
         }
         finally { _sizing = false; }
     }
-
-    public void ShowGameShell(bool activate)
-    {
-        SetTopmost(false);
-        ShowWindow(_window, 4);
-        EnsureFullscreenBounds();
-        SetWindowPos(_window, -2, 0, 0, 0, 0, 0x253);
-        if (activate) BringForward(_window);
-        else StayBehindForeground();
-    }
-
-    public static bool HasForegroundApp(nint self)
-    {
-        nint fg = Foreground;
-        if (fg == self) return true;
-        if (fg == 0 || !IsWindow(fg) || !IsWindowVisible(fg) || ToolboxWindow.IsIconic(fg)) return false;
-        var cls = new System.Text.StringBuilder(128);
-        GetClassName(fg, cls, cls.Capacity);
-        return cls.ToString() is not ("Progman" or "WorkerW" or "Shell_TrayWnd");
-    }
-
-    [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(nint hwnd, System.Text.StringBuilder text, int capacity);
 
     public void ShowOverlay()
     {

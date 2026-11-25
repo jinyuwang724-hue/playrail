@@ -34,7 +34,6 @@ public sealed partial class WallStage
     private static readonly string[] BootNames = { "游戏库", "控制中心", "性能", "手柄", "显示与声音", "系统", "设置" };
 
     private UiPrefs _prefs = new();
-    internal bool WindowManagerOn => _prefs.WindowManager;
     private ContainerVisual? _st;
     private ContainerVisual _stRightView = null!;
     private SpriteVisual _stTitle = null!, _stLeft = null!, _stRight = null!;
@@ -532,24 +531,7 @@ public sealed partial class WallStage
     private void BuildStGeneral(JsonObject? v, string later)
     {
         _stRows.Add(new PerfRow { Section = true, Title = "开机" });
-        BuildStBootMode();
-        if (ShellMode.Available)
-            _stRows.Add(StToggle("游戏模式窗口管理（试验）", _prefs.WindowManager, on => { SaveUi(_prefs with { WindowManager = on }); Repaint(); }, false));
-        if (ShellMode.Available)
-            _stRows.Add(StToggle("游戏模式保留系统输入法（试验）", ShellMode.KeepExplorer, on =>
-            {
-                if (_shellBusy) return;
-                _shellBusy = true;
-                _ = ShellMode.Run("set-covered", on ? "on" : "off").ContinueWith(t => _dq.TryEnqueue(() =>
-                {
-                    _shellBusy = false;
-                    Toast(t.Result == 0 ? (on ? "下次进入游戏模式时保留输入法" : "下次进入游戏模式时关闭桌面") : ShellMode.Why());
-                    if (_stOpen) Repaint();
-                }));
-            }, false));
-        // 游戏模式不经过 explorer，全屏体验只在桌面模式下有意义
-        if (ShellMode.Available && ShellMode.DefaultGame) { }
-        else if (v?["home"] is JsonObject home && home["choices"] is JsonArray choices)
+        if (v?["home"] is JsonObject home && home["choices"] is JsonArray choices)
         {
             // 关 / Claw 游戏库 / Steam 大屏幕 / Xbox（/ 现在装着的其他主页应用，比如 AnyFSE）
             const string own = "ClawToolbox.Library_ba3r68zr466za!App";
@@ -608,8 +590,7 @@ public sealed partial class WallStage
         _stRows.Add(StToggle("关闭窗口后留在托盘", _prefs.BackgroundRun,
             on => { SaveUi(_prefs with { BackgroundRun = on }); Repaint(); }, true));
         _stRows.Add(StAction("转入后台", "background", "", () => (_window as MainWindow)?.RunInBackground()));
-        // 游戏模式下游戏库就是外壳：退出会被 ClawShell 立刻拉回来，不给这一项
-        if (!ShellMode.Available || !ShellMode.GameMode) _stRows.Add(StAction("退出游戏库", "exit-library", "", () => (_window as MainWindow)?.ExitLibrary()));
+        _stRows.Add(StAction("退出游戏库", "exit-library", "", () => (_window as MainWindow)?.ExitLibrary()));
         _stRows.Add(new PerfRow { Section = true, Title = "语言" });
         // 换语言要重排所有已经画好的文字：存下来以后整个游戏库重启一次
         _stRows.Add(StPick("界面语言", new[] { "简体中文", "English" }, I18n.En ? 1 : 0, i =>

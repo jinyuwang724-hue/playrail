@@ -49,8 +49,7 @@ namespace ClawRouter {
         FileSystemWatcher files;
         ManagementEventWatcher buttons;
         FirmwareShortcutFilter shortcutFilter;
-        SessionModeProbe sessionMode;
-        volatile bool sessionGameMode;
+        const bool sessionGameMode=false;   // 游戏模式（ClawShell 外壳）2026-11 已移除：永远按桌面处理
         readonly SpecialShortcutCorrelation specialKeys = new SpecialShortcutCorrelation();
         GameBarGuard gameBarGuard;
         System.Threading.Timer changed;
@@ -105,7 +104,7 @@ namespace ClawRouter {
                     buttons.EventArrived += OnButton; buttons.Start();
                 } catch(Exception ex) { if(buttons != null) buttons.Dispose(); buttons = null; error = "按键通知不可用：" + ex.Message; }
                 if(!diagnostic) {
-                    try {sessionMode=new SessionModeProbe(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"ClawToolbox","shell","state.json"),OnSessionMode);sessionGameMode=sessionMode.Game;shortcutFilter=new FirmwareShortcutFilter(delegate{return sessionGameMode&&!suspended&&maintenance==null;});shortcutFilter.GameBarSuppressed+=OnSuppressedGamebar;shortcutFilter.ShortcutPressed+=OnImmediateShortcut;}
+                    try {shortcutFilter=new FirmwareShortcutFilter(delegate{return sessionGameMode&&!suspended&&maintenance==null;});shortcutFilter.GameBarSuppressed+=OnSuppressedGamebar;shortcutFilter.ShortcutPressed+=OnImmediateShortcut;}
                     catch(Exception ex){Log("shortcut-filter-unavailable",ex.Message);}
                     try {gameBarGuard=new GameBarGuard(Log);}
                     catch(Exception ex){Log("gamebar-guard-unavailable",ex.Message);}
@@ -167,10 +166,6 @@ namespace ClawRouter {
             var record=new Dictionary<string,object>{{"type","mapped_action"},{"source",source},{"command",value},{"scope",scope}};
             if(gesture!=null){record["gesture"]=gesture;record["gameMode"]=sessionGameMode;}
             routed++; Emit(record);
-        }
-        void OnSessionMode(bool game) {
-            sessionGameMode=game;
-            Task.Run((Action)delegate {lock(gate){if(disposed)return;gamebarShortcuts.Reset();Reconcile();Emit(new Dictionary<string,object>{{"type","session_mode"},{"game",game}});Status();}});
         }
         void OnImmediateShortcut(string action,IntPtr foreground,bool game) {
             long at=Stopwatch.GetTimestamp();
@@ -421,7 +416,6 @@ namespace ClawRouter {
             if(disposed)return;disposed=true;enabled=false;ready=false;released=false;
             if(gameBarGuard!=null){gameBarGuard.Dispose();gameBarGuard=null;}
             if(shortcutFilter!=null){shortcutFilter.Dispose();shortcutFilter=null;}
-            if(sessionMode!=null){sessionMode.Dispose();sessionMode=null;}
             ClearPending();
             SystemEvents.PowerModeChanged-=OnPower;
             if(files != null)files.Dispose();if(changed != null)changed.Dispose();

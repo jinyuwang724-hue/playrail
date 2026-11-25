@@ -60,11 +60,11 @@ public sealed partial class WallStage
     {
         ("wifi", 0, 0, 1), ("bt", 1, 0, 1), ("air", 2, 0, 1),
         ("shot", 0, 1, 1), ("kbd", 1, 1, 1), ("pad", 2, 1, 1),
-        ("pwr", 0, 2, 1), ("desk", 1, 2, 1), ("vrr", 2, 2, 1),
+        ("pwr", 0, 2, 1), ("vrr", 1, 2, 1),
         ("off", 0, 2, 1), ("restart", 1, 2, 1), ("sleep", 2, 2, 1),
         ("win", 3, 0, 2), ("lib", 3, 1, 2), ("quit", 3, 2, 2),
     };
-    private static readonly string[] QsPm = { "off", "restart", "sleep" }, QsR2 = { "pwr", "desk", "vrr" };
+    private static readonly string[] QsPm = { "off", "restart", "sleep" }, QsR2 = { "pwr", "vrr" };
     private static readonly HashSet<string> QsRisk = new() { "restart", "off" };
 
     // ---------------- 状态 ----------------
@@ -93,7 +93,6 @@ public sealed partial class WallStage
     private string? _qsSsid, _qsPadMode, _qsVrrRange;
     private int _qsBtCount = -1;
     private DwmThumb? _qsThumb;
-    private bool _qsUnderLibrary;
     private SpriteVisual? _qsUnder;
     private nint _qsGame;
     private (int L, int T, int W, int H) _qsGameRect;
@@ -189,7 +188,6 @@ public sealed partial class WallStage
             _qsSlide.Offset = new Vector3(QsHideX * QsK, 0, 0);
         }
         _qsPt = 0; _qsShowTo = 1;
-        _qsUnderLibrary = ShellMode.GameMode;
         if (_qsUnder != null) _qsUnder.IsVisible = false;   // 不压暗游戏，底下不用垫黑
         _qs!.IsVisible = true;
         QsBuild();
@@ -760,7 +758,6 @@ public sealed partial class WallStage
                 it.Name = mouse ? "键鼠模式" : "手柄模式"; it.Glyph = mouse ? "qam.mouse" : "qam.pad"; it.Disabled = _qsPadMode == null; it.Tip = it.Name; break;
             }
             case "pwr": it.Name = "电源"; it.Glyph = "qam.off"; it.Tip = "电源"; break;
-            case "desk": it.Name = "桌面"; it.Glyph = "qam.desk"; it.Disabled = !ShellMode.Available; it.Tip = "切换到桌面"; break;
             case "vrr":
                 it.Name = "可变刷新率"; it.Glyph = ""; it.On = _qsVrr == true; it.Disabled = _qsVrr == null;
                 it.Tip = "可变刷新率 · " + (_qsVrr == true ? (game && _qsVrrRange != null ? "开 · " + _qsVrrRange : "开") : "关"); break;
@@ -1732,10 +1729,6 @@ public sealed partial class WallStage
                 QsRebuild();
                 break;
             }
-            case "desk":
-                CloseQuickPanel(hideWindow: false, instant: true);
-                _ = CcSwitchMode();
-                break;
             case "sleep":
             {
                 nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(_window);

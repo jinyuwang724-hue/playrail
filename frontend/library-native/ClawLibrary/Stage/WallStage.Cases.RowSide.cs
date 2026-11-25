@@ -50,7 +50,7 @@ public sealed partial class WallStage
     private static readonly (string Id, string Icon)[] SpTiles =
     {
         ("wifi", "qam.wifi"), ("bt", "qam.bt"), ("osd", "sp.osd"), ("pad", "qam.pad"), ("gear", "sp.gear"),
-        ("shot", "qam.shot"), ("kbd", "qam.kbd"), ("win", "qam.win"), ("desk", "qam.desk"), ("pwr", "qam.off"),
+        ("shot", "qam.shot"), ("kbd", "qam.kbd"), ("win", "qam.win"), ("pwr", "qam.off"),
     };
     private static readonly string[] SpPicks = { "fps", "res", "hz" };
 
@@ -1077,11 +1077,6 @@ public sealed partial class WallStage
             case "win":
                 SpClose(instant: true);
                 OpenSwitcherShortcut();
-                return;
-            case "desk":
-                if (!ShellMode.Available) { Cue(Sfx.Bump); return; }
-                SpClose(instant: true);
-                _ = CcSwitchMode();
                 return;
         }
     }

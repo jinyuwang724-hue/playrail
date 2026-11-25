@@ -155,7 +155,6 @@ public sealed partial class MainWindow
 
     private void HideShortcutWindow()
     {
-        if (Stage.ShellMode.GameMode && !_desktopHandoff) { CancelShortcutTransition(); CompleteShortcutHide(); return; }
         if (_shortcutHiding)
         {
             ShowShortcutWindow("restore-" + ToolboxActivation.Target(_pendingRoute));
@@ -178,7 +177,6 @@ public sealed partial class MainWindow
 
     private void CompleteShortcutHide(bool returnToPrevious = true)
     {
-        if (Stage.ShellMode.GameMode && !_desktopHandoff) { ParkGameShell(returnToPrevious); return; }
         _surfaceSession = false;
         _shortcutMotion.Cancel();
         bool returnFocus = returnToPrevious && _shortcutWindow?.IsForeground == true;
@@ -253,7 +251,6 @@ public sealed partial class MainWindow
 
     private void DisposeShortcutWindow()
     {
-        _gameShellTimer?.Stop();
         ReleaseOverlay();
         _shortcutClosed = true; _shortcutMotion.Cancel(); CancelShortcutTransition();
         _stage?.EndShortcutSoftFocus(); _shortcutWindow?.Dispose();

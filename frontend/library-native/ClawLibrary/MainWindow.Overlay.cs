@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Nodes;
+﻿using System.Runtime.InteropServices;
+using System.Text.Json.Nodes;
 using ClawLibrary.Data;
 using Microsoft.UI.Dispatching;
 
@@ -11,7 +12,6 @@ public sealed partial class MainWindow
     private DispatcherQueueTimer? _overlayTimer;
     private volatile bool _overlayActive;
     private nint _overlayTarget;
-    private bool _overlayRenewing, _overlayInputPrepared;
     private bool _surfaceHideWindow, _surfaceHadOverlay, _surfaceSession;
     private bool _desktopHandoff;
 
@@ -23,7 +23,6 @@ public sealed partial class MainWindow
 
     private bool _switchInFlight;
     internal bool WindowSwitchInFlight => _switchInFlight;
-    private long _lastSpecialRouteAt = -10_000;
     private AgentClient? _gamebarAgent;
 
     private async Task ActivateOverlayRoute(string route, nint returnWindow)
@@ -33,119 +32,21 @@ public sealed partial class MainWindow
         try
         {
             if (_shortcutClosed || _desktopHandoff || _switchInFlight) return;
-            if (route == "game-shell") { RestoreGameShell(true); return; }
-            if (route == "game-shell-reveal") { RevealGameShell(); return; }
-            if (route == "keep-game-shell") { if (Stage.ShellMode.GameMode) RestoreGameShell(false); return; }
             string targetRoute = ToolboxActivation.Target(route.Replace(App.ViaShell, ""));
             bool quick = targetRoute == "control-center", switcher = targetRoute == "window-switcher";
-            bool special = quick || switcher;
-            bool game = Stage.ShellMode.GameMode;
             Log.Info($"route {route} return={returnWindow}");
-            // 快设键按一下，固件 / 后台偶尔紧跟着再报一个游戏库开关：它会把刚开的面板连同游戏库一起收走、回到上一个程序。
-            // 游戏模式下快设之后 600 ms 内的游戏库开关一律不理
-            long routeAt = Environment.TickCount64;
-            if (special) _lastSpecialRouteAt = routeAt;
-            else if (game && (routeAt - _lastSpecialRouteAt < 600 || _stage?.SpecialSurfaceOpen == true) && targetRoute is "library" or "activate")
-            { Log.Info($"route {route} ignored: right after a quick-settings route"); return; }
-            if (!game && route.StartsWith("minimize-", StringComparison.Ordinal))
+            if (route.StartsWith("minimize-", StringComparison.Ordinal))
             { _stage?.CloseSpecialSurfaces(); CompleteShortcutHide(returnToPrevious: false); return; }
-            if (special && !game)
+            if (quick || switcher)
             {
-                // 桌面模式的快设就是 Game Bar：复用一条后台连接，不必每次按键都重新握手
+                // 快设就是 Game Bar：复用一条后台连接，不必每次按键都重新握手
                 if (quick) { _gamebarAgent ??= new AgentClient(); await _gamebarAgent.Call("open_gamebar"); }
                 return;
             }
-            if (quick && _stage?.QuickPanelOpen == true) { ActivateRouteCore(route, returnWindow); return; }
-            if (!special && _overlayActive && _shortcutVisible && _stage?.SpecialSurfaceOpen != true
-                && route == "restore-library") route = "minimize-library";
-            bool closing = !special && route.StartsWith("minimize-", StringComparison.Ordinal);
-            nint self = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            nint foreground = LibraryWindow.Foreground;
-            bool owned = AppWindow.IsVisible && !ToolboxWindow.IsIconic(self)
-                && (foreground == self || OverlayAcceptsGamepad);
-            if (special && !_surfaceSession)
-            {
-                _surfaceSession = true;
-                _surfaceHideWindow = !owned;
-                _surfaceHadOverlay = _overlayActive;
-            }
-            // Use the window that actually owns input now. A delayed firmware
-            // report must not pin the surface to an application already left.
-            nint target = foreground != self ? foreground : returnWindow;
-            bool candidate = game && !closing && LibraryWindow.CanOverlay(target)
-                && !ToolboxWindow.ShellCloaked(self);
-            // 快捷面板有自己的窗口：先把面板弹出来（不等后台），输入隔离随后补上
-            bool fastQuick = quick && game && !closing && _stage?.QuickPanelOwnWindow == true && _stage?.QuickPanelOpen != true;
-            if (fastQuick) ActivateRouteCore(route, returnWindow);
-            if (!closing && (candidate || special) && _overlayAgent == null)
-            {
-                _overlayAgent = new AgentClient();
-                try
-                {
-                    if (!_overlayInputPrepared)
-                    {
-                        await _overlayAgent.Call("refresh_input_layer_apps");
-                        _overlayInputPrepared = true;
-                    }
-                    var state = await _overlayAgent.Call("set_overlay_hold", JsonValue.Create(true));
-                    if ((bool?)state?["safe"] != true) throw new IOException("输入层尚未确认隔离");
-                    StartOverlayHeartbeat();
-                }
-                catch (Exception ex)
-                {
-                    Log.Warn($"shortcut input fallback: {ex.Message}");
-                    _overlayInputPrepared = false;
-                    _overlayAgent.Dispose(); _overlayAgent = null;
-                    candidate = false;
-                }
-            }
-            if (candidate && _overlayAgent != null)
-            {
-                nint now = LibraryWindow.Foreground;
-                if (now != self && LibraryWindow.CanOverlay(now)) target = now;
-                _overlayTarget = target; _overlayActive = true;
-                _shortcutWindow?.SetOverlayTarget(target);
-                _shortcutWindow?.EnsureFullscreenBounds();
-            }
-            if (!fastQuick) ActivateRouteCore(route, returnWindow);
+            ActivateRouteCore(route, returnWindow);
         }
         catch (Exception ex) { Log.Error("shortcut route", ex); }
         finally { _overlayRoutes.Release(); }
-    }
-
-    private void StartOverlayHeartbeat()
-    {
-        _overlayTimer ??= DispatcherQueue.CreateTimer();
-        _overlayTimer.Interval = TimeSpan.FromMilliseconds(400);
-        _overlayTimer.Tick -= OverlayHeartbeat; _overlayTimer.Tick += OverlayHeartbeat;
-        _overlayTimer.Start();
-    }
-
-    private async void OverlayHeartbeat(DispatcherQueueTimer sender, object args)
-    {
-        if (_overlayAgent == null || _overlayRenewing) return;
-        if (!Stage.ShellMode.GameMode || (_shortcutWindow?.OverlayTargetIsForeground != true && _shortcutWindow?.IsForeground != true))
-        {
-            _stage?.CloseSpecialSurfaces();
-            CompleteShortcutHide(returnToPrevious: false);
-            return;
-        }
-        _overlayRenewing = true;
-        var client = _overlayAgent;
-        try
-        {
-            var result = await client.Call("set_overlay_hold", JsonValue.Create(true));
-            if ((bool?)result?["safe"] != true) throw new IOException("input isolation lost");
-        }
-        catch (Exception ex)
-        {
-            if (!ReferenceEquals(client, _overlayAgent)) return;
-            Log.Warn($"shortcut heartbeat: {ex.Message}");
-            _overlayInputPrepared = false;
-            _stage?.CloseSpecialSurfaces();
-            CompleteShortcutHide(returnToPrevious: false);
-        }
-        finally { _overlayRenewing = false; }
     }
 
     private void ReleaseOverlay()
@@ -163,7 +64,7 @@ public sealed partial class MainWindow
     {
         _stage?.SetSpecialInput(false);
         _surfaceSession = _surfaceHideWindow = false;
-        if (!_shortcutVisible || !Stage.ShellMode.GameMode || _shortcutWindow?.IsForeground != true) ReleaseOverlay();
+        ReleaseOverlay();
         Log.Info("quick panel ended (library window untouched)");
     }
 
@@ -189,11 +90,6 @@ public sealed partial class MainWindow
             _surfaceSession = _surfaceHideWindow = false;
             ReleaseOverlay();
             if (_shortcutClosed || _desktopHandoff) return false;
-            if (Stage.ShellMode.GameMode)
-            {
-                _wasGameMode = true;
-                RestoreGameShell(true);
-            }
             nint self = WinRT.Interop.WindowNative.GetWindowHandle(this);
             if (!LibraryWindow.OwnsForeground(self))
             {
@@ -252,7 +148,6 @@ public sealed partial class MainWindow
         finally { _switchInFlight = false; }
 
         long fallback = Environment.TickCount64;
-        if (Stage.ShellMode.GameMode) RestoreGameShell(true);
         Step("fallback", fallback, $"ok={_shortcutWindow?.IsForeground == true}");
         return false;
     }
@@ -271,6 +166,19 @@ public sealed partial class MainWindow
     {
         if (!_overlayActive) return;
         _shortcutWindow?.SetOverlayTarget(0);
-        LibraryWindow.BringForward(WinRT.Interop.WindowNative.GetWindowHandle(this));
     }
+
+    private static bool CoversMonitor(nint hwnd)
+    {
+        if (!GetWindowRect(hwnd, out var r)) return false;
+        var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(MonitorFromWindow(hwnd, 2), ref info)) return false;
+        return r.Left <= info.Monitor.Left && r.Top <= info.Monitor.Top && r.Right >= info.Monitor.Right && r.Bottom >= info.Monitor.Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)] private struct WinRect { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] private struct MonitorInfo { public int Size; public WinRect Monitor, Work; public uint Flags; }
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(nint hwnd, out WinRect r);
+    [DllImport("user32.dll")] private static extern nint MonitorFromWindow(nint hwnd, uint flags);
+    [DllImport("user32.dll")] private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
 }

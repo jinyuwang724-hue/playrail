@@ -61,7 +61,6 @@ public sealed partial class App : Application, Microsoft.UI.Xaml.Markup.IXamlMet
             initial.Route = initial.Route.Replace(ViaShell, "");
             _window = new MainWindow(initial.Route, initial.ReturnWindow);
             _window.Activate();
-            ToolboxWindow.SteamHomeRedirect(initial.Route, WinRT.Interop.WindowNative.GetWindowHandle(_window));
             var dq = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
             Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().Activated += (_, activation) =>
             {
@@ -101,7 +100,6 @@ public sealed partial class App : Application, Microsoft.UI.Xaml.Markup.IXamlMet
         if (data is Windows.ApplicationModel.Activation.IProtocolActivatedEventArgs protocol && protocol.Uri.Scheme == "claw-library")
             return ((ToolboxActivation.IsRoute(protocol.Uri.Host) ? protocol.Uri.Host : "activate") + (protocol.Uri.Query.Contains("via=shell") ? ViaShell : ""),
                 ToolboxActivation.ReturnWindow(protocol.Uri.Query));
-        if (data is Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch && launch.Arguments == "--game-shell") return ("game-shell", 0);
         return ("activate", 0);
     }
 
@@ -149,7 +147,6 @@ public sealed partial class MainWindow : Window
 
         InitializeShortcutWindow(returnWindow);
         _shortcutWindow?.EnsureFullscreenBounds();
-        InitializeGameShell();
 
         try
         {
@@ -160,7 +157,6 @@ public sealed partial class MainWindow : Window
         catch (Exception ex) { Log.Warn($"tray init: {ex.Message}"); }
         AppWindow.Closing += (_, e) =>
         {
-            if (Stage.ShellMode.GameMode && !_desktopHandoff) { e.Cancel = true; RestoreGameShell(_shortcutWindow?.IsForeground == true); return; }
             if (!_exiting && UiPrefs.Load().BackgroundRun && _tray?.EnsureIcon() == true)
             {
                 e.Cancel = true;
@@ -185,7 +181,7 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) => { DisposeShortcutWindow(); _tray?.Dispose(); _stage?.Dispose(); Log.Info("closed"); };
     }
 
-    public void ExitLibrary() { if (Stage.ShellMode.GameMode) { RestoreGameShell(true); return; } _exiting = true; Close(); }
+    public void ExitLibrary() { _exiting = true; Close(); }
 
     public void RunInBackground()
     {
@@ -212,7 +208,6 @@ public sealed partial class MainWindow : Window
             return;
         }
         if (viaShell) Log.Info($"shell switch arrived ({route}) cloaked={ToolboxWindow.ShellCloaked(hwnd)}");
-        if (ToolboxWindow.SteamHomeRedirect(route, hwnd)) return;
         // 快速设置键（后台的 controlCenter 动作）= 快捷设置面板：开着就收起，游戏库在前台时直接在它上面开
         bool quick = ToolboxActivation.Target(route) == "control-center";
         bool switcher = ToolboxActivation.Target(route) == "window-switcher";

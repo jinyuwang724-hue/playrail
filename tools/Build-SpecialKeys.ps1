@@ -5,7 +5,7 @@ $taskOut=Join-Path $taskRoot 'artifacts\special-keys-197'
 $taskSrc=Join-Path $taskOut 'src'
 $taskCsc="$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $taskNative=Join-Path $taskSrc 'native'
-$taskSources=@('ClawRouter.cs','FirmwareShortcutFilter.cs','GameBarGuard.cs','SessionModeProbe.cs','RawKeyboardSource.cs') | ForEach-Object { Join-Path $taskNative $_ }
+$taskSources=@('ClawRouter.cs','FirmwareShortcutFilter.cs','GameBarGuard.cs','RawKeyboardSource.cs') | ForEach-Object { Join-Path $taskNative $_ }
 & $taskCsc /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Management.dll /reference:System.Web.Extensions.dll /reference:System.Windows.Forms.dll ("/out:"+(Join-Path $taskOut 'ClawRouter-0.17.58-specialkeys.exe')) $taskSources
 if ($LASTEXITCODE) { throw 'Router compile failed' }
 foreach ($taskTest in @('FirmwareShortcutTests','SpecialKeys197\ShortcutTests')) {

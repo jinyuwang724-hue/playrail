@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $taskCompiler)) { throw 'Windows .NET Framework
 $taskOutput = Join-Path $taskRoot 'plugin\bin'
 [IO.Directory]::CreateDirectory($taskOutput) | Out-Null
 & (Join-Path $taskRoot 'tools\Prepare-FanModule.ps1')
-& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Management.dll /reference:System.Web.Extensions.dll /reference:System.Windows.Forms.dll ("/out:" + (Join-Path $taskOutput 'ClawRouter.exe')) (Join-Path $taskRoot 'native\ClawRouter.cs') (Join-Path $taskRoot 'native\FirmwareShortcutFilter.cs') (Join-Path $taskRoot 'native\GameBarGuard.cs') (Join-Path $taskRoot 'native\SessionModeProbe.cs') (Join-Path $taskRoot 'native\RawKeyboardSource.cs')
+& $taskCompiler /nologo /codepage:65001 /optimize+ /target:exe /platform:x64 /reference:System.Management.dll /reference:System.Web.Extensions.dll /reference:System.Windows.Forms.dll ("/out:" + (Join-Path $taskOutput 'ClawRouter.exe')) (Join-Path $taskRoot 'native\ClawRouter.cs') (Join-Path $taskRoot 'native\FirmwareShortcutFilter.cs') (Join-Path $taskRoot 'native\GameBarGuard.cs') (Join-Path $taskRoot 'native\RawKeyboardSource.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
 & $taskCompiler /nologo /codepage:65001 /optimize+ /target:winexe /platform:x64 ("/out:" + (Join-Path $taskOutput 'ClawTouchBridge.exe')) (Join-Path $taskRoot 'native\ClawTouchBridge.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Touch bridge build failed.' }

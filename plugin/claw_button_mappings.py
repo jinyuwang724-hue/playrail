@@ -38,7 +38,7 @@ def selected(settings, source, steam):
 
 def desktop_quick_settings_hold(event):
     if not event or event.get("type") != "mapped_action" or event.get("source") != "QS" \
-            or event.get("scope") != "general" or event.get("gameMode") is True:
+            or event.get("scope") != "general":
         return False
     command = event.get("command")
     if not isinstance(command, dict) or command.get("type") != "system" or command.get("action") != "gamebar":

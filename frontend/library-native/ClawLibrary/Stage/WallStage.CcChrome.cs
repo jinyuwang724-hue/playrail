@@ -75,7 +75,6 @@ public sealed partial class WallStage
         if (caps.Hibernate) items.Add(("hibernate", CcSnowflake, "休眠"));
         items.Add(("restart", "", "重启"));
         items.Add(("shutdown", "", "关机"));
-        if (ShellMode.Available) items.Add(("mode", "", "切换到桌面"));
         foreach (var (id, glyph, label) in items) _ccPower.Add(CcMakeButton(id, glyph, label, _ccPowerLayer));
     }
 
@@ -464,7 +463,6 @@ public sealed partial class WallStage
     private void CcPowerShow(bool show, bool instant = false)
     {
         _ccPowerOpen = show;
-        if (show) CcUpdateModeButton();
         int v = ++_ccPowerVersion;
         if (instant || Reduced)
         {
@@ -600,16 +598,6 @@ public sealed partial class WallStage
                 CcChromeFocus();
                 break;
             case "files":
-                // 游戏模式没有 explorer：从游戏库（应用包）里直接起 explorer 会让它跑在包里，先切到桌面
-                if (ShellMode.Available && !ShellMode.ExplorerRunning())
-                {
-                    _ = ShellMode.Run("to-desktop").ContinueWith(t => _dq.TryEnqueue(() =>
-                    {
-                        if (t.Result == 0) SystemInfo.Open("explorer.exe"); else Toast(ShellMode.Why());
-                    }));
-                    Toast("正在切换到桌面…");
-                    break;
-                }
                 SystemInfo.Open("explorer.exe");
                 Toast("正在打开文件管理器");
                 break;
@@ -647,7 +635,6 @@ public sealed partial class WallStage
     private void CcRunPower(string id)
     {
         var item = _ccPower.First(p => p.Id == id);
-        if (id == "mode") { _ = CcSwitchMode(); CcPowerShow(false); _ccZone = CcZone.Dock; _ccDockFocus = 0; CcChromeFocus(); return; }
         if (id is not ("restart" or "shutdown")) Toast($"正在{item.Label}…");
         Log.Info($"control center power: {id}");
         if (Program.Args.Contains("--power-dry")) return;
