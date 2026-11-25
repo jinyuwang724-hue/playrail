@@ -38,6 +38,15 @@ public sealed partial class WallStage
         foreach (var v in c.All) { v.StopAnimation("Opacity"); v.StartAnimation("Opacity", CsS(on ? 1 : 0, Math.Max(1, ms), Bezier.EaseOut, delay)); }
     }
 
+    /// <summary>
+    /// 照 Cocoon 的算法套括号：外扩 = clamp(0.12 × 短边, 5 dp, 24 dp) × 粗细系数 0.6；括号圆角 = 目标自己的圆角 + 外扩 / 2（和目标同心）。
+    /// </summary>
+    private void CurToCocoon(CurSet c, float x, float y, float w, float h, float targetRadius, bool move)
+    {
+        float o = Math.Clamp(0.12f * MathF.Min(w, h), 5 * RwDp, 24 * RwDp) * RwThick;
+        CurTo(c, x, y, w, h, o, targetRadius + o / 2, move);
+    }
+
     /// <summary>括号套到方框 (x, y, w, h) 上：外扩 pad、括号圆角 r。</summary>
     private void CurTo(CurSet c, float x, float y, float w, float h, float pad, float r, bool move)
     {

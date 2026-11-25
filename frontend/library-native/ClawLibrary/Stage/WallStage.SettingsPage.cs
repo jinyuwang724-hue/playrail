@@ -388,7 +388,7 @@ public sealed partial class WallStage
             Step = d => { int ni = Math.Clamp(idx + d, 0, names.Length - 1); if (ni != idx) set(ni); },
         };
         if (names.Length <= 4) { row.Choices = names; row.Choice = idx; row.Press = () => set((idx + 1) % names.Length); row.Select = set; }
-        else { row.Value = names[idx]; row.Numeric = true; row.Press = () => set((idx + 1) % names.Length); }
+        else { row.Value = names[idx]; row.Numeric = true; row.Press = () => set((idx + 1) % names.Length); row.Options = names; row.Choice = idx; row.Select = set; }
         return row;
     }
 

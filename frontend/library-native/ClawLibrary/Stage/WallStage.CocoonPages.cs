@@ -22,7 +22,7 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     // ---------------- 几何（首页的 1920×1200 设计单位） ----------------
-    private const float CpTop = 150, CpBottom = 1186, CpLeftX = 24, CpLeftW = 584, CpListX = 636, CpListW = 1240;
+    private const float CpTop = 150, CpBottom = 1186, CpLeftX = 44, CpLeftW = 562, CpListX = 636, CpListW = 1240;
     private const float CpRowH = 112, CpRowSubH = 140, CpRowSliderH = 160, CpSep = 4, CpGap = 36;
     private static readonly Color CpAccentInk = Color.FromArgb(255, 0x7A, 0x4C, 0xFF);
 
@@ -60,7 +60,8 @@ public sealed partial class WallStage
     // ---------------- 行的分类 / 种类 ----------------
 
     private static bool CpIsToggle(PerfRow r) => r.Choices is { Length: 2 } c && c[0] == "关" && c[1] == "开";
-    private static bool CpIsPick(PerfRow r) => r.Choices is { Length: > 0 } && !CpIsToggle(r);
+    private static bool CpIsPick(PerfRow r) => r.Choices is { Length: > 0 } && !CpIsToggle(r) || r.Options is { Length: > 0 };
+    private static string[]? CpOpts(PerfRow r) => r.Options ?? r.Choices;
     private static bool CpIsSlider(PerfRow r) => r.Numeric && r.Maximum > r.Minimum;
     private static bool CpFocusable(PerfRow r) => !r.Section && !r.Skip;
 
@@ -112,8 +113,8 @@ public sealed partial class WallStage
         root.Size = new Vector2(CsW, CsH);
         var g = G.C.CreateLinearGradientBrush();
         g.StartPoint = new Vector2(0, 0); g.EndPoint = new Vector2(0, 1);
-        g.ColorStops.Add(G.C.CreateColorGradientStop(0, Color.FromArgb(255, 0xF5, 0xF5, 0xF8)));
-        g.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(255, 0xE6, 0xE7, 0xED)));
+        g.ColorStops.Add(G.C.CreateColorGradientStop(0, Color.FromArgb(255, 0xEF, 0xEF, 0xF4)));
+        g.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(255, 0xE2, 0xE3, 0xEA)));
         var bg = G.Sprite(g, relative: false);
         bg.Size = new Vector2(CsW, CsH);
         var box = G.Container(relative: false);
@@ -195,9 +196,7 @@ public sealed partial class WallStage
             string? sub = on && slot >= 110 ? cats[i].Sub : null;
             if (on)
             {
-                RsSoftShadow(ds, CpLeftX, y + 4 + 4, CpLeftW, slot - 8, 30, 8, 0.14f);
-                ds.FillRoundedRectangle(CpLeftX, y + 4, CpLeftW, slot - 8, 30, 30, Color.FromArgb(255, 0xFB, 0xFB, 0xFC));
-                ds.DrawRoundedRectangle(CpLeftX + 0.5f, y + 4.5f, CpLeftW - 1, slot - 9, 30, 30, Color.FromArgb(255, 0xEC, 0xED, 0xF0), 1);
+                CpCard(ds, CpLeftX, y + 4, CpLeftW, slot - 8, null, MathF.Min(30, (slot - 8) / 2));
             }
             float k = MathF.Min(1, slot / 124);
             CpIcon(ds, cats[i].Name, CpLeftX + 64, cy, on ? CpAccentInk : RmInk, 0.82f * k);
@@ -214,11 +213,9 @@ public sealed partial class WallStage
         if (!CpSectioned) return;
         float top = CpTop + cats.Count * slot + 24, bottom = CpBottom;
         if (bottom - top < 220) return;
+        CpCard(ds, CpLeftX, top, CpLeftW, bottom - top, null);
         using var card = CanvasGeometry.CreateRoundedRectangle(ds.Device, CpLeftX, top, CpLeftW, bottom - top, 30, 30);
-        RsSoftShadow(ds, CpLeftX, top + 4, CpLeftW, bottom - top, 30, 8, 0.12f);
-        ds.FillGeometry(card, Color.FromArgb(255, 0xFB, 0xFB, 0xFC));
         using (ds.CreateLayer(1, card)) CpPanel(ds, CpLeftX, top, CpLeftW, bottom - top, cats[sel].Name);
-        ds.DrawRoundedRectangle(CpLeftX + 0.5f, top + 0.5f, CpLeftW - 1, bottom - top - 1, 30, 30, Color.FromArgb(255, 0xEC, 0xED, 0xF0), 1);
     }
 
     /// <summary>排右列：每行的 y、高、灰色说明；遇到分组标题（设置页）留出标题高度、另起一张卡片。</summary>
@@ -257,7 +254,7 @@ public sealed partial class WallStage
         ds.Clear(Colors.Transparent);
         ds.Transform = Matrix3x2.CreateTranslation(pad, pad) * Matrix3x2.CreateScale(CsRaster);
         ds.Antialiasing = CanvasAntialiasing.Antialiased;
-        foreach (var (y0, y1, seps) in groups) RsPaintGroupAt(ds, 0, CpListW, y0, y1, seps);
+        foreach (var (y0, y1, seps) in groups) CpCard(ds, 0, y0, CpListW, y1 - y0, seps);
         if (v.Lay.Count == 0)
         {
             using var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 32, VerticalAlignment = CanvasVerticalAlignment.Center };
@@ -310,7 +307,8 @@ public sealed partial class WallStage
         }
         else if (CpIsPick(r))
         {
-            string val = r.Choice >= 0 && r.Choice < r.Choices!.Length ? r.Choices[r.Choice] : r.Value;
+            var opts = CpOpts(r)!;
+            string val = r.Choice >= 0 && r.Choice < opts.Length ? opts[r.Choice] : r.Value;
             RsPaintPickPill(ds, R - 400, cy - 40, 400, 80, val, _cpDrop == index, 32);
         }
         else if (CpIsSlider(r))
@@ -337,12 +335,14 @@ public sealed partial class WallStage
         }
         else if (r.Numeric)
         {
-            // 没有范围的数值（刷新率、分辨率…）：‹ 值 ›，←→ 一档一档切
-            using var vf = new CanvasTextFormat { FontFamily = RmFont(r.Value), FontSize = 32, FontWeight = RsWt(r.Value, 500), HorizontalAlignment = CanvasHorizontalAlignment.Right, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
-            ds.DrawText(r.Value, new Windows.Foundation.Rect(R - 640, y, 600, h), RmInk, vf);
-            float vw = CpTextW(ds, r.Value, 32);
-            CpChev(ds, R - 40 - vw - 26, cy, left: true);
-            CpChev(ds, R - 6, cy, left: false);
+            // 一档一档切的数值（排序位置、备份…）：Cocoon「Rows per Page」那种灰胶囊「−  值  +」，←→ 切
+            var (px0, pw) = CpStepperX(ds, r.Value, R);
+            ds.FillRoundedRectangle(px0, cy - 38, pw, 76, 38, 38, Color.FromArgb(255, 0xE6, 0xE7, 0xEC));
+            ds.FillRoundedRectangle(px0 + 30, cy - 4, 28, 8, 4, 4, RmInk);
+            ds.FillRoundedRectangle(px0 + pw - 58, cy - 4, 28, 8, 4, 4, RmInk);
+            ds.FillRoundedRectangle(px0 + pw - 48, cy - 14, 8, 28, 4, 4, RmInk);
+            using var vf = new CanvasTextFormat { FontFamily = RmFont(r.Value), FontSize = 30, FontWeight = RsWt(r.Value), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
+            ds.DrawText(r.Value, new Windows.Foundation.Rect(px0 + 70, cy - 38, pw - 140, 76), RmInk, vf);
         }
         else
         {
@@ -366,6 +366,9 @@ public sealed partial class WallStage
 
     /// <summary>滑块下层的横向位置（列表内坐标）：− 的中心、轨道两端、+ 的中心。</summary>
     private static (float Minus, float X0, float X1, float Plus) CpSliderX(float tx, float R) => (tx + 170, tx + 222, R - 64, R - 16);
+
+    /// <summary>步进胶囊的左边和宽（右对齐到 R）。</summary>
+    private static (float X, float W) CpStepperX(CanvasDrawingSession ds, string v, float R) { float w = Math.Max(240, CpTextW(ds, v, 30) + 160); return (R - w, w); }
 
     private static float CpTextW(CanvasDrawingSession ds, string s, float size)
     {
@@ -406,8 +409,8 @@ public sealed partial class WallStage
         else v.List.Offset = new Vector3(CpListX - 16, CpTop - 16 - v.Scroll, 0);
         if (_cpDrop >= 0) return;   // 下拉开着：焦点框在选项上（CpPaintDrop）
         bool first = !v.Cur.Shown;
-        if (inList) CurTo(v.Cur, CpListX + 6, CpTop + hit.Y - v.Scroll + 4, CpListW - 12, hit.H - 8, 8, 40, move: !first);
-        else if (CpZone == 0 && cats.Count > 0) CurTo(v.Cur, CpLeftX, CpTop + cat * v.Slot + 4, CpLeftW, v.Slot - 8, 8, 36, move: !first);
+        if (inList) CurToCocoon(v.Cur, CpListX, CpTop + hit.Y - v.Scroll, CpListW, hit.H, 30, move: !first);
+        else if (CpZone == 0 && cats.Count > 0) CurToCocoon(v.Cur, CpLeftX, CpTop + cat * v.Slot + 4, CpLeftW, v.Slot - 8, MathF.Min(30, (v.Slot - 8) / 2), move: !first);
         else { if (v.Cur.Shown) CurShow(v.Cur, false, 60); return; }
         if (first) CurShow(v.Cur, true, 160, 120);
     }
@@ -415,7 +418,7 @@ public sealed partial class WallStage
     /// <summary>展开的下拉：选项卡片贴在胶囊下面（放不下就放上面），焦点框在选项上。</summary>
     private void CpPaintDrop(CpView v, List<PerfRow> rows)
     {
-        if (_cpDrop < 0 || _cpDrop >= rows.Count || rows[_cpDrop].Choices is not { Length: > 0 } opts)
+        if (_cpDrop < 0 || _cpDrop >= rows.Count || CpOpts(rows[_cpDrop]) is not { Length: > 0 } opts)
         {
             v.Drop.IsVisible = false;
             return;
@@ -435,7 +438,7 @@ public sealed partial class WallStage
             RsPaintOptionCard(ds, tmp, x, y, w, optH, 32);
         }
         v.Drop.IsVisible = true;
-        CurTo(v.Cur, x, y + _cpDropSel * optH, w, optH, 6, 30, move: true);
+        CurToCocoon(v.Cur, x, y + _cpDropSel * optH, w, optH, 24, move: true);
         if (!v.Cur.Shown) CurShow(v.Cur, true, 90);
     }
 
@@ -562,9 +565,19 @@ public sealed partial class WallStage
 
     private void CpChoose(PerfRow r, int i)
     {
-        if (r.Choices == null || i == r.Choice) return;
+        if (CpOpts(r) == null || i == r.Choice) return;
         if (r.Select != null) r.Select(i);
         else if (r.Step != null) r.Step(i - r.Choice);
+    }
+
+    /// <summary>下拉行的 ←→：直接换到上一个 / 下一个选项（不循环）。</summary>
+    private void CpPickStep(PerfRow r, int d)
+    {
+        var opts = CpOpts(r)!;
+        int to = Math.Clamp(r.Choice + d, 0, opts.Length - 1);
+        if (to == r.Choice) { Cue(Sfx.Bump); return; }
+        Cue(Sfx.Nav, pan: d < 0 ? 0.2f : 0.8f);
+        CpChoose(r, to);
     }
 
     /// <summary>性能类页面：分类里的第一行 / 下一行（不跨分类）。</summary>
@@ -582,7 +595,7 @@ public sealed partial class WallStage
         int d = dir is Direction.Up or Direction.Left ? -1 : 1;
         if (_cpDrop >= 0)
         {
-            var opts = rows[_cpDrop].Choices!;
+            var opts = CpOpts(rows[_cpDrop])!;
             if (dir is Direction.Left or Direction.Right) { Cue(Sfx.Bump); return true; }
             int to = _cpDropSel + d;
             if (to < 0 || to >= opts.Length) { Cue(Sfx.Bump); return true; }
@@ -597,6 +610,7 @@ public sealed partial class WallStage
         if (_stOpen)
         {
             if (_stZone == 1 && horiz && r is { } sr && CpIsSlider(sr)) { CpStep(sr, d); return true; }
+            if (_stZone == 1 && horiz && r is { } pr && CpIsPick(pr) && !pr.Disabled) { CpPickStep(pr, d); return true; }
             if (_stZone == 1 && horiz && r is { Numeric: true, Disabled: false, Step: not null } nr) { Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown); nr.Step(d); return true; }
             return false;   // 其余照设置页原来的走法（左列分类、右列上下、左右切值 / 回左列）
         }
@@ -624,6 +638,7 @@ public sealed partial class WallStage
         }
         if (r == null) return true;
         if (CpIsSlider(r)) { CpStep(r, d); return true; }
+        if (CpIsPick(r) && !r.Disabled) { CpPickStep(r, d); return true; }
         if (r.Numeric && r.Step != null && !r.Disabled) { Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown); r.Step(d); return true; }
         if (r.Step != null && !r.Disabled) { RowStep(r, d); return true; }
         if (dir == Direction.Left) { _cpZone = 0; Cue(Sfx.Back); CpRepaint(); return true; }
@@ -652,6 +667,7 @@ public sealed partial class WallStage
         if (r.Disabled) { Cue(Sfx.Bump); return true; }
         if (CpIsPick(r)) { _cpDrop = SettingsFocus; _cpDropSel = Math.Max(0, r.Choice); Cue(Sfx.MenuIn); CpRepaint(); return true; }
         if (CpIsSlider(r)) { Cue(Sfx.Bump); return true; }
+        if (r.Numeric) { if (r.Press != null) { Cue(Sfx.Nav); r.Press(); } else Cue(Sfx.Bump); return true; }   // 步进行：A 不进旧的「编辑数值」模式
         return false;
     }
 
@@ -749,6 +765,15 @@ public sealed partial class WallStage
                     Cue(Sfx.SliderUp);
                     r.SetNumber(Math.Clamp(n, r.Minimum, r.Maximum));
                 }
+                CpRepaint();
+                return;
+            }
+            if (r.Numeric && !CpIsSlider(r) && !CpIsPick(r) && r.Step != null && !r.Disabled)
+            {
+                // 步进胶囊：点右边 +，其余 −
+                float pr = CpListX + CpListW - 34;
+                Cue(Sfx.Nav);
+                r.Step(x > pr - 120 ? 1 : -1);
                 CpRepaint();
                 return;
             }

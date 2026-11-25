@@ -890,8 +890,12 @@ public sealed partial class WallStage
     /// <summary>括号路径：四角各一段（直腿 + 圆弧 + 直腿）；没有直腿时（圆、胶囊）每段两头各剪掉一点，四段之间留缝。</summary>
     private static CanvasGeometry SpBracketPath(ICanvasResourceCreator dev, float W, float H, float r, float pad)
     {
-        r = MathF.Min(r, MathF.Min(W, H) / 2);
-        float leg = MathF.Max(0, MathF.Min(18 * RwDp, (MathF.Min(W, H) - 2 * r - 13) / 2));
+        // Cocoon 的括号几何（11-25 按它的绘制代码核对）：尺寸系数 = clamp(短边 / 96 dp, 0.35, 1.75)；
+        // 腿长 18 dp × 系数，两段之间至少空 14 dp × 系数（不超过短边的 36 %），腿长不超过 (短边 − 2 × 圆角 − 空隙) / 2
+        float mn = MathF.Min(W, H), sf = Math.Clamp(mn / (96 * RwDp), 0.35f, 1.75f);
+        float gap = MathF.Min(14 * RwDp * sf, 0.36f * mn);
+        r = MathF.Min(r, MathF.Max(0, (mn - gap) / 2));
+        float leg = MathF.Max(0, MathF.Min(18 * RwDp * sf, (mn - 2 * r - gap) / 2));
         var (segs, _) = RwBracketPointsRaw(W, H, r, leg, pad, pad);
         if (leg < 0.5f)
         {

@@ -29,6 +29,35 @@ public sealed partial class WallStage
 
     // ---------------- 组件 ----------------
 
+    /// <summary>
+    /// 卡片（11-25 jinyu：照 Cocoon 设置页的容器做出立体感）：底下两层投影（贴身的一圈淡影 + 往下压的一层重影，底边最深）；
+    /// 面是从上 #FDFDFE 到下 #F0F1F4 的竖向渐变（不是纯白）；上边一道白色高光、描边上浅下深；底边往里一层淡淡的压暗；
+    /// 组内分隔线是浅灰线下面再垫一道白线（压出来的凹槽）。
+    /// </summary>
+    private void CpCard(CanvasDrawingSession ds, float x, float y, float w, float h, List<float>? seps, float r = 30)
+    {
+        var dev = ds.Device;
+        RsSoftShadow(ds, x + 4, y + 12, w - 8, h, r, 14, 0.20f);
+        RsSoftShadow(ds, x, y + 2, w, h, r, 3, 0.10f);
+        using var card = CanvasGeometry.CreateRoundedRectangle(dev, x, y, w, h, r, r);
+        using (var fill = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xFD, 0xFD, 0xFE), Color.FromArgb(255, 0xF0, 0xF1, 0xF4)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) })
+            ds.FillGeometry(card, fill);
+        using (ds.CreateLayer(1, card))
+        {
+            using var shade = new CanvasLinearGradientBrush(dev, Color.FromArgb(0, 0, 0, 0), Color.FromArgb(16, 20, 20, 40)) { StartPoint = new Vector2(0, y + h - 22), EndPoint = new Vector2(0, y + h) };
+            ds.FillRectangle(x, y + h - 22, w, 22, shade);
+            if (seps != null)
+                foreach (var sy in seps)
+                {
+                    ds.FillRectangle(x, sy, w, 2.5f, Color.FromArgb(255, 0xE1, 0xE2, 0xE7));
+                    ds.FillRectangle(x, sy + 2.5f, w, 1.5f, Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
+                }
+            ds.DrawLine(x + r * 0.6f, y + 1.5f, x + w - r * 0.6f, y + 1.5f, Color.FromArgb(255, 0xFF, 0xFF, 0xFF), 2);
+        }
+        using var edge = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xF4, 0xF4, 0xF7), Color.FromArgb(255, 0xC4, 0xC5, 0xCC)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) };
+        ds.DrawRoundedRectangle(x + 0.75f, y + 0.75f, w - 1.5f, h - 1.5f, r, r, edge, 1.5f);
+    }
+
     /// <summary>圆环仪表：开口朝下 270° 的轨道，紫色渐变弧到 frac，圆头；中间大号数字 + 单位，下面一行名称。</summary>
     private void CpRing(CanvasDrawingSession ds, float cx, float cy, float r, float stroke, float frac, string big, string unit, string caption, bool dim = false)
     {

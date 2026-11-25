@@ -220,6 +220,7 @@ public sealed partial class WallStage
             {
                 Title = title, Value = names[idx], Numeric = true,
                 Step = d => { int ni = Math.Clamp(idx + d, 0, names.Length - 1); if (ni != idx) set(ni); },
+                Options = names, Choice = idx, Select = set,
             };
         }
 

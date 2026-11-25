@@ -25,6 +25,8 @@ public sealed partial class WallStage
         public float Indent; // Optional child-row indentation; used by the system-page pilot.
         public string? EditId;
         public string[]? Choices;
+        /// <summary>选项多（> 4）的「几选一」：旧页面用 ‹ › 翻，Cocoon 样式页面画成下拉（Choice / Select 同 Choices）。</summary>
+        public string[]? Options;
         public int Choice = -1;
         public bool Section, Disabled, Numeric;
         public bool BrightValue;
