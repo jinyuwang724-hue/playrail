@@ -539,11 +539,11 @@ public sealed partial class WallStage
     internal static string CsStyleName(HomeStyle s) => s switch { HomeStyle.Wall => "海报墙", HomeStyle.Stack => "叠放", HomeStyle.Stand => "展台", HomeStyle.Hero => "大图", HomeStyle.Row => "单行", _ => "展架" };
 
     /// <summary>设置 › 游戏库 › 首页样式：按 A 立即生效。设置页盖着游戏库时等回到游戏库再播切换动画。</summary>
-    private void CsSetHomeStyle(HomeStyle style)
+    private void CsSetHomeStyle(HomeStyle style, bool quiet = false)
     {
         if (_prefs.Home == style) return;
         SaveUi(_prefs with { Home = style });
-        Toast($"首页样式：{CsStyleName(style)}");
+        if (!quiet) Toast($"首页样式：{CsStyleName(style)}");
         if (_cs == null) return;
         if (_ccOpen) { _cs.StylePending = true; return; }
         if (!CsStyleShown()) CsMorphStyle();

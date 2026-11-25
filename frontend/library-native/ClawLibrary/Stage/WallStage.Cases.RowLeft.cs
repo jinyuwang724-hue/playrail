@@ -354,7 +354,7 @@ public sealed partial class WallStage
             foreach (var vis in CcPageParts()) { vis.StopAnimation("Opacity"); vis.Opacity = 0; }
             _ccFadeClose = true;
             CloseControlCenter();
-            if (_cs?.Page is { Style: HomeStyle.Row } p && p.Rw is { Disposed: false })
+            if (_prefs.Home == HomeStyle.Row && _cs?.Page is { Style: HomeStyle.Row } p && p.Rw is { Disposed: false })
                 LsOpen(p, Math.Max(0, Array.FindIndex(LsMain, e => e.Id == id)));
             Log.Info($"left panel ← {id}");
         });

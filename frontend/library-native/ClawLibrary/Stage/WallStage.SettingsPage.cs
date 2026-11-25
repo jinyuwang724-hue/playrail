@@ -408,7 +408,7 @@ public sealed partial class WallStage
         if (_gsItem != null) BuildGsRows();
         else switch (_stCat)
         {
-            case 0: BuildStGeneral(v, later); break;
+            case 0: BuildStGeneral(v, later); BuildStInterface(); break;
             case 1: BuildStLibrary(); break;
             case 2: BuildStLook(); break;
             case 3: BuildStMagpie(); break;
@@ -751,12 +751,26 @@ public sealed partial class WallStage
     /// </summary>
     private void BuildStLook()
     {
-        var accentNames = new[] { "跟随封面" }.Concat(UiPrefs.Accents.Select(a => a.Name)).ToArray();
-        _stRows.Add(StPick("主题色", accentNames, _prefs.Accent + 1, i => { SaveUi(_prefs with { Accent = i - 1 }); Repaint(); CcRepaintPages(); }, 0));
-        _stRows.Add(StToggle("降低动态效果", _reducedLocal, on => { _reducedLocal = on; SaveUi(_prefs with { Reduced = on }); Repaint(); }, false));
-        _stRows.Add(StPick("截图页排版", ShStyleNames, _prefs.ShotsStyle, i => { ShSetStyle((ShStyle)i); Repaint(); }, 0));
+        // 11-25 jinyu：只有「主题」和当前主题自己的可改项；三套主题彼此独立，不显示别的主题的选项
+        var theme = CurrentTheme;
+        _stRows.Add(StPick("主题", UiThemeNames, (int)theme, i => { ApplyTheme((UiTheme)i); Repaint(); }));
+        switch (theme)
+        {
+            case UiTheme.Folia:
+                var accentNames = new[] { "跟随封面" }.Concat(UiPrefs.Accents.Select(a => a.Name)).ToArray();
+                _stRows.Add(StPick("强调色", accentNames, _prefs.Accent + 1, i => { SaveUi(_prefs with { Accent = i - 1 }); Repaint(); CcRepaintPages(); }, 0));
+                break;
+            case UiTheme.Cases:
+            case UiTheme.Cocoon:
+                break;
+        }
+    }
 
-        _stRows.Add(new PerfRow { Section = true, Title = "屏幕保护" });
+    /// <summary>和主题无关的界面项（放在「通用」最后）：降低动态效果、封面灯光屏保。</summary>
+    private void BuildStInterface()
+    {
+        _stRows.Add(new PerfRow { Section = true, Title = "界面" });
+        _stRows.Add(StToggle("降低动态效果", _reducedLocal, on => { _reducedLocal = on; SaveUi(_prefs with { Reduced = on }); Repaint(); }, false));
         _stRows.Add(StToggle("封面灯光屏保", _prefs.Screensaver, on =>
         {
             SaveUi(_prefs with { Screensaver = on }); MarkInput(); Repaint();

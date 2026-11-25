@@ -429,7 +429,7 @@ public sealed partial class WallStage
         if (_ccOpen && _wsOpen) return;
         if (_ccOpen && _shOpen) { ShY(); return; }
         if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
-        if (_ccOpen) CcCycleStyle();   // 拍立得 → 卡片 → 拼盘
+        if (_ccOpen) return;   // 控制中心样式跟着主题走（11-25），Y 不再切
         else if (CsActive) CsGameSettings();
         else OpenGameSettingsForFocus();
     }
