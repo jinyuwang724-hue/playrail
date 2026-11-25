@@ -30,9 +30,13 @@ public sealed partial class WallStage
     private sealed class CpView
     {
         public required ContainerVisual Root, ListBox;
-        public required SpriteVisual Bg, Head, Left, List, Press, Toast;
+        public required SpriteVisual Bg, Head, Left, Sel, List, Press, Toast;
         public required CurSet Cur;
-        public CompositionDrawingSurface? HeadS, LeftS, ListS, ToastS;
+        public CompositionDrawingSurface? HeadS, LeftS, SelS, ListS, ToastS;
+        public string SelKey = "";
+        public int LastCat = -1;
+        public long CatAt;
+        public bool ListPending;
         public string HeadKey = "", LeftKey = "", ListKey = "";
         public float Scroll, ListH;
         /// <summary>手指拖过列表：先不自动滚回焦点行。</summary>
@@ -55,10 +59,12 @@ public sealed partial class WallStage
     private int CpZone => _stOpen ? _stZone : _cpZone;
 
     private ContainerVisual? CpHost => _perfOpen ? _perf : _dsOpen ? _ds : _syOpen ? _sy : _stOpen ? _st : null;
-    private string CpTitle => _perfOpen ? "性能" : _dsOpen ? "显示与声音" : _syOpen ? "系统" : "设置";
+    private string CpTitle => _cpComp == "disp" ? "显示与声音" : _perfOpen ? "性能" : _dsOpen ? "显示与声音" : _syOpen ? "系统" : "设置";
+    /// <summary>组合页："disp" = 显示与声音（显示页 + 设置里挪过来的几个分类）。</summary>
+    private string? _cpComp;
 
     /// <summary>页面刚打开：焦点从左列开始（Cocoon 进设置页时停在第一个分类）。</summary>
-    private void CpReset() { _cpZone = 0; _cpDrop = -1; _cpTouchMode = false; foreach (var v in _cpViews.Values) { v.Scroll = 0; v.Manual = false; v.OffsetInit = false; v.HeadKey = v.LeftKey = v.ListKey = ""; v.Cur.Shown = false; foreach (var c in v.Cur.All) { c.StopAnimation("Opacity"); c.Opacity = 0; } } }
+    private void CpReset() { _cpZone = 0; _cpComp = null; _cpDrop = -1; _cpTouchMode = false; foreach (var v in _cpViews.Values) { v.Scroll = 0; v.Manual = false; v.OffsetInit = false; v.HeadKey = v.LeftKey = v.ListKey = v.SelKey = ""; v.LastCat = -1; v.Sel.IsVisible = false; v.Cur.Shown = false; foreach (var c in v.Cur.All) { c.StopAnimation("Opacity"); c.Opacity = 0; } } }
 
     // ---------------- 行的分类 / 种类 ----------------
 
@@ -71,11 +77,26 @@ public sealed partial class WallStage
     /// <summary>左列分类：性能 / 显示 / 系统 = 原来的分组标题；设置 = 它自己的分类。</summary>
     private List<(string Name, string? Sub, int First)> CpCats(List<PerfRow> rows)
     {
+        // First：≥ 0 = 这一页里分组标题所在的行；≤ -100 = 设置页的分类（-(编号 + 100)）
         var l = new List<(string, string?, int)>();
+        if (_cpComp == "disp")
+        {
+            // 显示与声音（11-25 jinyu）：显示页自己的分组 + 从设置挪过来的声音与反馈、Magpie、小黄鸭
+            for (int i = 0; i < _dsRows.Count; i++)
+                if (_dsRows[i].Section)
+                {
+                    l.Add((_dsRows[i].Title, null, i));
+                    if (_dsRows[i].Title == "声音") l.Add((StCatsMain[5], null, -105));
+                }
+            if (!l.Any(c => c.Item3 == -105)) l.Add((StCatsMain[5], null, -105));
+            l.Add((StCatsMain[3], null, -103));
+            l.Add((StCatsMain[4], null, -104));
+            return l;
+        }
         if (_stOpen)
         {
-            var cats = StCats;
-            for (int i = 0; i < cats.Length; i++) l.Add((cats[i], null, -1));
+            if (_gsItem != null) { var gc = StCats; for (int i = 0; i < gc.Length; i++) l.Add((gc[i], null, -(i + 100))); return l; }
+            foreach (int id in CpSettingsIds) l.Add((StCatsMain[id], null, -(id + 100)));
             return l;
         }
         for (int i = 0; i < rows.Count; i++)
@@ -84,13 +105,58 @@ public sealed partial class WallStage
         return l;
     }
 
+    /// <summary>设置页左列显示的分类（Magpie、小黄鸭、声音与反馈挪到了显示与声音）。</summary>
+    private static readonly int[] CpSettingsIds = { 0, 1, 2, 6, 7, 8, 9, StOsdCat, 11 };
+    private static bool CpCatIsSt((string Name, string? Sub, int First) c) => c.First <= -100;
+    private static int CpCatStId((string Name, string? Sub, int First) c) => -(c.First + 100);
+
     /// <summary>当前选中的分类（性能类页面：焦点行所在的分组）。</summary>
     private int CpCatIndex(List<PerfRow> rows, List<(string Name, string? Sub, int First)> cats)
     {
-        if (_stOpen) return _stCat;
+        if (_stOpen) return Math.Max(0, cats.FindIndex(c => CpCatIsSt(c) && CpCatStId(c) == _stCat));
         int f = SettingsFocus, k = 0;
         for (int c = 0; c < cats.Count; c++) if (cats[c].First >= 0 && cats[c].First <= f) k = c;
         return k;
+    }
+
+    /// <summary>换到第 to 个分类（左列）：设置页的分类、本页的分组，组合页（显示与声音）里两种之间切换时换底下的页面。</summary>
+    private void CpGoCat(List<PerfRow> rows, List<(string Name, string? Sub, int First)> cats, int to)
+    {
+        var c = cats[to];
+        if (CpCatIsSt(c))
+        {
+            int id = CpCatStId(c);
+            if (!_stOpen) CpSwapToSettings(id);
+            else StCategoryJump(id);
+            _stZone = 0;
+        }
+        else if (_stOpen && _cpComp != null) CpSwapToDisplay(c.First);
+        else { int first = CpFirstIn(rows, c.First); if (first >= 0) SettingsFocus = first; _cpZone = 0; }
+        if (CpHost is { } hh && _cpViews.TryGetValue(hh, out var vv)) { vv.Scroll = 0; vv.Manual = false; vv.OffsetInit = false; }
+        CpRepaint();
+    }
+
+    /// <summary>组合页：显示 → 设置里的分类（同一个画面，底下换成设置页，不播开关动画）。</summary>
+    private void CpSwapToSettings(int id)
+    {
+        CloseDisplay(instant: true);
+        OpenSettingsPage();
+        _stCat = id; _stZone = 0; _stArmed = null;
+        BuildStRows();
+        _stFocus = FirstStRow();
+        if (_st != null) { _st.StopAnimation("Opacity"); _st.Opacity = 1; }
+        _ = StRefresh();
+        CpTouchMode(_cpTouchMode);
+    }
+
+    private void CpSwapToDisplay(int sectionRow)
+    {
+        CloseSettingsPage(instant: true);
+        OpenDisplay();
+        int first = CpFirstIn(_dsRows, sectionRow);
+        if (first >= 0) _dsFocus = first;
+        _cpZone = 0;
+        if (_ds != null) { _ds.StopAnimation("Opacity"); _ds.Opacity = 1; }
     }
 
     /// <summary>右列要画的行：性能类页面只画当前分组；设置页全画（分组标题变成卡片上方的小字）。</summary>
@@ -126,10 +192,10 @@ public sealed partial class WallStage
         // 按下反馈：列表里那一行压一层淡灰（跟着列表滚，所以放在列表精灵里）
         var press = G.Sprite(G.Solid(Color.FromArgb(18, 30, 30, 60)), relative: false);
         press.Opacity = 0;
-        v = new CpView { Root = root, ListBox = box, Bg = bg, Head = Sp(), Left = Sp(), List = Sp(), Press = press, Toast = Sp(), Cur = null! };
+        v = new CpView { Root = root, ListBox = box, Bg = bg, Head = Sp(), Left = Sp(), Sel = Sp(), List = Sp(), Press = press, Toast = Sp(), Cur = null! };
         box.Children.InsertAtTop(v.List);
         v.List.Children.InsertAtTop(press);
-        foreach (var x in new Visual[] { bg, v.Head, v.Left, box }) root.Children.InsertAtTop(x);
+        foreach (var x in new Visual[] { bg, v.Head, v.Left, v.Sel, box }) root.Children.InsertAtTop(x);
         v.Cur = CurNew(root);
         v.Toast.Opacity = 0;
         root.Children.InsertAtTop(v.Toast);
@@ -162,12 +228,28 @@ public sealed partial class WallStage
         v.Cats = cats;
         int cat = Math.Clamp(CpCatIndex(rows, cats), 0, cats.Count - 1);
         CpPaintHead(v);
-        string leftKey = $"{CpTitle}|{cat}|{string.Join(",", cats.Select(c => c.Name))}|{CpPanelKey(cats[cat].Name)}";
+        // 左列：底图（所有分类 + 读数卡）只在内容变了时重画；选中的那张白卡单独一层，换分类时弹簧滑过去（连按跟手、不跳）
+        string leftKey = $"{CpTitle}|{string.Join(",", cats.Select(c => c.Name))}|{CpPanelKey(cats[cat].Name)}";
         if (leftKey != v.LeftKey) { v.LeftKey = leftKey; CpPaintLeft(v, cats, cat); }
+        CpPaintSel(v, cats, cat);
+        if (cat != v.LastCat) { v.LastCat = cat; v.CatAt = NowMs; }
         var vis = CpVisible(rows, cats, cat);
-        v.Lay = CpLayout(rows, vis, out var groups);
         string listKey = CpListKey(rows, vis);
-        if (listKey != v.ListKey) { v.ListKey = listKey; CpPaintList(v, rows, groups); }
+        if (listKey != v.ListKey)
+        {
+            // 连按换分类时右列先不重画，停下 140 ms 再画（不然每一步都重画整列卡片，按键就跟不上）
+            if (CpZone == 0 && v.ListKey.Length > 0 && NowMs - v.CatAt < 140)
+            {
+                if (!v.ListPending) { v.ListPending = true; After(150, () => { v.ListPending = false; if (CpActive) CpRepaint(); }); }
+            }
+            else
+            {
+                v.Lay = CpLayout(rows, vis, out var groups);
+                v.ListKey = listKey;
+                CpPaintList(v, rows, groups);
+            }
+        }
+        else v.Lay = CpLayout(rows, vis, out _);
         CpScrollAndFocus(v, rows, cats, cat);
         return true;
     }
@@ -227,12 +309,8 @@ public sealed partial class WallStage
         for (int i = 0; i < cats.Count; i++)
         {
             float y = CpTop + i * slot, cy = y + slot / 2;
-            bool on = i == sel;
-            string? sub = on && slot >= 110 ? cats[i].Sub : null;
-            if (on)
-            {
-                CpCard(ds, CpLeftX, y + 4, CpLeftW, slot - 8, null, MathF.Min(30, (slot - 8) / 2));
-            }
+            bool on = false;   // 选中的样子在单独一层（CpPaintSel）
+            string? sub = null;
             float k = MathF.Min(1, slot / 124);
             CpIcon(ds, cats[i].Name, CpLeftX + 64, cy, on ? CpAccentInk : RmInk, 0.82f * k);
             string name = cats[i].Name;
@@ -245,7 +323,7 @@ public sealed partial class WallStage
             }
         }
         // 性能 / 显示与声音 / 系统：分类下面一张白卡放实时读数（WallStage.CocoonPanels.cs）
-        if (!CpSectioned) return;
+        if (!(_perfOpen || _syOpen)) return;   // 11-25 jinyu：显示与声音不放读数卡
         float top = CpTop + cats.Count * slot + 24, bottom = CpBottom;
         if (bottom - top < 220) return;
         CpCard(ds, CpLeftX, top, CpLeftW, bottom - top, null);
@@ -281,6 +359,35 @@ public sealed partial class WallStage
             y += h + CpSep;
         }
         return lay;
+    }
+
+    /// <summary>选中的分类：一张白卡 + 紫色图标和名字，单独一层，换分类时弹簧滑到新位置。</summary>
+    private void CpPaintSel(CpView v, List<(string Name, string? Sub, int First)> cats, int sel)
+    {
+        if (sel < 0 || sel >= cats.Count || v.Slot <= 0) { v.Sel.IsVisible = false; return; }
+        float slot = v.Slot, pad = 30, w = CpLeftW + pad * 2, h = slot + pad * 2;
+        var to = new Vector3(CpLeftX - pad, CpTop + sel * slot - pad, 0);
+        string key = $"{cats[sel].Name}|{slot}";
+        if (key != v.SelKey)
+        {
+            v.SelKey = key;
+            float R = CsRaster;
+            int pw = (int)Math.Ceiling(w * R), ph = (int)Math.Ceiling(h * R);
+            if (v.SelS == null || (int)v.SelS.Size.Width != pw || (int)v.SelS.Size.Height != ph) { v.SelS?.Dispose(); v.SelS = G.Surface(pw, ph); ((CompositionSurfaceBrush)v.Sel.Brush).Surface = v.SelS; }
+            v.Sel.Size = new Vector2(w, h);
+            using var ds = CanvasComposition.CreateDrawingSession(v.SelS);
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateScale(R);
+            ds.Antialiasing = CanvasAntialiasing.Antialiased;
+            CpCard(ds, pad, pad + 4, CpLeftW, slot - 8, null, MathF.Min(30, (slot - 8) / 2));
+            float cy = pad + slot / 2, k = MathF.Min(1, slot / 124);
+            CpIcon(ds, cats[sel].Name, pad + 64, cy, CpAccentInk, 0.82f * k);
+            string name = cats[sel].Name;
+            using var f = new CanvasTextFormat { FontFamily = RmFont(name), FontSize = slot >= 100 ? 38 : 32, FontWeight = RsWt(name), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
+            ds.DrawText(name, new Windows.Foundation.Rect(pad + 126, pad, CpLeftW - 150, slot), CpAccentInk, f);
+        }
+        if (!v.Sel.IsVisible || v.Sel.Offset == Vector3.Zero || Reduced) { v.Sel.IsVisible = true; RwJump(v.Sel, to); }
+        else if (Vector3.Distance(v.Sel.Offset, to) > 0.5f) v.Sel.StartAnimation("Offset", RwSpring(to, 900));
     }
 
     private static float CpBaseH(PerfRow r, string? sub) => CpIsSlider(r) ? CpRowSliderH : sub != null ? CpRowSubH : CpRowH;
@@ -544,8 +651,8 @@ public sealed partial class WallStage
     {
         string? rs = cat switch
         {
-            "功耗" => "power", "Magpie" => "magpie", "小黄鸭" => "duck", "Steam 插件" => "steam", "关于" => "info",
-            "游戏库" => "stack", "外观" => "artwork", "性能显示" => "sliders", "更新" => "scrape", _ => null,
+            "功耗" => "power", "Magpie" => "magpie", "小黄鸭" => "duck", "关于" => "info",
+            "游戏库" => "stack", "外观" or "外观与主题" => "artwork", "性能显示" => "sliders", "更新" => "scrape", _ => null,
         };
         if (rs != null) { RsGlyph(ds, rs, cx, cy, ink, k); return; }
         var t = ds.Transform;
@@ -717,11 +824,10 @@ public sealed partial class WallStage
             if (dir == Direction.Right) { CpEnterList(rows, cats, cat); return true; }
             if (dir == Direction.Left) { Cue(Sfx.Bump); return true; }
             int to = cat + d;
-            if (!_stOpen) while (to >= 0 && to < cats.Count && CpFirstIn(rows, cats[to].First) < 0) to += d;
+            while (to >= 0 && to < cats.Count && !CpCatIsSt(cats[to]) && CpFirstIn(_cpComp == "disp" ? _dsRows : rows, cats[to].First) < 0) to += d;
             if (to < 0 || to >= cats.Count) { Cue(Sfx.Bump); return true; }
             CuePan(0.5f);
-            if (_stOpen) { StCategoryJump(to); _stZone = 0; CpRepaint(); }
-            else { SettingsFocus = CpFirstIn(rows, cats[to].First); CpRepaint(); }
+            CpGoCat(rows, cats, to);
             return true;
         }
         var r = CpRow;
@@ -982,10 +1088,7 @@ public sealed partial class WallStage
                 int c = (int)((y - CpTop) / v.Slot);
                 if (c < 0 || c >= v.Cats.Count) return;
                 Cue(Sfx.Nav);
-                if (_stOpen) { StCategoryJump(c); _stZone = 0; }
-                else { int first = CpFirstIn(rows, v.Cats[c].First); if (first >= 0) SettingsFocus = first; _cpZone = 0; }
-                if (CpHost is { } hh && _cpViews.TryGetValue(hh, out var vv)) { vv.Scroll = 0; vv.Manual = false; }
-                CpRepaint();
+                CpGoCat(rows, v.Cats, c);
                 return;
             }
             if (t.Row < 0 || t.Row >= rows.Count) return;
@@ -1030,5 +1133,6 @@ public sealed partial class WallStage
         _stFocus = FirstStRow();
         _stScroll = 0; _stScrollY = float.NaN;
         PaintSt();
+        if (i is 3 or 4) _ = StRefresh();   // Magpie / 小黄鸭：进来就读它们的配置
     }
 }

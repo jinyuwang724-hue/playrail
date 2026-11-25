@@ -18,8 +18,8 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private static readonly string[] StCatsMain = { "通用", "游戏库", "外观", "Magpie", "小黄鸭", "声音与反馈", "账户与服务", "开机自启", "禁用第三方软件", "维护", "Steam 插件", "性能显示", "关于" };
-    private const int StOsdCat = 11;
+    private static readonly string[] StCatsMain = { "通用", "游戏库", "外观与主题", "Magpie", "小黄鸭", "声音与反馈", "账户与服务", "开机自启", "禁用第三方软件", "维护", "性能显示", "关于" };
+    private const int StOsdCat = 10;
     /// <summary>左栏的分类：游戏设置时换成游戏的那几类（WallStage.GameSettings.cs）。</summary>
     private string[] StCats => _gsItem != null ? GsCats : StCatsMain;
     private const float StCatH = PerfRowH;
@@ -418,7 +418,6 @@ public sealed partial class WallStage
             case 7: BuildStStartup(v, later); break;
             case 8: BuildStVendors(v, later); break;
             case 9: BuildStMaintenance(v, later); break;
-            case 10: BuildStSteam(v, later); break;
             case StOsdCat: BuildStOsd(); break;
             default: BuildStAbout(v); break;
         }
@@ -623,11 +622,7 @@ public sealed partial class WallStage
     private void BuildStLibrary()
     {
         _stRows.Add(new PerfRow { Section = true, Title = "显示" });
-        _stRows.Add(StPick("首页样式", CsStyleOrder.Select(CsStyleName).ToArray(), Array.IndexOf(CsStyleOrder, _prefs.Home), i => { CsSetHomeStyle(CsStyleOrder[i]); Repaint(); }, 0));
-        _stRows.Add(StToggle("插卡音效", _prefs.InsertSound, on => { SaveUi(_prefs with { InsertSound = on }); Repaint(); }, true));
-        _stRows.Add(StToggle("竖条信息栏", _prefs.LibraryRail, on => { SetLibraryRail(on); Repaint(); }, true));
-        _stRows.Add(StPick("竖栏 Steam 按钮", new[] { "Steam 库", "Steam 大屏幕模式" }, (int)_prefs.SteamShortcut,
-            i => { SaveUi(_prefs with { SteamShortcut = (SteamShortcutTarget)i }); Repaint(); }, 0));
+        // 首页样式、插卡音效、竖条信息栏、竖栏 Steam 按钮：旧样式的选项，单行首页之后不再提供（11-25）
         _stRows.Add(StPick("Steam 游戏显示范围", new[] { "所有游戏", "已安装游戏" }, _prefs.SteamInstalledOnly ? 1 : 0,
             i => SetSteamInstalledOnly(i == 1), 0));
         var tabs = _allTabs ?? _lib.HomeTabs;
@@ -750,58 +745,16 @@ public sealed partial class WallStage
         catch (Exception ex) { Log.Warn($"pick wallpaper: {ex.Message}"); Toast("没能打开选文件窗口"); }
     }
 
+    /// <summary>
+    /// 外观与主题（11-25 jinyu：以后只有当前这一套 UI，旧的首页 / 控制中心 / 背景 / 墙面样式不再在这里切；
+    /// 能改的只是主题色和少量细节，都基于当前这套界面）。旧样式的代码存档在仓库外的本机文件夹里，不进主分支。
+    /// </summary>
     private void BuildStLook()
     {
-        _stRows.Add(new PerfRow { Section = true, Title = "标题" });
-        _stRows.Add(StPick("标题样式", TitleStyles.Names, Array.IndexOf(TitleStyles.Values, Style),
-            i => { SetTitleStyle(TitleStyles.Values[i]); Repaint(); }, 0));
-        var b = _backgroundSettings;
-        void SetBg(BackgroundSettings next) { _backgroundSettings = next; ApplyBackgroundSettings(); Repaint(); }
-        _stRows.Add(new PerfRow { Section = true, Title = "背景" });
-        var kinds = new[] { BackgroundKind.Latent, BackgroundKind.Monet, BackgroundKind.Nomand, BackgroundKind.Filmstrip };
-        _stRows.Add(StPick("背景样式", new[] { "隐现", "莫奈", "漫游", "胶片封面墙" }, Array.IndexOf(kinds, b.Kind), i => SetBg(b with { Kind = kinds[i] }), 0));
-        switch (b.Kind)
-        {
-            case BackgroundKind.Latent:
-                _stRows.Add(StPick("显示模式", new[] { "混合", "像素", "流体" }, (int)b.Latent, i => SetBg(b with { Latent = (LatentLayers)i }), 0));
-                break;
-            case BackgroundKind.Nomand:
-                _stRows.Add(StPick("背景效果", new[] { "镜头畸变", "纸张纹理" }, (int)b.Nomand, i => SetBg(b with { Nomand = (NomandEffect)i }), 0));
-                AddWallpaperRows(b, SetBg);
-                break;
-            case BackgroundKind.Monet:
-                _stRows.Add(StToggle("色块漂移", b.MonetDrift, on => SetBg(b with { MonetDrift = on }), true));
-                _stRows.Add(StToggle("光带", b.MonetStreaks, on => SetBg(b with { MonetStreaks = on }), true));
-                AddWallpaperRows(b, SetBg);
-                break;
-            case BackgroundKind.Filmstrip:
-                _stRows.Add(StPick("封面排列", new[] { "横向条带", "竖向条带" }, (int)b.FilmLayout, i => SetBg(b with { FilmLayout = (FilmLayout)i }), 0));
-                _stRows.Add(StNumber("条带数量", b.FilmStripCount, 0, 16, 1, n => n == 0 ? "自动" : $"{n} 条", n => SetBg(b with { FilmStripCount = n == 0 ? 0 : Math.Max(3, n) }), 0));
-                _stRows.Add(StNumber("滚动速度", b.FilmSpeed, 25, 200, 25, n => $"{n} %", n => SetBg(b with { FilmSpeed = n }), 100));
-                _stRows.Add(StNumber("倾斜角度", b.FilmAngle, 0, 45, 5, n => $"{n}°", n => SetBg(b with { FilmAngle = n }), 15));
-                _stRows.Add(StNumber("压暗", b.FilmDarkness, 0, 90, 10, n => $"{n} %", n => SetBg(b with { FilmDarkness = n }), 70));
-                break;
-        }
-        _stRows.Add(StToggle("动态背景", _backdropOn, on => { _backdropOn = on; UpdateBackdropRunning(); SaveUi(_prefs with { Backdrop = on }); Repaint(); }, true));
-        // 卡盒版首页、分类页、游戏设置、屏保用当前游戏的横幅；关掉后它们也用上面的样式
-        if (_cs != null) _stRows.Add(StToggle("游戏页面用横幅", _backgroundSettings.GameBanner, on => { SetGameBanner(on); Repaint(); }, true));
-
-        // 墙面（folia 的海报灯光、海报叠色）
-        void SetLook(UiPrefs next) { SaveUi(next); ApplyWallLook(); Repaint(); }
-        _stRows.Add(new PerfRow { Section = true, Title = "墙面" });
-        _stRows.Add(StToggle("竖条信息栏", _prefs.LibraryRail, on => { SetLibraryRail(on); Repaint(); }, true));
-        _stRows.Add(StPick("海报灯光", new[] { "开灯", "关灯" }, _prefs.LightsOn ? 0 : 1, i => SetLook(_prefs with { LightsOn = i == 0 }), 0));
-        _stRows.Add(StToggle("海报叠色", _prefs.PosterTint, on => SetLook(_prefs with { PosterTint = on }), true));
-        if (_prefs.PosterTint)
-        {
-            _stRows.Add(StToggle("自定义叠色", _prefs.PosterTintCustom, on => SetLook(_prefs with { PosterTintCustom = on }), false));
-            if (_prefs.PosterTintCustom)
-            {
-                int sw = Math.Max(0, Array.FindIndex(TintSwatches, s => s.Hex == _prefs.PosterTintColor));
-                _stRows.Add(StPick("叠色颜色", TintSwatches.Select(s => s.Name).ToArray(), sw, i => SetLook(_prefs with { PosterTintColor = TintSwatches[i].Hex }), 0));
-            }
-            _stRows.Add(StNumber("叠色强度", _prefs.PosterTintIntensity, 0, 100, 5, n => $"{n} %", n => SetLook(_prefs with { PosterTintIntensity = n }), 50));
-        }
+        var accentNames = new[] { "跟随封面" }.Concat(UiPrefs.Accents.Select(a => a.Name)).ToArray();
+        _stRows.Add(StPick("主题色", accentNames, _prefs.Accent + 1, i => { SaveUi(_prefs with { Accent = i - 1 }); Repaint(); CcRepaintPages(); }, 0));
+        _stRows.Add(StToggle("降低动态效果", _reducedLocal, on => { _reducedLocal = on; SaveUi(_prefs with { Reduced = on }); Repaint(); }, false));
+        _stRows.Add(StPick("截图页排版", ShStyleNames, _prefs.ShotsStyle, i => { ShSetStyle((ShStyle)i); Repaint(); }, 0));
 
         _stRows.Add(new PerfRow { Section = true, Title = "屏幕保护" });
         _stRows.Add(StToggle("封面灯光屏保", _prefs.Screensaver, on =>
@@ -820,21 +773,6 @@ public sealed partial class WallStage
                 CloseControlCenter(); After(1400, () => EnterScreensaver());
             }));
         }
-
-        _stRows.Add(new PerfRow { Section = true, Title = "界面" });
-        _stRows.Add(StPick("控制中心卡片", new[] { "拍立得", "卡片" }, _ccCards ? 1 : 0, i => { SetCcCardStyle(i == 1); Repaint(); }, 0));
-        _stRows.Add(StPick("截图页排版", ShStyleNames, _prefs.ShotsStyle, i => { ShSetStyle((ShStyle)i); Repaint(); }, 0));
-        _stRows.Add(StToggle("游戏库显示封面", _prefs.LibraryCover, on =>
-        {
-            SaveUi(_prefs with { LibraryCover = on });
-            CcReadData();
-            foreach (var blk in _ccBlocks) CcPaintCard(blk);
-            CcSetCover(_ccBlocks[0]);
-            Repaint();
-        }, false));
-        var accentNames = new[] { "跟随封面" }.Concat(UiPrefs.Accents.Select(a => a.Name)).ToArray();
-        _stRows.Add(StPick("强调色", accentNames, _prefs.Accent + 1, i => { SaveUi(_prefs with { Accent = i - 1 }); Repaint(); CcRepaintPages(); }, 0));
-        _stRows.Add(StToggle("降低动态效果", _reducedLocal, on => { _reducedLocal = on; SaveUi(_prefs with { Reduced = on }); Repaint(); }, false));
     }
 
     private PerfRow StNumber(string title, int value, int min, int max, int step, Func<int, string> fmt, Action<int> set, int def) => new()
@@ -863,55 +801,6 @@ public sealed partial class WallStage
         else _stRows.Add(StInfo("全局提示", later));
     }
 
-    /// <summary>Steam 插件（Decky 里的工具箱）管的事：大屏幕里快设键、Claw 键接管成左右侧栏，Steam 以管理员身份启动，大屏幕导航震动。</summary>
-    private void BuildStSteam(JsonObject? v, string later)
-    {
-        _stRows.Add(new PerfRow { Section = true, Title = "大屏幕按键" });
-        if (v?["steamKeys"] is JsonObject keys)
-        {
-            bool on = Bool(keys["enabled"]);
-            string qam = Str(keys["qamAction"]) ?? "MainMenu", msi = Str(keys["msiAction"]) ?? "QuickAccess";
-            void Save(bool en, string q, string m)
-            {
-                keys["enabled"] = en; keys["qamAction"] = q; keys["msiAction"] = m;
-                Repaint();
-                _ = StRun("set_steam_keys", null, JsonValue.Create(en), JsonValue.Create(q), JsonValue.Create(m));
-            }
-            string[] sides = { "MainMenu", "QuickAccess" }, sideNames = { "左侧栏", "右侧栏" };
-            _stRows.Add(StToggle("接管快设键和 Claw 键", on, to => Save(to, qam, msi), true));
-            var q = StPick("快设键", sideNames, Math.Max(0, Array.IndexOf(sides, qam)), i => Save(on, sides[i], msi), 0);
-            var m = StPick("Claw 键", sideNames, Math.Max(0, Array.IndexOf(sides, msi)), i => Save(on, qam, sides[i]), 1);
-            q.Disabled = m.Disabled = !on;
-            _stRows.Add(q);
-            _stRows.Add(m);
-        }
-        else _stRows.Add(StInfo("接管快设键和 Claw 键", later));
-
-        _stRows.Add(new PerfRow { Section = true, Title = "Steam" });
-        if (v?["compatibility"] is JsonObject c && c["enabled"] is JsonObject en)
-        {
-            bool busy = Bool(c["busy"]);
-            bool on = Bool(en["steam"]);
-            string status = Str((c["items"] as JsonObject)?["steam"]) ?? "";
-            string note = busy ? "处理中" : status.StartsWith("需要处理") ? "没生效" : "";
-            var row = StToggle("以管理员身份启动", on, to =>
-            {
-                en["steam"] = to;
-                Repaint();
-                _ = StRun("manage_compatibility", null, JsonValue.Create("set"), JsonValue.Create("steam"), JsonValue.Create(to));
-            }, false, note.Length > 0 ? note : "重启 Steam 后生效");
-            row.Disabled = busy;
-            _stRows.Add(row);
-            if (status.StartsWith("需要处理")) _stRows.Add(StInfo("没生效的原因", status.Replace("需要处理：", "")));
-        }
-        else _stRows.Add(StInfo("以管理员身份启动", later));
-        if (v?["haptics"] is JsonValue)
-        {
-            bool on = Bool(v["haptics"]);
-            _stRows.Add(StToggle("大屏幕导航震动", on, to => { v["haptics"] = to; Repaint(); _ = StRun("set_haptics_enabled", null, JsonValue.Create(to)); }, true));
-        }
-        else _stRows.Add(StInfo("大屏幕导航震动", later));
-    }
 
     private void BuildStStartup(JsonObject? v, string later)
     {
@@ -939,20 +828,51 @@ public sealed partial class WallStage
         {
             string id = Str(app["id"]) ?? "", name = Str(app["name"]) ?? id;
             if (!Bool(app["installed"])) { _stRows.Add(StValue(name, "没有安装")); continue; }
-            bool off = Bool(app["disabled"]);
+            // 11-25 jinyu：做成开关，开 = 禁用；拨了立刻生效（界面先变），后台在后面按顺序追上最后一次的状态，连拨不报错
+            bool off = _vendorWant.TryGetValue(id, out var want) ? want : Bool(app["disabled"]);
             int running = Int(app["running"]);
-            string state = off ? "已禁用" : running > 0 ? "运行中" : "未禁用";
-            _stRows.Add(new PerfRow
+            _stRows.Add(StToggle(name, off, to =>
             {
-                Title = name, Value = state, Changed = off,
-                Press = () =>
-                {
-                    app["disabled"] = !off;
-                    Repaint();
-                    _ = StRun("set_vendor_app", _ => off ? $"{name} 已恢复（服务和计划任务打开）" : $"{name} 已禁用，没有卸载", JsonValue.Create(id), JsonValue.Create(!off));
-                },
-            });
+                _vendorWant[id] = to;
+                Repaint();
+                _ = VendorPump(id, name);
+            }, null, !off && running > 0 ? "运行中" : ""));
         }
+    }
+
+    /// <summary>第三方软件开关想要的状态（还没被后台确认的）；在跑的那几个。</summary>
+    private readonly Dictionary<string, bool> _vendorWant = new();
+    private readonly HashSet<string> _vendorBusy = new();
+
+    /// <summary>
+    /// 把「想要的状态」交给后台：一次只跑一个；跑完发现又被拨过，就按最新的再跑一次，直到一致。
+    /// 中间不提示、不刷新（不会把开关弹回去）；全部跑完再读一次真实状态。出错时提示一次并以后台为准。
+    /// </summary>
+    private async Task VendorPump(string id, string name)
+    {
+        if (!_vendorBusy.Add(id)) return;
+        bool? applied = null;
+        try
+        {
+            while (_vendorWant.TryGetValue(id, out var target) && target != applied)
+            {
+                _agent ??= new AgentClient();
+                await _agent.Call("set_vendor_app", JsonValue.Create(id), JsonValue.Create(target));
+                applied = target;
+            }
+        }
+        catch (Exception ex)
+        {
+            Toast(ex.Message.Contains("不支持的后台调用") ? "工具箱后台版本太旧，先更新后台" : $"{name} 没有切换成功");
+            Log.Warn($"vendor {id}: {ex.Message}");
+        }
+        finally
+        {
+            _vendorBusy.Remove(id);
+            if (_stView?["vendors"] is JsonArray list && list.OfType<JsonObject>().FirstOrDefault(o => Str(o["id"]) == id) is { } o && applied is bool done) o["disabled"] = done;
+            _vendorWant.Remove(id);
+        }
+        if (_stOpen) { await StRefresh(); if (_stOpen && !_vendorBusy.Contains(id)) Repaint(); }
     }
 
     private bool _backendSetupRunning;

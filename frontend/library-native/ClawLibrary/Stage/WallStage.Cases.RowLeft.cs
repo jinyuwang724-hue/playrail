@@ -333,9 +333,9 @@ public sealed partial class WallStage
         {
             case "perf": OpenPerf(); break;
             case "pad": OpenGamepad(); break;
-            case "disp": OpenDisplay(); break;
+            case "disp": _cpComp = "disp"; OpenDisplay(); break;   // 显示与声音：组合页（含设置里的声音与反馈、Magpie、小黄鸭）
             case "sys": OpenSystem(); break;
-            case "set": OpenSettingsPage(); break;
+            case "set": OpenSettingsPage(); if (!CpSettingsIds.Contains(_stCat)) StCategoryJump(0); break;
             case "shot": OpenShots(); break;
         }
     }
