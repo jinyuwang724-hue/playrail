@@ -1028,29 +1028,30 @@ public sealed partial class WallStage
 
     private static (float W, float H, float R, float Leg) RsBracketGeom(bool option = false)
     {
-        // 整行：和游戏菜单同一种，圆角 60，左右中间留 13 的缺口；下拉选项：小一号，贴着选项卡片
-        float W = option ? RsPickW + 24 : RsListW + 14, H = option ? RsOptH + 16 : RsRowH + 20, r = option ? 46 : 60;
-        return (W, H, r, MathF.Max(0, (H - 2 * r - 13) / 2));
+        // 整行：真半圆端头 + 20 px 中缝；下拉选项：贴着 24 px 选项卡片的同心圆角四角括号
+        float W = (option ? RsPickW : RsListW) + CurOutset * 2f;
+        float H = (option ? RsOptH : RsRowH) + CurOutset * 2f;
+        float r = option ? 24f + CurOutset : H / 2f;
+        return (W, H, r, 0f);
     }
 
     private void RsPaintCursor(RsState rs, bool option = false)
     {
         var dev = G.Device;
         float R = CsRaster;
-        var (W, H, r, leg) = RsBracketGeom(option);
+        var (W, H, r, _) = RsBracketGeom(option);
         rs.CurW = W; rs.CurH = H;
         float sw = W + RmCurPad * 2, sh = H + RmCurPad * 2;
         int pw = (int)Math.Ceiling(sw * R), ph = (int)Math.Ceiling(sh * R);
-        var (segs, _) = RwBracketPointsRaw(W, H, r, leg, RmCurPad, RmCurPad);
-        using var path = RwBracketPath(dev, segs);
+        using var path = CocoonBracketPath(dev, W, H, r, RmCurPad);
         foreach (var s in new[] { rs.GlowSurf, rs.RimSurf, rs.LineSurf }) s?.Dispose();
         rs.GlowSurf = G.Surface(pw, ph);
         using (var ds = CanvasComposition.CreateDrawingSession(rs.GlowSurf))
         {
             ds.Clear(Colors.Transparent);
             using var cl = new CanvasCommandList(ds);
-            using (var s = cl.CreateDrawingSession()) { s.Transform = Matrix3x2.CreateScale(R); s.DrawGeometry(path, RwC2, RwSw * 2, RwRoundStroke); }
-            using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 7 * RwDp * R / 2, BorderMode = EffectBorderMode.Soft };
+            using (var s = cl.CreateDrawingSession()) { s.Transform = Matrix3x2.CreateScale(R); s.DrawGeometry(path, CurGlowColor, RwSw * 2, RwRoundStroke); }
+            using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = CurGlowBlurDp * RwDp * R / 2, BorderMode = EffectBorderMode.Soft };
             ds.DrawImage(blur);
         }
         rs.RimSurf = G.Surface(pw, ph);

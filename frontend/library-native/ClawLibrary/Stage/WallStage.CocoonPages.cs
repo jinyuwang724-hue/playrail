@@ -64,7 +64,7 @@ public sealed partial class WallStage
 
     private ContainerVisual? CpHost => _perfOpen ? _perf : _dsOpen ? _ds : _syOpen ? _sy : _stOpen ? _st : null;
     private string CpTitle => _cpComp == "disp" ? "显示与声音" : _perfOpen ? "性能" : _dsOpen ? "显示与声音" : _syOpen ? "系统" : "设置";
-    /// <summary>组合页："disp" = 显示与声音（显示页 + 设置里挪过来的几个分类）。</summary>
+    /// <summary>组合页："disp" = 显示与声音和缩放设置。</summary>
     private string? _cpComp;
 
     /// <summary>页面刚打开：焦点从左列开始（Cocoon 进设置页时停在第一个分类）。</summary>
@@ -85,14 +85,8 @@ public sealed partial class WallStage
         var l = new List<(string, string?, int)>();
         if (_cpComp == "disp")
         {
-            // 显示与声音（11-25 jinyu）：显示页自己的分组 + 从设置挪过来的声音与反馈、Magpie、小黄鸭
             for (int i = 0; i < _dsRows.Count; i++)
-                if (_dsRows[i].Section)
-                {
-                    l.Add((_dsRows[i].Title, null, i));
-                    if (_dsRows[i].Title == "声音") l.Add((StCatsMain[5], null, -105));
-                }
-            if (!l.Any(c => c.Item3 == -105)) l.Add((StCatsMain[5], null, -105));
+                if (_dsRows[i].Section) l.Add((_dsRows[i].Title, null, i));
             l.Add((StCatsMain[3], null, -103));
             l.Add((StCatsMain[4], null, -104));
             return l;
@@ -109,15 +103,16 @@ public sealed partial class WallStage
         return l;
     }
 
-    /// <summary>设置页左列显示的分类（Magpie、小黄鸭、声音与反馈挪到了显示与声音）。</summary>
-    private static readonly int[] CpSettingsIds = { 0, 1, 2, 6, 7, 8, 9, StOsdCat, 11 };
+    /// <summary>Magpie 和小黄鸭使用共享的设置页控件，在组合页显示。</summary>
+    private static readonly int[] CpSettingsIds = { 0, 1, 2, StServicesCat, 6, 7, 8, 9 };
     private static bool CpCatIsSt((string Name, string? Sub, int First) c) => c.First <= -100;
     private static int CpCatStId((string Name, string? Sub, int First) c) => -(c.First + 100);
 
     /// <summary>当前选中的分类（性能类页面：焦点行所在的分组）。</summary>
     private int CpCatIndex(List<PerfRow> rows, List<(string Name, string? Sub, int First)> cats)
     {
-        if (_stOpen) return Math.Max(0, cats.FindIndex(c => CpCatIsSt(c) && CpCatStId(c) == _stCat));
+        if (_stOpen)
+            return Math.Max(0, cats.FindIndex(c => _stBrowseMusic ? c.Name == DsSoundSection : CpCatIsSt(c) && CpCatStId(c) == _stCat));
         int f = SettingsFocus, k = 0;
         for (int c = 0; c < cats.Count; c++) if (cats[c].First >= 0 && cats[c].First <= f) k = c;
         return k;
@@ -134,8 +129,14 @@ public sealed partial class WallStage
             else StCategoryJump(id);
             _stZone = 0;
         }
-        else if (_stOpen && _cpComp != null) CpSwapToDisplay(c.First);
-        else { int first = CpFirstIn(rows, c.First); if (first >= 0) SettingsFocus = first; _cpZone = 0; }
+        else if (_stOpen && _cpComp != null) CpSwapToDisplay(c.Name);
+        else
+        {
+            int first = CpFirstIn(rows, c.First);
+            if (first >= 0) SettingsFocus = first;
+            _cpZone = 0;
+            if (_dsOpen) { _stArmed = null; DsRefreshCategory(); }
+        }
         if (CpHost is { } hh && _cpViews.TryGetValue(hh, out var vv)) { vv.Scroll = 0; vv.Manual = false; vv.OffsetInit = false; }
         CpRepaint();
     }
@@ -153,12 +154,10 @@ public sealed partial class WallStage
         CpTouchMode(_cpTouchMode);
     }
 
-    private void CpSwapToDisplay(int sectionRow)
+    private void CpSwapToDisplay(string section)
     {
         CloseSettingsPage(instant: true);
-        OpenDisplay();
-        int first = CpFirstIn(_dsRows, sectionRow);
-        if (first >= 0) _dsFocus = first;
+        OpenDisplay(section);
         _cpZone = 0;
         if (_ds != null) { _ds.StopAnimation("Opacity"); _ds.Opacity = 1; }
     }
@@ -181,7 +180,7 @@ public sealed partial class WallStage
     private CpView CpEnsure(ContainerVisual host)
     {
         // 显示与声音（组合页）底下在显示页和设置页之间换：两边共用同一套画面（左列、选中卡、焦点框都不重来），
-        // 只把它挪到当前页面下面 —— 以前各用各的，跨过「声音与反馈 / Magpie」时焦点框重新弹出、选中卡跳一下
+        // 换分类或打开音乐浏览器时沿用原来的选中卡和焦点画面。
         if (_cpComp == "disp" && _cpCompView is { } cv && (!_cpViews.TryGetValue(host, out var own) || own != cv))
         {
             if (own != null) host.Children.Remove(own.Root);
@@ -725,7 +724,7 @@ public sealed partial class WallStage
                 ds.FillRoundedRectangle(cx - 4, cy + 14, 8, 12, 2, 2, ink);
                 ds.FillRoundedRectangle(cx - 18, cy + 24, 36, 7, 3.5f, 3.5f, ink);
                 break;
-            case "声音": case "声音与反馈":
+            case DsSoundSection:
             {
                 using var pb = new CanvasPathBuilder(dev);
                 pb.BeginFigure(cx - 28, cy - 10); pb.AddLine(cx - 16, cy - 10); pb.AddLine(cx + 2, cy - 26); pb.AddLine(cx + 2, cy + 26); pb.AddLine(cx - 16, cy + 10); pb.AddLine(cx - 28, cy + 10);
@@ -1163,7 +1162,7 @@ public sealed partial class WallStage
     /// <summary>设置页：点左列分类（同 StCategoryClick 的效果，按序号）。</summary>
     private void StCategoryJump(int i)
     {
-        if (i < 0 || i >= StCats.Length) return;
+        if (i < 0 || i >= (_gsItem != null ? GsCats.Length : StCatsMain.Length)) return;
         _settingsEdit.End();
         _stCat = i; _stArmed = null; _stBrowse = null; _stBrowseExe = false; _stBrowseMusic = false; _stBrowsePick = null; _lgPage = LgPage.None;
         _stBrowseLossless = false;

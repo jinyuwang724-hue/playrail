@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32;
 
 // 显示与声音页（ClawLibrary 的 WallStage.Display.cs）要的系统设置，在 ClawPower 的提权执行端里跑：
@@ -285,14 +287,65 @@ static class DisplayAudio {
 
     // ---------------- 自动亮度（电源设置 ADAPTBRIGHT；没有光线传感器的机器写进 unsupported） ----------------
 
+    static readonly Guid SensorSetupClass = new Guid("5175d334-c371-4806-b3ba-71fd53c9258d");
+    static readonly DevicePropertyKey DeviceNameKey = new DevicePropertyKey {
+        Format = new Guid("b725f130-47ef-101a-a5f1-02608c9eebac"), Id = 10
+    };
+    const uint PresentDevices = 0x02, StringProperty = 0x12;
+    const int NoMoreDevices = 259, InsufficientBuffer = 122, PropertyNotFound = 1168;
+    const int DeviceRemoved = unchecked((int)0xe000020b);
+
+    [StructLayout(LayoutKind.Sequential)] struct DeviceInfo {
+        public int Size;
+        public Guid Class;
+        public uint Instance;
+        public IntPtr Reserved;
+    }
+    [StructLayout(LayoutKind.Sequential)] struct DevicePropertyKey {
+        public Guid Format;
+        public uint Id;
+    }
+    [DllImport("setupapi.dll", ExactSpelling = true, SetLastError = true)]
+    static extern IntPtr SetupDiGetClassDevsW(ref Guid cls, IntPtr enumerator, IntPtr parent, uint flags);
+    [DllImport("setupapi.dll", SetLastError = true)]
+    static extern bool SetupDiEnumDeviceInfo(IntPtr devices, uint index, ref DeviceInfo device);
+    [DllImport("setupapi.dll", ExactSpelling = true, SetLastError = true)]
+    static extern bool SetupDiGetDevicePropertyW(IntPtr devices, ref DeviceInfo device, ref DevicePropertyKey key,
+        out uint type, [Out] byte[] buffer, uint size, out uint required, uint flags);
+    [DllImport("setupapi.dll")]
+    static extern bool SetupDiDestroyDeviceInfoList(IntPtr devices);
+
     static bool HasLightSensor() {
-        // 光线传感器的设备接口类 GUID_DEVINTERFACE_SENSOR + ALS 类别：直接问传感器 API 太重，这里看注册的环境光传感器设备
-        using (var searcher = new System.Management.ManagementObjectSearcher("SELECT Name FROM Win32_PnPEntity WHERE PNPClass = 'Sensor'"))
-            foreach (System.Management.ManagementObject o in searcher.Get()) {
-                string name = Convert.ToString(o["Name"]) ?? "";
+        // 直接枚举当前连接的 Sensor 类设备，避免每次刷新都通过 WMI 扫描 PnP 设备。
+        var sensorClass = SensorSetupClass;
+        IntPtr devices = SetupDiGetClassDevsW(ref sensorClass, IntPtr.Zero, IntPtr.Zero, PresentDevices);
+        if (devices == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            var device = new DeviceInfo { Size = Marshal.SizeOf(typeof(DeviceInfo)) };
+            var key = DeviceNameKey;
+            var buffer = new byte[256];
+            for (uint index = 0; SetupDiEnumDeviceInfo(devices, index, ref device); index++) {
+                uint type, required;
+                if (!SetupDiGetDevicePropertyW(devices, ref device, ref key, out type, buffer, (uint)buffer.Length, out required, 0)) {
+                    int error = Marshal.GetLastWin32Error();
+                    if (error == InsufficientBuffer) {
+                        buffer = new byte[required];
+                        bool read = SetupDiGetDevicePropertyW(devices, ref device, ref key, out type, buffer, (uint)buffer.Length, out required, 0);
+                        error = read ? 0 : Marshal.GetLastWin32Error();
+                    }
+                    if (error == PropertyNotFound || error == DeviceRemoved) continue;
+                    if (error != 0) throw new Win32Exception(error);
+                }
+                if (type != StringProperty) continue;
+                string name = Encoding.Unicode.GetString(buffer, 0, (int)required).TrimEnd('\0');
                 if (name.IndexOf("Light", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("光", StringComparison.Ordinal) >= 0) return true;
             }
-        return false;
+            int enumerationError = Marshal.GetLastWin32Error();
+            if (enumerationError != NoMoreDevices) throw new Win32Exception(enumerationError);
+            return false;
+        } finally {
+            SetupDiDestroyDeviceInfoList(devices);
+        }
     }
 
     static readonly Guid SubVideo = new Guid("7516b95f-f776-4464-8c53-06167f40cc99"), AdaptBright = new Guid("fbd9aa66-9553-4097-ba44-ed6e9d65eab8");

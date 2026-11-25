@@ -18,7 +18,7 @@ public sealed partial class WallStage
             await Task.Delay(2000);
             if (!_ccOpen) OpenControlCenter(quiet: true);
             OpenSettingsPage();
-            _stCat = 6; _stZone = 1;
+            _stCat = StServicesCat; _stZone = 1;
             Repaint();
             Check("no library restart or preload action in account page", _stRows.All(r => !r.Title.Contains("载入") && !r.Title.Contains("托盘") && !r.Title.Contains("启动")));
             var counts = _stRows.Select((row, index) => (row, index)).Where(x => x.row.Title.EndsWith("已识别游戏")).ToList();
@@ -38,7 +38,7 @@ public sealed partial class WallStage
             Check("Xbox refresh retains Steam games", steam.SequenceEqual(_lib.Games.Where(g => g.Platform == "steam").Select(g => g.Id)));
             _stCat = 0; Repaint();
             Check("Steam startup moved into general settings", _stRows.Any(r => r.Title == "在托盘启动 Steam") && _stRows.Any(r => r.Title == "启动 Steam 至托盘"));
-            _stCat = 6; _stFocus = FirstStRow(); _stZone = 0; Repaint();
+            _stCat = StServicesCat; _stFocus = FirstStRow(); _stZone = 0; Repaint();
         }
         catch (Exception ex) { Log.Error("services probe", ex); checks.Add((JsonNode)new JsonObject { ["error"] = ex.Message }); }
         File.WriteAllText(Path.Combine(App.CacheDir, "services-probe.json"), checks.ToJsonString());

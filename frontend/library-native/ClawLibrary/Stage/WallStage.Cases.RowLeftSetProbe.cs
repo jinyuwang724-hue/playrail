@@ -29,7 +29,7 @@ public sealed partial class WallStage
             if (LsOpenNow) Activate();
             await Task.Delay(1400);
             if (!_stOpen) throw new InvalidOperationException("settings not open");
-            for (int c = 0; c < StCats.Length; c++)
+            for (int c = 0; c < CpSettingsIds.Length; c++)
             {
                 await Still($"{c:00}");
                 Move(Direction.Right); await Task.Delay(500);
@@ -53,15 +53,16 @@ public sealed partial class WallStage
                 Move(Direction.Down); await Task.Delay(600);
             }
             for (int i = 0; i < 4 && !LsOpenNow; i++) { if (!_ccOpen) break; Back(); await Task.Delay(500); }
-            // 显示与声音（组合页）：左列逐个分类走一遍（含挪过来的声音与反馈、Magpie、小黄鸭），只看不改
+            // 显示与声音（组合页）：左列逐个分类走一遍，只看不改。
             if (LsOpenNow)
             {
                 for (int i = 0; i < 6; i++) { Move(Direction.Up); await Task.Delay(120); }
                 for (int i = 0; i < 2; i++) { Move(Direction.Down); await Task.Delay(200); }
                 if (LsOpenNow) Activate();
                 await Task.Delay(1400);
-                for (int c = 0; c < 6; c++) { await Still($"disp-{c}"); Move(Direction.Down); await Task.Delay(500); }
-                for (int c = 0; c < 5; c++) { Move(Direction.Up); await Task.Delay(80); }
+                int count = CpCats(SettingsRows).Count;
+                for (int c = 0; c < count; c++) { await Still($"disp-{c}"); Move(Direction.Down); await Task.Delay(500); }
+                for (int c = 1; c < count; c++) { Move(Direction.Up); await Task.Delay(80); }
                 await Still("disp-fast");
                 for (int i = 0; i < 4 && !LsOpenNow; i++) { if (!_ccOpen) break; Back(); await Task.Delay(500); }
             }

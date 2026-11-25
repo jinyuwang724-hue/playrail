@@ -18,10 +18,11 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private static readonly string[] StCatsMain = { "通用", "游戏库", "外观与主题", "Magpie", "小黄鸭", "声音与反馈", "账户与服务", "开机自启", "禁用第三方软件", "维护", "性能显示", "关于" };
-    private const int StOsdCat = 10;
+    private static readonly string[] StCatsMain = { "通用", "游戏库", "外观与主题", "Magpie", "小黄鸭", "账户与服务", "开机自启", "禁用第三方软件", "维护", "关于" };
+    private const int StServicesCat = 5;
+    private static readonly string[] StMusicBrowseCats = { DsSoundSection };
     /// <summary>左栏的分类：游戏设置时换成游戏的那几类（WallStage.GameSettings.cs）。</summary>
-    private string[] StCats => _gsItem != null ? GsCats : StCatsMain;
+    private string[] StCats => _gsItem != null ? GsCats : _stBrowseMusic ? StMusicBrowseCats : StCatsMain;
     private const float StCatH = PerfRowH;
     /// <summary>
     /// 两栏的位置：设置页和性能页一样（左栏 40–388、右栏 428–1240）；游戏设置照手柄页的比例 ——
@@ -245,7 +246,7 @@ public sealed partial class WallStage
         _st.StartAnimation("Opacity", ToScalar(1, 240, EaseOutCss, 80));
         _stTimer ??= MakeStTimer();
         _stTimer.Start();
-        _ = StRefresh();
+        if (!_stBrowseMusic) _ = StRefresh();
         Log.Info("settings page open");
     }
 
@@ -309,7 +310,7 @@ public sealed partial class WallStage
         t.Tick += (_, _) =>
         {
             if (_stArmed != null && NowMs - _stArmedAt > 3000) { _stArmed = null; BuildStRows(); PaintSt(); }
-            if (_stOpen && !_settingsGesture.Active) _ = StRefresh();
+            if (_stOpen && !_stBrowseMusic && !_settingsGesture.Active) _ = StRefresh();
         };
         return t;
     }
@@ -332,13 +333,13 @@ public sealed partial class WallStage
             _stAgentDown = true;
         }
         finally { _stBusy = false; }
-        if (!_stOpen) return;
+        if (DsSoundVisible) DsRepaint();
+        if (!_stOpen || _stBrowseMusic) return;
         BuildStRows();
         PaintSt();
         if (_gsItem == null && _stCat == 1 && !_lgPolling) await LgRefresh();
         if (_gsItem == null && _stCat == 3 && _mgPrefs == null && !_mgLoading) await MgLoad();
         if (_gsItem == null && _stCat == 4 && !_lsBusy) await LsLoad();
-        if (_gsItem == null && _stCat == StOsdCat) await OsdLoad();
     }
 
     /// <summary>交给后台的动作：等它做完，按结果给提示，再读一次。</summary>
@@ -351,7 +352,7 @@ public sealed partial class WallStage
             if (done != null) Toast(done(r));
         }
         catch (Exception ex) { Toast(ex.Message.Contains("不支持的后台调用") ? "工具箱后台版本太旧，先更新后台" : $"没有做成：{ex.Message}"); }
-        if (_stOpen) await StRefresh();
+        if ((_stOpen && !_stBrowseMusic) || DsSoundVisible) await StRefresh();
     }
 
     private bool StConfirm(string key)
@@ -359,8 +360,7 @@ public sealed partial class WallStage
         if (_stArmed == key && NowMs - _stArmedAt <= 3000) { _stArmed = null; return true; }
         _stArmed = key;
         _stArmedAt = NowMs;
-        BuildStRows();
-        PaintSt();
+        if (_dsOpen) DsRepaint(); else Repaint();
         return false;
     }
 
@@ -412,12 +412,10 @@ public sealed partial class WallStage
             case 2: BuildStLook(); break;
             case 3: BuildStMagpie(); break;
             case 4: BuildStLossless(); break;
-            case 5: BuildStSound(v, later); break;
-            case 6: BuildStServices(); break;
-            case 7: BuildStStartup(v, later); break;
-            case 8: BuildStVendors(v, later); break;
-            case 9: BuildStMaintenance(v, later); break;
-            case StOsdCat: BuildStOsd(); break;
+            case StServicesCat: BuildStServices(); break;
+            case 6: BuildStStartup(v, later); break;
+            case 7: BuildStVendors(v, later); break;
+            case 8: BuildStMaintenance(v, later); break;
             default: BuildStAbout(v); break;
         }
         if (_stEditTitle != null)
@@ -461,6 +459,14 @@ public sealed partial class WallStage
 
     private void StBrowseTo(string? path)
     {
+        if (path == null && _stBrowseMusic)
+        {
+            CloseSettingsPage(instant: true);
+            OpenDisplay(DsSoundSection);
+            _cpZone = 1;
+            PaintDs();
+            return;
+        }
         _stBrowse = path;
         if (path == null) { _stBrowseExe = false; _stBrowseMusic = false; _stBrowsePick = null; _stBrowseLossless = false; }
         _stZone = 1;
@@ -651,7 +657,7 @@ public sealed partial class WallStage
         _stRows.Add(new PerfRow { Section = true, Title = "游戏来源 · 重新载入后生效" });
         _stRows.Add(StAction("账户与服务", "services", "Steam · Xbox", () =>
         {
-            _stCat = 6; _stFocus = 0; _stScroll = 0; _stScrollY = float.NaN;
+            _stCat = StServicesCat; _stFocus = 0; _stScroll = 0; _stScrollY = float.NaN;
             BuildStRows(); _stFocus = FirstStRow(); PaintSt();
         }));
         // 加进 Steam 的非 Steam 游戏就是本地游戏（和设置里添加的一样），一直显示，不再单独开关
@@ -777,25 +783,6 @@ public sealed partial class WallStage
         Reset = () => { if (value != def) set(def); },
         Step = d => { int nv = Math.Clamp(value + d * step, min, max); if (nv != value) set(nv); },
     };
-
-    private void BuildStSound(JsonObject? v, string later)
-    {
-        BuildAudioRows();
-        _stRows.Add(new PerfRow { Section = true, Title = "震动" });
-        _stRows.Add(StToggle("导航震动", _prefs.NavHaptics, on => { SaveUi(_prefs with { NavHaptics = on }); if (on) NavHaptic("confirm"); Repaint(); }, true));
-        _stRows.Add(new PerfRow { Section = true, Title = "全局提示" });
-        if (v?["notifications"] is JsonObject notices)
-        {
-            foreach (var (key, title) in new[] { ("power", "充电与电池供电提示"), ("mode", "手柄与桌面模式切换提示") })
-                _stRows.Add(StToggle(title, Bool(notices[key]), on =>
-                {
-                    notices[key] = on; Repaint();
-                    _ = StRun("set_notification", null, JsonValue.Create(key), JsonValue.Create(on));
-                }, true));
-        }
-        else _stRows.Add(StInfo("全局提示", later));
-    }
-
 
     private void BuildStStartup(JsonObject? v, string later)
     {
@@ -1038,7 +1025,11 @@ public sealed partial class WallStage
     {
         if (GsPadPicking && GpGroupY()) return;   // 游戏设置 › 手柄的分组页：Y 进这个键的触发设置
         if (_stZone != 1 || _stFocus < 0 || _stFocus >= _stRows.Count || GsOverlay) return;
-        var r = _stRows[_stFocus];
+        ResetSettingRow(_stRows[_stFocus]);
+    }
+
+    private void ResetSettingRow(PerfRow r)
+    {
         if (r.Reset == null || r.Disabled) { Toast("这一项没有默认值"); return; }
         r.Reset();
         Toast($"「{r.Title}」已恢复默认");
@@ -1047,6 +1038,7 @@ public sealed partial class WallStage
     /// <summary>点左栏的分类。</summary>
     private bool StCategoryClick(double sx, double sy)
     {
+        if (_stBrowseMusic) return false;
         double x = sx / _ccK - PerfLeftX + StGutter, y = sy / _ccK - PerfTop;
         if (x < 0 || x > StLeftW + StGutter || y < PerfSecH) return false;
         int i = (int)Math.Floor((y - PerfSecH) / StCatH);
@@ -1072,7 +1064,7 @@ public sealed partial class WallStage
         var stSw = System.Diagnostics.Stopwatch.StartNew();
         float k = _ccK, raster = k * Chrome.Dpi;
         float h = RowsHeight(_stRows), vh = PerfViewH;
-        using (var tl = TextKit.Layout(G.Device, _gsItem?.Title ?? (_stBrowseFromLibrary ? "添加游戏" : "设置"), TextKit.Ui(700), 24, 900, CanvasHorizontalAlignment.Left))
+        using (var tl = TextKit.Layout(G.Device, _gsItem?.Title ?? (_stBrowseMusic ? "导入本地音乐" : _stBrowseFromLibrary ? "添加游戏" : "设置"), TextKit.Ui(700), 24, 900, CanvasHorizontalAlignment.Left))
         {
             var bb = tl.LayoutBounds;
             float w = (float)bb.Width + 4, th = (float)bb.Height + 4;

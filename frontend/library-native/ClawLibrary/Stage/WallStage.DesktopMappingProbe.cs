@@ -54,18 +54,16 @@ public sealed partial class WallStage
             Check("four XeSS choices", fg >= 0 && _dsRows[fg].Choices?.Length == 4);
             _dsFocus = fg; PaintDs();
             await Task.Delay(450); await Capture("xess");
-            CloseDisplay(true);
-            OpenSettingsPage();
-            _stCat = 5;
-            for (int i = 0; i < 30 && !_stRows.Any(r => r.Title == "充电与电池供电提示"); i++)
+            for (int i = 0; i < 30 && !(_stView?["notifications"] is JsonObject); i++)
             {
                 await Task.Delay(500);
                 if (!_stBusy) await StRefresh();
-                BuildStRows();
+                BuildDsRows();
             }
-            PaintSt();
-            Check("global notification settings", _stRows.Any(r => r.Title == "充电与电池供电提示")
-                && _stRows.Any(r => r.Title == "手柄与桌面模式切换提示"));
+            _dsFocus = _dsRows.FindIndex(r => r.Title == "充电与电池供电提示");
+            PaintDs();
+            Check("global notification settings", _dsRows.Any(r => r.Title == "充电与电池供电提示" && !r.Disabled)
+                && _dsRows.Any(r => r.Title == "手柄与桌面模式切换提示" && !r.Disabled));
             await Task.Delay(450); await Capture("notifications");
         }
         catch (Exception ex) { Log.Warn(ex.ToString()); checks.Add((JsonNode)new JsonObject { ["error"] = ex.Message, ["passed"] = false }); }

@@ -289,7 +289,7 @@ public sealed partial class WallStage
     {
         int i = ls.Focus;
         float h = LsRowH;
-        CurTo(ls.Cur, 16, i * h + 16, LsW - 32, h - 32, 8, 34, move);
+        CurToCocoon(ls.Cur, 14, i * h + 18, LsW - 28, h - 36, (h - 36) / 2f, move);
     }
 
     private void LsMove(Direction dir)
@@ -333,7 +333,7 @@ public sealed partial class WallStage
         {
             case "perf": OpenPerf(); break;
             case "pad": OpenGamepad(); break;
-            case "disp": _cpComp = "disp"; OpenDisplay(); break;   // 显示与声音：组合页（含设置里的声音与反馈、Magpie、小黄鸭）
+            case "disp": _cpComp = "disp"; OpenDisplay(); break;
             case "sys": OpenSystem(); break;
             case "set": OpenSettingsPage(); if (!CpSettingsIds.Contains(_stCat)) StCategoryJump(0); break;
             case "shot": OpenShots(); break;

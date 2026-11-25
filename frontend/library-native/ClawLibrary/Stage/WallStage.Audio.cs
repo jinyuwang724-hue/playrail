@@ -12,6 +12,7 @@ public sealed partial class WallStage
     private bool _stBrowseMusic, _musicImporting, _audioDisposed;
     private int _soundPreviewVersion;
     private string? _musicError;
+    private IReadOnlyList<HomeTrack>? _soundTracks;
     private MusicLibrary MusicFiles => _musicLibrary ??= new MusicLibrary(
         Path.Combine(AppContext.BaseDirectory, "Assets", "Audio"), Path.Combine(App.CacheDir, "music"));
 
@@ -25,7 +26,7 @@ public sealed partial class WallStage
                 if (_audioDisposed) return;
                 _musicError = "播放失败，请重新选择曲目";
                 Log.Warn("home music: " + message);
-                if (_stOpen && _gsItem == null && _stCat == 5) { Toast(_musicError); Repaint(); }
+                if (DsSoundVisible) { Toast(_musicError); DsRepaint(); }
             });
             _audioTimer = _dq.CreateTimer();
             _audioTimer.Interval = TimeSpan.FromMilliseconds(100);
@@ -64,9 +65,10 @@ public sealed partial class WallStage
         {
             var moved = await MusicFiles.ConvertLegacyAsync();
             if (moved.Count == 0 || _audioDisposed) return;
+            _soundTracks = null;
             Log.Info($"music: converted {moved.Count} imported track(s) to MP3");
             if (moved.TryGetValue(_prefs.MusicTrack, out var id)) { _musicError = null; SaveUi(_prefs with { MusicTrack = id }); ApplyHomeAudio(); }
-            if (_stOpen && _gsItem == null && _stCat == 5) Repaint();
+            if (DsSoundVisible) DsRepaint();
         }
         catch (Exception ex) { Log.Warn("music convert: " + ex.Message); }
     }
@@ -74,7 +76,7 @@ public sealed partial class WallStage
     private void SaveAudio(UiPrefs next)
     {
         _musicError = null;
-        SaveUi(next); ApplyHomeAudio(); Repaint();
+        SaveUi(next); ApplyHomeAudio(); DsRepaint();
     }
 
     private void PreviewSounds()
@@ -88,53 +90,81 @@ public sealed partial class WallStage
         }
     }
 
-    private void BuildAudioRows()
+    private void BuildDsSoundFeedback()
     {
-        _stRows.Add(new PerfRow { Section = true, Title = "界面音效" });
-        _stRows.Add(StToggle("界面音效", _prefs.Sounds, on => { SaveAudio(_prefs with { Sounds = on }); }, false));
+        _dsRows.Add(StToggle("界面音效", _prefs.Sounds, on => SaveAudio(_prefs with { Sounds = on }), false));
         var volume = StNumber("音效音量", _prefs.SoundVolume, 0, 100, 5, n => $"{n} %", n =>
         {
             SaveAudio(_prefs with { SoundVolume = n }); Cue(Sfx.None); SoundFx.Play(Sfx.Nav, preview: true);
         }, 40);
-        _stRows.Add(volume);
-        _stRows.Add(new PerfRow { Title = "试听音效", Value = "", Press = () => { Cue(Sfx.None); PreviewSounds(); } });
+        _dsRows.Add(volume);
+        _dsRows.Add(new PerfRow { Title = "试听音效", Press = () => { Cue(Sfx.None); PreviewSounds(); } });
 
-        _stRows.Add(new PerfRow { Section = true, Title = "背景音乐" });
-        _stRows.Add(StToggle("背景音乐", _prefs.MusicEnabled, on => SaveAudio(_prefs with { MusicEnabled = on }), false));
-        _stRows.Add(StNumber("音乐音量", _prefs.MusicVolume, 0, 100, 5, n => $"{n} %", n => SaveAudio(_prefs with { MusicVolume = n }), 20));
-        var tracks = MusicFiles.Tracks();
+        _dsRows.Add(StToggle("背景音乐", _prefs.MusicEnabled, on => SaveAudio(_prefs with { MusicEnabled = on }), false));
+        _dsRows.Add(StNumber("音乐音量", _prefs.MusicVolume, 0, 100, 5, n => $"{n} %", n => SaveAudio(_prefs with { MusicVolume = n }), 20));
+        var tracks = _soundTracks ??= MusicFiles.Tracks();
         int index = Math.Max(0, tracks.ToList().FindIndex(t => t.Id == _prefs.MusicTrack));
         void Select(int n) { n = Math.Clamp(n, 0, tracks.Count - 1); SaveAudio(_prefs with { MusicTrack = tracks[n].Id }); }
         string name = tracks[index].Name;
-        _stRows.Add(new PerfRow
+        _dsRows.Add(new PerfRow
         {
             Title = "音乐曲目", Value = name.Length > 20 ? name[..19] + "…" : name, Numeric = true,
             Changed = tracks[index].Id != MusicLibrary.DefaultId,
             Step = d => Select(index + d), Press = () => Select((index + 1) % tracks.Count), Reset = () => Select(0),
         });
-        _stRows.Add(StToggle("循环播放", _prefs.MusicLoop, on => SaveAudio(_prefs with { MusicLoop = on }), true));
-        _stRows.Add(new PerfRow
+        _dsRows.Add(StToggle("循环播放", _prefs.MusicLoop, on => SaveAudio(_prefs with { MusicLoop = on }), true));
+        _dsRows.Add(new PerfRow
         {
             Title = "导入本地音乐", Value = _musicImporting ? "正在导入…" : "", Disabled = _musicImporting,
-            Press = () => { _stBrowseExe = false; _stBrowseMusic = true; StBrowseTo(""); },
+            Press = DsOpenMusicBrowser,
         });
         if (tracks[index].Custom)
         {
             var selected = tracks[index];
-            _stRows.Add(StAction("移除所选音乐", "music-remove", "仅移除导入的副本", () =>
+            string confirmation = "music-remove:" + selected.Id;
+            _dsRows.Add(StAction("移除所选音乐", confirmation, "仅移除导入的副本", () =>
             {
-                if (!StConfirm("music-remove")) return;
+                if (!StConfirm(confirmation)) return;
                 SaveAudio(_prefs with { MusicTrack = MusicLibrary.DefaultId });
                 After(1800, () =>
                 {
-                    try { MusicFiles.Remove(selected); Toast("已移除音乐副本"); }
+                    try { MusicFiles.Remove(selected); _soundTracks = null; Toast("已移除音乐副本"); }
                     catch (Exception ex) { Toast("没能移除：" + ex.Message); }
-                    if (_stOpen) Repaint();
+                    if (DsSoundVisible) DsRepaint();
                 });
             }));
         }
-        if (_musicError != null) _stRows.Add(StInfo("音乐状态", _musicError));
-        else _stRows.Add(StInfo("播放范围", "仅前台播放 · 游戏中淡出"));
+        if (_musicError != null) _dsRows.Add(StInfo("音乐状态", _musicError));
+        else _dsRows.Add(StInfo("播放范围", "仅前台播放 · 游戏中淡出"));
+
+        _dsRows.Add(StToggle("导航震动", _prefs.NavHaptics, on =>
+        {
+            SaveUi(_prefs with { NavHaptics = on });
+            if (on) NavHaptic("confirm");
+            DsRepaint();
+        }, true));
+        foreach (var (key, title) in new[] { ("power", "充电与电池供电提示"), ("mode", "手柄与桌面模式切换提示") })
+        {
+            if (_stView?["notifications"] is JsonObject notices && notices[key] is JsonValue)
+                _dsRows.Add(StToggle(title, Bool(notices[key]), on =>
+                {
+                    notices[key] = on;
+                    DsRepaint();
+                    _ = StRun("set_notification", null, JsonValue.Create(key), JsonValue.Create(on));
+                }, true));
+            else _dsRows.Add(StInfo(title, _stAgentDown ? DsOffline : _stView == null ? "—" : DsLater));
+        }
+    }
+
+    private void DsOpenMusicBrowser()
+    {
+        CloseDisplay(instant: true);
+        _stCat = 0;
+        _stBrowseMusic = true;
+        _stBrowse = "";
+        OpenSettingsPage();
+        _stZone = 1;
+        PaintSt();
     }
 
     private void BuildMusicBrowse(string path)
@@ -164,6 +194,7 @@ public sealed partial class WallStage
             await HomeMusic.ValidateAsync(imported.Path);
             if (_audioDisposed) return;
             SaveUi(_prefs with { MusicTrack = imported.Id });
+            _soundTracks = null;
             _musicError = null; ApplyHomeAudio();
             if (_stOpen && _stBrowseMusic) StBrowseTo(null);
             Toast($"已导入「{imported.Name}」"); SoundFx.Play(Sfx.Positive);
@@ -173,7 +204,12 @@ public sealed partial class WallStage
             if (imported != null) try { MusicFiles.Remove(imported); } catch { }
             if (!_audioDisposed) { Toast("导入失败：" + (ex is TimeoutException ? "读取音频超时，请换一个文件" : ex.Message)); SoundFx.Play(Sfx.Error); }
         }
-        finally { _musicImporting = false; if (!_audioDisposed && _stOpen) Repaint(); }
+        finally
+        {
+            _musicImporting = false;
+            if (!_audioDisposed && _stOpen && _stBrowseMusic) Repaint();
+            if (!_audioDisposed && DsSoundVisible) DsRepaint();
+        }
     }
 
     private async Task ProbeHomeAudio()

@@ -227,14 +227,13 @@ public sealed partial class WallStage
     private static void RaFocusRect(CanvasDrawingSession ds, float x, float y, float w, float h, float r)
     {
         var dev = ds.Device;
-        float W = w + 14, H = h + 20, rr = MathF.Min(r + 18, MathF.Min(W, H) / 2 - 8);
-        float leg = MathF.Max(0, MathF.Min(18 * RwDp, (MathF.Min(W, H) - 2 * rr - 13) / 2));
-        var (segs, _) = RwBracketPointsRaw(W, H, rr, leg, x - 7, y - 10);
-        using var path = RwBracketPath(dev, segs);
+        float W = w + CurOutset * 2f, H = h + CurOutset * 2f;
+        float rr = Math.Clamp(r, 0f, MathF.Min(w, h) / 2f) + CurOutset;
+        using var path = CocoonBracketPath(dev, W, H, rr, x - CurOutset, y - CurOutset);
         using (var glow = new CanvasCommandList(dev))
         {
-            using (var g = glow.CreateDrawingSession()) { g.Transform = ds.Transform; g.DrawGeometry(path, RwC2, RwSw * 2, RwRoundStroke); }
-            using var blur = new Microsoft.Graphics.Canvas.Effects.GaussianBlurEffect { Source = glow, BlurAmount = 7 * RwDp / 2 * ds.Transform.M11 };
+            using (var g = glow.CreateDrawingSession()) { g.Transform = ds.Transform; g.DrawGeometry(path, CurGlowColor, RwSw * 2, RwRoundStroke); }
+            using var blur = new Microsoft.Graphics.Canvas.Effects.GaussianBlurEffect { Source = glow, BlurAmount = CurGlowBlurDp * RwDp / 2 * ds.Transform.M11 };
             var t = ds.Transform; ds.Transform = Matrix3x2.Identity; ds.DrawImage(blur); ds.Transform = t;
         }
         using var br = new CanvasLinearGradientBrush(dev, RwC1, RwC2) { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x + w, y + h) };

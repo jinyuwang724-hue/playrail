@@ -837,7 +837,7 @@ public sealed partial class WallStage
         l.Add(("s:bri", 2, SpBX, SpBriY, SpBW, SpSlH, "c"));
         l.Add(("s:vol", 3, SpBX, SpVolY, SpBW, SpSlH, "c"));
         l.Add(("m:pw", 4, SpBX, SpGY0, SpBW, SpPwH, "none"));
-        for (int i = 0; i < 3; i++) l.Add(($"o:{SpPicks[i]}", 5 + i, SpBX, SpPickY(i), SpBW, SpPickRowH, "c"));
+        for (int i = 0; i < 3; i++) l.Add(($"o:{SpPicks[i]}", 5 + i, SpBX, SpPickY(i), SpBW, SpPickRowH, "row"));
         return l;
     }
 
@@ -861,12 +861,11 @@ public sealed partial class WallStage
         foreach (var v in SpCursorVis(sp)) { v.StopAnimation("Opacity"); v.StartAnimation("Opacity", CsS(on ? 1 : 0, Math.Max(1, ms), Bezier.EaseOut, delay)); }
     }
 
-    /// <summary>括号到一个方框：c 样式外扩 12、圆角 = 高的一半；row 外扩 8、圆角 42；opt 外扩 8、圆角 30。实现在共用的 CurTo（WallStage.Cursor.cs）。</summary>
+    /// <summary>括号到一个方框：c 样式按圆形/胶囊同心半圆端头，opt / row 按各自圆角用统一 CurToCocoon 渲染。</summary>
     private void SpCursorRect(SpState sp, float x, float y, float w, float h, string kind, bool move)
     {
-        float pad = kind == "c" ? 12 : 8;
-        float r = kind == "c" ? (h + pad * 2) / 2 : kind == "opt" ? 30 : 42;
-        CurTo(SpCur(sp), x, y, w, h, pad, r, move);
+        float targetR = kind == "c" ? MathF.Min(w, h) / 2f : kind == "opt" ? 24f : h <= 90f ? 24f : 28f;
+        CurToCocoon(SpCur(sp), x, y, w, h, targetR, move);
     }
 
     private CurSet SpCur(SpState sp) => sp.CurS ??= new CurSet { Glow = sp.Glow, Line = sp.Line, Line2 = sp.Line2, Rim = sp.Rim };
@@ -885,33 +884,6 @@ public sealed partial class WallStage
         a.InsertKeyFrame(1, Vector3.One, G.Ease(new Bezier(0.22f, 1f, 0.36f, 1f)));
         a.Duration = TimeSpan.FromMilliseconds(230);
         v.StartAnimation("Scale", a);
-    }
-
-    /// <summary>括号路径：四角各一段（直腿 + 圆弧 + 直腿）；没有直腿时（圆、胶囊）每段两头各剪掉一点，四段之间留缝。</summary>
-    private static CanvasGeometry SpBracketPath(ICanvasResourceCreator dev, float W, float H, float r, float pad)
-    {
-        // Cocoon 的括号几何（11-25 按它的绘制代码核对）：尺寸系数 = clamp(短边 / 96 dp, 0.35, 1.75)；
-        // 腿长 18 dp × 系数，两段之间至少空 14 dp × 系数（不超过短边的 36 %），腿长不超过 (短边 − 2 × 圆角 − 空隙) / 2
-        float mn = MathF.Min(W, H), sf = Math.Clamp(mn / (96 * RwDp), 0.35f, 1.75f);
-        float gap = MathF.Min(14 * RwDp * sf, 0.36f * mn);
-        r = MathF.Min(r, MathF.Max(0, (mn - gap) / 2));
-        float leg = MathF.Max(0, MathF.Min(18 * RwDp * sf, (mn - 2 * r - gap) / 2));
-        var (segs, _) = RwBracketPointsRaw(W, H, r, leg, pad, pad);
-        if (leg < 0.5f)
-        {
-            float g = MathF.Min(9, MathF.PI * r / 2 / 4);
-            for (int s = 0; s < segs.Count; s++)
-            {
-                var pts = segs[s];
-                var cum = new float[pts.Count];
-                for (int i = 1; i < pts.Count; i++) cum[i] = cum[i - 1] + Vector2.Distance(new Vector2(pts[i].X, pts[i].Y), new Vector2(pts[i - 1].X, pts[i - 1].Y));
-                float total = cum[^1];
-                var keep = new List<Vector3>();
-                for (int i = 0; i < pts.Count; i++) if (cum[i] >= g && cum[i] <= total - g) keep.Add(pts[i]);
-                if (keep.Count >= 2) segs[s] = keep;
-            }
-        }
-        return RwBracketPath(dev, segs);
     }
 
     // ---------------- 输入 ----------------

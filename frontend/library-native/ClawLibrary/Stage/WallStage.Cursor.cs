@@ -38,13 +38,111 @@ public sealed partial class WallStage
         foreach (var v in c.All) { v.StopAnimation("Opacity"); v.StartAnimation("Opacity", CsS(on ? 1 : 0, Math.Max(1, ms), Bezier.EaseOut, delay)); }
     }
 
+    private const float CurOutset = 5.5f, CurGlowBlurDp = 6.5f;
+    private static readonly Color CurGlowColor = RwC1;
+
     /// <summary>
-    /// 照 Cocoon 的算法套括号：外扩 = clamp(0.12 × 短边, 5 dp, 24 dp) × 粗细系数 0.6；括号圆角 = 目标自己的圆角 + 外扩 / 2（和目标同心）。
+    /// 照 Cocoon 的算法套同心括号：统一紧凑外扩 CurOutset，线中心圆角 = 目标圆角 + CurOutset（真正同心）。
     /// </summary>
     private void CurToCocoon(CurSet c, float x, float y, float w, float h, float targetRadius, bool move)
     {
-        float o = Math.Clamp(0.12f * MathF.Min(w, h), 5 * RwDp, 24 * RwDp) * RwThick;
-        CurTo(c, x, y, w, h, o, targetRadius + o / 2, move);
+        float tr = Math.Clamp(targetRadius, 0f, MathF.Min(w, h) / 2f);
+        CurTo(c, x, y, w, h, CurOutset, tr + CurOutset, move);
+    }
+
+    private static CanvasGeometry CocoonBracketPath(ICanvasResourceCreator dev, float W, float H, float r, float pad)
+        => CocoonBracketPath(dev, W, H, r, pad, pad);
+
+    /// <summary>
+    /// Cocoon 紧凑控件焦点几何：
+    /// 1) 圆形按钮（|W-H|≤2 且 r≥0.45·mn）：四段对称圆弧，12/3/6/9 点留出清晰呼吸缝；
+    /// 2) 胶囊/整行（W>H+2 且 r≥0.44·H 或 H-2r&lt;24）：真半圆端头 + 极短水平腿，左右中缝约 20 px；
+    /// 3) 常规圆角矩形卡片/列表行：真同心圆角 + 独立水平/垂直腿长，保证两段白边之间不粘连。
+    /// </summary>
+    private static CanvasGeometry CocoonBracketPath(ICanvasResourceCreator dev, float W, float H, float r, float padX, float padY)
+    {
+        float mn = MathF.Min(W, H);
+        using var pb = new CanvasPathBuilder(dev);
+        if (MathF.Abs(W - H) <= 2f && r >= mn * 0.45f)
+        {
+            float rc = mn / 2f, cx = padX + W / 2f, cy = padY + H / 2f;
+            float gapRad = Math.Clamp(26f / rc, 0.30f, 0.62f);
+            float half = (MathF.PI / 2f - gapRad) / 2f;
+            for (int k = 0; k < 4; k++)
+            {
+                float mid = MathF.PI / 4f + k * MathF.PI / 2f, a0 = mid - half, a1 = mid + half;
+                pb.BeginFigure(cx + rc * MathF.Cos(a0), cy + rc * MathF.Sin(a0));
+                pb.AddArc(new Vector2(cx + rc * MathF.Cos(a1), cy + rc * MathF.Sin(a1)), rc, rc, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
+                pb.EndFigure(CanvasFigureLoop.Open);
+            }
+        }
+        else if (W > H + 2f && (r >= H * 0.44f || H - 2f * r < 24f))
+        {
+            float rp = H / 2f, cy = padY + rp, lx = padX + rp, rx = padX + W - rp;
+            float gapC = Math.Clamp(20f, 18f, H * 0.30f);
+            float halfGap = MathF.Asin(Math.Clamp((gapC / 2f) / rp, 0.08f, 0.45f));
+            float legH = MathF.Min(Math.Clamp(0.06f * H, 4f, 10f), MathF.Max(0f, (W - H - 24f) / 2f));
+
+            float a0 = MathF.PI + halfGap;
+            pb.BeginFigure(lx + rp * MathF.Cos(a0), cy + rp * MathF.Sin(a0));
+            pb.AddArc(new Vector2(lx, padY), rp, rp, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
+            if (legH > 0.5f) pb.AddLine(lx + legH, padY);
+            pb.EndFigure(CanvasFigureLoop.Open);
+
+            if (legH > 0.5f) { pb.BeginFigure(rx - legH, padY); pb.AddLine(rx, padY); }
+            else pb.BeginFigure(rx, padY);
+            float a1 = -halfGap;
+            pb.AddArc(new Vector2(rx + rp * MathF.Cos(a1), cy + rp * MathF.Sin(a1)), rp, rp, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
+            pb.EndFigure(CanvasFigureLoop.Open);
+
+            float a2 = halfGap;
+            pb.BeginFigure(rx + rp * MathF.Cos(a2), cy + rp * MathF.Sin(a2));
+            pb.AddArc(new Vector2(rx, padY + H), rp, rp, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
+            if (legH > 0.5f) pb.AddLine(rx - legH, padY + H);
+            pb.EndFigure(CanvasFigureLoop.Open);
+
+            if (legH > 0.5f) { pb.BeginFigure(lx + legH, padY + H); pb.AddLine(lx, padY + H); }
+            else pb.BeginFigure(lx, padY + H);
+            float a3 = MathF.PI - halfGap;
+            pb.AddArc(new Vector2(lx + rp * MathF.Cos(a3), cy + rp * MathF.Sin(a3)), rp, rp, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
+            pb.EndFigure(CanvasFigureLoop.Open);
+        }
+        else
+        {
+            float innerMn = MathF.Max(1f, mn - CurOutset * 2f);
+            float sf = Math.Clamp(mn / (innerMn * 2.35f), 0.35f, 1.75f);
+            float gapMin = MathF.Max(26f, MathF.Min(0.28f * mn, 38f));
+            float cr = MathF.Min(r, MathF.Max(0f, (mn - gapMin) / 2f));
+            float legBase = 14f * RwDp * sf;
+            float legX = MathF.Max(0f, MathF.Min(legBase, (W - 2f * cr - gapMin) / 2f));
+            float legY = MathF.Max(0f, MathF.Min(legBase, (H - 2f * cr - gapMin) / 2f));
+            float x0 = padX, y0 = padY, x1 = padX + W, y1 = padY + H;
+
+            pb.BeginFigure(x1 - cr - legX, y0);
+            if (legX > 0.5f) pb.AddLine(x1 - cr, y0);
+            if (cr > 0.5f) pb.AddArc(new Vector2(x1, y0 + cr), cr, cr, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
+            if (legY > 0.5f) pb.AddLine(x1, y0 + cr + legY);
+            pb.EndFigure(CanvasFigureLoop.Open);
+
+            pb.BeginFigure(x1, y1 - cr - legY);
+            if (legY > 0.5f) pb.AddLine(x1, y1 - cr);
+            if (cr > 0.5f) pb.AddArc(new Vector2(x1 - cr, y1), cr, cr, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
+            if (legX > 0.5f) pb.AddLine(x1 - cr - legX, y1);
+            pb.EndFigure(CanvasFigureLoop.Open);
+
+            pb.BeginFigure(x0 + cr + legX, y1);
+            if (legX > 0.5f) pb.AddLine(x0 + cr, y1);
+            if (cr > 0.5f) pb.AddArc(new Vector2(x0, y1 - cr), cr, cr, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
+            if (legY > 0.5f) pb.AddLine(x0, y1 - cr - legY);
+            pb.EndFigure(CanvasFigureLoop.Open);
+
+            pb.BeginFigure(x0, y0 + cr + legY);
+            if (legY > 0.5f) pb.AddLine(x0, y0 + cr);
+            if (cr > 0.5f) pb.AddArc(new Vector2(x0 + cr, y0), cr, cr, 0, CanvasSweepDirection.Clockwise, CanvasArcSize.Small);
+            if (legX > 0.5f) pb.AddLine(x0 + cr + legX, y0);
+            pb.EndFigure(CanvasFigureLoop.Open);
+        }
+        return CanvasGeometry.CreatePath(pb);
     }
 
     /// <summary>括号套到方框 (x, y, w, h) 上：外扩 pad、括号圆角 r。</summary>
@@ -88,14 +186,14 @@ public sealed partial class WallStage
         {
             int pw = (int)Math.Ceiling(sw * R), ph = (int)Math.Ceiling(sh * R);
             var dev = G.Device;
-            using var path = SpBracketPath(dev, W, H, r, RmCurPad);
+            using var path = CocoonBracketPath(dev, W, H, r, RmCurPad);
             var glow = G.Surface(pw, ph);
             using (var ds = CanvasComposition.CreateDrawingSession(glow))
             {
                 ds.Clear(Colors.Transparent);
                 using var cl = new CanvasCommandList(ds);
-                using (var s = cl.CreateDrawingSession()) { s.Transform = Matrix3x2.CreateScale(R); s.DrawGeometry(path, RwC2, RwSw * 2, RwRoundStroke); }
-                using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 7 * RwDp * R / 2, BorderMode = EffectBorderMode.Soft };
+                using (var s = cl.CreateDrawingSession()) { s.Transform = Matrix3x2.CreateScale(R); s.DrawGeometry(path, CurGlowColor, RwSw * 2, RwRoundStroke); }
+                using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = CurGlowBlurDp * RwDp * R / 2, BorderMode = EffectBorderMode.Soft };
                 ds.DrawImage(blur);
             }
             var rim = G.Surface(pw, ph);

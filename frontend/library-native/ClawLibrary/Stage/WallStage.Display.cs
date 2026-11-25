@@ -21,6 +21,9 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     private const string DsLater = "后台还没接上";
+    private const string DsOffline = "连不上工具箱后台";
+    private const string DsSoundSection = "声音";
+    private const string DsOsdSection = "性能显示";
 
     private ContainerVisual? _ds;
     private ContainerVisual _dsRightView = null!;
@@ -29,7 +32,7 @@ public sealed partial class WallStage
     private int _dsFocus, _dsVersion;
     private SettingsWriteQueue? _dsWrites;
     private float _dsScroll, _dsScrollY = float.NaN;
-    /// <summary>后台的显示与声音状态（get_display_state 的结果，或老后台 widget_state 里的 system）。本地改动直接写在这里。</summary>
+    /// <summary>后台读数跨页面开关保留，各组在第一次读数返回前先显示设置名称。</summary>
     private JsonObject? _dsView;
     private readonly List<PerfRow> _dsRows = new();
     private DispatcherQueueTimer? _dsTimer;
@@ -41,15 +44,23 @@ public sealed partial class WallStage
 
     // ---------------- 开 / 关 ----------------
 
-    private void OpenDisplay()
+    private void OpenDisplay() => OpenDisplay(null);
+
+    private void OpenDisplay(string? section)
     {
         if (_cc == null) return;
         EnsureDsVisuals();
         _dsOpen = true;
+        _stArmed = null;
         SettingsResetPointer();
         ++_dsVersion;
         BuildDsRows();
         _dsFocus = _dsRows.FindIndex(r => !r.Section && !r.Skip);
+        if (section != null)
+        {
+            int first = CpFirstIn(_dsRows, _dsRows.FindIndex(r => r.Section && r.Title == section));
+            if (first >= 0) _dsFocus = first;
+        }
         _dsScroll = 0;
         _dsScrollY = float.NaN;
         PaintDs();
@@ -60,6 +71,7 @@ public sealed partial class WallStage
         _dsTimer ??= MakeDsTimer();
         _dsTimer.Start();
         _ = DsRefresh();
+        DsRefreshCategory();
         Log.Info("display page open");
     }
 
@@ -68,6 +80,7 @@ public sealed partial class WallStage
         if (!_dsOpen || _ds == null) return;
         if (!instant) { Cue(Sfx.ModalHide); LsPageClosed(); }
         _dsOpen = false;
+        _stArmed = null;
         SettingsResetPointer();
         _dsTimer?.Stop();
         int v = ++_dsVersion;
@@ -98,23 +111,58 @@ public sealed partial class WallStage
         _cc!.Children.InsertAtTop(_ds);
     }
 
-    /// <summary>两秒读一次（别处改了亮度 / 音量、插了耳机要跟上）；有没写完的改动时不读，免得把本地值冲掉。</summary>
+    /// <summary>页面打开时每两秒跟进系统侧的亮度、音量和设备变化。</summary>
     private DispatcherQueueTimer MakeDsTimer()
     {
         var t = _dq.CreateTimer();
         t.Interval = TimeSpan.FromSeconds(2);
         t.IsRepeating = true;
-        t.Tick += (_, _) => { if (_dsOpen && !_settingsGesture.Active && _dsWrites?.IsBusy != true) _ = DsRefresh(); };
+        t.Tick += (_, _) =>
+        {
+            if (!_dsOpen || DsEditing) return;
+            if (_stArmed != null && NowMs - _stArmedAt > 3000) { _stArmed = null; DsRepaint(); }
+            if (!CpActive || DsFocusedSection != DsOsdSection) _ = DsRefresh();
+            if (DsOsdVisible) _ = OsdLoad();
+        };
         return t;
     }
 
     // ---------------- 和 agent 打交道 ----------------
 
+    private bool DsEditing => _settingsGesture.Active || _dsWrites?.IsBusy == true || (_dsOpen && CpActive && _cpDrop >= 0);
+
+    private string? DsFocusedSection
+    {
+        get
+        {
+            if (_dsFocus < 0 || _dsFocus >= _dsRows.Count) return null;
+            int section = _dsRows.FindLastIndex(_dsFocus, r => r.Section);
+            return section >= 0 ? _dsRows[section].Title : null;
+        }
+    }
+    private bool DsSoundVisible => _dsOpen && (!CpActive || DsFocusedSection == DsSoundSection);
+    private bool DsOsdVisible => _dsOpen && (!CpActive || DsFocusedSection == DsOsdSection);
+
+    private void DsRefreshCategory()
+    {
+        if (DsSoundVisible) _ = StRefresh();
+        if (DsOsdVisible) _ = OsdLoad();
+    }
+
+    private void DsRepaint()
+    {
+        if (!_dsOpen) return;
+        BuildDsRows();
+        PaintDs();
+    }
+
     private async Task DsRefresh()
     {
-        if (_dsBusy || _settingsGesture.Active || _dsWrites?.IsBusy == true) return;
+        if (_dsBusy || DsEditing) return;
         _dsBusy = true;
         long revision = _dsWrites?.Revision ?? 0;
+        bool wasOffline = _dsAgentDown;
+        bool changed = false;
         try
         {
             _agent ??= new AgentClient();
@@ -128,9 +176,13 @@ public sealed partial class WallStage
                 // 老后台：只有小组件用的那几项
                 view = (await _agent.Call("widget_state"))?["system"];
             }
+            if (view is not JsonObject o) throw new InvalidOperationException("显示与声音状态不可用");
             _dsAgentDown = false;
-            if (!_settingsGesture.Active && _dsWrites?.IsBusy != true && revision == (_dsWrites?.Revision ?? 0) && view is JsonObject o)
+            if (!DsEditing && revision == (_dsWrites?.Revision ?? 0) && !JsonNode.DeepEquals(o, _dsView))
+            {
                 _dsView = (JsonObject)o.DeepClone();
+                changed = true;
+            }
         }
         catch (Exception ex)
         {
@@ -139,9 +191,9 @@ public sealed partial class WallStage
         }
         finally { _dsBusy = false; }
         if (!_dsOpen) return;
-        if (_dsWrites?.IsBusy != true && revision != (_dsWrites?.Revision ?? 0)) { _ = DsRefresh(); return; }
-        BuildDsRows();
-        PaintDs();
+        if (!DsEditing && revision != (_dsWrites?.Revision ?? 0)) { _ = DsRefresh(); return; }
+        if (!changed && wasOffline == _dsAgentDown) return;
+        DsRepaint();
     }
 
     /// <summary>
@@ -158,27 +210,31 @@ public sealed partial class WallStage
             _agent ??= new AgentClient();
             await _agent.Call(method, args);
         });
-        BuildDsRows();
-        PaintDs();
+        DsRepaint();
     }
 
     // ---------------- 右栏的行 ----------------
 
     private void BuildDsRows()
     {
+        string? focusedTitle = _dsFocus >= 0 && _dsFocus < _dsRows.Count ? _dsRows[_dsFocus].Title : null;
+        string? focusedSection = DsFocusedSection;
         _dsRows.Clear();
-        var v = _dsView;
-        if (v == null)
+        bool hasData = _dsView != null;
+        var v = _dsView ?? new JsonObject();
+        void Section(string title)
         {
-            _dsRows.Add(new PerfRow { Section = true, Title = "屏幕" });
-            _dsRows.Add(new PerfRow { Title = _dsAgentDown ? "连不上工具箱后台" : "正在读取…", Value = "—", Disabled = true });
-            return;
+            _dsRows.Add(new PerfRow { Section = true, Title = title });
+            if (!hasData && _dsAgentDown) _dsRows.Add(new PerfRow { Title = DsOffline, Disabled = true });
         }
         // 后台在 unsupported 里列出这台机器没有的（比如屏幕不支持 HDR）；字段干脆没有 = 后台还没写这一项
         var unsupported = (v["unsupported"] as JsonArray)?.Select(n => Str(n) ?? "").ToHashSet() ?? new HashSet<string>();
-        PerfRow Later(string title, string field = "") => unsupported.Contains(field)
-            ? new PerfRow { Title = title, Value = "这台机器不支持", Disabled = true }
-            : new PerfRow { Title = title, Value = DsLater, Disabled = true };
+        PerfRow Later(string title, string field = "") => new()
+        {
+            Title = title,
+            Value = !hasData ? "—" : unsupported.Contains(field) ? "这台机器不支持" : DsLater,
+            Disabled = true,
+        };
         PerfRow Toggle(string title, string field, string method)
         {
             if (v[field] is not JsonValue) return Later(title, field);
@@ -225,7 +281,7 @@ public sealed partial class WallStage
         }
 
         // ---- 显示 ----
-        _dsRows.Add(new PerfRow { Section = true, Title = "显示" });
+        Section("显示");
         _dsRows.Add(Number("亮度", "brightness", 0, 100, 5, b => $"{b} %", b => { v["brightness"] = b; DsSet("set_brightness", 150, JsonValue.Create(b)); }));
         int[] rates = (v["refreshRates"] as JsonArray)?.Select(n => Int(n)).Where(r => r > 0).Distinct().OrderByDescending(r => r).ToArray() ?? Array.Empty<int>();
         int hz = Int(v["refresh"]);
@@ -246,7 +302,7 @@ public sealed partial class WallStage
         else _dsRows.Add(Later("分辨率", "resolution"));
         _dsRows.Add(Toggle("可变刷新率（VRR）", "vrr", "set_vrr"));
 
-        if (!unsupported.Contains("autoBrightness") && v["autoBrightness"] is JsonValue)
+        if (!hasData || (!unsupported.Contains("autoBrightness") && v["autoBrightness"] is JsonValue))
             _dsRows.Add(Toggle("自动亮度", "autoBrightness", "set_auto_brightness"));
         _dsRows.Add(Toggle("HDR", "hdr", "set_hdr"));
         if (v["scales"] is JsonArray scales && scales.Count > 0)
@@ -257,7 +313,7 @@ public sealed partial class WallStage
         else _dsRows.Add(Later("屏幕缩放", "scales"));
 
         // ---- 声音 ----
-        _dsRows.Add(new PerfRow { Section = true, Title = "声音" });
+        Section(DsSoundSection);
         bool muted = Bool(v["muted"]);
         _dsRows.Add(Number("音量", "volume", 0, 100, 2, x => muted ? $"{x} % · 静音" : $"{x} %", x => { v["volume"] = x; DsSet("set_volume", 120, JsonValue.Create(x)); }));
         _dsRows.Add(Toggle("静音", "muted", "set_mute"));
@@ -281,14 +337,16 @@ public sealed partial class WallStage
             });
         }
         else _dsRows.Add(Later("麦克风", "micMuted"));
+        BuildDsSoundFeedback();
 
         // ---- 显卡（Intel 驱动的控制接口；拿不到的项后台不给，这里就不出现） ----
-        _dsRows.Add(new PerfRow { Section = true, Title = "显卡" });
+        Section("显卡");
         var gpu = v["gpu"] as JsonObject;
         if (gpu == null || !Bool(gpu["available"]))
             _dsRows.Add(gpu == null ? Later("Intel 显卡选项", "gpu") : new PerfRow { Title = "Intel 显卡选项", Value = Str(gpu["error"]) ?? "读不到显卡驱动", Disabled = true });
         else
         {
+            int firstOption = _dsRows.Count;
             void SetGpu(string name, JsonNode value) { gpu[name] = value.DeepClone(); DsSet("set_gpu_option", 200, JsonValue.Create(name), value); }
             if (Str(gpu["lowLatency"]) is string ll)
                 _dsRows.Add(Pick("低延迟", DsLowLatencyNames, Math.Max(0, Array.IndexOf(DsLowLatency, ll)), i => SetGpu("lowLatency", JsonValue.Create(DsLowLatency[i]))));
@@ -313,13 +371,21 @@ public sealed partial class WallStage
                     int val = Int(gpu[field]);
                     _dsRows.Add(Number(title, field, 0, 100, 5, x => $"{x}", x => SetGpu(field, JsonValue.Create(x)), val));
                 }
+            if (_dsRows.Count == firstOption)
+                _dsRows.Add(new PerfRow { Title = "Intel 显卡选项", Value = Str(gpu["error"]) ?? "暂无可调选项", Disabled = true });
         }
+        BuildDsOsd();
 
-        if (_dsFocus >= _dsRows.Count || (_dsFocus >= 0 && (_dsRows[_dsFocus].Skip || _dsRows[_dsFocus].Section)))
+        if (focusedSection != null)
         {
-            int f = Math.Min(_dsFocus, _dsRows.Count - 1);
-            while (f > 0 && (_dsRows[f].Section || _dsRows[f].Skip)) f--;
-            _dsFocus = f;
+            int section = _dsRows.FindIndex(r => r.Section && r.Title == focusedSection);
+            _dsFocus = CpFirstIn(_dsRows, section);
+            for (int i = section + 1; i < _dsRows.Count && !_dsRows[i].Section; i++)
+            {
+                if (_dsRows[i].Skip || _dsRows[i].Title != focusedTitle) continue;
+                _dsFocus = i;
+                break;
+            }
         }
     }
 
@@ -445,7 +511,7 @@ public sealed partial class WallStage
         string mic = v?["micMuted"] is JsonValue ? (Bool(v["micMuted"]) ? "静音" : "开") : "—";
         Rows(barY + 14, new[] { ("输出设备", output), ("麦克风", mic) });
 
-        if (_dsAgentDown || v == null)
-            PText(ds, _dsAgentDown ? "连不上工具箱后台" : "正在读取…", ui, 13, muted, 0, h - 12, W);
+        if (_dsAgentDown)
+            PText(ds, DsOffline, ui, 13, muted, 0, h - 12, W);
     }
 }

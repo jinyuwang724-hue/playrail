@@ -470,31 +470,29 @@ public sealed partial class WallStage
     private const float RmCurPad = 44;
 
     /// <summary>
-    /// 行的四角括号（照 jinyu 11-20 截图实测）：线中心左右外扩 7、上下外扩 10，圆角 57，
-    /// 每个角只有圆弧加 5 的短腿，左右两边中间留 13 左右的缺口（不是两端闭合的半圆）。
+    /// 行的四角括号（Cocoon 整行焦点）：统一紧凑外扩 CurOutset，整行用真半圆端头 + 左右中缝 20 px。
     /// </summary>
     private static (float W, float H, float R, float Leg) RmBracketGeom()
     {
-        float W = RmCardW + 14, H = RmRowH + 20, r = 57;
-        return (W, H, r, MathF.Max(0, (H - 2 * r - 13) / 2));
+        float W = RmCardW + CurOutset * 2f, H = RmRowH + CurOutset * 2f, r = H / 2f;
+        return (W, H, r, 0f);
     }
 
     private void RmPaintCursor(RmState rm)
     {
         var dev = G.Device;
         float R = CsRaster;
-        var (W, H, r, leg) = RmBracketGeom();
+        var (W, H, r, _) = RmBracketGeom();
         float sw = W + RmCurPad * 2, sh = H + RmCurPad * 2;
         int pw = (int)Math.Ceiling(sw * R), ph = (int)Math.Ceiling(sh * R);
-        var (segs, _) = RwBracketPointsRaw(W, H, r, leg, RmCurPad, RmCurPad);
-        using var path = RwBracketPath(dev, segs);
+        using var path = CocoonBracketPath(dev, W, H, r, RmCurPad);
         rm.GlowSurf = G.Surface(pw, ph);
         using (var ds = CanvasComposition.CreateDrawingSession(rm.GlowSurf))
         {
             ds.Clear(Colors.Transparent);
             using var cl = new CanvasCommandList(ds);
-            using (var s = cl.CreateDrawingSession()) { s.Transform = Matrix3x2.CreateScale(R); s.DrawGeometry(path, RwC2, RwSw * 2, RwRoundStroke); }
-            using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 7 * RwDp * R / 2, BorderMode = EffectBorderMode.Soft };
+            using (var s = cl.CreateDrawingSession()) { s.Transform = Matrix3x2.CreateScale(R); s.DrawGeometry(path, CurGlowColor, RwSw * 2, RwRoundStroke); }
+            using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = CurGlowBlurDp * RwDp * R / 2, BorderMode = EffectBorderMode.Soft };
             ds.DrawImage(blur);
         }
         rm.RimSurf = G.Surface(pw, ph);

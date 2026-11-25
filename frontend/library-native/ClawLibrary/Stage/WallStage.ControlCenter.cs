@@ -398,7 +398,13 @@ public sealed partial class WallStage
         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
         if (_ccOpen && _stOpen) { StResetFocused(); return; }
         if (_ccOpen && _shOpen) { ShY(); return; }
-        if (_ccOpen && (_perfOpen || _dsOpen || _syOpen)) return;
+        if (_ccOpen && _dsOpen)
+        {
+            if ((!CpActive || _cpZone == 1) && _dsFocus >= 0 && _dsFocus < _dsRows.Count && _dsRows[_dsFocus].Reset != null)
+                ResetSettingRow(_dsRows[_dsFocus]);
+            return;
+        }
+        if (_ccOpen && (_perfOpen || _syOpen)) return;
         if (_ccOpen) return;   // 控制中心样式跟着主题走（11-25），Y 不再切
         else if (CsActive) CsGameSettings();
         else OpenGameSettingsForFocus();
