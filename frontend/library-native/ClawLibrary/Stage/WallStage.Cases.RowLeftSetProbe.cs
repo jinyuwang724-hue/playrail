@@ -35,6 +35,19 @@ public sealed partial class WallStage
                 Move(Direction.Right); await Task.Delay(500);
                 for (int k = 0; k < 3; k++) { Move(Direction.Down); await Task.Delay(350); }
                 await Still($"{c:00}-in");
+                if (c == 0)
+                {
+                    // 下拉：回到第一行「开机进入」，A 展开，↓ 走一项，B 收起（不选，不改设置）
+                    for (int k = 0; k < 4; k++) { Move(Direction.Up); await Task.Delay(200); }
+                    Activate(); await Task.Delay(500);
+                    await Still("00-drop");
+                    Move(Direction.Down); await Task.Delay(400);
+                    await Still("00-drop2");
+                    Back(); await Task.Delay(400);
+                    // 连按：↓ 8 下、每 90 ms 一下（看卡不卡：日志里 cp paint 的耗时）
+                    for (int k = 0; k < 8; k++) { Move(Direction.Down); await Task.Delay(90); }
+                    await Still("00-fast");
+                }
                 if (_stZone == 1) { Back(); await Task.Delay(500); }
                 if (!_stOpen || _stZone != 0) throw new InvalidOperationException($"lost zone at {c}");
                 Move(Direction.Down); await Task.Delay(600);

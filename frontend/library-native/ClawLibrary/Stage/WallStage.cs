@@ -1236,6 +1236,7 @@ public sealed partial class WallStage : IDisposable
     public void Toast(string text)
     {
         if (_cueDepth == 0) SoundFx.Play(Sfx.Toast);   // 输入引起的提示已经有那次输入的声音
+        if (CpToast(text)) { Log.Info($"toast (page): {text}"); return; }   // Cocoon 样式页面开着：页面里的小胶囊，不弹系统通知条
         _ = ShowGlobalNotice(text);
         Log.Info($"toast: {text}");
     }

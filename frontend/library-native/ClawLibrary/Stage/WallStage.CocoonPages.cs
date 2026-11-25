@@ -6,6 +6,7 @@
 //   性能 / 显示与声音 / 系统的分类就是原来页面里的分组（功耗、CPU、风扇…）；设置页用它原来的分类。
 // 数据、读写和各行的动作全部沿用原来的页面（PerfRow 列表），这里只换画法和手柄 / 触摸的走法。
 using System.Numerics;
+using ClawLibrary.Data;
 using ClawLibrary.Engine;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Brushes;
@@ -29,11 +30,14 @@ public sealed partial class WallStage
     private sealed class CpView
     {
         public required ContainerVisual Root, ListBox;
-        public required SpriteVisual Bg, Head, Left, List, Drop;
+        public required SpriteVisual Bg, Head, Left, List, Press, Toast;
         public required CurSet Cur;
-        public CompositionDrawingSurface? HeadS, LeftS, ListS, DropS;
-        public string HeadKey = "";
+        public CompositionDrawingSurface? HeadS, LeftS, ListS, ToastS;
+        public string HeadKey = "", LeftKey = "", ListKey = "";
         public float Scroll, ListH;
+        /// <summary>手指拖过列表：先不自动滚回焦点行。</summary>
+        public bool Manual, OffsetInit;
+        public int ToastGen;
         public List<(int I, float Y, float H, string? Sub)> Lay = new();
         public List<(string Name, string? Sub, int First)> Cats = new();
         public float Slot;
@@ -44,7 +48,6 @@ public sealed partial class WallStage
     private int _cpZone;
     /// <summary>展开着的下拉：哪一行、焦点在第几个选项（-1 = 没有）。</summary>
     private int _cpDrop = -1, _cpDropSel;
-    private (uint Id, double X0, double Y0, float Scroll0, bool Drag)? _cpTouch;
 
     // 添加 / 编辑本地游戏页（_agOpen）是盖在设置页上的独立页面，输入归它自己
     private bool CpActive => _ccLight && _ccOpen && (_perfOpen || _dsOpen || _syOpen || _stOpen) && !GsOverlay && !_agOpen;
@@ -55,7 +58,7 @@ public sealed partial class WallStage
     private string CpTitle => _perfOpen ? "性能" : _dsOpen ? "显示与声音" : _syOpen ? "系统" : "设置";
 
     /// <summary>页面刚打开：焦点从左列开始（Cocoon 进设置页时停在第一个分类）。</summary>
-    private void CpReset() { _cpZone = 0; _cpDrop = -1; foreach (var v in _cpViews.Values) { v.Scroll = 0; v.HeadKey = ""; v.Cur.Shown = false; foreach (var c in v.Cur.All) { c.StopAnimation("Opacity"); c.Opacity = 0; } } }
+    private void CpReset() { _cpZone = 0; _cpDrop = -1; _cpTouchMode = false; foreach (var v in _cpViews.Values) { v.Scroll = 0; v.Manual = false; v.OffsetInit = false; v.HeadKey = v.LeftKey = v.ListKey = ""; v.Cur.Shown = false; foreach (var c in v.Cur.All) { c.StopAnimation("Opacity"); c.Opacity = 0; } } }
 
     // ---------------- 行的分类 / 种类 ----------------
 
@@ -120,35 +123,67 @@ public sealed partial class WallStage
         var box = G.Container(relative: false);
         box.Size = new Vector2(CsW, CsH);
         box.Clip = G.C.CreateInsetClip(CpListX - 40, CpTop - 14, 0, CsH - CpBottom);
-        v = new CpView { Root = root, ListBox = box, Bg = bg, Head = Sp(), Left = Sp(), List = Sp(), Drop = Sp(), Cur = null! };
+        // 按下反馈：列表里那一行压一层淡灰（跟着列表滚，所以放在列表精灵里）
+        var press = G.Sprite(G.Solid(Color.FromArgb(18, 30, 30, 60)), relative: false);
+        press.Opacity = 0;
+        v = new CpView { Root = root, ListBox = box, Bg = bg, Head = Sp(), Left = Sp(), List = Sp(), Press = press, Toast = Sp(), Cur = null! };
         box.Children.InsertAtTop(v.List);
+        v.List.Children.InsertAtTop(press);
         foreach (var x in new Visual[] { bg, v.Head, v.Left, box }) root.Children.InsertAtTop(x);
         v.Cur = CurNew(root);
-        root.Children.InsertAtTop(v.Drop);
+        v.Toast.Opacity = 0;
+        root.Children.InsertAtTop(v.Toast);
         host.Children.InsertAtTop(root);
         _cpViews[host] = v;
         return v;
     }
 
     /// <summary>四个页面的 Paint* 在浅色皮时改走这里。返回 true 表示画了（原来的画法跳过）。</summary>
+    /// <remarks>
+    /// 连按方向键时每一步都会进来：只有内容变了才重画列表 / 左列（按内容算的键比对），焦点移动只动焦点框和滚动，避免卡顿。
+    /// </remarks>
     private bool CpPaint()
     {
         foreach (var (h, cv) in _cpViews) cv.Root.IsVisible = _ccLight && h == CpHost;
         if (!CpActive || CpHost is not { } host) return false;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        try { return CpPaintCore(host); }
+        finally { double ms = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds; if (ms > 12) Log.Info($"cp paint {ms:0} ms"); }
+    }
+
+    private bool CpPaintCore(ContainerVisual host)
+    {
         var v = CpEnsure(host);
         v.Root.IsVisible = true;
         v.Root.Scale = new Vector3(_ccK / 1.5f, _ccK / 1.5f, 1);
         var rows = SettingsRows;
+        if (_cpDrop >= rows.Count || _cpDrop >= 0 && CpOpts(rows[_cpDrop]) == null) _cpDrop = -1;
         var cats = CpCats(rows);
         v.Cats = cats;
         int cat = Math.Clamp(CpCatIndex(rows, cats), 0, cats.Count - 1);
         CpPaintHead(v);
-        CpPaintLeft(v, cats, cat);
+        string leftKey = $"{CpTitle}|{cat}|{string.Join(",", cats.Select(c => c.Name))}|{CpPanelKey(cats[cat].Name)}";
+        if (leftKey != v.LeftKey) { v.LeftKey = leftKey; CpPaintLeft(v, cats, cat); }
         var vis = CpVisible(rows, cats, cat);
-        CpPaintList(v, rows, vis);
+        v.Lay = CpLayout(rows, vis, out var groups);
+        string listKey = CpListKey(rows, vis);
+        if (listKey != v.ListKey) { v.ListKey = listKey; CpPaintList(v, rows, groups); }
         CpScrollAndFocus(v, rows, cats, cat);
-        CpPaintDrop(v, rows);
         return true;
+    }
+
+    /// <summary>列表内容的键：行的文字、值、选中项、数值、可用 / 改动标记，加上展开着的下拉。</summary>
+    private string CpListKey(List<PerfRow> rows, List<int> vis)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(_cpDrop).Append('|').Append(CpTitle).Append('|');
+        foreach (int i in vis)
+        {
+            var r = rows[i];
+            sb.Append(r.Section ? '#' : '-').Append(r.Title).Append('\u0001').Append(r.Value).Append('\u0001').Append(r.Choice).Append('\u0001').Append(r.Number)
+              .Append(r.Disabled ? 'd' : ' ').Append(r.Changed ? 'c' : ' ').Append(r.Indent).Append('\u0002');
+        }
+        return sb.ToString();
     }
 
     private CompositionDrawingSurface CpSurf(ref CompositionDrawingSurface? s, SpriteVisual v, float x, float y, float w, float h)
@@ -218,7 +253,10 @@ public sealed partial class WallStage
         using (ds.CreateLayer(1, card)) CpPanel(ds, CpLeftX, top, CpLeftW, bottom - top, cats[sel].Name);
     }
 
-    /// <summary>排右列：每行的 y、高、灰色说明；遇到分组标题（设置页）留出标题高度、另起一张卡片。</summary>
+    /// <summary>
+    /// 排右列：每行的 y、高、灰色说明；遇到分组标题（设置页）另起一张卡片。
+    /// 展开着的下拉（Cocoon 的做法，同游戏编辑页）：那一行在原地变高，选项卡片整个装进行里，下面的行往下推。
+    /// </summary>
     private List<(int I, float Y, float H, string? Sub)> CpLayout(List<PerfRow> rows, List<int> vis, out List<(float Y0, float Y1, List<float> Seps)> groups)
     {
         var lay = new List<(int, float, float, string?)>();
@@ -235,7 +273,8 @@ public sealed partial class WallStage
                 continue;
             }
             string? sub = CpSub(r);
-            float h = CpIsSlider(r) ? CpRowSliderH : sub != null ? CpRowSubH : CpRowH;
+            float h = CpBaseH(r, sub);
+            if (i == _cpDrop && CpOpts(r) is { Length: > 0 } o) h += o.Length * CpOptH + 34;
             if (!open) { groups.Add((y, y + h, new List<float>())); open = true; }
             else { var g = groups[^1]; g.Seps.Add(y - CpSep); groups[^1] = (g.Y0, y + h, g.Seps); }
             lay.Add((i, y, h, sub));
@@ -244,13 +283,25 @@ public sealed partial class WallStage
         return lay;
     }
 
-    private void CpPaintList(CpView v, List<PerfRow> rows, List<int> vis)
+    private static float CpBaseH(PerfRow r, string? sub) => CpIsSlider(r) ? CpRowSliderH : sub != null ? CpRowSubH : CpRowH;
+
+    private const float CpOptH = 88, CpPickW = 400;
+
+    /// <summary>展开的下拉里第 k 个选项的方框（列表内坐标）：胶囊正下方。</summary>
+    private static (float X, float Y, float W, float H) CpOptRect(float rowY, int k) =>
+        (CpListW - 34 - CpPickW, rowY + CpRowH / 2 + 40 + 14 + k * CpOptH, CpPickW, CpOptH);
+
+    private void CpPaintList(CpView v, List<PerfRow> rows, List<(float Y0, float Y1, List<float> Seps)> groups)
     {
-        v.Lay = CpLayout(rows, vis, out var groups);
         float H = v.Lay.Count == 0 ? 200 : v.Lay[^1].Y + v.Lay[^1].H;
         v.ListH = H;
         float pad = 16;
-        using var ds = CanvasComposition.CreateDrawingSession(CpSurf(ref v.ListS, v.List, CpListX - pad, CpTop - pad - v.Scroll, CpListW + pad * 2, H + pad * 2));
+        // 只换画布和尺寸，不写 Offset：滚动的弹簧可能正在走，写一下就停了（位置由 CpScrollAndFocus / 触摸管）
+        float R0 = CsRaster, lw = CpListW + pad * 2, lh = H + pad * 2 + 40;
+        int pw = (int)Math.Ceiling(lw * R0), ph = (int)Math.Ceiling(lh * R0);
+        if (v.ListS == null || (int)v.ListS.Size.Width != pw || (int)v.ListS.Size.Height != ph) { v.ListS?.Dispose(); v.ListS = G.Surface(pw, ph); ((CompositionSurfaceBrush)v.List.Brush).Surface = v.ListS; }
+        v.List.Size = new Vector2(lw, lh);
+        using var ds = CanvasComposition.CreateDrawingSession(v.ListS);
         ds.Clear(Colors.Transparent);
         ds.Transform = Matrix3x2.CreateTranslation(pad, pad) * Matrix3x2.CreateScale(CsRaster);
         ds.Antialiasing = CanvasAntialiasing.Antialiased;
@@ -265,6 +316,7 @@ public sealed partial class WallStage
 
     private void CpPaintRow(CanvasDrawingSession ds, PerfRow r, int index, float y, float h, string? sub)
     {
+        h = CpBaseH(r, sub);   // 展开的下拉：行变高了，但标题和胶囊还在原来的高度里
         float cy = y + h / 2, R = CpListW - 34, tx = 44 + r.Indent * 1.5f;
         using var layer = r.Disabled ? ds.CreateLayer(0.4f) : null;
         if (r.Changed) ds.FillCircle(24, cy, 6, CpAccentInk);
@@ -309,7 +361,15 @@ public sealed partial class WallStage
         {
             var opts = CpOpts(r)!;
             string val = r.Choice >= 0 && r.Choice < opts.Length ? opts[r.Choice] : r.Value;
-            RsPaintPickPill(ds, R - 400, cy - 40, 400, 80, val, _cpDrop == index, 32);
+            bool open = _cpDrop == index;
+            RsPaintPickPill(ds, R - CpPickW, cy - 40, CpPickW, 80, val, open, 32);
+            if (open)
+            {
+                // 展开：选项卡片装在这一行里、胶囊正下方（Cocoon 的下拉）
+                var (ox, oy, ow, oh) = CpOptRect(y, 0);
+                var tmp = new RsRow { Title = r.Title, Options = opts, Current = () => r.Choice };
+                RsPaintOptionCard(ds, tmp, ox, oy, ow, oh, 32);
+            }
         }
         else if (CpIsSlider(r))
         {
@@ -387,59 +447,95 @@ public sealed partial class WallStage
         ds.DrawGeometry(g, RsSub, 4, RwRoundStroke);
     }
 
-    /// <summary>滚到焦点行露出来（上下各留 60），焦点框到焦点行 / 焦点分类。</summary>
+    /// <summary>
+    /// 滚到焦点行露出来（上下各留 60；展开的下拉整行露出来），焦点框到焦点行 / 展开的选项 / 焦点分类。
+    /// 手指拖过列表后（Manual）不再自动滚，直到下一次用手柄走焦点。
+    /// </summary>
     private void CpScrollAndFocus(CpView v, List<PerfRow> rows, List<(string Name, string? Sub, int First)> cats, int cat)
     {
-        int f = SettingsFocus;
+        int f = _cpDrop >= 0 ? _cpDrop : SettingsFocus;
         var hit = v.Lay.FirstOrDefault(e => e.I == f);
         bool inList = CpZone == 1 && hit.H > 0;
-        float view = CpBottom - CpTop, target = v.Scroll;
-        if (inList)
+        float view = CpBottom - CpTop, max = Math.Max(0, v.ListH - view + 30), target = Math.Clamp(v.Scroll, 0, max);
+        if (inList && !(v.Manual && _cpTouchMode))
         {
-            if (hit.Y - 60 < target) target = hit.Y - 60;
-            if (hit.Y + hit.H + 60 > target + view) target = hit.Y + hit.H + 60 - view;
+            float top = hit.Y - 60, bottom = hit.Y + hit.H + 60;
+            if (_cpDrop >= 0) { var (_, oy, _, oh) = CpOptRect(hit.Y, _cpDropSel); top = Math.Min(top, oy - 60); bottom = oy + oh + 80; }
+            if (bottom > target + view) target = bottom - view;
+            if (top < target) target = top;
+            target = Math.Clamp(target, 0, max);
         }
-        target = Math.Clamp(target, 0, Math.Max(0, v.ListH - view + 30));
-        if (target != v.Scroll)
+        if (!v.OffsetInit) { v.OffsetInit = true; v.Scroll = target; v.List.Offset = new Vector3(CpListX - 16, CpTop - 16 - target, 0); }
+        else if (MathF.Abs(target - v.Scroll) > 0.5f)
         {
             v.Scroll = target;
             var to = new Vector3(CpListX - 16, CpTop - 16 - target, 0);
             if (Reduced) RwJump(v.List, to); else v.List.StartAnimation("Offset", RwSpring(to));
         }
-        else v.List.Offset = new Vector3(CpListX - 16, CpTop - 16 - v.Scroll, 0);
-        if (_cpDrop >= 0) return;   // 下拉开着：焦点框在选项上（CpPaintDrop）
+        if (_cpTouchMode) return;   // 触摸操作时不显示焦点框
         bool first = !v.Cur.Shown;
-        if (inList) CurToCocoon(v.Cur, CpListX, CpTop + hit.Y - v.Scroll, CpListW, hit.H, 30, move: !first);
+        if (inList && _cpDrop >= 0)
+        {
+            var (ox, oy, ow, oh) = CpOptRect(hit.Y, _cpDropSel);
+            CurToCocoon(v.Cur, CpListX + ox, CpTop + oy - target, ow, oh, 24, move: !first);
+        }
+        else if (inList) CurToCocoon(v.Cur, CpListX, CpTop + hit.Y - target, CpListW, hit.H, 30, move: !first);
         else if (CpZone == 0 && cats.Count > 0) CurToCocoon(v.Cur, CpLeftX, CpTop + cat * v.Slot + 4, CpLeftW, v.Slot - 8, MathF.Min(30, (v.Slot - 8) / 2), move: !first);
         else { if (v.Cur.Shown) CurShow(v.Cur, false, 60); return; }
-        if (first) CurShow(v.Cur, true, 160, 120);
+        if (first) CurShow(v.Cur, true, 140, 60);
     }
 
-    /// <summary>展开的下拉：选项卡片贴在胶囊下面（放不下就放上面），焦点框在选项上。</summary>
-    private void CpPaintDrop(CpView v, List<PerfRow> rows)
+    /// <summary>左列读数卡内容的键（数据没变就不重画）。</summary>
+    private string CpPanelKey(string cat)
     {
-        if (_cpDrop < 0 || _cpDrop >= rows.Count || CpOpts(rows[_cpDrop]) is not { Length: > 0 } opts)
+        if (_perfOpen)
         {
-            v.Drop.IsVisible = false;
-            return;
+            var v = _perfView;
+            var last = _perfPower.Count > 0 ? _perfPower.Last() : 0;
+            return $"{cat}|{Num(v?["actual"]?["package"]):0.0}|{Num(v?["fan"]?["rpm1"]):0}|{Num(v?["live"]?["cpuTemp"]):0}|{_cpuFreq?.Mhz:0}|{_perfPower.Count}|{last:0.0}|{_perfCurveEdit}|{_perfPoint}|{(_perfS == null ? "" : PerfPresetText())}|{string.Join(",", PerfCurve(Str(_perfS?["fan"]?["mode"]) ?? "balanced"))}";
         }
-        var hit = v.Lay.FirstOrDefault(e => e.I == _cpDrop);
-        float optH = 88, w = 400, h = opts.Length * optH;
-        float x = CpListX + CpListW - 34 - w, rowTop = CpTop + hit.Y - v.Scroll;
-        float y = rowTop + hit.H / 2 + 48;
-        if (y + h > CpBottom) y = Math.Max(CpTop - 20, rowTop + hit.H / 2 - 48 - h);
-        float pad = 24;
-        using (var ds = CanvasComposition.CreateDrawingSession(CpSurf(ref v.DropS, v.Drop, x - pad, y - pad, w + pad * 2, h + pad * 2)))
+        if (_dsOpen) return _dsView?.ToJsonString() ?? "";
+        if (_syOpen) { var b = SystemInfo.Battery(); return $"{b.Percent}|{b.OnAc}|{_syView?["battery"]?.ToJsonString()}"; }
+        return "";
+    }
+
+    // ---------------- 提示（11-25 jinyu：不用旧的系统通知条；Cocoon 那种页面底部的白色小胶囊） ----------------
+
+    /// <summary>页面开着时的提示：底部居中一颗白胶囊（左边一个圆点图标），上浮淡入，2.4 s 后淡出。</summary>
+    private bool CpToast(string text)
+    {
+        if (!CpActive || CpHost is not { } host || !_cpViews.TryGetValue(host, out var v)) return false;
+        float R = CsRaster, h = 84, pad = 30;
+        float tw;
+        using (var f0 = new CanvasTextFormat { FontFamily = RmFont(text), FontSize = 30, FontWeight = RsWt(text, 500), WordWrapping = CanvasWordWrapping.NoWrap })
+        using (var l0 = new CanvasTextLayout(G.Device, text, f0, 1400, 100)) tw = (float)l0.LayoutBounds.Width;
+        float w = Math.Min(1500, tw + 130), x = CsW / 2 - w / 2, y = CpBottom - h - 30;
+        string kind = NoticeKind(text);
+        using (var ds = CanvasComposition.CreateDrawingSession(CpSurf(ref v.ToastS, v.Toast, x - pad, y - pad, w + pad * 2, h + pad * 2)))
         {
             ds.Clear(Colors.Transparent);
-            ds.Transform = Matrix3x2.CreateTranslation(pad - x, pad - y) * Matrix3x2.CreateScale(CsRaster);
-            var r = rows[_cpDrop];
-            var tmp = new RsRow { Title = r.Title, Options = opts, Current = () => r.Choice };
-            RsPaintOptionCard(ds, tmp, x, y, w, optH, 32);
+            ds.Transform = Matrix3x2.CreateTranslation(pad - x, pad - y) * Matrix3x2.CreateScale(R);
+            ds.Antialiasing = CanvasAntialiasing.Antialiased;
+            CpCard(ds, x, y, w, h, null, h / 2);
+            var c1 = kind == "error" ? Color.FromArgb(255, 0xFF, 0x7A, 0x84) : kind == "warning" ? Color.FromArgb(255, 0xFF, 0xC1, 0x6B) : RwC1;
+            var c2 = kind == "error" ? RmRed : kind == "warning" ? Color.FromArgb(255, 0xF0, 0x8A, 0x24) : RwC2;
+            using (var br = new CanvasLinearGradientBrush(ds.Device, c1, c2) { StartPoint = new Vector2(x + 26, y + 22), EndPoint = new Vector2(x + 66, y + 62) })
+                ds.FillCircle(x + 46, y + h / 2, 18, br);
+            ds.FillCircle(x + 46, y + h / 2, 6, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
+            using var f = new CanvasTextFormat { FontFamily = RmFont(text), FontSize = 30, FontWeight = RsWt(text, 500), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
+            ds.DrawText(text, new Windows.Foundation.Rect(x + 84, y, w - 110, h), RmInk, f);
         }
-        v.Drop.IsVisible = true;
-        CurToCocoon(v.Cur, x, y + _cpDropSel * optH, w, optH, 24, move: true);
-        if (!v.Cur.Shown) CurShow(v.Cur, true, 90);
+        int gen = ++v.ToastGen;
+        var home = v.Toast.Offset;
+        if (Reduced) v.Toast.Opacity = 1;
+        else
+        {
+            v.Toast.Offset = home + new Vector3(0, 24, 0);
+            v.Toast.StartAnimation("Offset", CsV3(home, 220, new Bezier(0.2f, 0.8f, 0.2f, 1f)));
+            v.Toast.StartAnimation("Opacity", CsS(1, 160, Bezier.EaseOut));
+        }
+        After(2400, () => { if (v.ToastGen == gen) v.Toast.StartAnimation("Opacity", CsS(0, 220, Bezier.EaseOut)); });
+        return true;
     }
 
     // ---------------- 图标（黑色实心，Cocoon 设置页左列那样） ----------------
@@ -587,16 +683,26 @@ public sealed partial class WallStage
         return -1;
     }
 
-    /// <summary>手柄方向键。处理了返回 true；没处理的交给原来的页面（设置页的左列、曲线编辑…）。</summary>
+    /// <summary>
+    /// 手柄方向键（11-25 jinyu：去掉旧页面「←→ 调选项」的走法）。四个页面统一：
+    ///   左列：↑↓ 换分类，→ 进右列（焦点落在第一行）；
+    ///   右列：↑↓ 在当前分类里走；←→ 只调滑块和「− 值 +」步进，别的行 ← 回左列；开关 / 下拉一律按 A；
+    ///   下拉展开着：↑↓ 选项，←→ 不动。
+    /// 设置页的特殊状态（打字中、曲线编辑）交回原来的页面。
+    /// </summary>
     private bool CpMove(Direction dir)
     {
         if (!CpActive) return false;
+        if (_stOpen && StEditing) return false;
+        if (_perfOpen && _perfCurveEdit) return false;
         var rows = SettingsRows;
         int d = dir is Direction.Up or Direction.Left ? -1 : 1;
+        bool horiz = dir is Direction.Left or Direction.Right;
+        CpTouchMode(false);
         if (_cpDrop >= 0)
         {
             var opts = CpOpts(rows[_cpDrop])!;
-            if (dir is Direction.Left or Direction.Right) { Cue(Sfx.Bump); return true; }
+            if (horiz) { Cue(Sfx.Bump); return true; }
             int to = _cpDropSel + d;
             if (to < 0 || to >= opts.Length) { Cue(Sfx.Bump); return true; }
             _cpDropSel = to;
@@ -604,52 +710,73 @@ public sealed partial class WallStage
             CpRepaint();
             return true;
         }
-        if (_perfOpen && _perfCurveEdit) return false;
-        var r = CpRow;
-        bool horiz = dir is Direction.Left or Direction.Right;
-        if (_stOpen)
-        {
-            if (_stZone == 1 && horiz && r is { } sr && CpIsSlider(sr)) { CpStep(sr, d); return true; }
-            if (_stZone == 1 && horiz && r is { } pr && CpIsPick(pr) && !pr.Disabled) { CpPickStep(pr, d); return true; }
-            if (_stZone == 1 && horiz && r is { Numeric: true, Disabled: false, Step: not null } nr) { Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown); nr.Step(d); return true; }
-            return false;   // 其余照设置页原来的走法（左列分类、右列上下、左右切值 / 回左列）
-        }
         var cats = CpCats(rows);
         int cat = CpCatIndex(rows, cats);
-        if (_cpZone == 0)
+        if (CpZone == 0)
         {
-            if (dir == Direction.Right) { _cpZone = 1; Cue(Sfx.Nav); CpRepaint(); return true; }
+            if (dir == Direction.Right) { CpEnterList(rows, cats, cat); return true; }
             if (dir == Direction.Left) { Cue(Sfx.Bump); return true; }
             int to = cat + d;
-            while (to >= 0 && to < cats.Count && CpFirstIn(rows, cats[to].First) < 0) to += d;
+            if (!_stOpen) while (to >= 0 && to < cats.Count && CpFirstIn(rows, cats[to].First) < 0) to += d;
             if (to < 0 || to >= cats.Count) { Cue(Sfx.Bump); return true; }
-            SettingsFocus = CpFirstIn(rows, cats[to].First);
             CuePan(0.5f);
-            CpRepaint();
+            if (_stOpen) { StCategoryJump(to); _stZone = 0; CpRepaint(); }
+            else { SettingsFocus = CpFirstIn(rows, cats[to].First); CpRepaint(); }
             return true;
         }
+        var r = CpRow;
         if (!horiz)
         {
             int f = SettingsFocus;
-            for (int i = f + d; i >= 0 && i < rows.Count && !rows[i].Section; i += d)
-                if (CpFocusable(rows[i])) { SettingsFocus = i; CuePan(0.5f); CpRepaint(); return true; }
+            for (int i = f + d; i >= 0 && i < rows.Count; i += d)
+            {
+                if (rows[i].Section && !_stOpen) break;   // 性能类页面：不跨分类
+                if (!CpFocusable(rows[i])) continue;
+                SettingsFocus = i;
+                if (_stOpen && _stArmed != null) { _stArmed = null; BuildStRows(); }
+                CuePan(0.5f);
+                CpRepaint();
+                return true;
+            }
             Cue(Sfx.Bump);
             return true;
         }
-        if (r == null) return true;
-        if (CpIsSlider(r)) { CpStep(r, d); return true; }
-        if (CpIsPick(r) && !r.Disabled) { CpPickStep(r, d); return true; }
-        if (r.Numeric && r.Step != null && !r.Disabled) { Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown); r.Step(d); return true; }
-        if (r.Step != null && !r.Disabled) { RowStep(r, d); return true; }
-        if (dir == Direction.Left) { _cpZone = 0; Cue(Sfx.Back); CpRepaint(); return true; }
+        if (r != null && !r.Disabled && CpIsSlider(r)) { CpStep(r, d); return true; }
+        if (r != null && !r.Disabled && CpIsStepper(r)) { Cue(d > 0 ? Sfx.SliderUp : Sfx.SliderDown); r.Step!(d); return true; }
+        if (dir == Direction.Left) { CpLeaveList(); return true; }
         Cue(Sfx.Bump);
         return true;
     }
 
-    /// <summary>A：下拉展开 / 选定；左列进右列；滑块不响应；其余（开关、进下一步）交给原来的页面。</summary>
+    /// <summary>「− 值 +」步进行：没有范围、也不是选项列表，只能一档一档走。</summary>
+    private static bool CpIsStepper(PerfRow r) => r.Numeric && !CpIsSlider(r) && !CpIsPick(r) && r.Step != null;
+
+    /// <summary>左列 → 右列：焦点落在这一分类的第一行，列表滚回顶上。</summary>
+    private void CpEnterList(List<PerfRow> rows, List<(string Name, string? Sub, int First)> cats, int cat)
+    {
+        int first = _stOpen ? FirstStRow() : CpFirstIn(rows, cats[cat].First);
+        if (first < 0 || first >= rows.Count || !CpFocusable(rows[first])) { Cue(Sfx.Bump); return; }
+        Cue(Sfx.Nav);
+        if (_stOpen) { _stFocus = first; _stZone = 1; } else { SettingsFocus = first; _cpZone = 1; }
+        if (CpHost is { } h && _cpViews.TryGetValue(h, out var v)) { v.Manual = false; v.Scroll = 0; }
+        CpRepaint();
+    }
+
+    private void CpLeaveList()
+    {
+        Cue(Sfx.Back);
+        _cpDrop = -1;
+        if (_stOpen) { _stZone = 0; _stArmed = null; } else _cpZone = 0;
+        CpRepaint();
+    }
+
+    /// <summary>A：左列进右列；下拉展开 / 选定；滑块不响应；步进行执行它自己的动作；开关和 ▸ 交给原来的页面。</summary>
     private bool CpActivate()
     {
         if (!CpActive) return false;
+        if (_stOpen && StEditing) return false;
+        if (_perfOpen && _perfCurveEdit) return false;
+        CpTouchMode(false);
         var rows = SettingsRows;
         if (_cpDrop >= 0)
         {
@@ -661,125 +788,233 @@ public sealed partial class WallStage
             CpRepaint();
             return true;
         }
-        if (_perfOpen && _perfCurveEdit) return false;
-        if (CpSectioned && _cpZone == 0) { _cpZone = 1; Cue(Sfx.Nav); CpRepaint(); return true; }
-        if (CpZone != 1 || CpRow is not { } r) return false;
+        var cats = CpCats(rows);
+        if (CpZone == 0) { CpEnterList(rows, cats, CpCatIndex(rows, cats)); return true; }
+        if (CpRow is not { } r) return true;
         if (r.Disabled) { Cue(Sfx.Bump); return true; }
-        if (CpIsPick(r)) { _cpDrop = SettingsFocus; _cpDropSel = Math.Max(0, r.Choice); Cue(Sfx.MenuIn); CpRepaint(); return true; }
+        if (CpIsPick(r)) { _cpDrop = SettingsFocus; _cpDropSel = Math.Clamp(r.Choice, 0, CpOpts(r)!.Length - 1); Cue(Sfx.MenuIn); CpRepaint(); return true; }
         if (CpIsSlider(r)) { Cue(Sfx.Bump); return true; }
-        if (r.Numeric) { if (r.Press != null) { Cue(Sfx.Nav); r.Press(); } else Cue(Sfx.Bump); return true; }   // 步进行：A 不进旧的「编辑数值」模式
-        return false;
+        if (CpIsStepper(r) || r.Numeric) { if (r.Press != null) { Cue(Sfx.Nav); r.Press(); } else Cue(Sfx.Bump); return true; }
+        if (_stOpen) return false;   // 设置页的开关 / 动作 / 进下一级：照原来的 StActivate（含「再按一次确认」）
+        RowPress(r);
+        CpRepaint();
+        return true;
     }
 
-    /// <summary>B：先收下拉；性能类页面右列退回左列；其余交给原来的页面（设置页同样右列 → 左列 → 退出）。</summary>
+    /// <summary>B：先收下拉；右列退回左列；左列交给原来的页面（设置页的子列表一层层退、最后关页面）。</summary>
     private bool CpBack()
     {
         if (!CpActive) return false;
-        if (_cpDrop >= 0) { _cpDrop = -1; Cue(Sfx.Back); CpRepaint(); return true; }
+        if (_stOpen && StEditing) return false;
         if (_perfOpen && _perfCurveEdit) return false;
-        if (CpSectioned && _cpZone == 1) { _cpZone = 0; Cue(Sfx.Back); CpRepaint(); return true; }
+        if (_cpDrop >= 0) { _cpDrop = -1; Cue(Sfx.Back); CpRepaint(); return true; }
+        if (_stOpen && (_stBrowse != null || _lgPage != LgPage.None)) return false;   // 文件夹浏览 / 本地游戏列表：原来的 B 一层层退
+        if (CpZone == 1) { CpLeaveList(); return true; }
         return false;
     }
 
-    // ---------------- 触摸 ----------------
+    // ---------------- 触摸（手机那样：点按直接生效、拖动滚动带惯性、拖滑块、按下有反馈、触摸时不显示焦点框） ----------------
 
     private (float X, float Y) CpLocal(double x, double y) { float s = _ccK / 1.5f; return ((float)(x / s), (float)(y / s)); }
+
+    private sealed class CpTouchState
+    {
+        public uint Id;
+        public float X0, Y0, Scroll0, LastY;
+        public long LastT;
+        public float Vel;          // 设计单位 / 秒
+        public bool Drag, Slider;
+        public int Row = -1;
+    }
+    private CpTouchState? _cpT;
+    private bool _cpTouchMode;
+
+    /// <summary>触摸操作时把焦点框藏起来（手机上没有焦点框）；手柄一动就回来。</summary>
+    private void CpTouchMode(bool on)
+    {
+        if (_cpTouchMode == on) return;
+        _cpTouchMode = on;
+        if (CpHost is { } h && _cpViews.TryGetValue(h, out var v))
+        {
+            if (on) CurShow(v.Cur, false, 80);
+            else v.Cur.Shown = false;   // 下次画焦点时按「第一次」处理：直接出现在当前行
+        }
+    }
 
     private bool CpPointerDown(PointerRoutedEventArgs e, Microsoft.UI.Input.PointerPoint pt)
     {
         if (!CpActive || CpHost is not { } host || !_cpViews.TryGetValue(host, out var v)) return false;
-        _cpTouch = (pt.PointerId, pt.Position.X, pt.Position.Y, v.Scroll, false);
+        if (_stOpen && StEditing) return false;
+        // 屏幕左缘留给「边缘右划返回」
+        if (e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx) return false;
+        var (x, y) = CpLocal(pt.Position.X, pt.Position.Y);
+        CpTouchMode(true);
+        v.List.StopAnimation("Offset");
+        v.List.Offset = new Vector3(CpListX - 16, CpTop - 16 - v.Scroll, 0);
+        var t = new CpTouchState { Id = pt.PointerId, X0 = x, Y0 = y, Scroll0 = v.Scroll, LastY = y, LastT = NowMs };
+        var rows = SettingsRows;
+        if (x >= CpListX && x <= CpListX + CpListW && y >= CpTop && y <= CpBottom)
+        {
+            float ly = y - CpTop + v.Scroll;
+            var hit = v.Lay.FirstOrDefault(l => ly >= l.Y && ly < l.Y + l.H);
+            if (hit.H > 0)
+            {
+                t.Row = hit.I;
+                var r = rows[hit.I];
+                // 按在滑块轨道上：直接拖值（不滚列表）
+                if (CpIsSlider(r) && !r.Disabled && r.SetNumber != null)
+                {
+                    var (_, sx0, sx1, _) = CpSliderX(44 + r.Indent * 1.5f, CpListW - 34);
+                    float lx = x - CpListX;
+                    if (ly > hit.Y + hit.H - 90 && lx >= sx0 - 30 && lx <= sx1 + 30) { t.Slider = true; CpSliderTo(r, lx, sx0, sx1); }
+                }
+                if (!t.Slider) CpPressFx(v, hit.Y, hit.H, true);
+            }
+        }
+        _cpT = t;
         _rootEl.CapturePointer(e.Pointer);
         e.Handled = true;
         return true;
     }
 
+    private void CpSliderTo(PerfRow r, float lx, float x0, float x1)
+    {
+        float f = Math.Clamp((lx - x0) / (x1 - x0), 0, 1);
+        int inc = Math.Max(1, r.Increment);
+        int n = Math.Clamp(r.Minimum + (int)MathF.Round(f * (r.Maximum - r.Minimum) / inc) * inc, r.Minimum, r.Maximum);
+        if (n == r.Number) return;
+        Cue(n > r.Number ? Sfx.SliderUp : Sfx.SliderDown, MathF.Pow(2, f - 0.5f));
+        r.SetNumber!(n);
+        CpRepaint();
+    }
+
+    /// <summary>按下的那一行压一层淡灰（手机列表的按下反馈），抬手 / 开始拖动时淡掉。</summary>
+    private void CpPressFx(CpView v, float rowY, float rowH, bool on)
+    {
+        if (on)
+        {
+            v.Press.Offset = new Vector3(16, 16 + rowY, 0);
+            v.Press.Size = new Vector2(CpListW, rowH);
+            v.Press.StopAnimation("Opacity");
+            v.Press.Opacity = 1;
+        }
+        else v.Press.StartAnimation("Opacity", CsS(0, 160, Bezier.EaseOut));
+    }
+
     private bool CpPointerMove(PointerRoutedEventArgs e)
     {
-        if (_cpTouch is not { } t || e.Pointer.PointerId != t.Id) return false;
+        if (_cpT is not { } t || e.Pointer.PointerId != t.Id) return false;
         e.Handled = true;
         if (CpHost is not { } host || !_cpViews.TryGetValue(host, out var v)) return true;
-        var pt = e.GetCurrentPoint(_rootEl).Position;
-        var (x0, y0) = CpLocal(t.X0, t.Y0);
-        var (x, y) = CpLocal(pt.X, pt.Y);
-        if (!t.Drag && Math.Abs(y - y0) < 24) return true;
-        if (x0 < CpListX) return true;
-        _cpTouch = t with { Drag = true };
-        float view = CpBottom - CpTop;
-        v.Scroll = Math.Clamp(t.Scroll0 - (y - y0), 0, Math.Max(0, v.ListH - view + 30));
-        v.List.StopAnimation("Offset");
-        v.List.Offset = new Vector3(CpListX - 16, CpTop - 16 - v.Scroll, 0);
-        if (v.Cur.Shown) CurShow(v.Cur, false, 60);
+        var p = e.GetCurrentPoint(_rootEl).Position;
+        var (x, y) = CpLocal(p.X, p.Y);
+        var rows = SettingsRows;
+        if (t.Slider && t.Row >= 0 && t.Row < rows.Count)
+        {
+            var r = rows[t.Row];
+            var (_, sx0, sx1, _) = CpSliderX(44 + r.Indent * 1.5f, CpListW - 34);
+            CpSliderTo(r, x - CpListX, sx0, sx1);
+            return true;
+        }
+        if (!t.Drag && Math.Abs(y - t.Y0) < 18) return true;
+        if (t.X0 < CpListX) return true;
+        if (!t.Drag) { t.Drag = true; CpPressFx(v, 0, 0, false); }
+        long now = NowMs;
+        float dt = Math.Max(1, now - t.LastT) / 1000f;
+        t.Vel = t.Vel * 0.4f + (y - t.LastY) / dt * 0.6f;
+        t.LastY = y; t.LastT = now;
+        float max = Math.Max(0, v.ListH - (CpBottom - CpTop) + 30);
+        float s = t.Scroll0 - (y - t.Y0);
+        // 拖过头：橡皮筋（超出部分只走三分之一）
+        if (s < 0) s /= 3; else if (s > max) s = max + (s - max) / 3;
+        v.Scroll = s;
+        v.Manual = true;
+        v.List.Offset = new Vector3(CpListX - 16, CpTop - 16 - s, 0);
         return true;
     }
 
     private bool CpPointerUp(PointerRoutedEventArgs e, bool canceled = false)
     {
-        if (_cpTouch is not { } t || e.Pointer.PointerId != t.Id) return false;
-        _cpTouch = null;
+        if (_cpT is not { } t || e.Pointer.PointerId != t.Id) return false;
+        _cpT = null;
         _rootEl.ReleasePointerCapture(e.Pointer);
         e.Handled = true;
-        if (canceled || t.Drag || CpHost is not { } host || !_cpViews.TryGetValue(host, out var v)) return true;
-        var (x, y) = CpLocal(t.X0, t.Y0);
+        if (CpHost is not { } host || !_cpViews.TryGetValue(host, out var v)) return true;
+        CpPressFx(v, 0, 0, false);
+        if (t.Slider || canceled) return true;
+        if (t.Drag)
+        {
+            // 惯性：按松手时的速度再滑一段，弹簧停到范围内
+            float max = Math.Max(0, v.ListH - (CpBottom - CpTop) + 30);
+            float target = Math.Clamp(v.Scroll - t.Vel * 0.32f, 0, max);
+            v.Scroll = target;
+            var to = new Vector3(CpListX - 16, CpTop - 16 - target, 0);
+            if (Reduced) RwJump(v.List, to);
+            else
+            {
+                var a = G.C.CreateVector3KeyFrameAnimation();
+                a.InsertKeyFrame(1, to, G.Ease(new Bezier(0.15f, 0.7f, 0.25f, 1f)));
+                a.Duration = TimeSpan.FromMilliseconds(Math.Clamp(Math.Abs(t.Vel) * 0.5f, 220, 650));
+                v.List.StartAnimation("Offset", a);
+            }
+            return true;
+        }
+        float x = t.X0, y = t.Y0;
         MarkInput();
         var rows = SettingsRows;
         WithCue(Sfx.None, () =>
         {
-            // 下拉开着：点选项 = 选定，点别处 = 收起
+            if (x < 200 && y < 130) { Back(); return; }   // 左上「B ←」
+            // 下拉展开着：点到选项 = 选定，点到别处 = 收起
             if (_cpDrop >= 0)
             {
-                if (v.Drop.IsVisible && x >= v.Drop.Offset.X + 24 && x <= v.Drop.Offset.X + v.Drop.Size.X - 24 && y >= v.Drop.Offset.Y + 24 && y <= v.Drop.Offset.Y + v.Drop.Size.Y - 24)
-                { _cpDropSel = (int)((y - v.Drop.Offset.Y - 24) / 88); CpActivate(); }
-                else CpBack();
+                var dh = v.Lay.FirstOrDefault(l => l.I == _cpDrop);
+                float ly0 = y - CpTop + v.Scroll;
+                var (ox, oy, ow, _) = CpOptRect(dh.Y, 0);
+                int k = (int)MathF.Floor((ly0 - oy) / CpOptH);
+                if (dh.H > 0 && x - CpListX >= ox && x - CpListX <= ox + ow && k >= 0 && k < CpOpts(rows[_cpDrop])!.Length)
+                { var dr = rows[_cpDrop]; _cpDrop = -1; Cue(Sfx.Positive); CpChoose(dr, k); CpRepaint(); }
+                else { _cpDrop = -1; Cue(Sfx.Back); CpRepaint(); }
                 return;
             }
-            if (x < 200 && y < 130) { Back(); return; }   // 左上「B ←」
             if (x >= CpLeftX && x <= CpLeftX + CpLeftW && y >= CpTop && v.Slot > 0)
             {
                 int c = (int)((y - CpTop) / v.Slot);
                 if (c < 0 || c >= v.Cats.Count) return;
                 Cue(Sfx.Nav);
-                if (_stOpen) { _stZone = 0; StCategoryJump(c); return; }
-                int first = CpFirstIn(rows, v.Cats[c].First);
-                if (first >= 0) { SettingsFocus = first; _cpZone = 0; CpRepaint(); }
-                return;
-            }
-            if (x < CpListX || x > CpListX + CpListW || y < CpTop) return;
-            float ly = y - CpTop + v.Scroll;
-            var hit = v.Lay.FirstOrDefault(e => ly >= e.Y && ly < e.Y + e.H);
-            if (hit.H <= 0) return;
-            var r = rows[hit.I];
-            SettingsFocus = hit.I;
-            if (_stOpen) _stZone = 1; else _cpZone = 1;
-            float R = CpListX + CpListW - 34;
-            if (CpIsSlider(r) && !r.Disabled)
-            {
-                var (smx, sx0, sx1, _) = CpSliderX(44 + r.Indent * 1.5f, CpListW - 34);
-                float x0 = CpListX + sx0, x1 = CpListX + sx1;
-                if (x >= CpListX + smx - 40 && x < x0 - 10) { CpStep(r, -1); return; }
-                if (x > x1 + 10) { CpStep(r, 1); return; }
-                if (x >= x0 - 10 && x <= x1 + 10 && r.SetNumber != null)
-                {
-                    float f = Math.Clamp((x - x0) / (x1 - x0), 0, 1);
-                    int n = r.Minimum + (int)MathF.Round(f * (r.Maximum - r.Minimum) / Math.Max(1, r.Increment)) * Math.Max(1, r.Increment);
-                    Cue(Sfx.SliderUp);
-                    r.SetNumber(Math.Clamp(n, r.Minimum, r.Maximum));
-                }
+                if (_stOpen) { StCategoryJump(c); _stZone = 0; }
+                else { int first = CpFirstIn(rows, v.Cats[c].First); if (first >= 0) SettingsFocus = first; _cpZone = 0; }
+                if (CpHost is { } hh && _cpViews.TryGetValue(hh, out var vv)) { vv.Scroll = 0; vv.Manual = false; }
                 CpRepaint();
                 return;
             }
-            if (r.Numeric && !CpIsSlider(r) && !CpIsPick(r) && r.Step != null && !r.Disabled)
+            if (t.Row < 0 || t.Row >= rows.Count) return;
+            var r = rows[t.Row];
+            var hit = v.Lay.FirstOrDefault(l => l.I == t.Row);
+            SettingsFocus = t.Row;
+            if (_stOpen) _stZone = 1; else _cpZone = 1;
+            if (r.Disabled) { Cue(Sfx.Bump); CpRepaint(); return; }
+            float lx = x - CpListX;
+            if (CpIsSlider(r))
             {
-                // 步进胶囊：点右边 +，其余 −
-                float pr = CpListX + CpListW - 34;
+                var (smx, sx0, sx1, spx) = CpSliderX(44 + r.Indent * 1.5f, CpListW - 34);
+                if (Math.Abs(lx - smx) < 40) CpStep(r, -1);
+                else if (Math.Abs(lx - spx) < 40) CpStep(r, 1);
+                CpRepaint();
+                return;
+            }
+            if (CpIsStepper(r))
+            {
+                float R = CpListW - 34;
                 Cue(Sfx.Nav);
-                r.Step(x > pr - 120 ? 1 : -1);
+                if (lx > R - 90) r.Step!(1); else if (lx > R - 400) r.Step!(-1);
                 CpRepaint();
                 return;
             }
             Cue(Sfx.Nav);
+            v.Manual = true;   // 点了就别把列表滚走
             if (!CpActivate()) CcActivate();
-            else CpRepaint();
+            CpRepaint();
         });
         return true;
     }
