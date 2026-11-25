@@ -7,7 +7,6 @@
 | 功能 | 文档 | 源码入口 |
 | --- | --- | --- |
 | 游戏库、控制中心、设置 | [游戏库](library/) · [原生界面开发记录](native-library/README.md) | [ClawLibrary](../frontend/library-native/ClawLibrary/) |
-| 游戏内快捷面板、无线连接、窗口切换 | [快捷面板](quick-access/) · [验证记录](../frontend/QAM/verification-0.1.245.md) | [快捷面板窗口](../frontend/library-native/ClawLibrary/QamWindow.cs) |
 | 功耗、风扇、帧率、性能显示、缩放 | [性能与画面](performance/) | [功耗助手](../native/ClawPower.cs) · [性能叠加层](../native/PerformanceOverlay.cs) |
 | 手柄、特殊键和键鼠映射 | [输入](input/) · [Steam Input 参考](steam-input-mapping/) | [原生输入层](../native/InputLayer/) · [按键路由](../native/ClawRouter.cs) |
 | 睡眠、显示和声音 | [系统](system/) | [睡眠组件](../native/SleepAnimation/) |

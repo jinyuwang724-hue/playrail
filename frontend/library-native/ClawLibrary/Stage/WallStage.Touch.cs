@@ -28,7 +28,7 @@ public sealed partial class WallStage
     {
         if (Math.Abs(tx) < SwipeMin || Math.Abs(tx) < Math.Abs(ty) * 1.2) return;
         if (_agOpen) { AgSwipe(tx < 0 ? 1 : -1); return; }
-        if (SettingsPageOpen && !_shOpen && !_wsOpen) return;
+        if (SettingsPageOpen && !_shOpen) return;
         if (_shOpen && !_shViewer && !_shFilterOpen && _dragFrom.y / _ccK <= 80) { ShSwitchTab(tx < 0 ? 1 : -1); return; }
         if (_shOpen && ShDragScrolls) return;
         // 划得远多走几格（每 260 设计 px 一格，最多 4 格）

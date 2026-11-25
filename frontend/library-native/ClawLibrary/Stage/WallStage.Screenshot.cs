@@ -1,4 +1,4 @@
-// Quick settings saves the composed monitor, including the scaled output of windowed games.
+// Screenshots save the composed monitor, including the scaled output of windowed games.
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using ClawLibrary.Data;
@@ -12,17 +12,6 @@ public sealed partial class WallStage
     private bool _shotBusy;
     internal bool _shotNeedsPermission;
 
-    private async Task QsTakeScreenshot()
-    {
-        if (_shotBusy) return;
-        nint target = _qsGame;
-        CloseQuickPanel(hideWindow: target != 0, instant: true);
-        // The fallback panel is drawn inside the library window. Hide its composition tree as well.
-        if (_qs != null) _qs.IsVisible = false;
-        string? path = await CaptureScreenshotAsync(target);
-        if (path == null) Toast(_shotNeedsPermission ? "截图没能保存：在游戏库里允许「屏幕截图」权限" : "截图没能保存");
-        else { Cue(Sfx.Shutter); Toast("已截图"); }
-    }
 
     internal async Task<string?> CaptureScreenshotAsync(nint target)
     {
@@ -31,7 +20,7 @@ public sealed partial class WallStage
         _shotNeedsPermission = false;
         try
         {
-            if (!await QsCaptureAccess(mayPrompt: false))
+            if (!await CaptureAccess(mayPrompt: false))
             {
                 _shotNeedsPermission = true;
                 return null;
@@ -66,7 +55,7 @@ public sealed partial class WallStage
                     if (!SetMagpieScreenshot(magpie, true))
                         throw new InvalidOperationException("Magpie 未能准备缩放画面截图");
                 }
-                (frame, _) = await CaptureMonitorFrameAsync(_qsWin?.Hwnd ?? 0, 1250, monitor: monitor);
+                (frame, _) = await CaptureMonitorFrameAsync(0, 1250, monitor: monitor);
             }
             finally
             {

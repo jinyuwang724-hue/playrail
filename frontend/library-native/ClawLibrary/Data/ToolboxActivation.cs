@@ -7,7 +7,7 @@ namespace ClawLibrary.Data;
 internal static class ToolboxActivation
 {
     public static bool IsRoute(string route) => route is "library" or "control-center"
-        or "restore-library" or "restore-control-center" or "minimize-library" or "minimize-control-center" or "window-switcher";
+        or "restore-library" or "restore-control-center" or "minimize-library" or "minimize-control-center";
     public static string Target(string route) => route.StartsWith("restore-", StringComparison.Ordinal) ? route[8..]
         : route.StartsWith("minimize-", StringComparison.Ordinal) ? route[9..] : route;
     public static bool ShouldMinimize(string route, bool? xboxFse, bool? steamBigPicture) =>

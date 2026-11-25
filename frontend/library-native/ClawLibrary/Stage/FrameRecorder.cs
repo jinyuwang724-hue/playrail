@@ -22,7 +22,7 @@ public sealed class FrameRecorder
 
     public static double QpcMs(long qpc) => qpc * 1000.0 / Stopwatch.Frequency;
 
-    /// <summary>录 window 所在的整块显示器（快捷面板在自己的窗口里，只录游戏库窗口录不到它）。</summary>
+    /// <summary>录 window 所在的整块显示器。</summary>
     public bool Display;
 
     public bool Start(Window window)

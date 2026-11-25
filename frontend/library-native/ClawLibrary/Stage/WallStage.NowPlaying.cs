@@ -49,7 +49,6 @@ public sealed partial class WallStage
             CsPaintActs(page, selected, CsActsWidth(selected));
         }
         if (_expandedKey is { } key && _tiles.TryGetValue(key, out var tile) && tile.Shown == id) tile.Redraw();
-        if (_qsOpen) QsRebuild();
     }
 
     private static string PlayedText(GameSession? g)
@@ -306,7 +305,6 @@ public sealed partial class WallStage
         {
             case 0: ResumeGame(g); break;
             case 1: _ = ForceQuitAsync(g); break;
-            case 3: OpenSwitcherFromAnywhere(); break;
             default: BrowseFromNowPlaying(); break;
         }
     }
@@ -328,8 +326,8 @@ public sealed partial class WallStage
         if (ok) { g.Hwnd = hwnd; EndLaunchMotion("handoff"); HideNowPlayingBar(); }
         else
         {
-            if (_lm != null) { _lm.Note = "没能切回游戏，请用窗口切换器"; PaintLaunchCopy(_lm); }
-            else Toast("没能切回游戏，请用窗口切换器");
+            if (_lm != null) { _lm.Note = "没能切回游戏"; PaintLaunchCopy(_lm); }
+            else Toast("没能切回游戏");
             Cue(Sfx.Error);
         }
     }

@@ -49,7 +49,6 @@ namespace ClawRouter {
         FileSystemWatcher files;
         ManagementEventWatcher buttons;
         FirmwareShortcutFilter shortcutFilter;
-        const bool sessionGameMode=false;   // 游戏模式（ClawShell 外壳）2026-11 已移除：永远按桌面处理
         readonly SpecialShortcutCorrelation specialKeys = new SpecialShortcutCorrelation();
         GameBarGuard gameBarGuard;
         System.Threading.Timer changed;
@@ -81,7 +80,7 @@ namespace ClawRouter {
             lock(outputGate) { record["at"] = DateTime.UtcNow.ToString("o"); Console.WriteLine(new JavaScriptSerializer().Serialize(record)); Console.Out.Flush(); }
         }
         public void Status() {
-            Emit(new Dictionary<string, object> { {"type","status"}, {"configured",configured}, {"mode",mode}, {"bigPictureOpen",mode=="BigPicture"}, {"enabled",enabled}, {"ready",ready}, {"released",released}, {"phase",phase}, {"error",error}, {"canObserve",buttons != null}, {"helperCheck","按压时核对，不定时扫描"}, {"canSuppress","Steam 大屏幕接管期间过滤固件快捷键"}, {"shortcutFilterReady",shortcutFilter != null}, {"sessionGameMode",sessionGameMode}, {"rawKeyboardReady",shortcutFilter!=null&&shortcutFilter.RawReady}, {"firmwareWindows",shortcutFilter==null?0:shortcutFilter.FirmwareWindows}, {"gameBarGuardActive",gameBarGuard!=null && gameBarGuard.Active}, {"gameBarClosed",gameBarGuard==null?0:gameBarGuard.Closed}, {"gameBarCloseFailures",gameBarGuard==null?0:gameBarGuard.Failures}, {"shortcutSuppressed",shortcutFilter==null?0:shortcutFilter.Suppressed}, {"shortcutReplayFailures",shortcutFilter==null?0:shortcutFilter.ReplayFailures}, {"modeSource","Steam 窗口状态通知 / 15 秒连接保护"}, {"playhubPort",playhubPort}, {"modeQueries",queries}, {"observed",observed}, {"routed",routed}, {"msiAction",msiAction}, {"qamAction",qamAction}, {"restorePending",restoreHelper}, {"helperRunning",Helpers().Length > 0}, {"diagnostic",diagnostic}, {"lastTimings",lastTimings} });
+            Emit(new Dictionary<string, object> { {"type","status"}, {"configured",configured}, {"mode",mode}, {"bigPictureOpen",mode=="BigPicture"}, {"enabled",enabled}, {"ready",ready}, {"released",released}, {"phase",phase}, {"error",error}, {"canObserve",buttons != null}, {"helperCheck","按压时核对，不定时扫描"}, {"canSuppress","Steam 大屏幕接管期间过滤固件快捷键"}, {"shortcutFilterReady",shortcutFilter != null}, {"rawKeyboardReady",shortcutFilter!=null&&shortcutFilter.RawReady}, {"firmwareWindows",shortcutFilter==null?0:shortcutFilter.FirmwareWindows}, {"gameBarGuardActive",gameBarGuard!=null && gameBarGuard.Active}, {"gameBarClosed",gameBarGuard==null?0:gameBarGuard.Closed}, {"gameBarCloseFailures",gameBarGuard==null?0:gameBarGuard.Failures}, {"shortcutSuppressed",shortcutFilter==null?0:shortcutFilter.Suppressed}, {"shortcutReplayFailures",shortcutFilter==null?0:shortcutFilter.ReplayFailures}, {"modeSource","Steam 窗口状态通知 / 15 秒连接保护"}, {"playhubPort",playhubPort}, {"modeQueries",queries}, {"observed",observed}, {"routed",routed}, {"msiAction",msiAction}, {"qamAction",qamAction}, {"restorePending",restoreHelper}, {"helperRunning",Helpers().Length > 0}, {"diagnostic",diagnostic}, {"lastTimings",lastTimings} });
         }
         static Process[] Helpers() {var result=new List<Process>();foreach(var p in Process.GetProcessesByName("XboxGamingBarHelper")){if(Native.IsAlive(p.Id))result.Add(p);else p.Dispose();}return result.ToArray();}
         static bool HelperRunning(int id) {foreach(var p in Helpers()){int pid=p.Id;p.Dispose();if(pid==id)return true;}return false;}
@@ -104,7 +103,7 @@ namespace ClawRouter {
                     buttons.EventArrived += OnButton; buttons.Start();
                 } catch(Exception ex) { if(buttons != null) buttons.Dispose(); buttons = null; error = "按键通知不可用：" + ex.Message; }
                 if(!diagnostic) {
-                    try {shortcutFilter=new FirmwareShortcutFilter(delegate{return sessionGameMode&&!suspended&&maintenance==null;});shortcutFilter.GameBarSuppressed+=OnSuppressedGamebar;shortcutFilter.ShortcutPressed+=OnImmediateShortcut;}
+                    try {shortcutFilter=new FirmwareShortcutFilter(delegate{return false;});shortcutFilter.GameBarSuppressed+=OnSuppressedGamebar;shortcutFilter.ShortcutPressed+=OnImmediateShortcut;}
                     catch(Exception ex){Log("shortcut-filter-unavailable",ex.Message);}
                     try {gameBarGuard=new GameBarGuard(Log);}
                     catch(Exception ex){Log("gamebar-guard-unavailable",ex.Message);}
@@ -150,8 +149,8 @@ namespace ClawRouter {
             } catch { /* Playhub is optional for ownership; keep the last menu fallback port. */ }
         }
         void Refresh() { lock(gate) { if(disposed)return; ReadPort();mode=ReadMode();Reconcile();Status(); } }
-        bool GeneralWanted() { return !diagnostic && !generalFailed && !suspended && (sessionGameMode || !(mode=="Unknown" && steamWindowOpen) && Policy.GeneralContext(mode,suspended,generalMappings.Count!=0,steamActive)); }
-        bool CanFilter() { return sessionGameMode && !suspended && maintenance==null; }
+        bool GeneralWanted() { return !diagnostic && !generalFailed && !suspended && (!(mode=="Unknown" && steamWindowOpen) && Policy.GeneralContext(mode,suspended,generalMappings.Count!=0,steamActive)); }
+        bool CanFilter() { return false; }
         bool AllowsConfiguredGamebar() {
             foreach(var raw in steamBindings.Values) {
                 var command=raw as Dictionary<string,object>;
@@ -162,21 +161,20 @@ namespace ClawRouter {
         void EmitMapping(string source, object command, string scope, string gesture=null) {
             var value=command as Dictionary<string,object>;
             if(value==null || Equals(Get(value,"type"),"none"))return;
-            if(sessionGameMode && Policy.IsGameBarCommand(value))return;
             var record=new Dictionary<string,object>{{"type","mapped_action"},{"source",source},{"command",value},{"scope",scope}};
-            if(gesture!=null){record["gesture"]=gesture;record["gameMode"]=sessionGameMode;}
+            if(gesture!=null){record["gesture"]=gesture;}
             routed++; Emit(record);
         }
         void OnImmediateShortcut(string action,IntPtr foreground,bool game) {
             long at=Stopwatch.GetTimestamp();
-            if(action!="gamebarInput")specialKeys.Keyboard(action=="windowSwitcher"||action=="gamebar"?42:88,at*1000.0/Stopwatch.Frequency);
+            if(action!="gamebarInput")specialKeys.Keyboard(action=="gamebar"?42:88,at*1000.0/Stopwatch.Frequency);
             Task.Run((Action)delegate {lock(gate){
-                if(disposed||maintenance!=null||suspended||game!=sessionGameMode)return;
+                if(disposed||maintenance!=null||suspended||game)return;
                 if(action=="gamebarInput"){Emit(new Dictionary<string,object>{{"type","desktop_gamebar_input"}});return;}
                 routed++;
                 Emit(new Dictionary<string,object>{{"type","mapped_action"},{"source","QS"},{"scope","general"},
                     {"command",new Dictionary<string,object>{{"type","system"},{"action",action}}},
-                    {"gesture",action=="controlCenter"?"short":"long"},{"gameMode",game},{"foregroundWindow",foreground.ToInt64()},
+                    {"gesture",action=="controlCenter"?"short":"long"},{"foregroundWindow",foreground.ToInt64()},
                     {"nativeMs",(Stopwatch.GetTimestamp()-at)*1000.0/Stopwatch.Frequency}});
             }});
         }
@@ -196,7 +194,7 @@ namespace ClawRouter {
         }
         void Reconcile() {
             if(shortcutContext!=mode) {shortcutContext=mode;gamebarShortcuts.Reset();}
-            if(gameBarGuard!=null)gameBarGuard.SetEnabled(sessionGameMode);
+            if(gameBarGuard!=null)gameBarGuard.SetEnabled(false);
             if(maintenance!=null) { if(shortcutFilter!=null)shortcutFilter.SetEnabled(false); phase="插件正在维护兼容性修复"; return; }
             // Disable before restoring the helper, which may take several seconds.
             if(shortcutFilter!=null && !CanFilter())shortcutFilter.SetEnabled(false);
@@ -303,7 +301,6 @@ namespace ClawRouter {
                 if((Stopwatch.GetTimestamp()-now)*1000.0/Stopwatch.Frequency>700) { Log("button-expired","过渡期间的旧按压已丢弃");return; }
                 if(code==88 || code==42) {
                     if(specialKeys.Consume(code,now*1000.0/Stopwatch.Frequency)){Log("special-key-correlated","delayed WMI "+code+" already handled by keyboard path");return;}
-                    if(sessionGameMode)EmitMapping("QS",new Dictionary<string,object>{{"type","system"},{"action",code==42?"windowSwitcher":"controlCenter"}},"general",code==42?"long":"short");
                     else if(code==42)EmitMapping("QS",new Dictionary<string,object>{{"type","system"},{"action","gamebar"}},"general","long");
                     else Emit(new Dictionary<string,object>{{"type","desktop_gamebar_input"}});
                     return;
@@ -354,7 +351,7 @@ namespace ClawRouter {
                     bool ok=false;string reason=null;
                     try {
                         if(diagnostic || id==null || id.Length!=32 || maintenance!=null)throw new InvalidOperationException("当前不能开始维护");
-                        maintenance=id;ClearPending();if(shortcutFilter!=null)shortcutFilter.SetEnabled(false);if(gameBarGuard!=null)gameBarGuard.SetEnabled(sessionGameMode);
+                        maintenance=id;ClearPending();if(shortcutFilter!=null)shortcutFilter.SetEnabled(false);if(gameBarGuard!=null)gameBarGuard.SetEnabled(false);
                         StopTweaks();released=false;
                         maintenanceTimeout=new System.Threading.Timer(delegate { lock(gate) { if(maintenance==id) {maintenance=null;Reconcile();Status();} } },null,120000,Timeout.Infinite);
                         ok=true;
@@ -374,8 +371,8 @@ namespace ClawRouter {
                     generalFailed=false;
                     mode=ReadMode();Reconcile();Status();
                 } else if(kind=="allow_gamebar") {
-                    if(!sessionGameMode && gameBarGuard!=null)gameBarGuard.SetEnabled(false);
-                    Emit(new Dictionary<string,object>{{"type","mapping_permission"},{"id",Get(c,"id")},{"ok",!sessionGameMode}});
+                    if(gameBarGuard!=null)gameBarGuard.SetEnabled(false);
+                    Emit(new Dictionary<string,object>{{"type","mapping_permission"},{"id",Get(c,"id")},{"ok",true}});
                 } else if(kind=="steam_context") {
                     if(!(Get(c,"active") is bool))throw new InvalidDataException("Steam 状态格式错误");
                     steamKnown=ready;steamActive=Equals(Get(c,"active"),true);steamReport=Stopwatch.GetTimestamp();

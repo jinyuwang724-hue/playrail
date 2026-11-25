@@ -185,7 +185,7 @@ public sealed partial class WallStage
         Log.Info("recrow done");
     }
 
-    /// <summary>--state=recstatus：原分辨率静帧核对顶栏 / 状态栏 / 竖条 / 快捷面板的对齐（中英混排基线、电池和数字等高）。</summary>
+    /// <summary>--state=recstatus：原分辨率静帧核对顶栏 / 状态栏 / 竖条的对齐（中英混排基线、电池和数字等高）。</summary>
     internal async Task RecStatusAsync()
     {
         await Task.Delay(2500);
@@ -223,7 +223,6 @@ public sealed partial class WallStage
             _stCat = 0; OpenSettingsPage(); await Still("settings-general"); CloseSettingsPage(true);
             ToggleControlCenter();
             await Task.Delay(800);
-            OpenQuickPanel(0); await Still("quick"); CloseQuickPanel(hideWindow: false, instant: true);
         }
         catch (Exception ex) { Log.Error("recstatus", ex); }
         if (_cs != null) { SaveUi(_prefs with { Home = style }); CsMorphStyle(); }

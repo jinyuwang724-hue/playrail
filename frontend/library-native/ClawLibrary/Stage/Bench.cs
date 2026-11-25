@@ -565,12 +565,6 @@ public static class Bench
                 case "recleft": await s.RecLeftAsync(); break;
                 case "recset": await s.RecSetAsync(); break;
                 case "recthemes": await s.RecThemesAsync(); break;
-                case "recqam": await s.RecQamAsync(); break;
-                case "qampress": await s.QamPressAsync(); break;
-                case "qamhalf": await s.QamHalfAsync(); break;
-#if DEBUG
-                case "qamwireless": await s.QamWirelessProbeAsync(); break;
-#endif
                 case "gstest": s.DemoGameSessionProbe(); break;
                 case "npattach": s.DemoAttachRunningGame(); break;
                 case "recplaying": await RecPlayingAsync(s); break;
@@ -635,84 +629,6 @@ public static class Bench
                     }
                     if (state is "gsm" or "gsmd") { for (int i = 0; i < (state == "gsm" ? 4 : 10); i++) { s.Move(Direction.Down); await Task.Delay(300); } await Task.Delay(600); }
                     if (state == "gsb") { s.Activate(); await Task.Delay(1200); }
-                    break;
-                }
-                case "qsapply":
-                {
-                    // 快捷设置：性能显示磁贴按 5 次（关 → 1 → 2 → 3 → 4 → 关 一整圈，回到原值），每次等后台回读
-                    await Task.Delay(1500);
-                    s.QuickPanelTest(0);
-                    await Task.Delay(2500);
-                    string start = s.QuickPanelTestValue("osd");
-                    for (int i = 0; i < 5; i++) { s.QuickPanelTestPress("osd"); await Task.Delay(2200); Log.Info($"quick panel test osd readback {i + 1}: {s.QuickPanelTestValue("osd")}"); }
-                    Log.Info($"quick panel test osd start={start} end={s.QuickPanelTestValue("osd")}");
-                    s.QuickPanelTestClose();
-                    break;
-                }
-                case "qsset":
-                {
-                    // 快捷设置：按 --qs=<焦点 id | power | arm | edit | sec=分区> 摆好状态停住（截图用）
-                    await Task.Delay(1500);
-                    s._qsTestGame = Program.Args.FirstOrDefault(a => a.StartsWith("--qsgame="))?[9..];
-                    s.QuickPanelTest(0);
-                    await Task.Delay(1800);
-                    s.QuickPanelTestState(Program.Args.FirstOrDefault(a => a.StartsWith("--qs="))?[5..] ?? "tdp");
-                    break;
-                }
-                case "qsrules":
-                {
-                    // 快捷设置导航规则：逐步按方向键，日志记每步焦点（--qsgame= 时带退出按钮）
-                    s._qsTestGame = Program.Args.FirstOrDefault(a => a.StartsWith("--qsgame="))?[9..];
-                    await Task.Delay(1500);
-                    s.QuickPanelTest(0);
-                    await Task.Delay(1800);
-                    Log.Info($"qsrules start {s.QsFocusTest}");
-                    var seq = Program.Args.FirstOrDefault(a => a.StartsWith("--seq="))?[6..] ?? "LRDLRDLLRDDDDDUUUUUURUL";
-                    foreach (char c in seq)
-                    {
-                        var d = c switch { 'L' => Direction.Left, 'R' => Direction.Right, 'U' => Direction.Up, _ => Direction.Down };
-                        s.Move(d); await Task.Delay(250);
-                        Log.Info($"qsrules {c} -> {s.QsFocusTest}");
-                    }
-                    s.SwitchTab(1); await Task.Delay(300); Log.Info($"qsrules RB -> page {s.QsFocusTest}");
-                    s.Move(Direction.Left); await Task.Delay(250); Log.Info($"qsrules L -> {s.QsFocusTest}");
-                    s.Move(Direction.Down); await Task.Delay(250); Log.Info($"qsrules D -> {s.QsFocusTest}");
-                    s.Move(Direction.Right); await Task.Delay(250); Log.Info($"qsrules R -> {s.QsFocusTest}");
-                    s.QuickPanelTestClose();
-                    break;
-                }
-                case "qs" or "qsnav":
-                {
-                    // 快捷设置：qs = 打开停住，qsnav = 走 12 步焦点后收起（游戏库里开，没有游戏画面）
-                    await Task.Delay(1500);
-                    s.QuickPanelTest(state == "qsnav" ? 12 : 0);
-                    if (state == "qsnav") { await Task.Delay(4600); s.QuickPanelTestClose(); await Task.Delay(1000); }
-                    break;
-                }
-                case "wsgo" or "wsx":
-                {
-                    // 窗口切换页：焦点停在标题含 --window= 的窗口上，wsgo = A 切过去，wsx = X 请它关
-                    string want = Program.Args.FirstOrDefault(a => a.StartsWith("--window="))?[9..] ?? "";
-                    s.ToggleControlCenter();
-                    await Task.Delay(1500);
-                    s.SwitcherTestState();
-                    await Task.Delay(1200);
-                    s.SwitcherTestPick(want, close: state == "wsx");
-                    await Task.Delay(1500);
-                    break;
-                }
-                case "ws" or "wsnav":
-                {
-                    // 窗口切换页：ws = 打开停住，wsnav = 打开、往右走两格、往回一格、B 出场
-                    s.ToggleControlCenter();
-                    await Task.Delay(1500);
-                    s.SwitcherTestState();
-                    await Task.Delay(1200);
-                    if (state == "wsnav")
-                    {
-                        s.Move(Direction.Right); await Task.Delay(500); s.Move(Direction.Right); await Task.Delay(500);
-                        s.Move(Direction.Left); await Task.Delay(800); s.SwitcherTestBack(); await Task.Delay(900);
-                    }
                     break;
                 }
                 case "shots0" or "shots1" or "shots2" or "shotsv" or "shotsnav" or "shotsf":

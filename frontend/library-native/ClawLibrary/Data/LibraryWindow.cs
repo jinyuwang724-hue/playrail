@@ -10,11 +10,8 @@ internal sealed class LibraryWindow : IDisposable
     private readonly Action<string, nint> _activate;
     private readonly uint _message;
     private nint _returnWindow;
-    private nint _overlayTarget;
-    private uint _overlayPid;
-    private Windows.Graphics.RectInt32 _overlayBounds;
     private uint _returnPid;
-    private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center", "window-switcher"];
+    private static readonly string[] Routes = ["library", "control-center", "restore-library", "restore-control-center", "minimize-library", "minimize-control-center"];
 
     public LibraryWindow(nint window, Action<string, nint> activate)
     {
@@ -32,8 +29,6 @@ internal sealed class LibraryWindow : IDisposable
     {
         if (message == 0x0083 && !Program.Args.Contains("--windowed")) return 0; // WM_NCCALCSIZE: the entire monitor is client area.
         if (message == 0x007e || message == 0x02e0) Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()?.TryEnqueue(EnsureFullscreenBounds);
-        if (_overlayTarget != 0 && message == 0x21) return 3; // WM_MOUSEACTIVATE / MA_NOACTIVATE
-        if (_overlayTarget != 0 && message == 0x024B) return 3; // WM_POINTERACTIVATE / PA_NOACTIVATE
         if (message == 0x112 && (wp & 0xfff0) == 0xf020 && IsWindowVisible(hwnd) && !ToolboxWindow.IsIconic(hwnd)) // WM_SYSCOMMAND / SC_MINIMIZE
         {
             try { _activate("minimize-library", 0); }
@@ -56,25 +51,6 @@ internal sealed class LibraryWindow : IDisposable
         return DefSubclassProc(hwnd, message, wp, lp);
     }
 
-    public static bool CanOverlay(nint window)
-    {
-        if (window == 0 || !IsWindowVisible(window) || ToolboxWindow.IsIconic(window)) return false;
-        GetWindowThreadProcessId(window, out uint pid);
-        if (pid == (uint)Environment.ProcessId) return false;
-        return pid != 0;
-    }
-
-    public bool OverlayTargetIsForeground => _overlayTarget != 0 && Foreground == _overlayTarget
-        && GetWindowThreadProcessId(_overlayTarget, out uint pid) != 0 && pid == _overlayPid;
-
-    public void SetOverlayTarget(nint target)
-    {
-        _overlayTarget = target;
-        GetWindowThreadProcessId(target, out _overlayPid);
-        long style = GetWindowLongPtr(_window, -20).ToInt64();
-        SetWindowLongPtr(_window, -20, (nint)(target != 0 ? style | 0x08000000L : style & ~0x08000000L));
-    }
-
     private bool _sizing;
     public void EnsureFullscreenBounds()
     {
@@ -82,7 +58,7 @@ internal sealed class LibraryWindow : IDisposable
         _sizing = true;
         try
         {
-            nint monitor = MonitorFromWindow(_overlayTarget != 0 ? _overlayTarget : _window, 2);
+            nint monitor = MonitorFromWindow(_window, 2);
             var info = new MONITORINFO { Size = Marshal.SizeOf<MONITORINFO>() };
             if (!GetMonitorInfo(monitor, ref info)) return;
             var r = info.Monitor;
@@ -99,14 +75,6 @@ internal sealed class LibraryWindow : IDisposable
                 SetWindowPos(_window, 0, r.Left, r.Top, r.Right-r.Left, r.Bottom-r.Top, 0x234);
         }
         finally { _sizing = false; }
-    }
-
-    public void ShowOverlay()
-    {
-        ShowWindow(_window, 4); // SW_SHOWNOACTIVATE (also restores from minimized)
-        EnsureFullscreenBounds();
-        bool shown = SetWindowPos(_window, -1, 0, 0, 0, 0, 0x253); // NOOWNERZORDER | NOACTIVATE | SHOWWINDOW | NOMOVE | NOSIZE
-        Log.Info($"overlay show topmost={shown} style={GetWindowLongPtr(_window, -20).ToInt64():X}");
     }
 
     public static nint Foreground => GetForegroundWindow();

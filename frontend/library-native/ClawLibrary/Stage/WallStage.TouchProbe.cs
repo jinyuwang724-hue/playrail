@@ -140,35 +140,6 @@ public sealed partial class WallStage
             CloseShots(true);
             CloseSettingsPage(true);
 
-            var sent = new List<(string Method, JsonNode Value)>();
-            _qsTouchTransport = (method, value) => { sent.Add((method, value.DeepClone())); return Task.CompletedTask; };
-            OpenQuickPanel(0);
-            _qsState = new JsonObject { ["system"] = new JsonObject { ["brightness"] = 50, ["volume"] = 50, ["muted"] = true } };
-            _qsDraft = new JsonObject { ["manual"] = new JsonObject { ["tdp"] = 15 } };
-            QsBuild();
-            _pagePointer.Begin(99, 0, 0, PointerSurface); // Prevent asynchronous readback from replacing the fixture.
-            var volume = _qsItems.First(i => i.Id == "volume");
-            QsTouchDrag("volume", (volume.X + volume.W + 300) * _ccK);
-            Check("quick settings: volume drag updates value and unmutes", Int(_qsState["system"]?["volume"]) == 100 && !Bool(_qsState["system"]?["muted"]));
-            var brightness = _qsItems.First(i => i.Id == "brightness");
-            QsSetLevel(brightness, .2f); QsSetLevel(brightness, .32f);
-            QsHot("bri", 1);
-            Check("quick settings: brightness adjusts by one", Int(_qsState["system"]?["brightness"]) == 33);
-            var brightnessKnob = _qsKnobs.First(k => k.Id == "brightness");
-            Check("quick settings: knob follows the new value immediately",
-                Math.Abs(brightnessKnob.C.Offset.X - (brightness.X + brightness.W * .33f) * QsK) < .01f);
-            Check("quick settings: screenshots enabled without a game", QsFind("shot")?.Disabled == false);
-            QsSetLevel(new() { Id = "brightness", Kind = QsKind.Slider, Disabled = true }, .9f);
-            Check("quick settings: disabled slider ignores touch", Int(_qsState["system"]?["brightness"]) == 33);
-            QsSetLevel(new() { Id = "tdp", Kind = QsKind.Slider }, .5f);
-            CloseQuickPanel(hideWindow: false, instant: true);
-            await _qsTouchPending;
-            _pagePointer.Reset();
-            Check("quick settings: volume uses correct backend request", sent.Any(s => s.Method == "set_volume" && Int(s.Value) == 100));
-            Check("quick settings: repeated brightness changes coalesce", sent.Count(s => s.Method == "set_brightness") == 1 && Int(sent.First(s => s.Method == "set_brightness").Value) == 33);
-            Check("quick settings: TDP retains the save_power contract", sent.Any(s => s.Method == "save_power" && s.Value["manual"]?["tdp"] != null));
-            _qsTouchTransport = null;
-
             OpenControlCenter(quiet: true);
             Check("navigation: control centre has no added back button or hotspot", TouchNavigationMode == 0 && !TouchNavigationHit(20 * _ccK, 48 * _ccK));
         }
@@ -176,14 +147,26 @@ public sealed partial class WallStage
         finally
         {
             _pagePointer.Reset(); SettingsResetPointer();
-            await _qsTouchPending;
-            _qsTouchTransport = null;
             _gpPicker = null; _gsItem = null;
-            CloseQuickPanel(hideWindow: false, instant: true);
             AgClose(); CloseShots(true); CloseGamepad(true);
             CloseDisplay(true); CloseSystem(true); ClosePerf(true); CloseSettingsPage(true);
             OpenSettingsPage(); _stCat = 0; _stZone = 0; Repaint();
             File.WriteAllText(Path.Combine(App.CacheDir, "touch-probe.json"), new JsonObject { ["checks"] = checks, ["error"] = error }.ToJsonString());
         }
+    }
+
+    /// <summary>自测输入（LibraryWindow 收到 wp 100+ 的注册消息）：0–3 上下左右、4 A、5 B。</summary>
+    internal void TestInput(string code, nint lp = 0)
+    {
+        switch (code)
+        {
+            case "0": Move(Direction.Up); break;
+            case "1": Move(Direction.Down); break;
+            case "2": Move(Direction.Left); break;
+            case "3": Move(Direction.Right); break;
+            case "4": Activate(); break;
+            case "5": Back(); break;
+        }
+        Log.Info($"test input {code}");
     }
 }

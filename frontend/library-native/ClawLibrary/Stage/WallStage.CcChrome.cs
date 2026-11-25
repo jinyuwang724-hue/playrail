@@ -63,7 +63,7 @@ public sealed partial class WallStage
         foreach (var (id, glyph, label) in new[]
         {
             ("power", "", "电源"), ("files", "", "文件管理器"), ("browser", "", "浏览器"),
-            ("windows", "", "窗口"), ("addgame", "", "添加游戏"), ("settings", "", "设置"), ("avatar", "", ""),
+            ("addgame", "", "添加游戏"), ("settings", "", "设置"), ("avatar", "", ""),
         })
             _ccDock.Add(CcMakeButton(id, glyph, label, _ccChrome));
         _ccPowerLayer = G.Container();
@@ -82,7 +82,7 @@ public sealed partial class WallStage
     private static readonly Dictionary<string, string> CcChromeDesc = new()
     {
         ["power"] = "睡眠、休眠、重启、关机", ["files"] = "打开资源管理器", ["browser"] = "打开默认浏览器",
-        ["windows"] = "切换和关闭打开的窗口", ["addgame"] = "把本地游戏加进游戏库", ["settings"] = "游戏库和工具箱的设置", ["avatar"] = "打开 Windows 设置",
+        ["addgame"] = "把本地游戏加进游戏库", ["settings"] = "游戏库和工具箱的设置", ["avatar"] = "打开 Windows 设置",
         ["sleep"] = "关屏，进入低电量待机", ["hibernate"] = "保存现场后断电，下次开机原样恢复",
         ["restart"] = "立即重启", ["shutdown"] = "立即关机",
     };
@@ -564,7 +564,6 @@ public sealed partial class WallStage
         if (_syOpen) { SyBack(); return true; }
         if (_stOpen) { StBack(); return true; }
         if (_shOpen) { ShBack(); return true; }
-        if (_wsOpen) { WsBack(); return true; }
         if (_ccZone == CcZone.Power) { CcPowerClose(); return true; }
         if (_ccZone == CcZone.Dock) { _ccZone = CcZone.Row; CcChromeFocus(); return true; }
         return false;
@@ -604,9 +603,6 @@ public sealed partial class WallStage
             case "browser":
                 _ = Task.Run(SystemInfo.OpenBrowser);
                 Toast("正在打开浏览器");
-                break;
-            case "windows":
-                OpenSwitcher();
                 break;
             case "addgame":
                 _ = AddGameFromLibrary();

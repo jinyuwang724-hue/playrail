@@ -46,7 +46,7 @@ public sealed partial class WallStage
         _screensaverTimer.Start();
     }
 
-    private bool ScreensaverBlocked => _wsOpen || _stack.Count == 0 || _qsOpen || _ccOpen || MorphBusy || _searchOpen || _backgroundSettingsOpen
+    private bool ScreensaverBlocked => _stack.Count == 0 || _ccOpen || MorphBusy || _searchOpen || _backgroundSettingsOpen
         || _railModel.SettingsOpen || _drag != null || PanVelocity != Vector2.Zero
         || _pad?.Panning == true || NowMs < _wallBusyUntil || NowMs < _screensaverPauseUntil;
 

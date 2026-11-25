@@ -127,7 +127,7 @@ namespace ClawRouter {
             string action=null;
             if(decision.GameBar){Suppressed++;if(gameMode==null){var old=GameBarSuppressed;if(old!=null)old();}else action="controlCenter";}
             if(decision.Switcher) {
-                action=game?"windowSwitcher":"gamebar";
+                action="gamebar";
                 // A swallowed firmware Tab must not turn the trailing Windows
                 // release into a Start menu tap. Preserve real Ctrl state.
                 if(!game&&GetAsyncKeyState(0x11)>=0){var tag=new UIntPtr(0x434C4157u);keybd_event(0x11,0,0,tag);keybd_event(0x11,0,2,tag);}

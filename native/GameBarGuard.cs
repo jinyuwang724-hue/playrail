@@ -50,7 +50,7 @@ namespace ClawRouter {
             foreach(string name in new[]{"GameBar","GameBarFTServer"})
                 foreach(var process in Process.GetProcessesByName(name))
                     using(process)Close((uint)process.Id,lease);
-            log("gamebar-guard","游戏模式拦截 Game Bar 窗口");
+            log("gamebar-guard","拦截 Game Bar 窗口");
         }
         void OnWindow(IntPtr eventHook,uint kind,IntPtr window,int objectId,int childId,uint thread,uint time) {
             if(window==IntPtr.Zero || objectId!=0 || childId!=0 || (kind!=3 && kind!=0x8000 && kind!=0x8002))return;

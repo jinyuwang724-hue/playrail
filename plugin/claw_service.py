@@ -294,7 +294,7 @@ class Service:
         try:
             await self._send({"command": "allow_gamebar", "id": ident})
             if not await asyncio.wait_for(future, 2):
-                raise ValueError("游戏模式使用快捷栏")
+                raise ValueError("Game Bar 暂不可用")
         finally:
             self._permission_waiters.pop(ident, None)
 

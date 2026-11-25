@@ -638,7 +638,6 @@ public sealed partial class WallStage
         _searchFocus = 1;
         _railFocused = true;
         PlaceSearchBox();
-        (_window as MainWindow)?.RequestTextInputFocus();
         _searchBox.Focus(FocusState.Programmatic);
         RepaintRail();
     }

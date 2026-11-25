@@ -280,7 +280,7 @@ public sealed partial class WallStage
         _stSecretBox ??= CreateSecretBox();
         _stSecretBox.Password = "";
         PositionInlineInput(_stSecretBox, done);
-        _dq.TryEnqueue(() => { if (_stSecretBox.Visibility == Visibility.Visible) { (_window as MainWindow)?.RequestTextInputFocus(); _stSecretBox.Focus(FocusState.Programmatic); } });
+        _dq.TryEnqueue(() => { if (_stSecretBox.Visibility == Visibility.Visible) { _stSecretBox.Focus(FocusState.Programmatic); } });
     }
 
     // All settings inputs share the existing inline editor's type, colours and placement.
@@ -401,7 +401,7 @@ public sealed partial class WallStage
         _dq.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
             if (!stillWanted() || box.Visibility != Visibility.Visible) return;
-            (_window as MainWindow)?.RequestTextInputFocus();
+           
             box.Focus(FocusState.Programmatic);
             box.SelectAll();
         });
