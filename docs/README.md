@@ -12,7 +12,7 @@
 | 睡眠、显示和声音 | [系统](system/) | [睡眠组件](../native/SleepAnimation/) |
 | Xbox Game Bar 小组件 | [Game Bar](gamebar/) | [小组件源码](../native/GameBarWidget/) |
 | Steam、Decky 与其他平台服务 | [平台集成](integrations/) | [插件与后台 Agent](../plugin/) |
-| 设计规范、界面文案、项目展示 | [界面设计](design/) · [README 截图](screenshots/) | [品牌素材](../assets/branding/) |
+| 设计规范、界面文案、项目展示 | [Cocoon 设计系统](design/cocoon/README.md) · [界面设计](design/) · [README 截图](screenshots/) | [品牌素材](../assets/branding/) |
 
 ## 构建与维护
 
