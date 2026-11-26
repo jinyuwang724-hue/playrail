@@ -297,13 +297,15 @@ public sealed partial class WallStage
     }
 
     /// <summary>按钮：绿色（渐变、白字、淡绿圆章）或白色（淡投影、灰圆章、黑字），左边圆章写手柄键；忙的时候圆章换成转圈。</summary>
-    private void RqButton(CanvasDrawingSession ds, float x, float y, float w, string key, string label, bool green, bool busy)
+    private void RqButton(CanvasDrawingSession ds, float x, float y, float w, string key, string label, bool green, bool busy, bool accent = false)
     {
         float h = 112, r = 56;
+        // accent：确认按钮用主题色（紫色渐变）代替绿色
+        Color ca = accent ? RwC1 : RqGreenA, cb = accent ? RwC2 : RqGreenB;
         if (green)
         {
             RsSoftShadow(ds, x, y + 6, w, h, r, 10, 0.18f);
-            using var br = new CanvasLinearGradientBrush(ds.Device, RqGreenA, RqGreenB) { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x, y + h) };
+            using var br = new CanvasLinearGradientBrush(ds.Device, ca, cb) { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x, y + h) };
             ds.FillRoundedRectangle(x, y, w, h, r, r, br);
         }
         else
@@ -331,7 +333,7 @@ public sealed partial class WallStage
         {
             ds.FillCircle(bx + 22, cy, 22, green ? Color.FromArgb(90, 0xFF, 0xFF, 0xFF) : Color.FromArgb(255, 0x9A, 0x9C, 0xA3));
             using var kf = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
-            ds.DrawText(key, new Windows.Foundation.Rect(bx, cy - 22, 44, 44), green ? RqGreenB : Color.FromArgb(255, 0xF2, 0xF2, 0xF4), kf);
+            ds.DrawText(key, new Windows.Foundation.Rect(bx, cy - 22, 44, 44), green ? cb : Color.FromArgb(255, 0xF2, 0xF2, 0xF4), kf);
         }
         ds.DrawTextLayout(lay, bx + 44 + 18, cy - (float)lay.LayoutBounds.Height / 2 - (float)lay.LayoutBounds.Y, ink);
     }

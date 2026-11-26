@@ -1,8 +1,8 @@
 // Steam 云端同步：填 Web API Key 的小窗（11-26 jinyu：做成「切换游戏」那种弹窗）。
 // 白底圆角卡片（同 RqPaint）：标题栏「B ←  Steam 云端同步」、一段说明、去哪里拿 Key 的网址（Y 打开）、
 // 底部一个大的灰色输入框（真的 TextBox 盖在上面，打开就拿焦点，触屏弹键盘），最下面两个按钮：
-// 白色「Ⓑ 取消」和绿色「Ⓐ 保存」：绿色是确认；Key 不是 32 位时绿色按钮变淡，输入框下面提示还差几位，
-// 凑够 32 位提示变绿「格式正确」。Enter = 保存，Esc = 取消。
+// 白色「Ⓑ 取消」和主题色「Ⓐ 保存」：主题色是确认（11-26 jinyu：按钮用主题色）；Key 不是 32 位时保存按钮变淡，输入框下面提示还差几位，
+// 凑够 32 位提示变主题色「格式正确」。Enter = 保存，Esc = 取消。
 using System.Numerics;
 using ClawLibrary.Data;
 using ClawLibrary.Engine;
@@ -153,15 +153,15 @@ public sealed partial class WallStage
             // 输入框：大的灰色圆角框，里面的字是盖在上面的 TextBox；格式对了描一圈绿边
             float fy = ak.FieldY;
             ds.FillRoundedRectangle(37, fy, AkW - 74, AkFieldH, AkFieldH / 2, AkFieldH / 2, AkFieldBg);
-            if (valid) ds.DrawRoundedRectangle(38.5f, fy + 1.5f, AkW - 77, AkFieldH - 3, AkFieldH / 2, AkFieldH / 2, RqGreenB, 3);
+            if (valid) ds.DrawRoundedRectangle(38.5f, fy + 1.5f, AkW - 77, AkFieldH - 3, AkFieldH / 2, AkFieldH / 2, CpAccentInk, 3);
             string count = valid ? "格式正确" : n == 0 ? "需要 32 位字母和数字" : $"已输入 {n} 位，需要 32 位";
             using (var cf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 30, FontWeight = new Windows.UI.Text.FontWeight(500), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
-                ds.DrawText(count, new Windows.Foundation.Rect(0, fy + AkFieldH + 12, AkW, 44), valid ? RqGreenB : RsSub, cf);
+                ds.DrawText(count, new Windows.Foundation.Rect(0, fy + AkFieldH + 12, AkW, 44), valid ? CpAccentInk : RsSub, cf);
             // 按钮：白色取消、绿色保存（Key 不对时保存变淡）
             float bw = (AkW - 74 - 38) / 2;
             RqButton(ds, 37, ak.BtnY, bw, "B", "取消", green: false, busy: false);
             using (valid ? null : ds.CreateLayer(0.45f))
-                RqButton(ds, 37 + bw + 38, ak.BtnY, bw, "A", _steamRefreshing ? "正在保存…" : "保存", green: true, busy: _steamRefreshing);
+                RqButton(ds, 37 + bw + 38, ak.BtnY, bw, "A", _steamRefreshing ? "正在保存…" : "保存", green: true, busy: _steamRefreshing, accent: true);
         }
         ((CompositionSurfaceBrush)ak.Card.Brush).Surface = ak.Surf;
         ak.Card.Size = new Vector2(w, hh);
