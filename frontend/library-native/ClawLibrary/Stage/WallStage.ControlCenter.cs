@@ -396,6 +396,7 @@ public sealed partial class WallStage
         if (MorphIntercept()) return;
         if (_ccOpen && _agOpen) { AgY(); return; }
         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
+        if (_ccOpen && _ak != null) { AkPad("Y"); return; }
         if (_ccOpen && _stOpen) { StResetFocused(); return; }
         if (_ccOpen && _shOpen) { ShY(); return; }
         if (_ccOpen && _dsOpen)

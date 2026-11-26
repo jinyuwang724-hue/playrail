@@ -836,6 +836,7 @@ public sealed partial class WallStage
     /// </summary>
     private bool CpMove(Direction dir)
     {
+        if (_ak != null) return AkPad("dir");
         if (!CpActive) return false;
         if (_stOpen && StEditing) return false;
         if (_perfOpen && _perfCurveEdit) return false;
@@ -916,6 +917,7 @@ public sealed partial class WallStage
     /// <summary>A：左列进右列；下拉展开 / 选定；滑块不响应；步进行执行它自己的动作；开关和 ▸ 交给原来的页面。</summary>
     private bool CpActivate()
     {
+        if (_ak != null) return AkPad("A");
         if (!CpActive) return false;
         if (_stOpen && StEditing) return false;
         if (_perfOpen && _perfCurveEdit) return false;
@@ -947,6 +949,7 @@ public sealed partial class WallStage
     /// <summary>B：先收下拉；右列退回左列；左列交给原来的页面（设置页的子列表一层层退、最后关页面）。</summary>
     private bool CpBack()
     {
+        if (_ak != null) return AkPad("B");
         if (!CpActive) return false;
         if (_stOpen && StEditing) return false;
         if (_perfOpen && _perfCurveEdit) return false;
@@ -991,6 +994,7 @@ public sealed partial class WallStage
         // 屏幕左缘留给「边缘右划返回」
         if (e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx) return false;
         var (x, y) = CpLocal(pt.Position.X, pt.Position.Y);
+        if (_ak != null) { e.Handled = true; return AkTap(x, y); }
         CpTouchMode(true);
         v.List.StopAnimation("Offset");
         v.List.Offset = new Vector3(CpListX - 16, CpTop - 16 - v.Scroll, 0);

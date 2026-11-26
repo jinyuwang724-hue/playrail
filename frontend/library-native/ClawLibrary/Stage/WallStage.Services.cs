@@ -45,6 +45,7 @@ public sealed partial class WallStage
         _stRows.Add(new PerfRow { Title = "账户", Value = account?.Name ?? "未连接", Skip = true });
         _stRows.Add(new PerfRow
         {
+            Sub = _connectCancel == null,   // 打开 Steam 登录网页
             Title = _connectCancel != null ? "取消连接" : account == null ? "连接 Steam" : "更换 Steam 账户",
             Disabled = _steamRefreshing,
             Value = _connectCancel != null ? "正在等待网页确认…" : "",
@@ -53,21 +54,15 @@ public sealed partial class WallStage
         if (account != null)
         {
             bool cloud = _steamCloud.HasKey(account.Id);
-            _stRows.Add(new PerfRow { Title = "Steam 云端同步", Value = cloud ? "已配置" : "需配置 Web API Key", Disabled = _steamRefreshing, Press = ConfigureSteamCloud });
-            if (!cloud) _stRows.Add(new PerfRow { Title = "获取 Steam Web API Key", Value = "›", Press = () => PlatformClients.Open("https://steamcommunity.com/dev/apikey") });
+            _stRows.Add(new PerfRow { Sub = true, Title = "Steam 云端同步", Value = cloud ? "已配置" : "需配置 Web API Key", Disabled = _steamRefreshing, Press = ConfigureSteamCloud });
             if (_steamCloudSnapshot?.SteamId == account.Id)
                 _stRows.Add(new PerfRow { Title = "上次云端同步", Value = _steamCloudSnapshot.Updated.ToLocalTime().ToString("MM-dd HH:mm"), Skip = true });
-            _stRows.Add(new PerfRow { Title = "更新本机安装状态", Disabled = _steamRefreshing, Press = RefreshSteamInstallation });
-            if (cloud) _stRows.Add(new PerfRow { Title = "移除云端配置", Disabled = _steamRefreshing, Press = () =>
-            {
-                try { _steamCloud.RemoveKey(account.Id); _ = RefreshPlatformLibrary("steam"); }
-                catch { Toast("云端配置未能移除，请重试"); }
-            } });
+            // 本机安装状态自动跟着 Steam 变（WatchSteamInstalls），不再列手动更新；云端配置不单独移除（11-26 jinyu）
         }
         _stRows.Add(new PerfRow { Title = _steamCloudSnapshot == null ? "本机已识别游戏" : "云端已识别游戏", Value = $"{_lib.IdentifiedCount("steam")} 款", Skip = true, BrightValue = true });
         _stRows.Add(new PerfRow { Title = "更新 Steam 游戏库", Value = _steamRefreshing ? "更新中…" : "", Disabled = _steamRefreshing,
             Press = () => _ = RefreshPlatformLibrary("steam") });
-        if (account != null) _stRows.Add(new PerfRow { Title = "断开 Steam 连接", Disabled = _connectCancel != null || _steamRefreshing,
+        if (account != null) _stRows.Add(new PerfRow { Title = "解除 Steam 账号绑定", Disabled = _connectCancel != null || _steamRefreshing,
             Press = () => { try { _connections.SetSteam(null); _steamCloudSnapshot = null;
                 ApplyLibrarySnapshot(_lib.ReplacePlatform("steam", Library.Build(new(), new())));
                 _ = RefreshPlatformLibrary("steam"); Repaint(); } catch { Toast("连接记录未能保存，请重试"); } } });

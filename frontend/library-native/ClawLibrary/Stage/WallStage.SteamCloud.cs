@@ -43,6 +43,7 @@ public sealed partial class WallStage
     private void ConfigureSteamCloud()
     {
         if (_connections.Steam is not { } account || _steamRefreshing) return;
+        if (AkShow(account.Id)) return;   // Cocoon 样式的设置页：弹窗
         StEditSecret(text =>
         {
             string key = text.Trim();
@@ -67,12 +68,61 @@ public sealed partial class WallStage
         finally { _steamRefreshing = false; if (!_servicesDisposed && _stOpen) Repaint(); }
     }
 
+    // ---------------- 本机安装状态：自动跟着 Steam 变（11-26 jinyu：不要手动「更新本机安装状态」） ----------------
+
+    private readonly List<FileSystemWatcher> _steamInstallWatch = new();
+    private HashSet<string>? _steamInstalledLast;
+    private int _steamInstallGen;
+
+    /// <summary>盯着各个库目录的 appmanifest：Steam 装上 / 卸掉 / 装完一款游戏时，停 2 秒后后台重读安装状态，变了才刷新游戏库。</summary>
+    private void WatchSteamInstalls()
+    {
+        foreach (var w in _steamInstallWatch) w.Dispose();
+        _steamInstallWatch.Clear();
+        if (Steam.Root() is not { } root) return;
+        foreach (var dir in Steam.LibraryDirs(root))
+        {
+            if (!Directory.Exists(dir)) continue;
+            try
+            {
+                var w = new FileSystemWatcher(dir, "appmanifest_*.acf") { NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size };
+                FileSystemEventHandler h = (_, _) => _dq.TryEnqueue(SteamInstallsChanged);
+                w.Changed += h; w.Created += h; w.Deleted += h;
+                w.Renamed += (_, _) => _dq.TryEnqueue(SteamInstallsChanged);
+                w.EnableRaisingEvents = true;
+                _steamInstallWatch.Add(w);
+            }
+            catch (Exception ex) { Log.Warn($"watch {dir}: {ex.Message}"); }
+        }
+        Log.Info($"steam install watch: {_steamInstallWatch.Count} folders");
+        // 记下启动时的安装状态，之后只有真的变了才刷新
+        _ = Task.Run(() => Steam.ReadInstalled(root)).ContinueWith(t => { if (!t.IsFaulted) _dq.TryEnqueue(() => _steamInstalledLast ??= t.Result); });
+    }
+
+    private void SteamInstallsChanged()
+    {
+        int gen = ++_steamInstallGen;
+        After(2000, () => { if (gen == _steamInstallGen && !_servicesDisposed) RefreshSteamInstallation(); });
+    }
+
     private void RefreshSteamInstallation()
     {
-        if (_steamRefreshing) return;
+        if (_steamRefreshing || _servicesDisposed) return;
         string? root = Steam.Root();
-        if (root == null) { Toast("本机尚未安装 Steam"); return; }
-        _steamRoot = root;
-        ApplyLibrarySnapshot(_lib.Refilter(Steam.ReadInstalled(root)));
+        if (root == null) return;
+        _ = Task.Run(() => Steam.ReadInstalled(root)).ContinueWith(t =>
+        {
+            if (t.IsFaulted) return;
+            var set = t.Result;
+            _dq.TryEnqueue(() =>
+            {
+                if (_servicesDisposed) return;
+                if (_steamInstalledLast != null && _steamInstalledLast.SetEquals(set)) return;
+                _steamInstalledLast = set;
+                _steamRoot = root;
+                Log.Info($"steam installs changed: {set.Count}");
+                ApplyLibrarySnapshot(_lib.Refilter(set));
+            });
+        });
     }
 }

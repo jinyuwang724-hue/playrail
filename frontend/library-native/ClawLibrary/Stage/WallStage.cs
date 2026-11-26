@@ -307,6 +307,7 @@ public sealed partial class WallStage : IDisposable
         _lib = Library.Load(seed, stats, id => ArtKitBuilder.TryLoad(ArtDirectory(id)), collections, owned, installed, Steam.ShortcutTargets(user), local);
         _steamRoot = steam; _steamUser = user;
         LoadSteamCloudCache();
+        WatchSteamInstalls();
         RestoreGameSession();
         if (_lib.Games.Count == 0)
         {
@@ -1635,6 +1636,7 @@ public sealed partial class WallStage : IDisposable
         DisposeStartupReadiness();
         DisposeShortcutMotion();
         _servicesDisposed = true;
+        foreach (var w in _steamInstallWatch) w.Dispose();
         _connectCancel?.Cancel();
         _steamCloudLifetime.Cancel();
         StopScreensaver();

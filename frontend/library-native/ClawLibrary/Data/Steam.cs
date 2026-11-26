@@ -244,19 +244,29 @@ public static class Steam
         ulong.TryParse(folder, out var v) && v > uint.MaxValue ? (v >> 32).ToString() : folder;
 
     /// <summary>各个库目录（libraryfolders.vdf）里的 appmanifest：(appid, AppState 节点)。</summary>
+    /// <summary>各个库目录的 steamapps 文件夹（主目录 + libraryfolders.vdf 里登记的）。</summary>
+    public static List<string> LibraryDirs(string root)
+    {
+        var dirs = new List<string> { Path.Combine(root, "steamapps") };
+        var lf = Path.Combine(root, "steamapps", "libraryfolders.vdf");
+        try
+        {
+            if (File.Exists(lf))
+            {
+                var folders = TextVdf.Parse(File.ReadAllText(lf, Encoding.UTF8)).Path("libraryfolders");
+                if (folders != null)
+                    foreach (var (_, node) in folders.Children)
+                        if (node.Value("path") is { } p) dirs.Add(Path.Combine(p, "steamapps"));
+            }
+        }
+        catch (Exception ex) { Log.Warn($"libraryfolders: {ex.Message}"); }
+        return dirs.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     private static List<(string Id, TextVdf State, string File)> Manifests(string root)
     {
         var list = new List<(string, TextVdf, string)>();
-        var dirs = new List<string> { Path.Combine(root, "steamapps") };
-        var lf = Path.Combine(root, "steamapps", "libraryfolders.vdf");
-        if (File.Exists(lf))
-        {
-            var folders = TextVdf.Parse(File.ReadAllText(lf, Encoding.UTF8)).Path("libraryfolders");
-            if (folders != null)
-                foreach (var (_, node) in folders.Children)
-                    if (node.Value("path") is { } p) dirs.Add(Path.Combine(p, "steamapps"));
-        }
-        foreach (var d in dirs.Distinct(StringComparer.OrdinalIgnoreCase))
+        foreach (var d in LibraryDirs(root))
         {
             if (!Directory.Exists(d)) continue;
             foreach (var acf in Directory.GetFiles(d, "appmanifest_*.acf"))
