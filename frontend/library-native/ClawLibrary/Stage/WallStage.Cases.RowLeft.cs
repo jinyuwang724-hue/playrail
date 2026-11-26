@@ -36,6 +36,9 @@ public sealed partial class WallStage
         public required ContainerVisual Root, Panel, List;
         public required SpriteVisual Scrim, Bg;
         public CurSet Cur = null!;
+        /// <summary>焦点行底下的白色选中卡：括号套在它上面（同心），不再套一个看不见的大胶囊。</summary>
+        public SpriteVisual? Card;
+        public CompositionDrawingSurface? CardSurf;
         public required CsPage Page;
         public readonly List<(SpriteVisual V, CompositionDrawingSurface S)> Rows = new();
         public int Focus;
@@ -166,6 +169,7 @@ public sealed partial class WallStage
         {
             _cs?.Root.Children.Remove(ls.Root);
             foreach (var r in ls.Rows) r.S.Dispose();
+            ls.CardSurf?.Dispose();
             ls.Root.Dispose();
         }
         catch (ObjectDisposedException) { }
@@ -285,11 +289,38 @@ public sealed partial class WallStage
 
     // ---------------- 焦点 / 输入 ----------------
 
+    // 选中卡：行内左右各让 18、上下各让 22，圆角和面板一样 30（11-26 jinyu：侧栏焦点框形状别扭——
+    // 原来括号套的是一个看不见的、两头半圆的大胶囊，半径 78，和行、面板都对不上）
+    private const float LsCardX = 18, LsCardInY = 22, LsCardR = LsRad, LsCardPad = 28;
+    private static float LsCardW => LsW - 2 * LsCardX;
+    private static float LsCardH => LsRowH - 2 * LsCardInY;
+
+    private void LsEnsureCard(LsState ls)
+    {
+        if (ls.Card != null) return;
+        float w = LsCardW + LsCardPad * 2, h = LsCardH + LsCardPad * 2, R = CsRaster;
+        ls.CardSurf = G.Surface((int)Math.Ceiling(w * R), (int)Math.Ceiling(h * R));
+        using (var ds = CanvasComposition.CreateDrawingSession(ls.CardSurf))
+        {
+            ds.Clear(Colors.Transparent);
+            ds.Transform = Matrix3x2.CreateTranslation(LsCardPad, LsCardPad) * Matrix3x2.CreateScale(R);
+            RsSoftShadow(ds, 0, 6, LsCardW, LsCardH, LsCardR, 12, 0.12f);
+            ds.FillRoundedRectangle(0, 0, LsCardW, LsCardH, LsCardR, LsCardR, Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
+            ds.DrawRoundedRectangle(0.5f, 0.5f, LsCardW - 1, LsCardH - 1, LsCardR, LsCardR, Color.FromArgb(255, 0xE8, 0xE9, 0xEC), 1);
+        }
+        ls.Card = G.Sprite(G.C.CreateSurfaceBrush(ls.CardSurf), relative: false);
+        ls.Card.Size = new Vector2(w, h);
+        ls.List.Children.InsertAtBottom(ls.Card);   // 在行的文字和图标下面
+    }
+
     private void LsFocus(LsState ls, bool move)
     {
+        LsEnsureCard(ls);
         int i = ls.Focus;
-        float h = LsRowH;
-        CurToCocoon(ls.Cur, 14, i * h + 18, LsW - 28, h - 36, (h - 36) / 2f, move);
+        float x = LsCardX, y = i * LsRowH + LsCardInY;
+        var to = new Vector3(x - LsCardPad, y - LsCardPad, 0);
+        if (move && !Reduced) ls.Card!.StartAnimation("Offset", RwSpring(to)); else RwJump(ls.Card!, to);
+        CurToCocoon(ls.Cur, x, y, LsCardW, LsCardH, LsCardR, move);
     }
 
     private void LsMove(Direction dir)
