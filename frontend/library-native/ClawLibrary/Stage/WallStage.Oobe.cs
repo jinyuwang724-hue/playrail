@@ -618,14 +618,14 @@ public sealed partial class WallStage
     /// <summary>全屏体验主页：0 Claw 游戏库、1 Steam 大屏幕（主页还是游戏库，被当主页打开时转去 Steam）、2 Xbox 应用、3 桌面（不进全屏体验）。</summary>
     private string[] ObHomeNames => new[] { L("游戏库", "Library"), L("Steam 大屏幕", "Steam Big Picture"), "Xbox", L("桌面", "Desktop") };
 
-    /// <summary>主页页的焦点：0 = 主页选项，1..4 = 设置行，5 = 继续。</summary>
+    /// <summary>主页页的焦点：0 = 主页选项，1..ObRows.Length = 设置行，ObGo = 继续。</summary>
+    private const int ObGo = 4;
     private (string Name, string[] Values, Func<int> Get, Action<int> Set)[] ObRows => new (string, string[], Func<int>, Action<int>)[]
     {
         (L("界面音效", "UI sounds"), new[] { L("开", "On"), L("关", "Off") }, () => _prefs.Sounds ? 0 : 1, v => { SaveUi(_prefs with { Sounds = v == 0 }); ApplyHomeAudio(); }),
         (L("背景音乐", "Music"), new[] { L("开", "On"), L("关", "Off") }, () => _prefs.MusicEnabled ? 0 : 1, v => { SaveUi(_prefs with { MusicEnabled = v == 0 }); ApplyHomeAudio(); }),
         (L("手柄震动", "Haptics"), new[] { L("开", "On"), L("关", "Off") }, () => _prefs.NavHaptics ? 0 : 1, v => SaveUi(_prefs with { NavHaptics = v == 0 })),
-        (L("开机先显示", "Open to"), new[] { L("游戏库", "Library"), L("控制中心", "Control center") }, () => _prefs.Boot == BootTarget.ControlCenter ? 1 : 0,
-            v => SaveUi(_prefs with { Boot = v == 1 ? BootTarget.ControlCenter : BootTarget.Library })),
+        // 「开机先显示」去掉了（11-26 jinyu：打开后一律进游戏库）
     };
 
     private void ObBuildHome()
@@ -660,7 +660,7 @@ public sealed partial class WallStage
             _obHovers.Add((new Windows.Foundation.Rect((ObMargin - 24) * _obK, y * _obK, ObRowW * _obK, ObRowH * _obK), idx + 1));
         }
         float by = ry + rows.Length * ObRowH + 48;
-        ObButton(ObMargin, by, ObKind.Primary, () => L("继续", "Continue"), () => _obFocus == 5, () => true, () => { _obFocus = 5; ObActivate(); }, 5);
+        ObButton(ObMargin, by, ObKind.Primary, () => L("继续", "Continue"), () => _obFocus == ObGo, () => true, () => { _obFocus = ObGo; ObActivate(); }, ObGo);
     }
 
     /// <summary>主页选项：选中且聚焦 = 白色实心圆；选中没聚焦 = 浅色玻璃圆；没选中 = 深色圆、图标变淡。图标用各自平台的标志。</summary>
@@ -921,7 +921,7 @@ public sealed partial class WallStage
                 if (!h)
                 {
                     int f = _obFocus + d;
-                    if (f is < 0 or > 5) { Cue(Sfx.Bump); return; }
+                    if (f < 0 || f > ObGo) { Cue(Sfx.Bump); return; }
                     _obFocus = f; ObRepaint(); return;
                 }
                 if (_obFocus == 0)
@@ -930,7 +930,7 @@ public sealed partial class WallStage
                     if (next < 0 || next >= ObHomeCount) { Cue(Sfx.Bump); return; }
                     ObSetHome(next); return;
                 }
-                if (_obFocus is >= 1 and <= 4)
+                if (_obFocus >= 1 && _obFocus < ObGo)
                 {
                     var r = ObRows[_obFocus - 1];
                     int v = r.Get() + d;
@@ -978,7 +978,7 @@ public sealed partial class WallStage
                 }
                 Cue(Sfx.Bump); return;
             case ObStep.Home:
-                if (_obFocus < 5) { _obFocus++; ObRepaint(); return; }
+                if (_obFocus < ObGo) { _obFocus++; ObRepaint(); return; }
                 Cue(Sfx.DetailIn); ObShowPage(ObStep.Prepare, 1); return;
             case ObStep.Prepare:
                 Cue(Sfx.Bump); return;
