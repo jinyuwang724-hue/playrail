@@ -17,6 +17,9 @@ public sealed partial class WallStage
     {
         public required SpriteVisual Glow, Line, Line2, Rim;
         public float W, H, R;
+        /// <summary>上一次给的目标位置（精灵的 Offset）。动画跑着时读 Visual.Offset 拿到的是旧的静态值，不能拿它算距离。</summary>
+        public Vector3 To;
+        public bool HasTo;
         public bool Shown;
         public Visual[] All => new Visual[] { Glow, Line, Line2, Rim };
     }
@@ -117,7 +120,8 @@ public sealed partial class WallStage
         if (resize)
         {
             float ow = c.W, oh = c.H;
-            var oldCenter = new Vector3(c.Glow.Offset.X + (ow + RmCurPad * 2) / 2, c.Glow.Offset.Y + (oh + RmCurPad * 2) / 2, 0);
+            var from = c.HasTo ? c.To : c.Glow.Offset;
+            var oldCenter = new Vector3(from.X + (ow + RmCurPad * 2) / 2, from.Y + (oh + RmCurPad * 2) / 2, 0);
             CurPaint(c, W, H, r);
             foreach (var v in c.All)
             {
@@ -131,11 +135,15 @@ public sealed partial class WallStage
                 else { v.StopAnimation("Scale"); v.Scale = Vector3.One; }
             }
         }
-        float dx = to.X - c.Glow.Offset.X, dy = to.Y - c.Glow.Offset.Y;
+        // 11-26 jinyu：上下移动 / 连按时焦点框偶尔「往外一扩」像抽搐 —— 原因是这里的橡皮筋拉伸：
+        // 距离拿 Visual.Offset 算，动画跑着时那是很久以前的静态值，原地重画（读数刷新、内容刷新）也会算出一大段距离，
+        // 框就突然拉长 45 %；连按时每次又从 1 重新开始拉。现在不拉伸，只用位置弹簧；目标没变就不重启动画。
+        bool same = c.HasTo && Vector3.Distance(c.To, to) < 0.25f && !resize;
+        c.To = to; c.HasTo = true;
+        if (same) return;
         foreach (var v in c.All)
         {
             if (move && !Reduced) v.StartAnimation("Offset", RwSpring(to)); else RwJump(v, to);
-            if (move && !Reduced && !resize) SpStretch(v, dx, dy, W, H);
         }
     }
 
