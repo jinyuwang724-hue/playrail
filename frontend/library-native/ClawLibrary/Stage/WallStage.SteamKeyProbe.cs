@@ -31,14 +31,23 @@ public sealed partial class WallStage
             if (!_stOpen) throw new InvalidOperationException("settings not open");
             StCategoryJump(1); Repaint(); await Task.Delay(500);
             await Still("page");
-            if (!AkShow(_connections.Steam?.Id ?? "76561197960287930")) throw new InvalidOperationException("dialog not shown");
-            if (_akBox != null) _akBox.Text = "";
+            if (!AkShowSteam(_connections.Steam?.Id ?? "76561197960287930")) throw new InvalidOperationException("dialog not shown");
+            await Task.Delay(300);
+            _akBoxes[0].Text = "";
             await Still("empty");
-            if (_akBox != null) _akBox.Text = "0123456789ABCDEF";
+            _akBoxes[0].Text = "0123456789ABCDEF";
             await Still("half");
-            if (_akBox != null) _akBox.Text = "0123456789ABCDEF0123456789ABCDEF";
+            _akBoxes[0].Text = "0123456789ABCDEF0123456789ABCDEF";
             await Still("valid");
             AkClose(); await Task.Delay(400);
+            // IGDB：两个框，第一个填好、第二个空着（不保存）
+            if (!AkShowIgdb()) throw new InvalidOperationException("igdb dialog not shown");
+            await Task.Delay(300);
+            string id0 = _akBoxes[0].Text, sec0 = _akBoxes[1].Text;
+            _akBoxes[0].Text = "abcdefghijklmnopqrstuvwxyz0123"; _akBoxes[1].Text = "";
+            await Still("igdb");
+            AkClose(); await Task.Delay(400);
+            await Still("lib");
             for (int i = 0; i < 4 && !LsOpenNow; i++) { if (!_ccOpen) break; Back(); await Task.Delay(500); }
             if (LsOpenNow) { PadView(); await Task.Delay(500); }
         }

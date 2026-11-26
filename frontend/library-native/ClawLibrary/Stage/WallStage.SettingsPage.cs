@@ -637,21 +637,7 @@ public sealed partial class WallStage
 
         BuildLgEntryRows();
 
-        _stRows.Add(new PerfRow { Section = true, Title = "封面 · 将重新载入游戏库" });
-        long bytes = 0;
-        try { if (Directory.Exists(ArtRoot)) bytes = new DirectoryInfo(ArtRoot).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length); } catch { }
-        _stRows.Add(StAction("重新生成全部封面", "art", $"{bytes >> 20} MB", () =>
-        {
-            if (!StConfirm("art")) return;
-            try { Directory.CreateDirectory(App.CacheDir); File.WriteAllText(Path.Combine(App.CacheDir, "art.reset"), "1"); } catch { }
-            RestartLibrary();
-        }));
-
-        BuildStScrapeKeys();
-
-        _stRows.Add(new PerfRow { Section = true, Title = "启动游戏后" });
-        _stRows.Add(StPick("游戏库", new[] { "保持", "转入后台并暂停" }, (int)_prefs.AfterLaunch, i => { SaveUi(_prefs with { AfterLaunch = (AfterLaunch)i }); Repaint(); }, 0));
-        _stRows.Add(StPick("游戏中回到游戏库", new[] { "正在游戏面板", "墙面 + 顶部提示" }, (int)_prefs.NowPlaying, i => { SaveUi(_prefs with { NowPlaying = (NowPlayingStyle)i }); Repaint(); }, 0));
+        // 11-26 jinyu：「重新生成全部封面」和「启动游戏后」（游戏库 / 游戏中回到游戏库）删了；IGDB 刮削密钥在本地游戏卡里（BuildLgEntryRows）
     }
 
     /// <summary>

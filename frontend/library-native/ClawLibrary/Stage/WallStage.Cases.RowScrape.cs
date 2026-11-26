@@ -221,44 +221,15 @@ public sealed partial class WallStage
     /// 设置 › 刮削来源密钥（11-21 jinyu：各刮削源的 key 放到设置里，设置页之后会重做）。
     /// 这一版设置页还没有文字输入：在浏览器里复制好，按 A 从剪贴板粘贴；再按一次清除。
     /// </summary>
+    /// <summary>IGDB 刮削密钥：一行，按下弹「填密钥」小窗（同 Steam API Key，11-26 jinyu）；放在设置 › 游戏库的本地游戏卡里。</summary>
     private void BuildStScrapeKeys()
     {
         var p = ScLoadPrefs();
-        _stRows.Add(new PerfRow { Section = true, Title = "刮削来源密钥 · IGDB（dev.twitch.tv 建应用后获得）" });
-        string Mask(string s) => s.Length == 0 ? "未设置 · A 从剪贴板粘贴" : $"已设置 ···{s[Math.Max(0, s.Length - 4)..]} · A 清除";
-        PerfRow Key(string title, string id, Func<string> get, Action<string> set) => StAction(title, id, Mask(get()), () =>
+        _stRows.Add(new PerfRow
         {
-            if (get().Length > 0) { set(""); ScSavePrefs(); Toast($"{title} 清除了"); Repaint(); return; }
-            _ = Task.Run(async () =>
-            {
-                string text = "";
-                try
-                {
-                    var tcs = new TaskCompletionSource<string>();
-                    _dq.TryEnqueue(async () =>
-                    {
-                        try
-                        {
-                            var c = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
-                            tcs.TrySetResult(c.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.Text) ? await c.GetTextAsync() : "");
-                        }
-                        catch (Exception ex) { tcs.TrySetException(ex); }
-                    });
-                    text = (await tcs.Task).Trim();
-                }
-                catch (Exception ex) { Log.Warn($"scrape key paste: {ex.Message}"); }
-                _dq.TryEnqueue(() =>
-                {
-                    if (text.Length == 0 || text.Length > 200 || text.Any(char.IsWhiteSpace)) { Toast("剪贴板里没有可用的密钥（先复制一行不含空格的文字）"); return; }
-                    set(text);
-                    ScSavePrefs();
-                    Toast($"{title} 存好了");
-                    Repaint();
-                });
-            });
+            Sub = true, Title = "IGDB 刮削密钥", Value = p.IgdbReady ? "已配置" : "未配置",
+            Press = () => { if (!AkShowIgdb()) Toast("在 Cocoon 主题的设置页里配置"); },
         });
-        _stRows.Add(Key("Client ID", "scrape:igdbid", () => p.IgdbId, v => p.IgdbId = v));
-        _stRows.Add(Key("Client Secret", "scrape:igdbsecret", () => p.IgdbSecret, v => p.IgdbSecret = v));
     }
 
     private static string ScMatchName(JsonObject m)

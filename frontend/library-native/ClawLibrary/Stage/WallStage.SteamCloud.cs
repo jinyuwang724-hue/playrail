@@ -43,7 +43,7 @@ public sealed partial class WallStage
     private void ConfigureSteamCloud()
     {
         if (_connections.Steam is not { } account || _steamRefreshing) return;
-        if (AkShow(account.Id)) return;   // Cocoon 样式的设置页：弹窗
+        if (AkShowSteam(account.Id)) return;   // Cocoon 样式的设置页：弹窗
         StEditSecret(text =>
         {
             string key = text.Trim();

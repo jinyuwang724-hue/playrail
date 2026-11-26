@@ -129,6 +129,7 @@ public sealed partial class WallStage
                 _ = LgJob("set_steamgriddb_key", JsonValue.Create(key == "清除" ? "" : key));
             }),
         });
+        BuildStScrapeKeys();
     }
 
     // ---------------- 本地游戏清单 ----------------

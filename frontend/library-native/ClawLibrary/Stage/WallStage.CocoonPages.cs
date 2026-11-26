@@ -836,7 +836,7 @@ public sealed partial class WallStage
     /// </summary>
     private bool CpMove(Direction dir)
     {
-        if (_ak != null) return AkPad("dir");
+        if (_ak != null) return AkPad(dir == Direction.Up ? "Up" : dir == Direction.Down ? "Down" : "dir");
         if (!CpActive) return false;
         if (_stOpen && StEditing) return false;
         if (_perfOpen && _perfCurveEdit) return false;
