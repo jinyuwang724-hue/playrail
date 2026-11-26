@@ -470,6 +470,9 @@ public sealed partial class WallStage
         foreach (var (i, y, h, sub) in v.Lay) CpPaintRow(ds, rows[i], i, y, h, sub);
     }
 
+    /// <summary>行标题统一用中文字体 500（11-26 jinyu：纯英文名字以前换成 Poppins 粗体，和中文行对不齐）。</summary>
+    private static readonly Windows.UI.Text.FontWeight CpTitleWt = new(500);
+
     private void CpPaintRow(CanvasDrawingSession ds, PerfRow r, int index, float y, float h, string? sub)
     {
         h = CpBaseH(r, sub);   // 展开的下拉：行变高了，但标题和胶囊还在原来的高度里
@@ -480,19 +483,19 @@ public sealed partial class WallStage
         if (CpIsSlider(r))
         {
             // 两层（Cocoon「Highlight thickness」）：上面标题，下面「数值 − 轨道 +」；左边留给图标
-            using var tf = new CanvasTextFormat { FontFamily = RmFont(r.Title), FontSize = 36, FontWeight = RsWt(r.Title), WordWrapping = CanvasWordWrapping.NoWrap };
+            using var tf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 36, FontWeight = CpTitleWt, WordWrapping = CanvasWordWrapping.NoWrap };
             ds.DrawText(r.Title, new Windows.Foundation.Rect(tx, y + 18, R - tx, 52), RmInk, tf);
         }
         else if (sub != null)
         {
-            using (var tf = new CanvasTextFormat { FontFamily = RmFont(r.Title), FontSize = 36, FontWeight = RsWt(r.Title), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
+            using (var tf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 36, FontWeight = CpTitleWt, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
                 ds.DrawText(r.Title, new Windows.Foundation.Rect(tx, y + 20, right - tx, 52), RmInk, tf);
             using (var sf = new CanvasTextFormat { FontFamily = RmFont(sub), FontSize = 26, FontWeight = RsWt(sub, 500), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
                 ds.DrawText(sub, new Windows.Foundation.Rect(tx, y + 78, right - tx, 40), RsSub, sf);
         }
         else
         {
-            using var tf = new CanvasTextFormat { FontFamily = RmFont(r.Title), FontSize = 36, FontWeight = RsWt(r.Title), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
+            using var tf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 36, FontWeight = CpTitleWt, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
             ds.DrawText(r.Title, new Windows.Foundation.Rect(tx, y, Math.Max(200, right - tx), h), RmInk, tf);
         }
         if (CpIsToggle(r))

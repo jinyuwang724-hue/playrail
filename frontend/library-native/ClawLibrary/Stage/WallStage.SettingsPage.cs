@@ -734,7 +734,8 @@ public sealed partial class WallStage
         {
             string id = Str(it["id"]) ?? "", name = Str(it["name"]) ?? id;
             bool on = Bool(it["enabled"]);
-            if (Str(it["protected"]) is string why) { _stRows.Add(StValue(name, "开")); continue; }
+            // 系统需要、不能关的项：也画成开关（开着），拨它只提示原因（11-26 jinyu：不要出现老的「开」字样）
+            if (Str(it["protected"]) is string why) { _stRows.Add(StToggle(name, true, _ => Toast(why))); continue; }
             _stRows.Add(StToggle(name, on, to =>
             {
                 it["enabled"] = to;
