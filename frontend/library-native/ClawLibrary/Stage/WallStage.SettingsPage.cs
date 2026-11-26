@@ -83,16 +83,13 @@ public sealed partial class WallStage
         }
     }
 
-    /// <summary>游戏库载入后：集合的顺序和显示隐藏、默认集合。</summary>
+    /// <summary>游戏库载入后：集合用默认顺序、全部显示、从第一个开始（11-26 jinyu：设置里不再提供集合位置 / 可见性 / 默认集合，以前存的也不再生效）。</summary>
     private void ApplyTabPrefs(bool keepCurrent = false)
     {
         string? current = keepCurrent && _tabIndex < _lib.HomeTabs.Count ? _lib.HomeTabs[_tabIndex].Id : null;
         _allTabs ??= _lib.HomeTabs.ToList();
-        var order = _prefs.TabOrder.ToList();
-        var tabs = _allTabs.OrderBy(t => order.IndexOf(t.Id) is int i && i >= 0 ? i : order.Count + _allTabs.IndexOf(t)).ToList();
-        var shown = tabs.Where(t => !_prefs.TabsHidden.Contains(t.Id)).ToList();
-        _lib.HomeTabs = shown.Count > 0 ? shown : tabs.Take(1).ToList();
-        int want = _lib.HomeTabs.FindIndex(t => t.Id == (current ?? _prefs.StartTab));
+        _lib.HomeTabs = _allTabs.ToList();
+        int want = current == null ? 0 : _lib.HomeTabs.FindIndex(t => t.Id == current);
         _tabIndex = want >= 0 ? want : 0;
     }
 
@@ -391,6 +388,9 @@ public sealed partial class WallStage
         return row;
     }
 
+    /// <summary>这一行会打开子页面：行尾画 ▸（只有子页面才画；执行动作的行不画，11-26 jinyu）。</summary>
+    private static PerfRow StSub(PerfRow r) { r.Sub = true; return r; }
+
     private PerfRow StAction(string title, string key, string idle, Action run) =>
         new() { Title = title, Value = _stArmed == key ? "再按一次确认" : idle, Press = run };
 
@@ -482,7 +482,7 @@ public sealed partial class WallStage
         string path = _stBrowse!;
         string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         if (_stBrowsePick != null && Directory.Exists(desktop) && !string.Equals(path, desktop, StringComparison.OrdinalIgnoreCase))
-            _stRows.Add(new PerfRow { Title = "桌面快捷方式", Value = "浏览  ›", Press = () => StBrowseTo(desktop) });
+            _stRows.Add(new PerfRow { Sub = true, Title = "桌面快捷方式", Value = "浏览  ›", Press = () => StBrowseTo(desktop) });
         _stRows.Add(new PerfRow { Section = true, Title = path.Length == 0 ? "选择磁盘" : path });
         if (path.Length == 0)
         {
@@ -490,7 +490,7 @@ public sealed partial class WallStage
             {
                 string root = d.Name;
                 string label = string.IsNullOrEmpty(d.VolumeLabel) ? (d.DriveType == DriveType.Removable ? "可移动磁盘" : "本地磁盘") : d.VolumeLabel;
-                _stRows.Add(new PerfRow { Title = root.TrimEnd('\\'), Value = $"{label} · 剩 {d.AvailableFreeSpace >> 30} GB", Press = () => StBrowseTo(root) });
+                _stRows.Add(new PerfRow { Sub = true, Title = root.TrimEnd('\\'), Value = $"{label} · 剩 {d.AvailableFreeSpace >> 30} GB", Press = () => StBrowseTo(root) });
             }
             return;
         }
@@ -501,7 +501,7 @@ public sealed partial class WallStage
             string[] subs;
             try { subs = Directory.GetDirectories(path).Where(d => (new DirectoryInfo(d).Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0).OrderBy(d => d, StringComparer.CurrentCulture).Take(400).ToArray(); }
             catch (Exception ex) { _stRows.Add(StInfo("打不开这个文件夹", ex.Message)); return; }
-            foreach (var d in subs) _stRows.Add(new PerfRow { Title = Path.GetFileName(d), Value = "›", Press = () => StBrowseTo(d) });
+            foreach (var d in subs) _stRows.Add(new PerfRow { Sub = true, Title = Path.GetFileName(d), Value = "›", Press = () => StBrowseTo(d) });
             int before = _stRows.Count;
             if (_stBrowseLossless) BuildLsBrowseExes(path); else BuildStBrowseExes(path);
             if (subs.Length == 0 && _stRows.Count == before) _stRows.Add(StInfo("（空）", ""));
@@ -527,7 +527,7 @@ public sealed partial class WallStage
         string[] dirs;
         try { dirs = Directory.GetDirectories(path).Where(d => (new DirectoryInfo(d).Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0).OrderBy(d => d, StringComparer.CurrentCulture).Take(400).ToArray(); }
         catch (Exception ex) { _stRows.Add(StInfo("打不开这个文件夹", ex.Message)); return; }
-        foreach (var d in dirs) _stRows.Add(new PerfRow { Title = Path.GetFileName(d), Value = "›", Press = () => StBrowseTo(d) });
+        foreach (var d in dirs) _stRows.Add(new PerfRow { Sub = true, Title = Path.GetFileName(d), Value = "›", Press = () => StBrowseTo(d) });
         if (dirs.Length == 0) _stRows.Add(StInfo("（没有子文件夹）", ""));
     }
 
@@ -557,7 +557,7 @@ public sealed partial class WallStage
                 ids.Add("unavailable"); names.Add("未生效"); sel = "unavailable";
             }
             int idx = Math.Max(0, ids.IndexOf(sel));
-            _stRows.Add(StPick("全屏体验", names.ToArray(), idx, i =>
+            _stRows.Add(StPick("Windows 全屏体验", names.ToArray(), idx, i =>
             {
                 string pick = ids[i];
                 if (pick == "unavailable") return;
@@ -569,10 +569,10 @@ public sealed partial class WallStage
                     return pick == "off" ? "开机不再进入全屏体验" : $"全屏体验主页：{names[i]}";
                 }, JsonValue.Create(aumid));
             }));
-            if (Str(home["error"]) is string error) _stRows.Add(StInfo("全屏体验状态", error));
+            if (Str(home["error"]) is string error) _stRows.Add(StInfo("Windows 全屏体验状态", error));
         }
-        else _stRows.Add(StInfo("全屏体验", later));
-        _stRows.Add(StPick("首页", BootNames, (int)_prefs.Boot, i => { SaveUi(_prefs with { Boot = (BootTarget)i }); Repaint(); }, 0));
+        else _stRows.Add(StInfo("Windows 全屏体验", later));
+        // 11-26 jinyu：不再设置「首页」（打开后先到哪），一律进游戏库
         if (v?["autostart"] is JsonValue)
         {
             bool on = Bool(v["autostart"]);
@@ -595,8 +595,8 @@ public sealed partial class WallStage
         _stRows.Add(new PerfRow { Section = true, Title = "后台运行" });
         _stRows.Add(StToggle("关闭窗口后留在托盘", _prefs.BackgroundRun,
             on => { SaveUi(_prefs with { BackgroundRun = on }); Repaint(); }, true));
-        _stRows.Add(StAction("转入后台", "background", "", () => (_window as MainWindow)?.RunInBackground()));
-        _stRows.Add(StAction("退出游戏库", "exit-library", "", () => (_window as MainWindow)?.ExitLibrary()));
+        _stRows.Add(StAction("重启软件", "restart-app", "", RestartLibrary));
+        _stRows.Add(StAction("退出软件", "exit-library", "", () => (_window as MainWindow)?.ExitLibrary()));
         _stRows.Add(new PerfRow { Section = true, Title = "语言" });
         // 换语言要重排所有已经画好的文字：存下来以后整个游戏库重启一次
         _stRows.Add(StPick("界面语言", new[] { "简体中文", "English" }, I18n.En ? 1 : 0, i =>
@@ -608,58 +608,14 @@ public sealed partial class WallStage
 
     private void BuildStLibrary()
     {
+        // 11-26 jinyu：第一张卡 = 是否显示未安装的 Steam 游戏 + 原来「账户与服务」里的 Steam / Xbox（并成一张）；
+        // 默认集合、集合位置 / 可见性不再提供（集合一律默认顺序，见 ApplyTabPrefs）
         _stRows.Add(new PerfRow { Section = true, Title = "显示" });
-        // 首页样式、插卡音效、竖条信息栏、竖栏 Steam 按钮：旧样式的选项，单行首页之后不再提供（11-25）
-        _stRows.Add(StPick("Steam 游戏显示范围", new[] { "所有游戏", "已安装游戏" }, _prefs.SteamInstalledOnly ? 1 : 0,
-            i => SetSteamInstalledOnly(i == 1), 0));
-        var tabs = _allTabs ?? _lib.HomeTabs;
-        var visible = _lib.HomeTabs;
-        int start = Math.Max(0, visible.FindIndex(t => t.Id == _prefs.StartTab));
-        _stRows.Add(StPick("默认集合", visible.Select(t => t.Label).ToArray(), start, i => { SaveUi(_prefs with { StartTab = visible[i].Id }); Repaint(); }, 0));
-
-        _stRows.Add(new PerfRow { Section = true, Title = "集合" });
-        var ordered = tabs.OrderBy(t => _prefs.TabOrder.ToList().IndexOf(t.Id) is int i && i >= 0 ? i : 99 + tabs.IndexOf(t)).ToList();
-        for (int k = 0; k < ordered.Count; k++)
-        {
-            var tab = ordered[k];
-            int pos = k;
-            bool hidden = _prefs.TabsHidden.Contains(tab.Id);
-            _stRows.Add(new PerfRow
-            {
-                Title = tab.Label + "位置", Numeric = true, EditId = "collection-order:" + tab.Id,
-                Value = $"第 {pos + 1} 个",
-                Changed = hidden || (_prefs.TabOrder.Length > 0 && !_prefs.TabOrder.Take(ordered.Count).SequenceEqual(tabs.Select(t => t.Id))),
-                Step = d =>
-                {
-                    int to = Math.Clamp(pos + d, 0, ordered.Count - 1);
-                    if (to == pos) return;
-                    var ids = ordered.Select(t => t.Id).ToList();
-                    ids.RemoveAt(pos); ids.Insert(to, tab.Id);
-                    SaveUi(_prefs with { TabOrder = ids.ToArray() });
-                    ApplyTabPrefs(keepCurrent: true); RepaintRail();
-                    _stFocus += (to - pos) * 2;
-                    Repaint();
-                },
-                Reset = () => { SaveUi(_prefs with { TabOrder = Array.Empty<string>(), TabsHidden = Array.Empty<string>() }); ApplyTabPrefs(keepCurrent: true); RepaintRail(); Repaint(); },
-            });
-            _stRows.Add(StPick(tab.Label + "可见性", new[] { "显示", "隐藏" }, hidden ? 1 : 0, choice =>
-            {
-                var hiddenNow = _prefs.TabsHidden.ToList();
-                if (choice == 0) hiddenNow.Remove(tab.Id);
-                else if (tabs.Count - hiddenNow.Count <= 1) { Toast("至少要留一个集合"); return; }
-                else if (!hiddenNow.Contains(tab.Id)) hiddenNow.Add(tab.Id);
-                SaveUi(_prefs with { TabsHidden = hiddenNow.ToArray() });
-                ApplyTabPrefs(keepCurrent: true); RepaintRail(); Repaint();
-            }, 0));
-        }
+        _stRows.Add(StToggle("显示未安装的 Steam 游戏", !_prefs.SteamInstalledOnly, on => SetSteamInstalledOnly(!on), true));
+        BuildStServices(oneCard: true);
 
         string reload = "";
         _stRows.Add(new PerfRow { Section = true, Title = "游戏来源 · 重新载入后生效" });
-        _stRows.Add(StAction("账户与服务", "services", "Steam · Xbox", () =>
-        {
-            _stCat = StServicesCat; _stFocus = 0; _stScroll = 0; _stScrollY = float.NaN;
-            BuildStRows(); _stFocus = FirstStRow(); PaintSt();
-        }));
         // 加进 Steam 的非 Steam 游戏就是本地游戏（和设置里添加的一样），一直显示，不再单独开关
         foreach (var folder in _prefs.Folders)
         {
@@ -675,7 +631,7 @@ public sealed partial class WallStage
             }));
             if (count < 0) _ = StCountFolder(folder);
         }
-        _stRows.Add(StAction("添加游戏文件夹", "addfolder", "", () => StBrowseTo("")));
+        _stRows.Add(StSub(StAction("添加游戏文件夹", "addfolder", "", () => StBrowseTo(""))));
         _stRows.Add(StToggle("显示 Steam 隐藏游戏", _prefs.ShowHiddenGames, on => { SaveUi(_prefs with { ShowHiddenGames = on }); _stNeedsReload = true; Repaint(); }, false, reload));
         _stRows.Add(StAction("重新载入游戏库", "reload", _stNeedsReload ? "待重新载入" : "", RestartLibrary));
 

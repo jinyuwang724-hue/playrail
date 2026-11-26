@@ -163,19 +163,7 @@ public sealed partial class WallStage : IDisposable
         InitRail();
         if (!Program.Args.Contains("--no-backdrop")) _backdropOn = _prefs.Backdrop;
         BuildChrome();
-        // 首页：控制中心，或者它下面的某一页
-        if (_prefs.Boot != BootTarget.Library) After(900, () =>
-        {
-            if (!_ccOpen) OpenControlCenter();
-            switch (_prefs.Boot)
-            {
-                case BootTarget.Perf: OpenPerf(); break;
-                case BootTarget.Gamepad: OpenGamepad(); break;
-                case BootTarget.Display: OpenDisplay(); break;
-                case BootTarget.System: OpenSystem(); break;
-                case BootTarget.Settings: OpenSettingsPage(); break;
-            }
-        });
+        // 打开后一律进游戏库（11-26 jinyu：不再设置「首页」，以前存的 Boot 不再生效）
         long tChrome = NowMs;
         Log.Info($"library: {_lib.Games.Count} games, {_lib.Collections.Count} collections, view {View.Width}x{View.Height} scale {View.Scale} dpi {Chrome.Dpi} ({NowMs - t0}ms)");
 

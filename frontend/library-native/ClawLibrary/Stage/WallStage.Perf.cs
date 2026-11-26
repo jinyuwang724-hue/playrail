@@ -29,6 +29,8 @@ public sealed partial class WallStage
         public string[]? Options;
         public int Choice = -1;
         public bool Section, Disabled, Numeric;
+        /// <summary>按下去打开子页面（Cocoon 页面行尾画 ▸ 的只有这种）。</summary>
+        public bool Sub;
         public bool BrightValue;
         /// <summary>这个模式下用不上的行：照样占位（高度不变），焦点跳过。</summary>
         public bool Skip;

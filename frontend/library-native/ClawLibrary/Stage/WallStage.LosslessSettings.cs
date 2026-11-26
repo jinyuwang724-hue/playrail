@@ -132,7 +132,7 @@ public sealed partial class WallStage
         if (!found)
         {
             _stRows.Add(new PerfRow { Title = "重新检测", Disabled = _lsBusy, Press = () => { _ = LsLoad(true); } });
-            _stRows.Add(new PerfRow { Title = "选择程序…", Value = "LosslessScaling.exe", Disabled = _lsBusy,
+            _stRows.Add(new PerfRow { Sub = true, Title = "选择程序…", Value = "LosslessScaling.exe", Disabled = _lsBusy,
                 Press = () => { _stBrowseLossless = true; StBrowseTo(""); } });
             return;
         }
@@ -166,7 +166,7 @@ public sealed partial class WallStage
         BuildLsFields(_lsEditor["profileSchema"] as JsonArray, values);
         BuildLsFields(_lsEditor["globalSchema"] as JsonArray, (JsonObject)_lsEditor["globalValues"]!);
         _stRows.Add(new PerfRow { Section = true, Title = "配置管理" });
-        _stRows.Add(new PerfRow { Title = "添加游戏配置…", Value = "复制当前配置", Disabled = _lsSaving, Press = () => LsBrowseProfile(profile) });
+        _stRows.Add(new PerfRow { Sub = true, Title = "添加游戏配置…", Value = "复制当前配置", Disabled = _lsSaving, Press = () => LsBrowseProfile(profile) });
         if (!defaultProfile)
             _stRows.Add(StAction("删除当前配置", "ls-delete-profile", "保存后生效", () =>
             {

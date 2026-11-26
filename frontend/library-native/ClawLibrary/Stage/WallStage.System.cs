@@ -359,7 +359,7 @@ public sealed partial class WallStage
 
         // ---- 更新与维护：只留一行，进三级页面「全部更新」 ----
         _syRows.Add(new PerfRow { Section = true, Title = "更新" });
-        _syRows.Add(SyAct("系统与驱动更新", "updates", SyUpdateSummary(v) + "  ›", () => SyOpenUpdates(true)));
+        _syRows.Add(StSub(SyAct("系统与驱动更新", "updates", SyUpdateSummary(v) + "  ›", () => SyOpenUpdates(true))));
         if (_syFocus >= _syRows.Count || (_syFocus >= 0 && (_syRows[_syFocus].Skip || _syRows[_syFocus].Section)))
         {
             int f = Math.Min(_syFocus, _syRows.Count - 1);

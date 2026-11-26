@@ -95,8 +95,8 @@ public sealed partial class WallStage
         bool busy = Bool(s?["busy"]);
         var games = LgGames().ToList();
         _stRows.Add(new PerfRow { Section = true, Title = "本地游戏" });
-        _stRows.Add(StAction("添加游戏", "lgadd", "", () => { _stBrowseExe = true; StBrowseTo(""); }));
-        _stRows.Add(new PerfRow { Title = "本地游戏", Value = s == null ? "" : $"{games.Count} 款", Disabled = s != null && games.Count == 0, Press = () => LgOpenList() });
+        _stRows.Add(StSub(StAction("添加游戏", "lgadd", "", () => { _stBrowseExe = true; StBrowseTo(""); })));
+        _stRows.Add(new PerfRow { Sub = true, Title = "本地游戏", Value = s == null ? "" : $"{games.Count} 款", Disabled = s != null && games.Count == 0, Press = () => LgOpenList() });
         int folder = _lgFolderTaken ? 0 : Library.FolderGames.Count;
         if (folder > 0)
             _stRows.Add(StAction("收进文件夹里的游戏", "lgfolder", $"{folder} 款", () =>

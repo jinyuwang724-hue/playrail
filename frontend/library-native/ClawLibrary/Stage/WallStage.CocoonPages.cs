@@ -104,7 +104,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>Magpie 和小黄鸭使用共享的设置页控件，在组合页显示。</summary>
-    private static readonly int[] CpSettingsIds = { 0, 1, 2, StServicesCat, 6, 7, 8, 9 };
+    private static readonly int[] CpSettingsIds = { 0, 1, 2, 6, 7, 8, 9 };   // 账户与服务并进了游戏库（11-26）
     private static bool CpCatIsSt((string Name, string? Sub, int First) c) => c.First <= -100;
     private static int CpCatStId((string Name, string? Sub, int First) c) => -(c.First + 100);
 
@@ -548,8 +548,8 @@ public sealed partial class WallStage
         }
         else
         {
-            bool nav = r.Press != null || r.Secondary != null;
-            string v = r.Value.TrimEnd('›', ' ');   // 原来值里自带的 › 不要（行尾已经有 ▸）
+            bool nav = r.Sub;   // 11-26 jinyu：▸ 只给打开子页面的行；执行动作的行不加提示
+            string v = r.Value.TrimEnd('›', ' ');   // 原来值里自带的 › 不要
             if (v.Length > 0)
             {
                 using var vf = new CanvasTextFormat { FontFamily = RmFont(v), FontSize = 32, FontWeight = RsWt(v, 500), HorizontalAlignment = CanvasHorizontalAlignment.Right, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };

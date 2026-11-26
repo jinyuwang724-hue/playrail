@@ -37,9 +37,10 @@ public sealed partial class WallStage
         if (paused) _pacer?.TryGetAnimationController("Opacity")?.Pause();
     }
 
-    private void BuildStServices()
+    /// <summary>Steam / Xbox 的账户和游戏库。oneCard：并进设置 › 游戏库的第一张卡里（不另起分组）。</summary>
+    private void BuildStServices(bool oneCard = false)
     {
-        _stRows.Add(new PerfRow { Section = true, Title = "Steam" });
+        if (!oneCard) _stRows.Add(new PerfRow { Section = true, Title = "Steam" });
         var account = _connections.Steam;
         _stRows.Add(new PerfRow { Title = "账户", Value = account?.Name ?? "未连接", Skip = true });
         _stRows.Add(new PerfRow
@@ -72,7 +73,7 @@ public sealed partial class WallStage
                 _ = RefreshPlatformLibrary("steam"); Repaint(); } catch { Toast("连接记录未能保存，请重试"); } } });
         if (_steamRefreshError != null) _stRows.Add(new PerfRow { Title = "更新状态", Value = _steamRefreshError, Skip = true });
 
-        _stRows.Add(new PerfRow { Section = true, Title = "Xbox" });
+        if (!oneCard) _stRows.Add(new PerfRow { Section = true, Title = "Xbox" });
         _stRows.Add(new PerfRow { Title = "账户", Value = "未连接", Skip = true });
         // 尚无本应用的 Microsoft Client ID；不以打开客户端冒充账户授权。
         _stRows.Add(new PerfRow { Title = "连接 Xbox", Value = "暂未开放", Press = () => Toast("Xbox 账户连接尚未开放，本机游戏可正常识别和启动") });

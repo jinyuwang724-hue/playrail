@@ -68,10 +68,10 @@ public sealed partial class WallStage
             _stRows.Add(StPick("预设", names, selected, i => { _mgSelected = names[i]; Repaint(); }));
             var current = (JsonObject)presets[selected]!;
             _stRows.Add(StInfo("效果链", string.Join(" → ", ((JsonArray)current["effects"]!).Select(e => MgEffectLabel(Str(e?["name"]) ?? "")))));
-            _stRows.Add(StAction("编辑预设", "mg-edit", Bool(current["builtin"]) ? "内置预设" : "自定义预设", () => MgOpenEditor(current, false)));
-            _stRows.Add(StAction("复制预设", "mg-copy", "", () => MgOpenEditor(current, true)));
+            _stRows.Add(StSub(StAction("编辑预设", "mg-edit", Bool(current["builtin"]) ? "内置预设" : "自定义预设", () => MgOpenEditor(current, false))));
+            _stRows.Add(StSub(StAction("复制预设", "mg-copy", "", () => MgOpenEditor(current, true))));
         }
-        if (_mgCatalog != null) _stRows.Add(StAction("新建预设", "mg-new", "", () => MgOpenEditor(null, true)));
+        if (_mgCatalog != null) _stRows.Add(StSub(StAction("新建预设", "mg-new", "", () => MgOpenEditor(null, true))));
         _stRows.Add(StAction("刷新预设与设置", "mg-reload", _mgLoading ? "正在读取…" : "", () => { _ = MgLoad(); }));
         var p = _mgPrefs;
         if (p == null)
