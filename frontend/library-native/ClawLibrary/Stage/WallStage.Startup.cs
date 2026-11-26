@@ -18,9 +18,12 @@ public sealed partial class WallStage
     private LoadedImageSurface? _startupMarkSurface;
     private readonly StartupVisibilityGate _startupVisibility = new();
 
+    /// <summary>开机进全屏体验时的启动动画（黑底 + 呼吸的标志）。11-26 jinyu：不要启动动画 —— 不再播放、不留开关，代码先留着。</summary>
+    private const bool StartupShieldEnabled = false;
+
     private void PrepareStartupShield()
     {
-        if (!StartupShieldRequested || _prefs.FseSteam) return;
+        if (!StartupShieldEnabled || !StartupShieldRequested || _prefs.FseSteam) return;
         const string path = @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\GamingConfiguration";
         if (Registry.GetValue(path, "GamingHomeApp", null) as string != "ClawToolbox.Library_ba3r68zr466za!App" ||
             Registry.GetValue(path, "StartupToGamingHome", 0) is not int enabled || enabled != 1) return;
