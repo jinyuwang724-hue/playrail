@@ -209,12 +209,13 @@ public sealed partial class WallStage
         using (var f = new CanvasTextFormat { FontFamily = RmFont(label), FontSize = 36, FontWeight = RsWt(label, 600), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
             ds.DrawText(label, new Windows.Foundation.Rect(134, 0, 440, h), RmInk, f);
         {
-            // ⊙：灰圆底 + 白色三角（打开全屏页）
-            ds.FillCircle(612, cy, 17, LsGrey);
+            // ▸：打开全屏页（11-26 jinyu：侧栏右侧一律用右三角表示跳转，和页面里子页面行的 ▸ 同一个画法）
+            float R = 622;
             using var pb = new CanvasPathBuilder(ds.Device);
-            pb.BeginFigure(607, cy - 7); pb.AddLine(619, cy); pb.AddLine(607, cy + 7); pb.EndFigure(CanvasFigureLoop.Closed);
+            pb.BeginFigure(R - 10, cy - 9); pb.AddLine(R, cy); pb.AddLine(R - 10, cy + 9); pb.EndFigure(CanvasFigureLoop.Closed);
             using var tri = CanvasGeometry.CreatePath(pb);
-            ds.FillGeometry(tri, Color.FromArgb(255, 0xF4, 0xF4, 0xF6));
+            ds.FillGeometry(tri, RmInk);
+            ds.DrawGeometry(tri, RmInk, 3, RwRoundStroke);
         }
         if (i < LsMain.Length - 1) ds.FillRectangle(0, h - 3, LsW, 3, LsSep);
     }
@@ -315,11 +316,9 @@ public sealed partial class WallStage
 
     private void LsFocus(LsState ls, bool move)
     {
-        LsEnsureCard(ls);
+        // 11-26 jinyu：焦点行不要白色选中卡和投影，只留焦点框（框的位置和圆角不变）
         int i = ls.Focus;
         float x = LsCardX, y = i * LsRowH + LsCardInY;
-        var to = new Vector3(x - LsCardPad, y - LsCardPad, 0);
-        if (move && !Reduced) ls.Card!.StartAnimation("Offset", RwSpring(to)); else RwJump(ls.Card!, to);
         CurToCocoon(ls.Cur, x, y, LsCardW, LsCardH, LsCardR, move);
     }
 
