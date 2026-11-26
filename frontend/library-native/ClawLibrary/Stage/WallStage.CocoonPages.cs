@@ -201,12 +201,26 @@ public sealed partial class WallStage
         bg.Size = new Vector2(CsW, CsH);
         var box = G.Container(relative: false);
         box.Size = new Vector2(CsW, CsH);
-        box.Clip = G.C.CreateInsetClip(CpListX - 40, CpTop - 14, 0, CsH - CpBottom);
+        // 11-26 jinyu：右列往上一直延伸到屏幕顶（滚上去的卡片从标题栏那一带露出来），顶部一段渐隐盖住（CpTopFade）
+        box.Clip = G.C.CreateInsetClip(CpListX - 40, 0, 0, CsH - CpBottom);
         // 按下反馈：列表里那一行压一层淡灰（跟着列表滚，所以放在列表精灵里）
         var press = G.Sprite(G.Solid(Color.FromArgb(18, 30, 30, 60)), relative: false);
         press.Opacity = 0;
         v = new CpView { Root = root, ListBox = box, Bg = bg, Head = Sp(), Left = Sp(), Sel = G.Container(relative: false), List = Sp(), Press = press, Toast = Sp(), Cur = null! };
         box.Children.InsertAtTop(v.List);
+        // 顶部渐隐：页面底色（顶上那一段的颜色）从屏幕顶的不透明，到第一张卡上沿（CpTop）变成全透明
+        {
+            var fg = G.C.CreateLinearGradientBrush();
+            fg.StartPoint = new Vector2(0, 0); fg.EndPoint = new Vector2(0, 1);
+            var top = Color.FromArgb(255, 0xEF, 0xEF, 0xF4);
+            fg.ColorStops.Add(G.C.CreateColorGradientStop(0, top));
+            fg.ColorStops.Add(G.C.CreateColorGradientStop(0.35f, Color.FromArgb(235, top.R, top.G, top.B)));
+            fg.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(0, top.R, top.G, top.B)));
+            var fade = G.Sprite(fg, relative: false);
+            fade.Size = new Vector2(CsW - (CpListX - 40), CpTop);
+            fade.Offset = new Vector3(CpListX - 40, 0, 0);
+            box.Children.InsertAtTop(fade);
+        }
         v.List.Children.InsertAtTop(press);
         foreach (var x in new Visual[] { bg, v.Head, v.Left, v.Sel, box }) root.Children.InsertAtTop(x);
         v.Cur = CurNew(root);
