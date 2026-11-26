@@ -83,6 +83,19 @@ public sealed partial class WallStage
             }));
     }
 
+    /// <summary>SteamGridDB：一个 API Key（32 位）。已经配置过时框里留空（后台不回传密钥），空着保存 = 不改。</summary>
+    private bool AkShowSgdb(bool already)
+    {
+        static string? Check(string s) => s.Length == 0 ? "需要 32 位字母和数字" : s.Any(char.IsWhiteSpace) ? "不能有空格" : s.Length != 32 || !s.All(char.IsLetterOrDigit) ? $"已输入 {s.Length} 位，需要 32 位" : null;
+        return AkShow(new AkSpec("SteamGridDB 密钥",
+            already ? "已经配置过。重新填一个会替换掉原来的。SteamGridDB 用来给本地游戏下载封面、横图、背景和标志。"
+                    : "SteamGridDB 用来给本地游戏下载封面、横图、背景和标志。不填也能用，填了下载更稳定。",
+            "登录 SteamGridDB 后在偏好设置的 API 页面生成，复制 32 位的 Key：",
+            "https://www.steamgriddb.com/profile/preferences/api",
+            new[] { new AkField("API Key", "粘贴或输入 API Key", "", Check) },
+            v => _ = LgJob("set_steamgriddb_key", System.Text.Json.Nodes.JsonValue.Create(v[0]))));
+    }
+
     // ---------------- 小窗本身 ----------------
 
     /// <summary>打开小窗（只在 Cocoon 样式的设置页里；别的样式返回 false，由调用方用原来的办法）。</summary>

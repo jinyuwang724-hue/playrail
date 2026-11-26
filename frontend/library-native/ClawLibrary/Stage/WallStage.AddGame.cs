@@ -106,28 +106,12 @@ public sealed partial class WallStage
                 _lgFolderTaken = true;
                 _ = LgJob("local_games_add_many", items);
             }));
-        int missing = games.Count(g => !LgHasArt(g, "p"));
-        string artValue = busy && phase == "补封面" ? $"{Int(job?["done"])}/{Int(job?["total"])}" : missing > 0 ? $"{missing} 款" : "完整";
-        _stRows.Add(new PerfRow { Title = "补全封面", Value = artValue, Disabled = s == null || (missing == 0 && !busy), Press = () => { if (!busy) _ = LgJob("local_games_fill_art"); } });
-        int pending = Int(s?["pending"]);
-        string syncValue = busy && phase is "关闭 Steam" or "写入 Steam" or "启动 Steam" ? phase
-            : _stArmed == "lgsync" ? "再按一次确认"
-            : pending > 0 ? $"{pending} 款" : "已同步";
+        // 11-26 jinyu：「补全封面」「同步到 Steam」删了；SteamGridDB 密钥和 IGDB 一样，一行 ▸ 弹「填密钥」小窗
+        bool sgdbSet = s != null && Bool(s["key"]);
         _stRows.Add(new PerfRow
         {
-            Title = "同步到 Steam（将重启 Steam）", Value = syncValue, Disabled = s == null || (pending == 0 && !busy),
-            Press = () => { if (!busy && StConfirm("lgsync")) _ = LgJob("local_games_sync"); },
-        });
-        _stRows.Add(new PerfRow
-        {
-            Title = "SteamGridDB 密钥", Value = s == null ? "" : Bool(s["key"]) ? "已填" : "不填也能用",
-            // 空着确认 = 不改（清掉密钥要输入「清除」）
-            Press = () => StEditText("", key =>
-            {
-                key = key.Trim();
-                if (key.Length == 0) return;
-                _ = LgJob("set_steamgriddb_key", JsonValue.Create(key == "清除" ? "" : key));
-            }),
+            Sub = true, Title = "SteamGridDB 密钥", Value = s == null ? "" : sgdbSet ? "已配置" : "未配置",
+            Press = () => { if (!AkShowSgdb(sgdbSet)) Toast("在 Cocoon 主题的设置页里配置"); },
         });
         BuildStScrapeKeys();
     }
