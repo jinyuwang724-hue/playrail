@@ -289,6 +289,7 @@ public sealed partial class WallStage
     /// <summary>LB / RB：选择指令里换页签。</summary>
     private void GpSwitchTab(int delta)
     {
+        if (CgpSwitchTab(delta)) return;
         var p = _gpPicker;
         if (p?.Level == GpSubLevel.Group) { GpGroupSwitch(p, delta); return; }
         if (p?.Level != GpSubLevel.Chooser) return;

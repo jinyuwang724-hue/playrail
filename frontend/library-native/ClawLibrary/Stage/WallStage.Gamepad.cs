@@ -152,9 +152,15 @@ public sealed partial class WallStage
         ++_gpVersion;
         _gpInSide = true;
         _gpFocus = 0;
+        _gpArtPage.IsVisible = !_ccLight;
+        _gpBody.IsVisible = !_ccLight;
+        if (_ccLight) CgpOnOpen(); else CgpHide();
         BuildGpItems();
-        GpPlaceArt(instant: true);
-        GpShowFaces(GpPageFaces(), instant: true);
+        if (!_ccLight)
+        {
+            GpPlaceArt(instant: true);
+            GpShowFaces(GpPageFaces(), instant: true);
+        }
         _gpShown = _pad?.Last ?? default;
         PaintGp();
         foreach (var vis in CcPageParts()) vis.StartAnimation("Opacity", ToScalar(0, 160, EaseOutCss));
@@ -180,6 +186,7 @@ public sealed partial class WallStage
         if (!_gpOpen || _gp == null) return;
         if (!instant) { Cue(Sfx.ModalHide); LsPageClosed(); }
         _gpOpen = false;
+        CgpOnClose(instant);
         SettingsResetPointer();
         _gpEditing = false;
         _gpPicker = null;
@@ -552,6 +559,7 @@ public sealed partial class WallStage
     /// <summary>手柄页里的 X / Y：震动页 X 测试震动、Y 恢复原来的强度；别的页不做事。</summary>
     private void GpPadButton(bool isY)
     {
+        if (CgpPadButton(isY)) return;
         if (isY && GpGroupY()) return;
         if (_gpPicker != null || _gpEditing || GpCatId != "rumble") return;
         if (isY) _ = GpWrite("restore_rumble");
@@ -726,6 +734,9 @@ public sealed partial class WallStage
     private void PaintGp()
     {
         if (_gp == null) return;
+        if (CgpPaint()) return;
+        _gpArtPage.IsVisible = true;
+        _gpBody.IsVisible = true;
         float k = _ccK, raster = k * Chrome.Dpi;
         if (_gpArtK != k)
         {
@@ -771,6 +782,7 @@ public sealed partial class WallStage
         // 游戏设置里的按键选择：画在设置页上
         if (!_gpOpen) { if (_stOpen && _gsItem != null) Repaint(); return; }
         if (_gp == null) return;
+        if (CgpPaint()) return;
         GpUpdateMapScroll();
         float k = _ccK, raster = k * Chrome.Dpi;
         _gpTargets.Clear();
@@ -795,6 +807,7 @@ public sealed partial class WallStage
     private void PaintGpHi()
     {
         if (_gp == null) return;
+        if (CgpPaintLive()) return;
         float k = _ccK, raster = k * Chrome.Dpi;
         CcSet(_gpHi, CcDraw(1280, 800, raster, PaintGpArtHi));
         _gpHi.Size = new Vector2(1280 * k, 800 * k);

@@ -1217,7 +1217,7 @@ public sealed partial class WallStage : IDisposable
     public void Toast(string text)
     {
         if (_cueDepth == 0) SoundFx.Play(Sfx.Toast);   // 输入引起的提示已经有那次输入的声音
-        if (CpToast(text)) { Log.Info($"toast (page): {text}"); return; }   // Cocoon 样式页面开着：页面里的小胶囊，不弹系统通知条
+        if (CpToast(text) || CgpToast(text)) { Log.Info($"toast (page): {text}"); return; }   // Cocoon 样式页面开着：页面里的小胶囊，不弹系统通知条
         _ = ShowGlobalNotice(text);
         Log.Info($"toast: {text}");
     }
@@ -1379,6 +1379,12 @@ public sealed partial class WallStage : IDisposable
             if (ConsumeScreensaverWake()) { e.Handled = true; return; }
             MarkInput();
             var p = e.GetCurrentPoint(_rootEl).Properties;
+            if (CgpActive)
+            {
+                if (!p.IsHorizontalMouseWheel) CgpWheel(p.MouseWheelDelta);
+                e.Handled = true;
+                return;
+            }
             if (SettingsPageOpen && !_agOpen && !_shOpen && !GsArtMode)
             {
                 if (!p.IsHorizontalMouseWheel) SettingsWheel(p.MouseWheelDelta);
@@ -1461,7 +1467,7 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         MarkInput();
-        if (_ob == null && CpPointerDown(e, pt)) return;   // Cocoon 样式页面
+        if (_ob == null && (CpPointerDown(e, pt) || CgpPointerDown(e, pt))) return;   // Cocoon 样式页面
         if (_ob == null && !_ccOpen && LsPointerDown(e, pt)) return;   // 单行首页左侧栏
         if (_ob == null && !_ccOpen && SpPointerDown(e, pt)) return;   // 单行首页右侧栏
         if (_ob == null && _ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx && !TouchNavigationHit(pt.Position.X, pt.Position.Y))
@@ -1516,7 +1522,8 @@ public sealed partial class WallStage : IDisposable
         if (_ob != null) ObHover(current.Position.X, current.Position.Y);
         if (_lm is { Leaving: false }) LaunchMotionHover(current.Position.X, current.Position.Y);
         if (_edge?.id == e.Pointer.PointerId) { e.Handled = true; return; }
-        if (CpPointerMove(e)) return;
+        if (CgpActive) CgpHover(current.Position.X, current.Position.Y);
+        if (CpPointerMove(e) || CgpPointerMove(e)) return;
         if (SpPointerMove(e)) return;
         if (_settingsGesture.Owns(e.Pointer.PointerId))
         {
@@ -1551,7 +1558,7 @@ public sealed partial class WallStage : IDisposable
             e.Handled = true;
             return;
         }
-        if (CpPointerUp(e)) return;
+        if (CpPointerUp(e) || CgpPointerUp(e)) return;
         if (LsPointerUp(e)) return;
         if (SpPointerUp(e)) return;
         if (_edge is { } edge && edge.id == e.Pointer.PointerId)
@@ -1605,6 +1612,7 @@ public sealed partial class WallStage : IDisposable
         SpPointerUp(e, canceled: true);
         LsPointerUp(e, canceled: true);
         CpPointerUp(e, canceled: true);
+        CgpPointerUp(e, canceled: true);
         SettingsPointerCancel(e.Pointer.PointerId);
         if (_drag?.id == e.Pointer.PointerId) _drag = null;
         if (_edge?.id == e.Pointer.PointerId) _edge = null;

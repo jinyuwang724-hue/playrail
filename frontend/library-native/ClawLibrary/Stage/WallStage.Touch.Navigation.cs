@@ -101,7 +101,7 @@ public sealed partial class WallStage
 
     private bool UseSettingsPointer(double x, double y)
     {
-        if (!SettingsPageOpen || _agOpen || _shOpen || GsArtMode || TouchNavigationHit(x, y)) return false;
+        if (CgpActive || !SettingsPageOpen || _agOpen || _shOpen || GsArtMode || TouchNavigationHit(x, y)) return false;
         if (!GsPadMapMode) return true;
         // Embedded controller diagram and the settings above it have separate hit maps.
         return x / _ccK < StRightX || SettingsTargetAt(x, y) != null;

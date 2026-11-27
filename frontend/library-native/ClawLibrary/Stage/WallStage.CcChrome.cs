@@ -556,7 +556,7 @@ public sealed partial class WallStage
 
     private bool CcChromeBack()
     {
-        if (CpBack()) return true;
+        if (CpBack() || CgpBack()) return true;
         if (_agOpen) { AgBack(); return true; }
         if (_perfOpen) { PerfBack(); return true; }
         if (_gpOpen) { GpBack(); return true; }

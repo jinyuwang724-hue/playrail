@@ -58,6 +58,7 @@ public sealed partial class WallStage
     /// <summary>震一下的画面：左右强度 0–1。抖动 420 ms 衰减到 0；握把亮起再暗下；握把形状的描边往外扩 1.0→1.3 淡出。</summary>
     private void GpPlayRumble(float left, float right)
     {
+        if (CgpPlayRumble(left, right)) return;
         if (_gp == null || Reduced) return;
         float amp = 1.2f + 2.8f * Math.Max(left, right);
         var shake = G.C.CreateVector3KeyFrameAnimation();

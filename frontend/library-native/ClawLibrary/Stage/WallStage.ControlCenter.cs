@@ -321,7 +321,7 @@ public sealed partial class WallStage
 
     private void CcMove(Direction dir)
     {
-        if (CpMove(dir)) return;   // 从左侧栏进的 Cocoon 样式页面
+        if (CpMove(dir) || CgpMove(dir)) return;   // 从左侧栏进的 Cocoon 样式页面
         if (_agOpen) { AgMove(dir); return; }
         if (_perfOpen) { PerfMove(dir); return; }
         if (_gpOpen) { GpMove(dir); return; }
@@ -349,7 +349,7 @@ public sealed partial class WallStage
 
     private void CcActivate()
     {
-        if (CpActivate()) return;
+        if (CpActivate() || CgpActivate()) return;
         if (_agOpen) { AgActivate(); return; }
         if (_perfOpen) { PerfActivate(); return; }
         if (_gpOpen) { GpActivate(); return; }
