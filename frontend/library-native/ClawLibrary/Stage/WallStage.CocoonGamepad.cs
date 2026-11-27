@@ -370,7 +370,8 @@ public sealed partial class WallStage
             {
                 bool desk = cat == 4;
                 int modeIdx = GpWantDesktop ? 1 : 0;
-                rows.Add(new CgpRow
+                // 11-27 jinyu：桌面模式页不放「当前控制模式」，只在按键映射页
+                if (!desk) rows.Add(new CgpRow
                 {
                     Break = true,
                     Id = "mode",
@@ -716,7 +717,7 @@ public sealed partial class WallStage
             else if (GpDesktopStock(src))
             {
                 row.Stock = true;
-                row.Value = $"原键 · {GpNativeName(src)}";
+                row.Value = GpNativeName(src);   // 11-27 jinyu：原键只写键名，不加「原键 ·」
             }
             else
             {
@@ -762,7 +763,7 @@ public sealed partial class WallStage
         else if (isNative)
         {
             row.Stock = true;
-            row.Value = src is "M1" or "M2" ? "未映射" : $"原键 · {GpNativeName(src)}";
+            row.Value = src is "M1" or "M2" ? "未映射" : GpNativeName(src);
         }
         else
         {
@@ -1016,12 +1017,16 @@ public sealed partial class WallStage
         {
             // 按键映射 / 震动 / 桌面模式：Claw 8 EX 陶瓷正反面线稿
             bool isBack = (_cgpActiveKey is "M1" or "M2") && (_cgpCat is 0 or 4);
-            string tag = isBack ? "背面视图 · 背键高亮" : _cgpCat == 3 ? "握把马达预览" : $"聚焦：{CgpShortKeyLabel(_cgpActiveKey)}";
-            float tw = CpTextW(ds, tag, 20) + 28;
-            float tx = CgpWellW - 16 - tw, ty = 14;
-            ds.FillRoundedRectangle(tx, ty, tw, 36, 18, 18, Color.FromArgb(255, 0xE4, 0xE5, 0xEC));
-            using (var tf = new CanvasTextFormat { FontFamily = RmFont(tag), FontSize = 20, FontWeight = RsWt(tag, 500), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
+            // 11-27 jinyu：背面视图不挂「背面视图 · 背键高亮」标签
+            string? tag = isBack ? null : _cgpCat == 3 ? "握把马达预览" : $"聚焦：{CgpShortKeyLabel(_cgpActiveKey)}";
+            if (tag != null)
+            {
+                float tw = CpTextW(ds, tag, 20) + 28;
+                float tx = CgpWellW - 16 - tw, ty = 14;
+                ds.FillRoundedRectangle(tx, ty, tw, 36, 18, 18, Color.FromArgb(255, 0xE4, 0xE5, 0xEC));
+                using var tf = new CanvasTextFormat { FontFamily = RmFont(tag), FontSize = 20, FontWeight = RsWt(tag, 500), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
                 ds.DrawText(tag, new Rect(tx, ty, tw, 36), RsSub, tf);
+            }
 
             string hiKey = _cgpCat == 3 ? "" : _cgpActiveKey;
             CgpDrawClawWireframe(ds, 22, 58, CgpWellW - 44, 240, hiKey, isBack, _cgpCat == 3, rumL, rumR, _cgpRumblePulse, snap);
@@ -1586,12 +1591,13 @@ public sealed partial class WallStage
     private static void CgpDrawRightChev(CanvasDrawingSession ds, float rightX, float cy)
     {
         using var pb = new CanvasPathBuilder(ds.Device);
-        pb.BeginFigure(rightX - 11, cy - 9);
-        pb.AddLine(rightX - 2, cy);
-        pb.AddLine(rightX - 11, cy + 9);
-        pb.EndFigure(CanvasFigureLoop.Open);
-        using var chev = CanvasGeometry.CreatePath(pb);
-        ds.DrawGeometry(chev, RmInk, 4f, RwRoundStroke);
+        pb.BeginFigure(rightX - 10, cy - 9);
+        pb.AddLine(rightX, cy);
+        pb.AddLine(rightX - 10, cy + 9);
+        pb.EndFigure(CanvasFigureLoop.Closed);
+        using var tri = CanvasGeometry.CreatePath(pb);
+        ds.FillGeometry(tri, RmInk);
+        ds.DrawGeometry(tri, RmInk, 3, RwRoundStroke);
     }
 
     /// <summary>Cocoon 立体 3D 键帽（普通白灰凸起 / 紫色修饰键叠加 / 淡紫当前选中）。</summary>

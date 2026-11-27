@@ -567,6 +567,7 @@ public static class Bench
                 case "recset": await s.RecSetAsync(); break;
                 case "recflick": await s.RecFlickAsync(); break;
                 case "recakey": await s.RecAkeyAsync(); break;
+                case "recgpc": await s.RecGpcAsync(); break;
                 case "recthemes": await s.RecThemesAsync(); break;
                 case "gstest": s.DemoGameSessionProbe(); break;
                 case "npattach": s.DemoAttachRunningGame(); break;
