@@ -32,7 +32,7 @@ public sealed partial class WallStage
     private const float CshLeftX = 44, CshLeftW = 562, CshSlot = 124, CshCols = 3, CshGapX = 28, CshGapY = 28, CshDateH = 58, CshGroupGap = 30;
     private static float CshThumbW => (CpListW - (CshCols - 1) * CshGapX) / CshCols;
     private static float CshThumbH => CshThumbW * 9 / 16;
-    private const float CshPillY = 896, CshPillH = 116, CshStripY = 1062, CshStripW = 150, CshStripH = 84, CshStripGap = 18;
+    private const float CshPillY = 930, CshPillH = 116, CshStripY = 1062, CshStripW = 150, CshStripH = 84, CshStripGap = 18;
     private const float CshMenuX = 1100, CshMenuW = 616, CshMenuRowH = 116;
     private const float CshDlgW = 920, CshDlgH = 780;
 
@@ -165,10 +165,11 @@ public sealed partial class WallStage
         var sg = G.C.CreateLinearGradientBrush();
         sg.StartPoint = new Vector2(0, 0); sg.EndPoint = new Vector2(0, 1);
         sg.ColorStops.Add(G.C.CreateColorGradientStop(0, Color.FromArgb(0, 0, 0, 0)));
-        sg.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(140, 0, 0, 0)));
+        sg.ColorStops.Add(G.C.CreateColorGradientStop(0.45f, Color.FromArgb(90, 0, 0, 0)));
+        sg.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(175, 0, 0, 0)));
         var vShade = G.Sprite(sg, relative: false);
-        vShade.Size = new Vector2(CsW, CsH - (CshPillY - 120));
-        vShade.Offset = new Vector3(0, CshPillY - 120, 0);
+        vShade.Size = new Vector2(CsW, CsH - (CshPillY - 200));
+        vShade.Offset = new Vector3(0, CshPillY - 200, 0);
         var vPill = Sp();
         var vIcon = G.Sprite(G.Solid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
         foreach (var x in new Visual[] { vBlack, vImg, vShade, vStrip, vPill, vIcon }) viewer.Children.InsertAtTop(x);
@@ -633,47 +634,68 @@ public sealed partial class WallStage
         else if (v.VCur.Shown) CurShow(v.VCur, false, 80);
     }
 
+    /// <summary>
+    /// 大图底部的信息（11-27 jinyu：白色胶囊太碍眼）：不放底框，直接压在底部的暗渐变上——左下角游戏小图标、白色游戏名、
+    /// 下面一行淡白的时间 · 来源；右边同一行淡白的「第几张 / 共几张」。字带一点投影，亮图上也看得清。
+    /// </summary>
     private void CshPaintPill(CshView v, Capture c)
     {
         string title = c.Game, sub = $"{c.Time.Month} 月 {c.Time.Day} 日 {c.Time:HH:mm} · {c.Source}", pos = $"{_shVIndex + 1} / {ShFlat.Count}";
-        float tw, sw, pw;
-        using (var g = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 36, FontWeight = new Windows.UI.Text.FontWeight(600), WordWrapping = CanvasWordWrapping.NoWrap })
-        using (var l = new CanvasTextLayout(G.Device, title, g, 2000, 100)) tw = MathF.Min(900, (float)l.LayoutBounds.Width);
-        using (var g = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 28, WordWrapping = CanvasWordWrapping.NoWrap })
-        using (var l = new CanvasTextLayout(G.Device, sub, g, 2000, 100)) sw = (float)l.LayoutBounds.Width;
-        using (var g = new CanvasTextFormat { FontFamily = RwPoppins, FontSize = 28, FontWeight = new Windows.UI.Text.FontWeight(600), WordWrapping = CanvasWordWrapping.NoWrap })
-        using (var l = new CanvasTextLayout(G.Device, pos, g, 2000, 100)) pw = (float)l.LayoutBounds.Width;
-        float w = 22 + 72 + 26 + MathF.Max(tw, sw) + 40 + pw + 44, x = CsW / 2 - w / 2, y = CshPillY, pad = 30;
-        using (var ds = CanvasComposition.CreateDrawingSession(CpSurf(ref v.VPillS, v.VPill, x - pad, y - pad, w + pad * 2, CshPillH + pad * 2)))
+        float x = 0, y = CshPillY, w = CsW, h = CshPillH, ix = 64, iconS = 64, tx = ix + iconS + 24;
+        using (var ds = CanvasComposition.CreateDrawingSession(CpSurf(ref v.VPillS, v.VPill, x, y, w, h)))
         {
             ds.Clear(Colors.Transparent);
-            ds.Transform = Matrix3x2.CreateTranslation(pad - x, pad - y) * Matrix3x2.CreateScale(CsRaster);
             ds.Antialiasing = CanvasAntialiasing.Antialiased;
-            RsSoftShadow(ds, x, y + 10, w, CshPillH, CshPillH / 2, 18, 0.30f);
-            ds.FillRoundedRectangle(x, y, w, CshPillH, CshPillH / 2, CshPillH / 2, Color.FromArgb(242, 0xFA, 0xFA, 0xFA));
-            float tx = x + 22 + 72 + 26;
-            using (var f = new CanvasTextFormat { FontFamily = RmFont(title), FontSize = 36, FontWeight = RsWt(title, 600), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
-                ds.DrawText(title, new Rect(tx, y + 16, 900, 50), RmInk, f);
-            using (var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 28, WordWrapping = CanvasWordWrapping.NoWrap })
-                ds.DrawText(sub, new Rect(tx, y + 62, 900, 40), Color.FromArgb(255, 0x6C, 0x6F, 0x78), f);
-            using (var f = new CanvasTextFormat { FontFamily = RwPoppins, FontSize = 28, FontWeight = new Windows.UI.Text.FontWeight(600), HorizontalAlignment = CanvasHorizontalAlignment.Right, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
-                ds.DrawText(pos, new Rect(x + w - 44 - 300, y, 300, CshPillH), Color.FromArgb(255, 0x8E, 0x90, 0x98), f);
+            using var cl = new CanvasCommandList(ds);
+            using (var s = cl.CreateDrawingSession())
+            {
+                s.Transform = Matrix3x2.CreateScale(CsRaster);
+                using (var f = new CanvasTextFormat { FontFamily = RmFont(title), FontSize = 36, FontWeight = RsWt(title, 600), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
+                    s.DrawText(title, new Rect(tx, 14, 1200, 50), Color.FromArgb(255, 0xFA, 0xFA, 0xFA), f);
+                using (var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 27, WordWrapping = CanvasWordWrapping.NoWrap })
+                    s.DrawText(sub, new Rect(tx, 62, 1200, 40), Color.FromArgb(200, 0xFA, 0xFA, 0xFA), f);
+                using (var f = new CanvasTextFormat { FontFamily = RwPoppins, FontSize = 28, FontWeight = new Windows.UI.Text.FontWeight(600), HorizontalAlignment = CanvasHorizontalAlignment.Right, WordWrapping = CanvasWordWrapping.NoWrap })
+                    s.DrawText(pos, new Rect(w - 64 - 400, 22, 400, 44), Color.FromArgb(200, 0xFA, 0xFA, 0xFA), f);
+            }
+            using (var sh = new Microsoft.Graphics.Canvas.Effects.ShadowEffect { Source = cl, BlurAmount = 5 * CsRaster, ShadowColor = Color.FromArgb(150, 0, 0, 0) })
+                ds.DrawImage(sh, 0, 2 * CsRaster);
+            ds.DrawImage(cl);
         }
-        // 游戏图标：游戏库封面（没有归到游戏的用灰块）
+        // 游戏图标：游戏库封面（没有归到游戏的不放）
         Images.Release(v.VIconRef); v.VIconRef = null;
-        v.VIcon.Brush = G.Solid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0));
+        v.VIcon.IsVisible = false;
         if (c.GameId != null && _lib.ById.TryGetValue(c.GameId, out var item) && RqArt(item) is { } art)
         {
             float R = CsRaster;
-            v.VIconRef = Images.Acquire(art, (int)Math.Ceiling(72 * R), (int)Math.Ceiling(108 * R));
-            if (v.VIconRef != null) { var b = G.C.CreateSurfaceBrush(v.VIconRef); b.Stretch = CompositionStretch.UniformToFill; v.VIcon.Brush = b; }
+            v.VIconRef = Images.Acquire(art, (int)Math.Ceiling(iconS * R), (int)Math.Ceiling(iconS * 1.5f * R));
+            if (v.VIconRef != null) { var b = G.C.CreateSurfaceBrush(v.VIconRef); b.Stretch = CompositionStretch.UniformToFill; v.VIcon.Brush = b; v.VIcon.IsVisible = true; }
         }
-        v.VIcon.Size = new Vector2(72, 72);
-        v.VIcon.Offset = new Vector3(x + 22, y + (CshPillH - 72) / 2, 0);
+        v.VIcon.Size = new Vector2(iconS, iconS);
+        v.VIcon.Offset = new Vector3(ix, y + 22, 0);
         var rr = G.C.CreateRoundedRectangleGeometry();
-        rr.Size = new Vector2(72, 72);
-        rr.CornerRadius = new Vector2(18, 18);
+        rr.Size = new Vector2(iconS, iconS);
+        rr.CornerRadius = new Vector2(16, 16);
         v.VIcon.Clip = G.C.CreateGeometricClip(rr);
+        if (!v.VIcon.IsVisible)
+        {
+            // 没有图标时字往左靠（重画一次，起点挪到图标的位置）
+            using var ds = CanvasComposition.CreateDrawingSession(v.VPillS!);
+            ds.Clear(Colors.Transparent);
+            using var cl = new CanvasCommandList(ds);
+            using (var s = cl.CreateDrawingSession())
+            {
+                s.Transform = Matrix3x2.CreateScale(CsRaster);
+                using (var f = new CanvasTextFormat { FontFamily = RmFont(title), FontSize = 36, FontWeight = RsWt(title, 600), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
+                    s.DrawText(title, new Rect(ix, 14, 1300, 50), Color.FromArgb(255, 0xFA, 0xFA, 0xFA), f);
+                using (var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 27, WordWrapping = CanvasWordWrapping.NoWrap })
+                    s.DrawText(sub, new Rect(ix, 62, 1300, 40), Color.FromArgb(200, 0xFA, 0xFA, 0xFA), f);
+                using (var f = new CanvasTextFormat { FontFamily = RwPoppins, FontSize = 28, FontWeight = new Windows.UI.Text.FontWeight(600), HorizontalAlignment = CanvasHorizontalAlignment.Right, WordWrapping = CanvasWordWrapping.NoWrap })
+                    s.DrawText(pos, new Rect(w - 64 - 400, 22, 400, 44), Color.FromArgb(200, 0xFA, 0xFA, 0xFA), f);
+            }
+            using (var sh = new Microsoft.Graphics.Canvas.Effects.ShadowEffect { Source = cl, BlurAmount = 5 * CsRaster, ShadowColor = Color.FromArgb(150, 0, 0, 0) })
+                ds.DrawImage(sh, 0, 2 * CsRaster);
+            ds.DrawImage(cl);
+        }
     }
 
     /// <summary>缩略条：当前这张居中，左右各最多四张，两边的淡一些。</summary>
