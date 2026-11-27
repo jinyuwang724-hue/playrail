@@ -24,7 +24,7 @@ public sealed partial class WallStage
         try
         {
             if (_cs != null && _prefs.Home != HomeStyle.Row) { SaveUi(_prefs with { Home = HomeStyle.Row }); CsMorphStyle(); await Task.Delay(1500); }
-            foreach (var (name, idx) in new[] { ("perf", 0), ("disp", 2), ("sys", 3), ("set", 4) })
+            foreach (var (name, idx) in new[] { ("perf", 0), ("disp", 2), ("sys", 3), ("set", 5) })
             {
                 if (!LsOpenNow) { PadView(); await Task.Delay(900); }
                 if (!LsOpenNow) throw new InvalidOperationException("panel not open");

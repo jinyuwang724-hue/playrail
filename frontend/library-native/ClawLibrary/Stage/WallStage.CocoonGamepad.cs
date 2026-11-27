@@ -1018,7 +1018,7 @@ public sealed partial class WallStage
             // 按键映射 / 震动 / 桌面模式：Claw 8 EX 陶瓷正反面线稿
             bool isBack = (_cgpActiveKey is "M1" or "M2") && (_cgpCat is 0 or 4);
             // 11-27 jinyu：背面视图不挂「背面视图 · 背键高亮」标签
-            string? tag = isBack ? null : _cgpCat == 3 ? "握把马达预览" : $"聚焦：{CgpShortKeyLabel(_cgpActiveKey)}";
+            string? tag = isBack || _cgpCat == 3 ? null : $"聚焦：{CgpShortKeyLabel(_cgpActiveKey)}";   // 11-27 jinyu：震动页不要「握把马达预览」
             if (tag != null)
             {
                 float tw = CpTextW(ds, tag, 20) + 28;
@@ -1029,7 +1029,7 @@ public sealed partial class WallStage
             }
 
             string hiKey = _cgpCat == 3 ? "" : _cgpActiveKey;
-            CgpDrawClawWireframe(ds, 22, 58, CgpWellW - 44, 240, hiKey, isBack, _cgpCat == 3, rumL, rumR, _cgpRumblePulse, snap);
+            CgpDrawClawWireframe(ds, 22, 58, CgpWellW - 44, 240, hiKey, isBack, false, rumL, rumR, false, snap);   // 震动页只画手柄线稿，不画马达预览
         }
     }
 

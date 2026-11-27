@@ -25,7 +25,7 @@ public sealed partial class WallStage
             PadView(); await Task.Delay(900);
             if (!LsOpenNow) throw new InvalidOperationException("panel not open");
             for (int i = 0; i < 6; i++) { Move(Direction.Up); await Task.Delay(120); }
-            for (int i = 0; i < 4; i++) { Move(Direction.Down); await Task.Delay(200); }
+            for (int i = 0; i < 5; i++) { Move(Direction.Down); await Task.Delay(200); }
             if (LsOpenNow) Activate();
             await Task.Delay(1400);
             if (!_stOpen) throw new InvalidOperationException("settings not open");

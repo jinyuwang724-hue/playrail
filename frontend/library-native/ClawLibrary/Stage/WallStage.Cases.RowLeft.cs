@@ -28,7 +28,7 @@ public sealed partial class WallStage
 
     private static readonly (string Id, string Label)[] LsMain =
     {
-        ("perf", "性能"), ("pad", "手柄"), ("disp", "显示与声音"), ("sys", "系统"), ("set", "设置"), ("shot", "相册"),
+        ("perf", "性能"), ("pad", "手柄"), ("disp", "显示与声音"), ("sys", "系统"), ("shot", "相册"), ("set", "设置"),   // 11-27 jinyu：相册在设置前面
     };
 
     private sealed class LsState
