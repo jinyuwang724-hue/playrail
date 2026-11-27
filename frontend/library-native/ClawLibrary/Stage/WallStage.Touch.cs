@@ -29,7 +29,7 @@ public sealed partial class WallStage
         if (Math.Abs(tx) < SwipeMin || Math.Abs(tx) < Math.Abs(ty) * 1.2) return;
         if (_agOpen) { AgSwipe(tx < 0 ? 1 : -1); return; }
         if (SettingsPageOpen && !_shOpen) return;
-        if (_shOpen && !_shViewer && !_shFilterOpen && _dragFrom.y / _ccK <= 80) { ShSwitchTab(tx < 0 ? 1 : -1); return; }
+        if (_shOpen && !CshActive && !_shViewer && !_shFilterOpen && _dragFrom.y / _ccK <= 80) { ShSwitchTab(tx < 0 ? 1 : -1); return; }
         if (_shOpen && ShDragScrolls) return;
         // 划得远多走几格（每 260 设计 px 一格，最多 4 格）
         int steps = Math.Clamp((int)Math.Round(Math.Abs(tx) / (_ccK * 260)), 1, 4);
@@ -88,10 +88,11 @@ public sealed partial class WallStage
     // ---------------- 截图页 ----------------
 
     /// <summary>日历排版是上下滚的一长列：拖动就滚它；放映、冲印、大图是左右走的，用划。</summary>
-    private bool ShDragScrolls => _shStyle == ShStyle.Calendar && !_shViewer && !_shFilterOpen;
+    private bool ShDragScrolls => (_shStyle == ShStyle.Calendar || CshActive) && !_shViewer && !_shFilterOpen;
 
     private void ShDrag(float dy)
     {
+        if (CshActive) { CshDrag(dy); return; }
         if (!ShDragScrolls || _shGrid == null) return;
         float k = _ccK, viewH = (float)View.Height / k - ShGridTop;
         _shScroll = Math.Clamp(_shScroll - dy, 0, Math.Max(0, _shContentH - viewH));

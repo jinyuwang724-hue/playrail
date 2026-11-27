@@ -297,11 +297,11 @@ public sealed partial class WallStage
     }
 
     /// <summary>按钮：绿色（渐变、白字、淡绿圆章）或白色（淡投影、灰圆章、黑字），左边圆章写手柄键；忙的时候圆章换成转圈。</summary>
-    private void RqButton(CanvasDrawingSession ds, float x, float y, float w, string key, string label, bool green, bool busy, bool accent = false)
+    private void RqButton(CanvasDrawingSession ds, float x, float y, float w, string key, string label, bool green, bool busy, bool accent = false, bool red = false)
     {
         float h = 112, r = 56;
-        // accent：确认按钮用主题色（紫色渐变）代替绿色
-        Color ca = accent ? RwC1 : RqGreenA, cb = accent ? RwC2 : RqGreenB;
+        // accent：确认按钮用主题色（紫色渐变）代替绿色；red：删除这种不可逆的用红色
+        Color ca = red ? Color.FromArgb(255, 0xFF, 0x7A, 0x84) : accent ? RwC1 : RqGreenA, cb = red ? RmRed : accent ? RwC2 : RqGreenB;
         if (green)
         {
             RsSoftShadow(ds, x, y + 6, w, h, r, 10, 0.18f);

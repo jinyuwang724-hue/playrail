@@ -65,6 +65,7 @@ public sealed partial class WallStage
 
     private void ShPaintAll()
     {
+        if (CshActive) { CshRefresh(); return; }
         if (_sh == null) return;
         if (_shSurfaceK != _ccK) { _shShadows.Clear(); _shFilm = null; _shSurfaceK = _ccK; }
         ShPaintTitle();
@@ -231,6 +232,7 @@ public sealed partial class WallStage
 
     private void ShBuildBody()
     {
+        if (CshActive) { CshRefresh(); return; }
         ShReleaseBody();
         float k = _ccK;
         _shInfo = G.Sprite(G.C.CreateSurfaceBrush(), relative: false);
@@ -267,6 +269,7 @@ public sealed partial class WallStage
 
     private void ShReleaseAll()
     {
+        CshReleaseAll();
         ShReleaseBody();
         if (_shVRef != null) { Images.Release(_shVRef); _shVRef = null; }
         _shVPath = null;
@@ -827,6 +830,7 @@ public sealed partial class WallStage
 
     private void ShFocusChanged(int old)
     {
+        if (CshActive) { if (_csh is { } cv) { _cshZone = 1; CshScrollAndFocus(cv, true); CshEnsureImages(cv); } return; }
         if (_shUnits.Count == 0) return;
         if (_shStyle == ShStyle.Calendar)
         {
@@ -887,6 +891,7 @@ public sealed partial class WallStage
 
     private void ShShowViewer(bool on)
     {
+        if (CshActive) { CshShowViewer(on); return; }
         EnsureShViewer();
         var v = _shV!;
         int ver = _shVersion;
@@ -913,6 +918,7 @@ public sealed partial class WallStage
 
     private void ShPaintViewer()
     {
+        if (CshActive) { CshPaintViewer(); return; }
         if (_shV == null || !_shViewer || ShViewerShot() is not { } c) return;
         float k = _ccK, raster = ShRaster, vw = (float)View.Width / k;
         // 图：新图解码好了才换上，不出空白帧

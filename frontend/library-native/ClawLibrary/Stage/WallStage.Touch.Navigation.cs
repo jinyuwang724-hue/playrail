@@ -53,13 +53,13 @@ public sealed partial class WallStage
         : _lm is { Leaving: false } ? 0
         : 0;   // 游戏库左上角的三道杠去掉了（≡ 键照旧打开控制中心）
 
-    private bool TouchFilterHit(double x, double y) => _shOpen && !_shViewer
+    private bool TouchFilterHit(double x, double y) => _shOpen && !_shViewer && !CshActive
         && x >= 96 * TouchScale && x < 140 * TouchScale && y >= 24 * TouchScale && y < 72 * TouchScale;
 
     private bool TouchNavigationHit(double x, double y) => TouchFilterHit(x, y) || TouchShotStyleHit(x, y)
         || TouchNavigationMode == 2 && x >= 0 && x < 40 * TouchScale && y >= 24 * TouchScale && y < 72 * TouchScale;
 
-    private bool TouchShotStyleHit(double x, double y) => _shOpen && !_shViewer && !_shFilterOpen
+    private bool TouchShotStyleHit(double x, double y) => _shOpen && !_shViewer && !_shFilterOpen && !CshActive
         && x >= 148 * TouchScale && x < 192 * TouchScale && y >= 24 * TouchScale && y < 72 * TouchScale;
 
     private bool TouchNavigationClick(double x, double y)
@@ -75,7 +75,7 @@ public sealed partial class WallStage
     {
         int mode = TouchNavigationMode;
         float k = TouchScale;
-        bool filter = _shOpen && !_shViewer;
+        bool filter = _shOpen && !_shViewer && !CshActive;   // Cocoon 相册：不要左上角的筛选 / 排版小图标
         if (mode == _touchNavigationMode && k == _touchNavigationScale && filter == _touchFilterVisible && _touchShotStyle == (int)_shStyle && _touchFilterOpen == _shFilterOpen) return;
         _touchFilterOpen = _shFilterOpen;
         _touchShotStyle = (int)_shStyle;

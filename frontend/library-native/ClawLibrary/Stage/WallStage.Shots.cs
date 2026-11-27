@@ -90,6 +90,7 @@ public sealed partial class WallStage
         _shViewer = false;
         _shArmed = null;
         _shStyle = (ShStyle)Math.Clamp(_prefs.ShotsStyle, 0, 2);
+        if (_ccLight) CshOnOpen();   // Cocoon 相册（WallStage.CocoonShots.cs）
         int v = ++_shVersion;
         _shFavs = Captures.LoadFavorites();
         _shFilter = filter;
@@ -307,6 +308,7 @@ public sealed partial class WallStage
     /// <summary>View：打开 / 关上筛选。大图里不开。</summary>
     private void ShToggleFilter()
     {
+        if (CshActive) return;   // Cocoon 相册：左列就是筛选
         if (_shViewer) return;
         if (_shFilterOpen) { ShCloseFilter(); return; }
         _shFilterItems = ShBuildFilterItems();
@@ -364,6 +366,7 @@ public sealed partial class WallStage
 
     private void ShMove(Direction dir)
     {
+        if (CshActive) { CshMove(dir); return; }
         if (_shFilterOpen) { ShFilterMove(dir); return; }
         if (_shViewer) { ShViewerMove(dir); return; }
         if (_shUnits.Count == 0) return;
@@ -401,6 +404,7 @@ public sealed partial class WallStage
 
     private void ShActivate()
     {
+        if (CshActive) { CshActivate(); return; }
         if (_shFilterOpen) { ShFilterPick(); return; }
         if (_shViewer) { ShRunAction(); return; }
         if (_shUnits.Count == 0) return;
@@ -409,6 +413,7 @@ public sealed partial class WallStage
 
     private void ShBack()
     {
+        if (CshActive && CshBack()) return;
         if (_shFilterOpen) { ShCloseFilter(); return; }
         if (_shViewer) { ShCloseViewer(); return; }
         if (_shFromLibrary) { _shFromLibrary = false; CloseShots(instant: true); CloseControlCenter(); return; }   // 从游戏库按钮进来的：直接回游戏库
@@ -418,6 +423,7 @@ public sealed partial class WallStage
     /// <summary>Y：收藏 / 取消收藏（日历里的连拍收藏最上面那张）。</summary>
     private void ShY()
     {
+        if (CshActive) { CshY(); return; }
         if (_shFilterOpen) return;
         var c = _shViewer ? ShViewerShot() : _shUnits.Count > 0 ? _shUnits[_shFocus].Top : null;
         if (c != null) ShToggleFav(c);
@@ -426,6 +432,7 @@ public sealed partial class WallStage
     /// <summary>X：大图里藏起 / 露出文字；页面里换排版（存进 ui.ini）。</summary>
     private void ShX()
     {
+        if (CshActive) { CshX(); return; }
         if (_shFilterOpen) return;
         if (_shViewer) { _shViewerChrome = !_shViewerChrome; ShPaintViewer(); return; }
         ShSetStyle((ShStyle)(((int)_shStyle + 1) % 3));
@@ -444,6 +451,7 @@ public sealed partial class WallStage
     /// <summary>LB / RB：换页签（全部 / Steam / 本地），筛选跟着走。大图里不换。</summary>
     private void ShSwitchTab(int delta)
     {
+        if (CshActive) { if (delta > 0) CshFavKey(); else Cue(Sfx.Bump); return; }   // Cocoon 相册：RB 收藏
         if (_shViewer || _shFilterOpen || _shTabs.Count < 2) return;
         _shTab = (_shTab + delta + _shTabs.Count) % _shTabs.Count;
         _shTabKey = ShCurrentTab?.Key;
@@ -608,6 +616,7 @@ public sealed partial class WallStage
     {
         float k = _ccK;
         float x = (float)sx / k, y = (float)sy / k;
+        if (CshActive) { CshClick(x * 1.5f, y * 1.5f); return; }
         if (_shViewer) { ShViewerClick(x, y); return; }
         if (_shFilterOpen)
         {
