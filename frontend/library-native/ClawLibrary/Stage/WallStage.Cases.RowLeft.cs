@@ -162,6 +162,26 @@ public sealed partial class WallStage
         Log.Info("left panel close");
     }
 
+    /// <summary>
+    /// 进全屏页时收侧栏（11-28 jinyu：进手柄页会闪、还看到一个矩形框）：以前是侧栏滑走、首页去模糊、首页卡片的焦点框淡回来，
+    /// 同时页面才开始淡入——于是先露出一下清晰的首页和卡片焦点框。现在侧栏和首页的模糊原样留着，页面直接淡入盖在上面，
+    /// 等页面完全不透明了再在底下悄悄拆掉侧栏、去掉模糊（不显示首页焦点框，回来时由 LsPageClosed 重新打开侧栏）。
+    /// </summary>
+    private void LsCloseUnder(LsState ls)
+    {
+        if (!ls.Open) return;
+        ls.Open = false;
+        int gen = ++ls.Gen;
+        CurShow(ls.Cur, false, 60);
+        After(Reduced ? 1 : 520, () =>
+        {
+            if (_ls != ls || ls.Gen != gen) return;
+            RwBackdropFx(ls.Page, false, 1);
+            if (ls.Page.Rw is { PanelFocus: < 0, Disposed: false }) RwCursorShow(ls.Page, true);   // 页面已经盖住了，看不到
+            LsDispose();
+        });
+    }
+
     private void LsDispose()
     {
         if (_ls is not { } ls) return;
@@ -354,7 +374,7 @@ public sealed partial class WallStage
     private void LsGo(LsState ls, string id)
     {
         Log.Info($"left panel → {id}");
-        LsClose(instant: false);
+        LsCloseUnder(ls);
         _ccLight = true;   // Cocoon 样式页面（WallStage.CocoonPages.cs）
         CpReset();
         OpenControlCenter(quiet: true);

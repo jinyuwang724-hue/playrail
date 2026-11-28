@@ -83,9 +83,14 @@ public sealed partial class WallStage
             PadView(); await Task.Delay(900);
             if (!LsOpenNow) throw new InvalidOperationException("panel not open");
             for (int i = 0; i < 7; i++) { Move(Direction.Up); await Task.Delay(110); }
+            int page = int.TryParse(Program.Args.FirstOrDefault(a => a.StartsWith("--page="))?[7..], out var pg) ? pg : 0;   // 0 性能 1 手柄 2 显示 3 系统 4 相册 5 设置
+            for (int i = 0; i < page; i++) { Move(Direction.Down); await Task.Delay(180); }
             await Rec("enter", () => { if (LsOpenNow) Activate(); }, 1600);
-            await Rec("tolight", () => SetCocoonDark(false), 1100);
-            await Rec("todark", () => SetCocoonDark(true), 1100);
+            if (page == 0)
+            {
+                await Rec("tolight", () => SetCocoonDark(false), 1100);
+                await Rec("todark", () => SetCocoonDark(true), 1100);
+            }
             for (int i = 0; i < 4 && !LsOpenNow; i++) { if (!_ccOpen) break; Back(); await Task.Delay(500); }
             if (LsOpenNow) { PadView(); await Task.Delay(500); }
         }
