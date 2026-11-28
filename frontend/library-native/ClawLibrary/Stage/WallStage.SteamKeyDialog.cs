@@ -195,6 +195,7 @@ public sealed partial class WallStage
             ds.Antialiasing = CanvasAntialiasing.Antialiased;
             RsSoftShadow(ds, 0, 12, AkW, ak.H, 60, 22, 0.35f);
             ds.FillRoundedRectangle(0, 0, AkW, ak.H, 60, 60, RsBg);
+            if (CocoonPalette.Dark) DkEdge(ds, 0, 0, AkW, ak.H, 60);
             RqHeaderPill(ds, 37, 37);
             using (var tf = new CanvasTextFormat { FontFamily = RmFont(spec.Title), FontSize = 48, FontWeight = RsWt(spec.Title), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
                 ds.DrawText(spec.Title, new Windows.Foundation.Rect(192, 37, 680, 74), RmInk, tf);
@@ -210,7 +211,7 @@ public sealed partial class WallStage
                 ds.DrawTextLayout(lay, 60, y + 4, RsSub);
             // 网址胶囊：灰底、左边 Y 圆章、紫色网址 + 右边外链箭头（Y 或点它打开网页）
             float ly = ak.LinkY, lx = 37, lw = AkW - 74;
-            ds.FillRoundedRectangle(lx, ly, lw, AkLinkH, AkLinkH / 2, AkLinkH / 2, Ck(Color.FromArgb(255, 0xEE, 0xEF, 0xF3)));
+            if (CocoonPalette.Dark) DkRaised(ds, lx, ly, lw, AkLinkH, AkLinkH / 2); else ds.FillRoundedRectangle(lx, ly, lw, AkLinkH, AkLinkH / 2, AkLinkH / 2, Color.FromArgb(255, 0xEE, 0xEF, 0xF3));
             float cy = ly + AkLinkH / 2;
             ds.FillCircle(lx + 50, cy, 22, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)));
             using (var kf = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
@@ -233,7 +234,7 @@ public sealed partial class WallStage
                 if (n > 1)
                     using (var lf = new CanvasTextFormat { FontFamily = RmFont(spec.Fields[i].Label), FontSize = 30, FontWeight = RsWt(spec.Fields[i].Label, 600), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
                         ds.DrawText(spec.Fields[i].Label, new Windows.Foundation.Rect(60, fy - AkLabelH, AkW - 120, AkLabelH - 4), RmInk, lf);
-                ds.FillRoundedRectangle(37, fy, AkW - 74, AkFieldH, AkFieldH / 2, AkFieldH / 2, AkFieldBg);
+                if (CocoonPalette.Dark) DkWell(ds, 37, fy, AkW - 74, AkFieldH, AkFieldH / 2); else ds.FillRoundedRectangle(37, fy, AkW - 74, AkFieldH, AkFieldH / 2, AkFieldH / 2, AkFieldBg);
                 if (err == null) ds.DrawRoundedRectangle(38.5f, fy + 1.5f, AkW - 77, AkFieldH - 3, AkFieldH / 2, AkFieldH / 2, CpAccentInk, 3);
                 else if (n > 1 && i == ak.Focus) ds.DrawRoundedRectangle(38.5f, fy + 1.5f, AkW - 77, AkFieldH - 3, AkFieldH / 2, AkFieldH / 2, Ck(Color.FromArgb(255, 0xB4, 0xB6, 0xBE)), 3);
                 using var cf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 30, FontWeight = new Windows.UI.Text.FontWeight(500), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };

@@ -349,6 +349,7 @@ public sealed partial class WallStage
         var outPx = new byte[w * h * 4];
         Vector2 hs = new(p.W / 2, p.H / 2), c = new(p.X + hs.X, p.Y + hs.Y);
         float rad = p.R;
+        bool dark = CocoonPalette.Dark;
         static float Sd(Vector2 q, Vector2 hh, float r) { var a = Vector2.Abs(q) - (hh - new Vector2(r)); return Vector2.Max(a, Vector2.Zero).Length() - r + MathF.Min(MathF.Max(a.X, a.Y), 0); }
         static float Sst(float e0, float e1, float x) { float t = Math.Clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); }
         for (int j = 0; j < h; j++)
@@ -363,7 +364,7 @@ public sealed partial class WallStage
             if (p.Kind == 0)
             {
                 float s = Sd(pt - c - new Vector2(0, 6), hs - new Vector2(3), MathF.Max(rad - 3, 0));
-                float m = 1 - 0.22f * MathF.Pow(1 - Sst(-2, 12, s), 2);
+                float m = 1 - (dark ? 0.34f : 0.22f) * MathF.Pow(1 - Sst(-2, 12, s), 2);
                 m *= 1 - 0.03f * MathF.Exp(-MathF.Max(best, 0) * 1.2f);
                 shadeA = 1 - m;
             }
@@ -376,8 +377,17 @@ public sealed partial class WallStage
                 if (p.Kind == 0)
                 {
                     float l = 0.299f * gr + 0.587f * gg + 0.114f * gb;
-                    gr += (l - gr) * 0.4f; gg += (l - gg) * 0.4f; gb += (l - gb) * 0.4f;
-                    gr += (0.353f - gr) * 0.2f; gg += (0.353f - gg) * 0.2f; gb += (0.37f - gb) * 0.2f;
+                    if (dark)
+                    {
+                        // 暗色磨砂：去饱和多一点，再往深灰 #1C1D21 压 64 %——还透得出壁纸的颜色，但字是白的
+                        gr += (l - gr) * 0.5f; gg += (l - gg) * 0.5f; gb += (l - gb) * 0.5f;
+                        gr += (0.11f - gr) * 0.64f; gg += (0.114f - gg) * 0.64f; gb += (0.13f - gb) * 0.64f;
+                    }
+                    else
+                    {
+                        gr += (l - gr) * 0.4f; gg += (l - gg) * 0.4f; gb += (l - gb) * 0.4f;
+                        gr += (0.353f - gr) * 0.2f; gg += (0.353f - gg) * 0.2f; gb += (0.37f - gb) * 0.2f;
+                    }
                     // 法线（数值梯度）：光从上方来，上边宽而亮，左右窄，底边一条细线
                     const float e = 0.5f;
                     var n = new Vector2(Sd(pt - c + new Vector2(e, 0), hs, rad) - Sd(pt - c - new Vector2(e, 0), hs, rad),
@@ -387,11 +397,13 @@ public sealed partial class WallStage
                     float add = 0.035f * up * MathF.Exp(-depth * 1.4f);
                     float amp = 0.24f * up + 0.14f * side + 0.13f * down, wid = MathF.Max(12 * up + 5 * side + 3 * down, 0.5f);
                     add += amp * MathF.Pow(Math.Clamp(1 - depth / wid, 0, 1), 1.35f);
+                    if (dark) add *= 0.62f;   // 暗玻璃的边光收一点，只留一道细亮边
                     gr += add; gg += add; gb += add;
                 }
                 else
                 {
-                    gr += (0.43f - gr) * 0.2f; gg += (0.43f - gg) * 0.2f; gb += (0.49f - gb) * 0.2f;
+                    if (dark) { gr += (0.14f - gr) * 0.6f; gg += (0.145f - gg) * 0.6f; gb += (0.17f - gb) * 0.6f; }
+                    else { gr += (0.43f - gr) * 0.2f; gg += (0.43f - gg) * 0.2f; gb += (0.49f - gb) * 0.2f; }
                 }
                 r = gr * cover; g = gg * cover; b = gb * cover;
                 a = cover + (1 - cover) * shadeA;
@@ -416,7 +428,9 @@ public sealed partial class WallStage
         sprite.Offset = new Vector3(x0 / R, y0 / R, 0);
     }
 
-    private static readonly Color RwWhite = Color.FromArgb(255, 0xfa, 0xfa, 0xfa), RwInk = Color.FromArgb(255, 0x21, 0x21, 0x21);
+    private static readonly Color RwWhite = Color.FromArgb(255, 0xfa, 0xfa, 0xfa);
+    /// <summary>首页顶栏的字和图标墨色：浅色磨砂上深灰，暗色磨砂上近白。</summary>
+    private static Color RwInk => CocoonPalette.Dark ? Color.FromArgb(255, 0xEE, 0xEF, 0xF3) : Color.FromArgb(255, 0x21, 0x21, 0x21);
 
     /// <summary>LB / RB：上圆下方的小墓碑（33×38，上圆角 16.5、下圆角 7），深灰半透明底 + 浅灰粗体字。</summary>
     private static void RwShoulder(CanvasDrawingSession ds, float x, float y, float w, float h, string label)

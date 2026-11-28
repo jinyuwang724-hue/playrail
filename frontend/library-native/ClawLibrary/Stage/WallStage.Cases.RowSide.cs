@@ -400,8 +400,8 @@ public sealed partial class WallStage
             {
                 CompositionBrush brush = layer switch
                 {
-                    0 => CkSolid(Color.FromArgb(255, 0xD6, 0xD7, 0xDD)),
-                    1 => G.Solid(Ck(Color.FromArgb(255, 0x2B, 0x2B, 0x33))),
+                    0 => CocoonPalette.Dark ? G.Solid(DkRgb(0x45464E)) : G.Solid(Color.FromArgb(255, 0xD6, 0xD7, 0xDD)),   // 面板换明暗时整个重建
+                    1 => CocoonPalette.Dark ? G.Solid(DkRgb(0xE6E7EC)) : G.Solid(Color.FromArgb(255, 0x2B, 0x2B, 0x33)),
                     _ => SpVGrad(CpKnobStart, SpOn2),
                 };
                 var v = G.Sprite(brush, relative: false);
@@ -454,8 +454,12 @@ public sealed partial class WallStage
         var g = G.C.CreateLinearGradientBrush();
         g.StartPoint = new Vector2(0, 0); g.EndPoint = new Vector2(0, 1);
         float H = SpH1;
-        foreach (var (y, c) in new (float, int)[] { (0, 0xFAFAFA), (60 - SpT, 0xFAFAFA), (400 - SpT, 0xF6F7FA), (600 - SpT + 120, 0xF6F7FA), (1000 - SpT + 120, 0xF2F6FA), (H - 10, 0xF2F6FA), (H, 0xE7EAF1) })
-            g.ColorStops.Add(CkStop(Math.Clamp(y / H, 0, 1), C(c)));
+        // 暗色：上 #2C2D33 → 下 #222328，底边往里压暗到 #1B1C20（面板换明暗时整个重建，不用登记）
+        var stops = CocoonPalette.Dark
+            ? new (float, int)[] { (0, 0x2C2D33), (400 - SpT, 0x27282D), (1000 - SpT + 120, 0x222328), (H - 10, 0x222328), (H, 0x1B1C20) }
+            : new (float, int)[] { (0, 0xFAFAFA), (60 - SpT, 0xFAFAFA), (400 - SpT, 0xF6F7FA), (600 - SpT + 120, 0xF6F7FA), (1000 - SpT + 120, 0xF2F6FA), (H - 10, 0xF2F6FA), (H, 0xE7EAF1) };
+        foreach (var (y, c) in stops)
+            g.ColorStops.Add(G.C.CreateColorGradientStop(Math.Clamp(y / H, 0, 1), C(c)));
         return g;
     }
 
@@ -535,7 +539,7 @@ public sealed partial class WallStage
         ds.Clear(Colors.Transparent);
         ds.Transform = Matrix3x2.CreateTranslation(-x0, -y0) * Matrix3x2.CreateScale(CsRaster);
         ds.Antialiasing = CanvasAntialiasing.Antialiased;
-        RwDrawRight(ds, rw, -dx, clock, ampm, Ck(RwInk));   // 快捷面板是白卡（暗色模式下深灰），时间跟着换色
+        RwDrawRight(ds, rw, -dx, clock, ampm, RmInk);   // 快捷面板是白卡（暗色模式下深灰），时间跟着换色
     }
 
     /// <summary>不随数值动的部分：滑块两端圆按钮和轨道、分组卡片（照二级页）、功耗单位。</summary>
@@ -552,10 +556,10 @@ public sealed partial class WallStage
             float y = k == 0 ? SpBriY : SpVolY, cy = y + SpSlH / 2;
             foreach (var (cx, icon) in new[] { (SpBX + 38, k == 0 ? "sp.sunlo" : muted ? "qam.mute" : "sp.vol0"), (SpBX + SpBW - 38, k == 0 ? "qam.sun" : "qam.vol") })
             {
-                ds.FillCircle(cx, cy, 38, Ck(Color.FromArgb(255, 0xE8, 0xE8, 0xEE)));
+                if (CocoonPalette.Dark) DkOrb(ds, cx, cy, 38); else ds.FillCircle(cx, cy, 38, Color.FromArgb(255, 0xE8, 0xE8, 0xEE));
                 SpIcon(ds, icon, cx, cy, 34, SpTileInk, 2);
             }
-            ds.FillRoundedRectangle(SpTrackX0, cy - 4, SpTrackW, 8, 4, 4, Ck(Color.FromArgb(255, 0xDC, 0xDC, 0xE3)));
+            if (CocoonPalette.Dark) DkWell(ds, SpTrackX0 - 2, cy - 5, SpTrackW + 4, 10, 5); else ds.FillRoundedRectangle(SpTrackX0, cy - 4, SpTrackW, 8, 4, 4, Color.FromArgb(255, 0xDC, 0xDC, 0xE3));
         }
         var seps = new List<float> { SpGY0 + SpPwH };
         for (int i = 1; i < 3; i++) seps.Add(SpGY0 + SpPwH + i * SpPickPitch);
@@ -584,9 +588,13 @@ public sealed partial class WallStage
         {
             ds.Clear(Colors.Transparent);
             ds.Transform = Matrix3x2.CreateScale(CsRaster);
-            SpShadow(ds, pad, pad + 5, SpTile, SpTile, SpTile / 2, 6, Color.FromArgb(31, 30, 30, 50));
-            ds.FillCircle(c, c, SpTile / 2, Ck(Color.FromArgb(255, 0xF5, 0xF6, 0xF9)));   // 关着的开关底（Cocoon 视频取色）
-            ds.DrawCircle(c, c, SpTile / 2 - 0.75f, Color.FromArgb(150, 255, 255, 255), 1.5f);
+            if (CocoonPalette.Dark) DkOrb(ds, c, c, SpTile / 2);   // 暗色：凸起的深色圆钮，顶上亮边
+            else
+            {
+                SpShadow(ds, pad, pad + 5, SpTile, SpTile, SpTile / 2, 6, Color.FromArgb(31, 30, 30, 50));
+                ds.FillCircle(c, c, SpTile / 2, Color.FromArgb(255, 0xF5, 0xF6, 0xF9));   // 关着的开关底（Cocoon 视频取色）
+                ds.DrawCircle(c, c, SpTile / 2 - 0.75f, Color.FromArgb(150, 255, 255, 255), 1.5f);
+            }
             SpIcon(ds, icon, c, c, 46, SpTileInk, 2.2f);
         }
         using (var ds = CanvasComposition.CreateDrawingSession(t.SOn))
@@ -1139,9 +1147,9 @@ public sealed partial class WallStage
                 {
                     float tw = 84, th = 50, tx = SpBX + SpBW - 6 - tw, ty = cy - th / 2;
                     if (on) { using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, RwC2) { StartPoint = new Vector2(tx, ty), EndPoint = new Vector2(tx + tw, ty + th) }; ds.FillRoundedRectangle(tx, ty, tw, th, th / 2, th / 2, br); }
-                    else { ds.FillRoundedRectangle(tx, ty, tw, th, th / 2, th / 2, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xE9))); ds.DrawRoundedRectangle(tx + 1.5f, ty + 1.5f, tw - 3, th - 3, th / 2 - 1.5f, th / 2 - 1.5f, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)), 3); }
+                    else { CpToggleOffTrack(ds, tx, ty, tw, th, 3); }
                     RsSoftShadow(ds, (on ? tx + tw - 25 : tx + 25) - 18, cy - 18 + 2, 36, 36, 18, 3, 0.22f);
-                    ds.FillCircle(on ? tx + tw - 25 : tx + 25, cy, 18, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
+                    ds.FillCircle(on ? tx + tw - 25 : tx + 25, cy, 18, CpKnobFill(on));
                 }
                 else if (right == "lock") SpIcon(ds, "qam.lock", SpBX + SpBW - 24, cy, 26, SpMute, 2);
                 else if (right.Length > 0)

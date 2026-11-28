@@ -61,4 +61,38 @@ public sealed partial class WallStage
         if (_cs != null && style != HomeStyle.Row) { SaveUi(_prefs with { Home = style }); CsMorphStyle(); }
         Log.Info("recaccent done");
     }
+
+    /// <summary>暗色组件静帧（--state=recdarkmenu）：首页 Y 菜单、编辑页、编辑页里的下拉；只在确认焦点在「编辑」上时才按 A（第 0 行是启动），全程不改设置。帧存 recdmenu-*。</summary>
+    internal async Task RecDarkMenuAsync()
+    {
+        await Task.Delay(2500);
+        string dir = Path.Combine(App.CacheDir, "rec");
+        async Task Still(string name)
+        {
+            await Task.Delay(800);
+            var r = new FrameRecorder { Full = true };
+            if (!r.Start(HostWindow)) return;
+            await Task.Delay(200);
+            Log.Info($"recdarkmenu {name}: {await r.StopAndSaveAsync(Path.Combine(dir, "dmenu-" + name), System.Diagnostics.Stopwatch.GetTimestamp())} frames");
+        }
+        try
+        {
+            if (_cs?.Page is not { Style: HomeStyle.Row } p) throw new InvalidOperationException("not row home");
+            RmShow(p); await Task.Delay(900);
+            if (_rm == null) throw new InvalidOperationException("menu not open");
+            await Still("menu");
+            Move(Direction.Down); await Task.Delay(400);
+            if (_rm is { Sel: 1 })
+            {
+                Activate(); await Task.Delay(1500);
+                await Still("sheet");
+                Move(Direction.Down); await Task.Delay(300); Move(Direction.Down); await Task.Delay(400);
+                await Still("sheet-focus");
+                Back(); await Task.Delay(900);
+            }
+            if (_rm != null) { Back(); await Task.Delay(700); }
+        }
+        catch (Exception ex) { Log.Error("recdarkmenu", ex); }
+        Log.Info("recdarkmenu done");
+    }
 }

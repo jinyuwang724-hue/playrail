@@ -173,7 +173,7 @@ public sealed partial class WallStage
     private static void RsPaintPillExpanded(CanvasDrawingSession ds, bool canDown, bool canUp)
     {
         var dev = ds.Device;
-        ds.FillRoundedRectangle(0, 0, RsPillW, RsPillH, RsPillH / 2, RsPillH / 2, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xE9)));
+        if (CocoonPalette.Dark) DkWell(ds, 0, 0, RsPillW, RsPillH, RsPillH / 2); else ds.FillRoundedRectangle(0, 0, RsPillW, RsPillH, RsPillH / 2, RsPillH / 2, Color.FromArgb(255, 0xE4, 0xE5, 0xE9));
         float iw = (RsPillW - 18) / 2, ih = RsPillH - 14;
         for (int s = 0; s < 2; s++)
         {
@@ -234,8 +234,7 @@ public sealed partial class WallStage
         }
         var off = Layer(ds =>
         {
-            ds.FillRoundedRectangle(0, 0, w, h, h / 2, h / 2, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xE9)));
-            ds.DrawRoundedRectangle(2, 2, w - 4, h - 4, h / 2 - 2, h / 2 - 2, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)), 4);
+            CpToggleOffTrack(ds, 0, 0, w, h, 4);
         }, w, h);
         var on = Layer(ds =>
         {

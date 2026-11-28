@@ -4,6 +4,10 @@
 //   用合成画刷（页面底色渐变、纯色精灵）的地方走 CkSolid / CkStop 登记，切换时 CkRetint() 原地改色，不用重建页面。
 using System;
 using System.Collections.Generic;
+using System.Numerics;
+using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Brushes;
+using Microsoft.Graphics.Canvas.Geometry;
 using Microsoft.UI.Composition;
 using Windows.UI;
 
@@ -53,6 +57,144 @@ public sealed partial class WallStage
         if (_prefs.CocoonDark == on) return;
         SaveUi(_prefs with { CocoonDark = on });
         CkRetint();
+        if (_rsBox is { } box)   // 改名输入框是缓存的：主题和字色跟着换
+        {
+            box.RequestedTheme = on ? Microsoft.UI.Xaml.ElementTheme.Dark : Microsoft.UI.Xaml.ElementTheme.Light;
+            var ink = new Microsoft.UI.Xaml.Media.SolidColorBrush(RmInk);
+            foreach (var key in new[] { "TextControlForeground", "TextControlForegroundPointerOver", "TextControlForegroundFocused" }) box.Resources[key] = ink;
+            box.Foreground = ink;
+        }
         RefreshCocoonThemeVisuals();
+    }
+
+    // ---------------- 暗色材质（11-28 jinyu：不能只是把颜色调暗，组件要按暗色重新做质感） ----------------
+    // 暗底上分层不靠灰度差，而靠：上沿亮、下沿几乎看不见的细边（光从上方来），比浅色更深更大的投影，
+    // 凸起的东西（卡片、圆钮）顶上一层很淡的光，凹下去的东西（开关底、下拉、滑轨）顶上压一道内阴影、下沿一条细亮线。
+
+    private static Color DkRgb(uint rgb, byte a = 255) => Color.FromArgb(a, (byte)(rgb >> 16), (byte)(rgb >> 8 & 0xFF), (byte)(rgb & 0xFF));
+    private static Color DkWhite(byte a) => Color.FromArgb(a, 255, 255, 255);
+    private static Color DkBlack(byte a) => Color.FromArgb(a, 0, 0, 0);
+
+    /// <summary>暗色卡片：#303137 → #28292E 竖向渐变，顶上 48 px 白 5 % 的光，分隔线 = 深槽 + 下面一条白 5 % 的细线，边是上亮下暗的渐变细线。</summary>
+    private void DkCard(CanvasDrawingSession ds, float x, float y, float w, float h, float r, IEnumerable<float>? seps, float sepH = 4)
+    {
+        var dev = ds.Device;
+        RsSoftShadow(ds, x + 2, y + 14, w - 4, h, r, 18, 0.45f);
+        RsSoftShadow(ds, x, y + 2, w, h, r, 3, 0.35f);
+        using var card = CanvasGeometry.CreateRoundedRectangle(dev, x, y, w, h, r, r);
+        using (var fill = new CanvasLinearGradientBrush(dev, DkRgb(0x303137), DkRgb(0x28292E)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) })
+            ds.FillGeometry(card, fill);
+        using (ds.CreateLayer(1, card))
+        {
+            using (var sheen = new CanvasLinearGradientBrush(dev, DkWhite(14), DkWhite(0)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + 48) })
+                ds.FillRectangle(x, y, w, 48, sheen);
+            if (seps != null)
+                foreach (var sy in seps)
+                {
+                    ds.FillRectangle(x, sy, w, MathF.Max(1.5f, sepH - 1.5f), DkRgb(0x1C1D21));
+                    ds.FillRectangle(x, sy + MathF.Max(1.5f, sepH - 1.5f), w, 1.2f, DkWhite(13));
+                }
+        }
+        var stops = new[]
+        {
+            new CanvasGradientStop { Position = 0, Color = DkWhite(60) },
+            new CanvasGradientStop { Position = MathF.Min(0.45f, 60 / MathF.Max(h, 1)), Color = DkWhite(16) },
+            new CanvasGradientStop { Position = 1, Color = DkWhite(7) },
+        };
+        using var edge = new CanvasLinearGradientBrush(dev, stops) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) };
+        ds.DrawRoundedRectangle(x + 0.75f, y + 0.75f, w - 1.5f, h - 1.5f, r, r, edge, 1.5f);
+    }
+
+    /// <summary>暗色凹槽（关着的开关底、下拉胶囊、滑轨）：#1B1C20 底，上沿往里一道内阴影，下沿一条白 9 % 的细亮线。</summary>
+    private static void DkWell(CanvasDrawingSession ds, float x, float y, float w, float h, float r)
+    {
+        var dev = ds.Device;
+        using var g = CanvasGeometry.CreateRoundedRectangle(dev, x, y, w, h, r, r);
+        ds.FillGeometry(g, DkRgb(0x1B1C20));
+        using (ds.CreateLayer(1, g))
+        {
+            float sh = MathF.Min(10, h * 0.4f);
+            using var inner = new CanvasLinearGradientBrush(dev, DkBlack(110), DkBlack(0)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + sh) };
+            ds.FillRectangle(x, y, w, sh, inner);
+        }
+        var stops = new[]
+        {
+            new CanvasGradientStop { Position = 0, Color = DkBlack(90) },
+            new CanvasGradientStop { Position = 0.5f, Color = DkWhite(0) },
+            new CanvasGradientStop { Position = 1, Color = DkWhite(26) },
+        };
+        using var edge = new CanvasLinearGradientBrush(dev, stops) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) };
+        ds.DrawRoundedRectangle(x + 0.6f, y + 0.6f, w - 1.2f, h - 1.2f, MathF.Max(0, r - 0.6f), MathF.Max(0, r - 0.6f), edge, 1.2f);
+    }
+
+    /// <summary>暗色凸起圆钮（快捷开关关着、滑块两端的按钮）：#3B3C43 → #2B2C32，底下一层深投影，边上亮下暗。</summary>
+    private void DkOrb(CanvasDrawingSession ds, float cx, float cy, float r)
+    {
+        var dev = ds.Device;
+        RsSoftShadow(ds, cx - r * 0.92f, cy - r + r * 0.16f, r * 1.84f, r * 2, r, r * 0.16f, 0.55f);
+        using (var fill = new CanvasLinearGradientBrush(dev, DkRgb(0x3C3D44), DkRgb(0x2B2C32)) { StartPoint = new Vector2(0, cy - r), EndPoint = new Vector2(0, cy + r) })
+            ds.FillCircle(cx, cy, r, fill);
+        var stops = new[]
+        {
+            new CanvasGradientStop { Position = 0, Color = DkWhite(72) },
+            new CanvasGradientStop { Position = 0.5f, Color = DkWhite(8) },
+            new CanvasGradientStop { Position = 1, Color = DkWhite(16) },
+        };
+        using var rim = new CanvasLinearGradientBrush(dev, stops) { StartPoint = new Vector2(0, cy - r), EndPoint = new Vector2(0, cy + r) };
+        ds.DrawCircle(cx, cy, r - 0.75f, rim, 1.5f);
+    }
+
+    /// <summary>拨动开关关着时的底：浅色 = 浅灰底 + 灰圈；暗色 = 凹槽。ring = 浅色版灰圈的线宽。</summary>
+    private static void CpToggleOffTrack(CanvasDrawingSession ds, float x, float y, float w, float h, float ring)
+    {
+        if (CocoonPalette.Dark) { DkWell(ds, x, y, w, h, h / 2); return; }
+        ds.FillRoundedRectangle(x, y, w, h, h / 2, h / 2, Color.FromArgb(255, 0xE4, 0xE5, 0xE9));
+        ds.DrawRoundedRectangle(x + ring / 2, y + ring / 2, w - ring, h - ring, h / 2 - ring / 2, h / 2 - ring / 2, Color.FromArgb(255, 0x9A, 0x9C, 0xA3), ring);
+    }
+
+    /// <summary>开关圆钮：开着永远白；关着在暗色里是浅灰（白钮压在深槽里太跳）。</summary>
+    private static Color CpKnobFill(bool on) => on || !CocoonPalette.Dark ? Color.FromArgb(255, 0xFA, 0xFA, 0xFA) : DkRgb(0xC9CAD2);
+
+    /// <summary>滑轨底：浅色 = 浅灰条；暗色 = 凹槽。</summary>
+    private static void CpTrackBg(CanvasDrawingSession ds, float x, float y, float w, float h)
+    {
+        if (CocoonPalette.Dark) { DkWell(ds, x, y, w, h, h / 2); return; }
+        ds.FillRoundedRectangle(x, y, w, h, h / 2, h / 2, Color.FromArgb(255, 0xDC, 0xDC, 0xE3));
+    }
+
+    /// <summary>暗色面板 / 弹窗的边：上沿白 22 %，往下很快淡到白 4 %（光从上方来）。只画边，底色由调用方画。</summary>
+    private static void DkEdge(CanvasDrawingSession ds, float x, float y, float w, float h, float r, float top = 56)
+    {
+        var stops = new[]
+        {
+            new CanvasGradientStop { Position = 0, Color = DkWhite((byte)top) },
+            new CanvasGradientStop { Position = MathF.Min(0.45f, 70 / MathF.Max(h, 1)), Color = DkWhite(14) },
+            new CanvasGradientStop { Position = 1, Color = DkWhite(8) },
+        };
+        using var edge = new CanvasLinearGradientBrush(ds.Device, stops) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) };
+        ds.DrawRoundedRectangle(x + 0.75f, y + 0.75f, w - 1.5f, h - 1.5f, r, r, edge, 1.5f);
+    }
+
+    /// <summary>暗色浮层（下拉选项卡、Y 菜单、相册菜单）：比卡片再亮一级（#37383E → #2F3035），投影更深更散。</summary>
+    private void DkPop(CanvasDrawingSession ds, float x, float y, float w, float h, float r)
+    {
+        var dev = ds.Device;
+        RsSoftShadow(ds, x, y + 16, w, h, r, 26, 0.6f);
+        RsSoftShadow(ds, x, y + 2, w, h, r, 4, 0.4f);
+        using var g = CanvasGeometry.CreateRoundedRectangle(dev, x, y, w, h, r, r);
+        using (var fill = new CanvasLinearGradientBrush(dev, DkRgb(0x37383E), DkRgb(0x2F3035)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) })
+            ds.FillGeometry(g, fill);
+        DkEdge(ds, x, y, w, h, r, 64);
+    }
+
+    /// <summary>暗色凸起按钮（次要按钮、胶囊）：#3A3B42 → #2E2F35，贴身投影，上亮下暗的边。</summary>
+    private void DkRaised(CanvasDrawingSession ds, float x, float y, float w, float h, float r)
+    {
+        var dev = ds.Device;
+        RsSoftShadow(ds, x, y + 5, w, h, r, 8, 0.5f);
+        using var g = CanvasGeometry.CreateRoundedRectangle(dev, x, y, w, h, r, r);
+        using (var fill = new CanvasLinearGradientBrush(dev, DkRgb(0x3B3C43), DkRgb(0x2E2F35)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) })
+            ds.FillGeometry(g, fill);
+        DkEdge(ds, x, y, w, h, r, 70);
     }
 }

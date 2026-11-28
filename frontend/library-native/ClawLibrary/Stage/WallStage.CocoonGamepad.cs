@@ -1433,7 +1433,7 @@ public sealed partial class WallStage
             using (var vf = new CanvasTextFormat { FontFamily = RmFont(r.Value), FontSize = 30, FontWeight = RsWt(r.Value, 500), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
                 ds.DrawText(r.Value, new Rect(tx, scy - 24, mx - tx - 20, 48), RsSub, vf);
             ds.FillRoundedRectangle(mx - 16, scy - 4, 32, 8, 4, 4, RmInk);
-            ds.FillRoundedRectangle(x0, scy - 5, x1 - x0, 10, 5, 5, Ck(Color.FromArgb(255, 0xDC, 0xDC, 0xE3)));
+            CpTrackBg(ds, x0, scy - 5, x1 - x0, 10);
             if (frac > 0)
             {
                 using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, CpAccentDeep) { StartPoint = new Vector2(x0, 0), EndPoint = new Vector2(x1, 0) };
@@ -1474,11 +1474,10 @@ public sealed partial class WallStage
                 }
                 else
                 {
-                    ds.FillRoundedRectangle(x, ty, 120, 76, 38, 38, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xE9)));
-                    ds.DrawRoundedRectangle(x + 2, ty + 2, 116, 72, 36, 36, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)), 4);
+                    CpToggleOffTrack(ds, x, ty, 120, 76, 4);
                 }
                 RsSoftShadow(ds, (on ? x + 82 : x + 38) - 27, cy - 27 + 3, 54, 54, 27, 4, 0.22f);
-                ds.FillCircle(on ? x + 82 : x + 38, cy, 27, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
+                ds.FillCircle(on ? x + 82 : x + 38, cy, 27, CpKnobFill(on));
                 break;
             }
             case CgpRowKind.Dropdown:
@@ -1800,6 +1799,7 @@ public sealed partial class WallStage
                 var t = ds.Transform; ds.Transform = Matrix3x2.Identity; ds.DrawImage(op); ds.Transform = t;
             }
             ds.FillRoundedRectangle(RsX, RsY, RsW, RsH, RsR, RsR, RsBg);
+            if (CocoonPalette.Dark) DkEdge(ds, RsX, RsY, RsW, RsH, RsR);
         }
         ((CompositionSurfaceBrush)v.ModalSheet.Brush).Surface = v.ModalSheetS;
         v.ModalSheet.Size = new Vector2(w, h);
@@ -1963,13 +1963,13 @@ public sealed partial class WallStage
             ds.FillRoundedRectangle(1652, 104, 134, 74, 37, 37, br);
         ds.FillCircle(1689, 141, 21, CpPillBadge);
         using (var f = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
-            ds.DrawText("Y", new Rect(1668, 120, 42, 42), CpAccentInk, f);
+            ds.DrawText("Y", new Rect(1668, 120, 42, 42), CpPillInk, f);
         ds.FillCircle(1750, 141, 21, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
         // 三道滑杆图标 = 多触发与高级触发设置
         foreach (var (ly, kx) in new[] { (-8f, 4f), (0f, -4f), (8f, 3f) })
         {
-            ds.DrawLine(1740, 141 + ly, 1760, 141 + ly, CpAccentInk, 2.8f, RwRoundStroke);
-            ds.FillCircle(1750 + kx, 141 + ly, 3.2f, CpAccentInk);
+            ds.DrawLine(1740, 141 + ly, 1760, 141 + ly, CpPillInk, 2.8f, RwRoundStroke);
+            ds.FillCircle(1750 + kx, 141 + ly, 3.2f, CpPillInk);
         }
     }
 

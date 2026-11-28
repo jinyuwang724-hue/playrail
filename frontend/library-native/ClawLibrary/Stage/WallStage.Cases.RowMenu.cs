@@ -369,7 +369,8 @@ public sealed partial class WallStage
                 ds.DrawImage(op);
                 ds.Transform = Matrix3x2.CreateScale(R);
             }
-            ds.FillRoundedRectangle(pad, pad, RmCardW, RmCardH, RmCardR, RmCardR, Ck(Color.FromArgb(255, 0xF7, 0xF8, 0xFA)));
+            if (CocoonPalette.Dark) DkPop(ds, pad, pad, RmCardW, RmCardH, RmCardR);
+            else ds.FillRoundedRectangle(pad, pad, RmCardW, RmCardH, RmCardR, RmCardR, Color.FromArgb(255, 0xF7, 0xF8, 0xFA));
             for (int i = 0; i < RmLabels.Length; i++)
             {
                 float y = pad + i * (RmRowH + RmSep);

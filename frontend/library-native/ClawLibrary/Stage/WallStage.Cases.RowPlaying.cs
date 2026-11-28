@@ -334,6 +334,7 @@ public sealed partial class WallStage
             ds.Transform = Matrix3x2.CreateTranslation(RqPad, RqPad) * Matrix3x2.CreateScale(R);
             RsSoftShadow(ds, 0, 12, RqW, h, 60, 22, 0.35f);
             ds.FillRoundedRectangle(0, 0, RqW, h, 60, 60, RsBg);
+            if (CocoonPalette.Dark) DkEdge(ds, 0, 0, RqW, h, 60);
             RqHeaderPill(ds, 37, 37);
             string title = sw ? "切换游戏" : "退出游戏";
             using (var tf = new CanvasTextFormat { FontFamily = RmFont(title), FontSize = 48, FontWeight = RsWt(title), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
@@ -410,9 +411,13 @@ public sealed partial class WallStage
         }
         else
         {
-            RsSoftShadow(ds, x, y + 5, w, h, r, 9, 0.16f);
-            ds.FillRoundedRectangle(x, y, w, h, r, r, Ck(Color.FromArgb(255, 0xFC, 0xFC, 0xFD)));
-            ds.DrawRoundedRectangle(x + 0.5f, y + 0.5f, w - 1, h - 1, r, r, Ck(Color.FromArgb(255, 0xEA, 0xEB, 0xEE)), 1);
+            if (CocoonPalette.Dark) DkRaised(ds, x, y, w, h, r);
+            else
+            {
+                RsSoftShadow(ds, x, y + 5, w, h, r, 9, 0.16f);
+                ds.FillRoundedRectangle(x, y, w, h, r, r, Color.FromArgb(255, 0xFC, 0xFC, 0xFD));
+                ds.DrawRoundedRectangle(x + 0.5f, y + 0.5f, w - 1, h - 1, r, r, Color.FromArgb(255, 0xEA, 0xEB, 0xEE), 1);
+            }
         }
         var ink = green ? Color.FromArgb(255, 0xFF, 0xFF, 0xFF) : RmInk;
         using var tf = new CanvasTextFormat { FontFamily = RmFont(label), FontSize = 42, FontWeight = RsWt(label), WordWrapping = CanvasWordWrapping.NoWrap };
@@ -519,8 +524,12 @@ public sealed partial class WallStage
         {
             ds.Transform = Matrix3x2.CreateTranslation(pad, pad) * ds.Transform;
             RsSoftShadow(ds, 0, 8, w, h, 36, 16, 0.25f);
-            ds.FillRoundedRectangle(0, 0, w, h, 36, 36, Ck(Color.FromArgb(240, 0xFA, 0xFA, 0xFA)));
-            ds.DrawRoundedRectangle(0.5f, 0.5f, w - 1, h - 1, 36, 36, Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEA)), 1);
+            if (CocoonPalette.Dark) { ds.FillRoundedRectangle(0, 0, w, h, 36, 36, DkRgb(0x303137, 240)); DkEdge(ds, 0, 0, w, h, 36); }
+            else
+            {
+                ds.FillRoundedRectangle(0, 0, w, h, 36, 36, Color.FromArgb(240, 0xFA, 0xFA, 0xFA));
+                ds.DrawRoundedRectangle(0.5f, 0.5f, w - 1, h - 1, 36, 36, Color.FromArgb(255, 0xE6, 0xE7, 0xEA), 1);
+            }
             using var tf = new CanvasTextFormat { FontFamily = RmFont(item.Title), FontSize = 36, FontWeight = RsWt(item.Title), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
             ds.DrawText(item.Title, new Windows.Foundation.Rect(110, 18, w - 130, 50), RmInk, tf);
             using var sf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 32, FontWeight = new Windows.UI.Text.FontWeight(500), WordWrapping = CanvasWordWrapping.NoWrap };

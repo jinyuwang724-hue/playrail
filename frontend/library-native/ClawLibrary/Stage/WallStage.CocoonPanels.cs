@@ -37,6 +37,7 @@ public sealed partial class WallStage
     /// </summary>
     private void CpCard(CanvasDrawingSession ds, float x, float y, float w, float h, List<float>? seps, float r = 30)
     {
+        if (CocoonPalette.Dark) { DkCard(ds, x, y, w, h, r, seps); return; }
         var dev = ds.Device;
         RsSoftShadow(ds, x + 4, y + 12, w - 8, h, r, 14, 0.20f);
         RsSoftShadow(ds, x, y + 2, w, h, r, 3, 0.10f);

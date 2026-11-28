@@ -132,7 +132,8 @@ public sealed partial class WallStage
     private const float RsGap = 32, RsGroupR = 30;
     private const float RsPad = 50;
     // 面板底 #FAFAFA，分组卡片 #F7F8FA，分隔线 #E2E3E5（从视频像素取）
-    private static Color RsBg => Ck(Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
+    /// <summary>面板底：浅色 #FAFAFA；暗色比卡片（#303137）低一级，卡片才浮得起来。</summary>
+    private static Color RsBg => CocoonPalette.Dark ? DkRgb(0x232428) : Color.FromArgb(255, 0xFA, 0xFA, 0xFA);
     private static Color RsGroup => Ck(Color.FromArgb(255, 0xF7, 0xF8, 0xFA));
     private static Color RsLine => Ck(Color.FromArgb(255, 0xE2, 0xE3, 0xE5));
     private static Color RsSub => Ck(Color.FromArgb(255, 0x5F, 0x61, 0x68));
@@ -318,6 +319,7 @@ public sealed partial class WallStage
                 var t = ds.Transform; ds.Transform = Matrix3x2.Identity; ds.DrawImage(op); ds.Transform = t;
             }
             ds.FillRoundedRectangle(RsX, RsY, RsW, RsH, RsR, RsR, RsBg);
+            if (CocoonPalette.Dark) DkEdge(ds, RsX, RsY, RsW, RsH, RsR);
         }
         ((CompositionSurfaceBrush)rs.Sheet.Brush).Surface = rs.SheetSurf;
         rs.Sheet.Size = new Vector2(w, h);
@@ -518,6 +520,7 @@ public sealed partial class WallStage
     {
         var dev = ds.Device;
         float r = RsGroupR;
+        if (CocoonPalette.Dark) { DkCard(ds, x, y0, w, y1 - y0, r, seps, sepH); return; }
         {
             float h = y1 - y0;
             using (var cl = new CanvasCommandList(dev))
@@ -643,7 +646,7 @@ public sealed partial class WallStage
             ds.FillRoundedRectangle(1652, 104, 134, 74, 37, 37, br);
         ds.FillCircle(1689, 141, 21, CpPillBadge);
         using (var f = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
-            ds.DrawText("Y", new Windows.Foundation.Rect(1668, 120, 42, 42), CpAccentInk, f);
+            ds.DrawText("Y", new Windows.Foundation.Rect(1668, 120, 42, 42), CpPillInk, f);
         if (play)
         {
             // Y ▶：白色实心三角（Cocoon 刮削页右上是「开始」）
@@ -659,7 +662,7 @@ public sealed partial class WallStage
         {
             pb.BeginFigure(1740, 141); pb.AddLine(1747, 148); pb.AddLine(1760, 134); pb.EndFigure(CanvasFigureLoop.Open);
             using var tick = CanvasGeometry.CreatePath(pb);
-            ds.DrawGeometry(tick, CpAccentInk, 5, RwRoundStroke);
+            ds.DrawGeometry(tick, CpPillInk, 5, RwRoundStroke);
         }
     }
 
@@ -717,7 +720,7 @@ public sealed partial class WallStage
         {
             // 来源优先级：灰色胶囊里「↓ ↑」（到头的那边变淡），右边开关（Cocoon 的刮削来源行）
             float px = 1468, pw = 164, ph = 84, py = cy - ph / 2;
-            ds.FillRoundedRectangle(px, py, pw, ph, ph / 2, ph / 2, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xE9)));
+            if (CocoonPalette.Dark) DkWell(ds, px, py, pw, ph, ph / 2); else ds.FillRoundedRectangle(px, py, pw, ph, ph / 2, ph / 2, Color.FromArgb(255, 0xE4, 0xE5, 0xE9));
             void Chev(float x, bool up, bool on)
             {
                 using var pb = new CanvasPathBuilder(ds.Device);
@@ -753,11 +756,10 @@ public sealed partial class WallStage
                 }
                 else
                 {
-                    ds.FillRoundedRectangle(x, ty, 120, 76, 38, 38, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xE9)));
-                    ds.DrawRoundedRectangle(x + 2, ty + 2, 116, 72, 36, 36, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)), 4);
+                    CpToggleOffTrack(ds, x, ty, 120, 76, 4);
                 }
                 RsSoftShadow(ds, (on ? x + 82 : x + 38) - 27, cy - 27 + 3, 54, 54, 27, 4, 0.22f);
-                ds.FillCircle(on ? x + 82 : x + 38, cy, 27, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
+                ds.FillCircle(on ? x + 82 : x + 38, cy, 27, CpKnobFill(on));
                 break;
             }
             case RsKind.Pick:
@@ -785,9 +787,13 @@ public sealed partial class WallStage
     private void RsPaintPickPill(CanvasDrawingSession ds, float px, float py, float pw, float ph, string val, bool open, float fontSize, bool text = true)
     {
         float cy = py + ph / 2, k = ph / 84;
-        RsSoftShadow(ds, px, py + 3 * k, pw, ph, ph / 2, 6 * k, 0.14f);
-        ds.FillRoundedRectangle(px, py, pw, ph, ph / 2, ph / 2, Ck(Color.FromArgb(255, 0xFF, 0xFF, 0xFF)));
-        ds.DrawRoundedRectangle(px + 0.5f, py + 0.5f, pw - 1, ph - 1, ph / 2, ph / 2, Ck(Color.FromArgb(255, 0xEC, 0xED, 0xF0)), 1);
+        if (CocoonPalette.Dark) DkWell(ds, px, py, pw, ph, ph / 2);   // 暗色：下拉胶囊是凹进卡片里的槽
+        else
+        {
+            RsSoftShadow(ds, px, py + 3 * k, pw, ph, ph / 2, 6 * k, 0.14f);
+            ds.FillRoundedRectangle(px, py, pw, ph, ph / 2, ph / 2, Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
+            ds.DrawRoundedRectangle(px + 0.5f, py + 0.5f, pw - 1, ph - 1, ph / 2, ph / 2, Color.FromArgb(255, 0xEC, 0xED, 0xF0), 1);
+        }
         if (text) RsPaintPickText(ds, px, py, pw, ph, val, fontSize);
         float tx = px + pw - 43 * k, a = 7 * k, b = 4.5f * k;
         using var pb = new CanvasPathBuilder(ds.Device);
@@ -817,9 +823,9 @@ public sealed partial class WallStage
     {
         var opts = row.Options!;
         float h = opts.Length * optH, cr = MathF.Min(30, optH * 0.4f);
-        RsSoftShadow(ds, x0, y0 + 5, w, h, cr, 8, 0.18f);
         using var card = CanvasGeometry.CreateRoundedRectangle(ds.Device, x0, y0, w, h, cr, cr);
-        ds.FillGeometry(card, Ck(Color.FromArgb(255, 0xFC, 0xFC, 0xFD)));
+        if (CocoonPalette.Dark) DkPop(ds, x0, y0, w, h, cr);
+        else { RsSoftShadow(ds, x0, y0 + 5, w, h, cr, 8, 0.18f); ds.FillGeometry(card, Color.FromArgb(255, 0xFC, 0xFC, 0xFD)); }
         int cur = row.Current?.Invoke() ?? -1;
         using (ds.CreateLayer(1, card))
             for (int k = 0; k < opts.Length; k++)
@@ -1387,6 +1393,7 @@ public sealed partial class WallStage
             ds.Transform = Matrix3x2.CreateTranslation(pad - RsEdX, pad - RsEdY) * Matrix3x2.CreateScale(R);
             RsSoftShadow(ds, RsEdX, RsEdY + 10, RsEdW, RsEdH, 60, 18, 0.35f);
             ds.FillRoundedRectangle(RsEdX, RsEdY, RsEdW, RsEdH, 60, 60, RsBg);
+            if (CocoonPalette.Dark) DkEdge(ds, RsEdX, RsEdY, RsEdW, RsEdH, 60);
             // 左上：灰胶囊里 ✕ 圆章 + 返回箭头
             ds.FillRoundedRectangle(58, 50, 134, 74, 37, 37, Ck(Color.FromArgb(255, 0xE2, 0xE3, 0xE7)));
             ds.FillCircle(94, 87, 21, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)));
@@ -1413,18 +1420,20 @@ public sealed partial class WallStage
             {
                 pb.BeginFigure(1760, 77); pb.AddLine(1777, 87); pb.AddLine(1760, 97); pb.EndFigure(CanvasFigureLoop.Closed);
                 using var tri = CanvasGeometry.CreatePath(pb);
-                ds.FillGeometry(tri, CpAccentInk);
+                ds.FillGeometry(tri, CpPillInk);
             }
             ds.FillCircle(1828, 87, 21, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
             using (var pb = new CanvasPathBuilder(dev))
             {
                 pb.BeginFigure(1818, 87); pb.AddLine(1825, 94); pb.AddLine(1838, 80); pb.EndFigure(CanvasFigureLoop.Open);
                 using var tick = CanvasGeometry.CreatePath(pb);
-                ds.DrawGeometry(tick, CpAccentInk, 5, RwRoundStroke);
+                ds.DrawGeometry(tick, CpPillInk, 5, RwRoundStroke);
             }
             // 输入框：浅灰，上浅下深
-            using (var field = new CanvasLinearGradientBrush(dev, Ck(Color.FromArgb(255, 0xF2, 0xF3, 0xF6)), Ck(Color.FromArgb(255, 0xE1, 0xE2, 0xE8))) { StartPoint = new Vector2(0, RsFieldY), EndPoint = new Vector2(0, RsFieldY + RsFieldH) })
-                ds.FillRoundedRectangle(RsFieldX, RsFieldY, RsFieldW, RsFieldH, 48, 48, field);
+            if (CocoonPalette.Dark) DkWell(ds, RsFieldX, RsFieldY, RsFieldW, RsFieldH, 48);
+            else
+                using (var field = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xF2, 0xF3, 0xF6), Color.FromArgb(255, 0xE1, 0xE2, 0xE8)) { StartPoint = new Vector2(0, RsFieldY), EndPoint = new Vector2(0, RsFieldY + RsFieldH) })
+                    ds.FillRoundedRectangle(RsFieldX, RsFieldY, RsFieldW, RsFieldH, 48, 48, field);
         }
         if (_rsEdPanel == null || _rsEdPanel.Parent != parent)
         {
@@ -1478,7 +1487,7 @@ public sealed partial class WallStage
             BorderThickness = new Thickness(0),
             Padding = new Thickness(0),
             VerticalContentAlignment = VerticalAlignment.Center,
-            RequestedTheme = ElementTheme.Light,
+            RequestedTheme = CocoonPalette.Dark ? ElementTheme.Dark : ElementTheme.Light,
             IsSpellCheckEnabled = false,
             IsTextPredictionEnabled = false,
             Visibility = Visibility.Collapsed,

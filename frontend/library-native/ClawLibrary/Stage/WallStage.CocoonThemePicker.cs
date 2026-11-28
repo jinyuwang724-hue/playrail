@@ -319,6 +319,7 @@ public sealed partial class WallStage
                 EndPoint = new Vector2(0, RsY + RsH),
             };
             ds.FillRoundedRectangle(RsX, RsY, RsW, RsH, RsR, RsR, bg);
+            if (CocoonPalette.Dark) DkEdge(ds, RsX, RsY, RsW, RsH, RsR);
         }
         ((CompositionSurfaceBrush)st.Sheet.Brush).Surface = st.SheetS;
         st.Sheet.Size = new Vector2(w, h);

@@ -783,8 +783,8 @@ public sealed partial class WallStage
         ds.Clear(Colors.Transparent);
         ds.Transform = Matrix3x2.CreateTranslation(pad - x, pad - y) * Matrix3x2.CreateScale(CsRaster);
         ds.Antialiasing = CanvasAntialiasing.Antialiased;
-        RsSoftShadow(ds, x, y + 14, w, h, 30, 24, 0.35f);
-        ds.FillRoundedRectangle(x, y, w, h, 30, 30, Ck(Color.FromArgb(255, 0xFA, 0xFA, 0xFA)));
+        if (CocoonPalette.Dark) DkPop(ds, x, y, w, h, 30);
+        else { RsSoftShadow(ds, x, y + 14, w, h, 30, 24, 0.35f); ds.FillRoundedRectangle(x, y, w, h, 30, 30, Color.FromArgb(255, 0xFA, 0xFA, 0xFA)); }
         for (int i = 0; i < labels.Length; i++)
         {
             float ry = y + i * CshMenuRowH, cy = ry + CshMenuRowH / 2;
@@ -896,6 +896,7 @@ public sealed partial class WallStage
             ds.Antialiasing = CanvasAntialiasing.Antialiased;
             RsSoftShadow(ds, 0, 12, CshDlgW, CshDlgH, 60, 22, 0.35f);
             ds.FillRoundedRectangle(0, 0, CshDlgW, CshDlgH, 60, 60, RsBg);
+            if (CocoonPalette.Dark) DkEdge(ds, 0, 0, CshDlgW, CshDlgH, 60);
             RqHeaderPill(ds, 37, 37);
             using (var tf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 48, FontWeight = RsWt("删除截图"), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
                 ds.DrawText("删除截图", new Rect(192, 37, 680, 74), RmInk, tf);
