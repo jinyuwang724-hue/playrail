@@ -57,68 +57,14 @@ public sealed partial class WallStage
     private static float CtpHueX0 => CtpCanvasX + CtpHueInset;
     private static float CtpHueX1 => CtpCanvasX + CtpCanvasW - CtpHueInset;
 
-    // ---------------- 颜色珠 ----------------
+    // ---------------- 颜色圆点 ----------------
 
-    private static Color CtpShift(Color c, float dl)
-    {
-        var (l, ch, h) = CocoonPalette.SrgbToOklch(c);
-        return CocoonPalette.OklchToSrgb(Math.Clamp(l + dl, 0.05f, 0.98f), ch, h);
-    }
-
-    /// <summary>
-    /// 立体颜色珠：对角渐变打底（左上起点色、右下终点色），背光一侧压一层同色深影出体积，底部一弯反光，
-    /// 左上一大片柔光加一块斜着的镜面亮斑，边缘一道上亮下淡的细亮边；珠子底下落一团同色柔光（像光透过彩色玻璃）和一小片接触阴影。
-    /// </summary>
+        /// <summary>扁平颜色圆点（11-28 jinyu：不要珠子质感）：左上起点色 → 右下终点色的对角渐变，一道极淡的描边防止浅色融进白卡。shadow 参数保留不用。</summary>
     private void CpDrawOrb(CanvasDrawingSession ds, float cx, float cy, float r, Color c1, Color c2, bool shadow = true)
     {
-        var dev = ds.Device;
-        if (shadow)
-        {
-            var mid = CocoonPalette.LerpOklch(c1, c2, 0.65f);
-            SpShadow(ds, cx - r * 0.8f, cy + r * 0.12f, r * 1.6f, r * 1.05f, r * 0.52f, r * 0.34f, Color.FromArgb(140, mid.R, mid.G, mid.B));
-            RsSoftShadow(ds, cx - r * 0.56f, cy + r * 0.74f, r * 1.12f, r * 0.34f, r * 0.17f, r * 0.12f, 0.2f);
-        }
-        using var clip = CanvasGeometry.CreateCircle(dev, cx, cy, r);
-        using (ds.CreateLayer(1f, clip))
-        {
-            using (var body = new CanvasLinearGradientBrush(dev, CtpShift(c1, 0.05f), CtpShift(c2, -0.04f)) { StartPoint = new Vector2(cx - r * 0.7f, cy - r * 0.8f), EndPoint = new Vector2(cx + r * 0.7f, cy + r * 0.8f) })
-                ds.FillCircle(cx, cy, r, body);
-
-            var deep = CtpShift(c2, -0.36f);
-            var shade = new[]
-            {
-                new CanvasGradientStop { Position = 0f, Color = Color.FromArgb(0, deep.R, deep.G, deep.B) },
-                new CanvasGradientStop { Position = 0.5f, Color = Color.FromArgb(0, deep.R, deep.G, deep.B) },
-                new CanvasGradientStop { Position = 1f, Color = Color.FromArgb(150, deep.R, deep.G, deep.B) },
-            };
-            using (var sb = new CanvasRadialGradientBrush(dev, shade) { Center = new Vector2(cx - r * 0.3f, cy - r * 0.36f), RadiusX = r * 1.45f, RadiusY = r * 1.45f })
-                ds.FillCircle(cx, cy, r, sb);
-
-            var bounce = CtpShift(c1, 0.18f);
-            using (var bb = new CanvasRadialGradientBrush(dev, Color.FromArgb(105, bounce.R, bounce.G, bounce.B), Color.FromArgb(0, bounce.R, bounce.G, bounce.B)) { Center = new Vector2(cx + r * 0.14f, cy + r * 1.02f), RadiusX = r * 0.78f, RadiusY = r * 0.4f })
-                ds.FillCircle(cx, cy, r, bb);
-
-            using (var gl = new CanvasRadialGradientBrush(dev, Color.FromArgb(110, 255, 255, 255), Color.FromArgb(0, 255, 255, 255)) { Center = new Vector2(cx - r * 0.3f, cy - r * 0.4f), RadiusX = r * 0.9f, RadiusY = r * 0.78f })
-                ds.FillCircle(cx, cy, r, gl);
-
-            var hp = new Vector2(cx - r * 0.33f, cy - r * 0.5f);
-            var t = ds.Transform;
-            ds.Transform = Matrix3x2.CreateRotation(-0.6f, hp) * t;
-            using (var sp = new CanvasRadialGradientBrush(dev, Color.FromArgb(240, 255, 255, 255), Color.FromArgb(0, 255, 255, 255)) { Center = hp, RadiusX = r * 0.38f, RadiusY = r * 0.2f })
-                ds.FillEllipse(hp, r * 0.38f, r * 0.2f, sp);
-            ds.Transform = t;
-            ds.FillCircle(cx - r * 0.44f, cy - r * 0.56f, MathF.Max(1.2f, r * 0.055f), Color.FromArgb(230, 255, 255, 255));
-
-            var rimStops = new[]
-            {
-                new CanvasGradientStop { Position = 0f, Color = Color.FromArgb(190, 255, 255, 255) },
-                new CanvasGradientStop { Position = 0.42f, Color = Color.FromArgb(0, 255, 255, 255) },
-                new CanvasGradientStop { Position = 0.82f, Color = Color.FromArgb(0, 255, 255, 255) },
-                new CanvasGradientStop { Position = 1f, Color = Color.FromArgb(80, 255, 255, 255) },
-            };
-            using (var rim = new CanvasLinearGradientBrush(dev, rimStops) { StartPoint = new Vector2(cx, cy - r), EndPoint = new Vector2(cx, cy + r) })
-                ds.DrawCircle(cx, cy, r - 1.3f, rim, 2.4f);
-        }
+        using (var body = new CanvasLinearGradientBrush(ds.Device, c1, c2) { StartPoint = new Vector2(cx - r * 0.7f, cy - r * 0.7f), EndPoint = new Vector2(cx + r * 0.7f, cy + r * 0.7f) })
+            ds.FillCircle(cx, cy, r, body);
+        ds.DrawCircle(cx, cy, r - 0.5f, Color.FromArgb(22, 0, 0, 0), 1f);
     }
 
     /// <summary>选中的珠子外面一圈细环（主题深色），和珠子之间留一道缝。</summary>
