@@ -44,7 +44,8 @@ public sealed partial class WallStage
     private static float SpPickRowH => SpPickPitch - SpSepH;
     private const float SpSubY = 217, SpSubRowH = 84;
 
-    private static readonly Color SpOn1 = Color.FromArgb(255, 0x8F, 0x8B, 0xFF), SpOn2 = Color.FromArgb(255, 0x73, 0x40, 0xFF);
+    private static Color SpOn1 => CocoonPalette.Current.SoftStart;
+    private static Color SpOn2 => CocoonPalette.Current.Deep;
     private static readonly Color SpTileInk = Color.FromArgb(255, 0x2A, 0x2A, 0x31), SpMute = Color.FromArgb(255, 0x5D, 0x5D, 0x68);
 
     private static readonly (string Id, string Icon)[] SpTiles =
@@ -346,7 +347,7 @@ public sealed partial class WallStage
             {
                 ds.Clear(Colors.Transparent);
                 ds.Transform = Matrix3x2.CreateScale(CsRaster);
-                using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, Color.FromArgb(255, 0x73, 0x40, 0xFF)) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(SpTrackW, 0) };
+                using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, SpOn2) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(SpTrackW, 0) };
                 ds.FillRoundedRectangle(0, 0, SpTrackW, 8, 4, 4, br);
             }
             ((CompositionSurfaceBrush)fillV.Brush).Surface = fs;
@@ -361,8 +362,8 @@ public sealed partial class WallStage
             {
                 ds.Clear(Colors.Transparent);
                 ds.Transform = Matrix3x2.CreateTranslation(kp, kp) * Matrix3x2.CreateScale(CsRaster);
-                SpShadow(ds, 0, 3, 56, 56, 28, 5, Color.FromArgb(89, 80, 40, 200));
-                using var br = new CanvasLinearGradientBrush(ds.Device, Color.FromArgb(255, 0x9A, 0x9C, 0xFF), Color.FromArgb(255, 0x6F, 0x3C, 0xFF)) { StartPoint = new Vector2(8, 0), EndPoint = new Vector2(48, 56) };
+                SpShadow(ds, 0, 3, 56, 56, 28, 5, CocoonPalette.Current.KnobShadow);
+                using var br = new CanvasLinearGradientBrush(ds.Device, CpKnobStart, CpKnobEnd) { StartPoint = new Vector2(8, 0), EndPoint = new Vector2(48, 56) };
                 ds.FillCircle(28, 28, 28, br);
             }
             ((CompositionSurfaceBrush)knob.Brush).Surface = ks;
@@ -400,7 +401,7 @@ public sealed partial class WallStage
                 {
                     0 => G.Solid(Color.FromArgb(255, 0xD6, 0xD7, 0xDD)),
                     1 => G.Solid(Color.FromArgb(255, 0x2B, 0x2B, 0x33)),
-                    _ => SpVGrad(Color.FromArgb(255, 0x9A, 0x9C, 0xFF), SpOn2),
+                    _ => SpVGrad(CpKnobStart, SpOn2),
                 };
                 var v = G.Sprite(brush, relative: false);
                 v.Size = new Vector2(6, th);
@@ -591,7 +592,7 @@ public sealed partial class WallStage
         {
             ds.Clear(Colors.Transparent);
             ds.Transform = Matrix3x2.CreateScale(CsRaster);
-            SpShadow(ds, pad, pad + 6, SpTile, SpTile, SpTile / 2, 8, Color.FromArgb(89, 115, 64, 255));
+            SpShadow(ds, pad, pad + 6, SpTile, SpTile, SpTile / 2, 8, CocoonPalette.Current.TileGlow);
             using var br = new CanvasLinearGradientBrush(ds.Device, SpOn1, SpOn2) { StartPoint = new Vector2(pad + 20, pad), EndPoint = new Vector2(pad + SpTile - 20, pad + SpTile) };
             ds.FillCircle(c, c, SpTile / 2, br);
             SpIcon(ds, icon, c, c, 46, Colors.White, 2.2f);

@@ -102,6 +102,7 @@ public sealed partial class WallStage
     /// <summary>A 唤醒：选中屏幕上那款游戏（卡盒版首页），只唤醒，不启动。</summary>
     private bool CsSaverWakeWithGame()
     {
+        if (_ccSs != null) return CcSaverWakeWithGame();
         var g = _csSs?.Game;
         if (g == null || _cs == null) return false;
         ConsumeScreensaverWake();
@@ -170,6 +171,7 @@ public sealed partial class WallStage
 
     private void CsSaverPowerChanged()
     {
+        if (_ccSs != null) { CcSaverPowerChanged(); return; }
         if (_csSs is not { } ss) return;
         _screensaverNextSwitch = NowMs + CsSaverHoldMs;
         if (!_screensaverPowerWanted) return;

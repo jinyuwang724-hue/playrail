@@ -321,6 +321,7 @@ public sealed partial class WallStage
 
     private void CcMove(Direction dir)
     {
+        if (CtpMove(dir)) return;
         if (CpMove(dir) || CgpMove(dir)) return;   // 从左侧栏进的 Cocoon 样式页面
         if (_agOpen) { AgMove(dir); return; }
         if (_perfOpen) { PerfMove(dir); return; }
@@ -349,6 +350,7 @@ public sealed partial class WallStage
 
     private void CcActivate()
     {
+        if (CtpActivate()) return;
         if (CpActivate() || CgpActivate()) return;
         if (_agOpen) { AgActivate(); return; }
         if (_perfOpen) { PerfActivate(); return; }
@@ -394,6 +396,7 @@ public sealed partial class WallStage
         MarkInput();
         if (_ob != null) return;
         if (MorphIntercept()) return;
+        if (_ccOpen && CtpPadY()) return;
         if (_ccOpen && _agOpen) { AgY(); return; }
         if (_ccOpen && _gpOpen) { GpPadButton(isY: true); return; }
         if (_ccOpen && _ak != null) { AkPad("Y"); return; }
@@ -428,6 +431,7 @@ public sealed partial class WallStage
         if (ConsumeScreensaverWake()) return;
         MarkInput();
         if (_ob != null) return;
+        if (_ccOpen && CtpPadX()) return;
         if (_ccOpen && _agOpen) { MarkInput(); AgX(); return; }
         if (_ccOpen && _gpOpen) { MarkInput(); GpPadButton(isY: false); return; }
         if (_ccOpen && _shOpen) { MarkInput(); if (!MorphIntercept()) ShX(); return; }

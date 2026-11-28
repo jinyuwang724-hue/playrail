@@ -119,7 +119,7 @@ public sealed partial class WallStage
             bool on = i == a.Tab;
             if (on) ds.FillRoundedRectangle(cx + 4, y + 8, cellW - 8, h - 16, 29, 29, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
             using var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 34, HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
-            ds.DrawText(RaKinds[i].Title, new Windows.Foundation.Rect(cx, y, cellW, h), on ? Color.FromArgb(255, 0x7A, 0x4C, 0xFF) : RsSub, f);
+            ds.DrawText(RaKinds[i].Title, new Windows.Foundation.Rect(cx, y, cellW, h), on ? CpAccentInk : RsSub, f);
         }
     }
 
@@ -155,7 +155,7 @@ public sealed partial class WallStage
             }
             RaSourceIcon(ds, srcs[i], RaLeftX + 70, y + 64, sel);
             using var f = new CanvasTextFormat { FontFamily = RmFont(srcs[i]), FontSize = 42, FontWeight = new Windows.UI.Text.FontWeight(600), VerticalAlignment = CanvasVerticalAlignment.Center };
-            ds.DrawText(srcs[i], new Windows.Foundation.Rect(RaLeftX + 140, y, RaLeftW - 150, 128), sel ? Color.FromArgb(255, 0x7A, 0x4C, 0xFF) : RmInk, f);
+            ds.DrawText(srcs[i], new Windows.Foundation.Rect(RaLeftX + 140, y, RaLeftW - 150, 128), sel ? CpAccentInk : RmInk, f);
         }
         // 右栏：灰底卡
         ds.FillRoundedRectangle(RaRightX, RaTop - 10, RaRightW, RaBottom - RaTop + 10, 36, 36, Color.FromArgb(255, 0xF1, 0xF2, 0xF5));
@@ -274,7 +274,7 @@ public sealed partial class WallStage
 
     private void RaSourceIcon(CanvasDrawingSession ds, string src, float cx, float cy, bool sel)
     {
-        var ink = sel ? Color.FromArgb(255, 0x7A, 0x4C, 0xFF) : RmInk;
+        var ink = sel ? CpAccentInk : RmInk;
         if (src == "SteamGridDB")
         {
             for (int k = 2; k >= 0; k--)

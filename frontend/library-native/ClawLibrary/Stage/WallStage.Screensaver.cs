@@ -48,7 +48,8 @@ public sealed partial class WallStage
 
     private bool ScreensaverBlocked => _stack.Count == 0 || _ccOpen || MorphBusy || _searchOpen || _backgroundSettingsOpen
         || _railModel.SettingsOpen || _drag != null || PanVelocity != Vector2.Zero
-        || _pad?.Panning == true || NowMs < _wallBusyUntil || NowMs < _screensaverPauseUntil;
+        || _pad?.Panning == true || NowMs < _wallBusyUntil || NowMs < _screensaverPauseUntil
+        || _csSearchOpen || LsOpenNow || SpOpenNow || _rq != null || _rs != null || _rm != null || CpActive || _cgp != null;
 
     private void ScreensaverTick()
     {
@@ -68,7 +69,8 @@ public sealed partial class WallStage
         if (_screensaverActive)
         {
             // 退到后台立即恢复正常墙面，回来后重新计算空闲时间。
-            if ((!_prefs.Screensaver && !_screensaverProbe) || !foreground || _ccOpen || MorphBusy || _searchOpen || _backgroundSettingsOpen)
+            if ((!_prefs.Screensaver && !_screensaverProbe) || !foreground || _ccOpen || MorphBusy || _searchOpen || _backgroundSettingsOpen
+                || _csSearchOpen || LsOpenNow || SpOpenNow || _rq != null || _rs != null || _rm != null || CpActive || _cgp != null)
             {
                 ExitScreensaver();
                 _lastInput = NowMs;
@@ -110,7 +112,18 @@ public sealed partial class WallStage
         // 卡盒版开着（三种首页样式都算）：换成统一的新屏保（WallStage.Cases.Screensaver.cs），不再点亮墙上的海报
         if (_cs != null)
         {
-            if (_csInsert != null || _lm != null || !CsSaverEnter()) return false;
+            if (_csInsert != null || _lm != null) return false;
+            if (CurrentTheme == UiTheme.Cocoon)
+            {
+                if (!CcSaverEnter()) return false;
+                _screensaverActive = true;
+                PanVelocity = Vector2.Zero;
+                UpdateScreensaverPower();
+                CcSaverShow(first: true);
+                Log.Info("screensaver entered (cocoon)");
+                return true;
+            }
+            if (!CsSaverEnter()) return false;
             _screensaverActive = true;
             PanVelocity = Vector2.Zero;
             UpdateScreensaverPower();
@@ -143,6 +156,13 @@ public sealed partial class WallStage
         _screensaverActive = false;
         _screensaverProbe = false;
         UpdateScreensaverPower();
+        if (_ccSs != null)
+        {
+            CcSaverExit();
+            _lastInput = NowMs;
+            Log.Info("screensaver exited (cocoon)");
+            return;
+        }
         if (_csSs != null)
         {
             CsSaverExit();
@@ -223,6 +243,7 @@ public sealed partial class WallStage
     private void PickScreensaverGame()
     {
         if (!_screensaverActive) return;
+        if (_ccSs != null) { CcSaverShow(); return; }
         if (_csSs != null) { CsSaverShow(); return; }
         var candidates = ScreensaverCandidates();
         int index = ScreensaverPolicy.PickGame(candidates.Select(t => t.Shown!).ToArray(), _screensaverPreviousGame, Random.Shared);
@@ -236,7 +257,7 @@ public sealed partial class WallStage
     /// <summary>窗口缩放或裁剪补进新卡时，同步其屏保外观，并检查当前点亮卡是否仍看得见。</summary>
     private void RefreshScreensaverTiles()
     {
-        if (!_screensaverActive || _csSs != null) return;
+        if (!_screensaverActive || _csSs != null || _ccSs != null) return;
         var candidates = ScreensaverCandidates();
         if (_screensaverLitKey == null || !candidates.Any(t => t.Slot.Key == _screensaverLitKey)) PickScreensaverGame();
         else ApplyWallLook();
@@ -245,6 +266,7 @@ public sealed partial class WallStage
     private void RefreshScreensaverClock(bool force = false)
     {
         if (!_screensaverActive) return;
+        if (_ccSs != null) { CcSaverPaintClock(force); return; }
         if (_csSs != null) { CsSaverPaintClock(force); return; }
         string text = DateTime.Now.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
         if (!force && text == _screensaverClockText && Chrome.Dpi == _screensaverClockDpi && View.Width == _screensaverClockWidth) return;

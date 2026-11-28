@@ -56,6 +56,7 @@ public sealed partial class WallStage
     private void ApplyUiPrefsBeforeLoad()
     {
         _prefs = UiPrefs.Load();
+        CocoonPalette.ApplyFromPrefs(_prefs);
         Library.ShowHidden = _prefs.ShowHiddenGames;
         Library.IncludeSteam = _prefs.SourceSteam;
         _connections = new PlatformConnectionStore(App.CacheDir);
@@ -98,6 +99,7 @@ public sealed partial class WallStage
     private void SaveUi(UiPrefs next)
     {
         _prefs = next;
+        CocoonPalette.ApplyFromPrefs(_prefs);
         _prefs.Save();
     }
 
@@ -251,6 +253,7 @@ public sealed partial class WallStage
     {
         if (!_stOpen || _st == null) return;
         if (!instant) { Cue(Sfx.ModalHide); LsPageClosed(); }
+        if (_ctp != null) CtpDispose();
         if (_agOpen) { _agOpen = false; _agDraft = null; AgHideBox(); if (_ag != null) _ag.IsVisible = false; }
         _stOpen = false;
         GsArtReset();
@@ -690,8 +693,52 @@ public sealed partial class WallStage
                 _stRows.Add(StPick("强调色", accentNames, _prefs.Accent + 1, i => { SaveUi(_prefs with { Accent = i - 1 }); Repaint(); CcRepaintPages(); }, 0));
                 break;
             case UiTheme.Cases:
-            case UiTheme.Cocoon:
                 break;
+            case UiTheme.Cocoon:
+            {
+                _stRows.Add(new PerfRow { Section = true, Title = "主题色" });
+                var swatchNames = CocoonPalette.Presets.Select(p => p.Name).Append("自定义配色").ToArray();
+                int curIdx = _prefs.CocoonTheme >= 0 && _prefs.CocoonTheme < CocoonPalette.Presets.Length
+                    ? _prefs.CocoonTheme
+                    : CocoonPalette.Presets.Length;
+                _stRows.Add(new PerfRow
+                {
+                    EditId = "cocoon-swatches",
+                    Title = "主题色预设",
+                    Value = CocoonPalette.ActiveName(_prefs),
+                    Options = swatchNames,
+                    Choice = curIdx,
+                    Numeric = true,
+                    Changed = _prefs.CocoonTheme != 0,
+                    Reset = () => ApplyCocoonPreset(0),
+                    Select = i =>
+                    {
+                        if (i >= 0 && i < CocoonPalette.Presets.Length) ApplyCocoonPreset(i);
+                        else if (_prefs.CocoonTheme == -1 || (_prefs.CocoonCustomStart == "#86a7fd" && _prefs.CocoonCustomEnd == "#8037ff")) CtpOpen();
+                        else ApplyCocoonCustom(_prefs.CocoonCustomStart, _prefs.CocoonCustomEnd);
+                    },
+                    Step = d =>
+                    {
+                        int next = Math.Clamp(curIdx + d, 0, swatchNames.Length - 1);
+                        if (next < CocoonPalette.Presets.Length) ApplyCocoonPreset(next);
+                        else ApplyCocoonCustom(_prefs.CocoonCustomStart, _prefs.CocoonCustomEnd);
+                    },
+                    Press = CtpOpen,
+                });
+                var (c1, c2) = CocoonPalette.ActivePair(_prefs);
+                _stRows.Add(new PerfRow { Section = true, Title = "自定义取色" });
+                _stRows.Add(new PerfRow
+                {
+                    EditId = "cocoon-picker",
+                    Sub = true,
+                    Title = "主题色取色板",
+                    Value = $"{CocoonPalette.ToHex(c1)} → {CocoonPalette.ToHex(c2)}",
+                    Changed = _prefs.CocoonTheme == -1,
+                    Reset = () => ApplyCocoonPreset(0),
+                    Press = CtpOpen,
+                });
+                break;
+            }
         }
     }
 

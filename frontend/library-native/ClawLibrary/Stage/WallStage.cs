@@ -1140,6 +1140,7 @@ public sealed partial class WallStage : IDisposable
         if (ConsumeScreensaverWake()) return;
         if (_backgroundSettingsOpen) return;
         MarkInput();
+        if (_ccOpen && CtpSwitchTab(delta)) return;
         if (_ccOpen && _agOpen) { AgSwitchTab(delta); return; }   // 添加游戏页换图种
         if (_ccOpen && _gpOpen) { GpSwitchTab(delta); return; }   // 手柄页「选择指令」里 LB / RB 换页签
         if (_ccOpen && _stOpen && GsOverlayTab(delta)) return;     // 游戏设置：按键选择换页签 / 封面换图种
@@ -1467,7 +1468,7 @@ public sealed partial class WallStage : IDisposable
             return;
         }
         MarkInput();
-        if (_ob == null && (CpPointerDown(e, pt) || CgpPointerDown(e, pt))) return;   // Cocoon 样式页面
+        if (_ob == null && (CtpPointerDown(e, pt) || CpPointerDown(e, pt) || CgpPointerDown(e, pt))) return;   // Cocoon 样式页面
         if (_ob == null && !_ccOpen && LsPointerDown(e, pt)) return;   // 单行首页左侧栏
         if (_ob == null && !_ccOpen && SpPointerDown(e, pt)) return;   // 单行首页右侧栏
         if (_ob == null && _ccOpen && e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch && pt.Position.X <= EdgeBackPx && !TouchNavigationHit(pt.Position.X, pt.Position.Y))
@@ -1523,7 +1524,7 @@ public sealed partial class WallStage : IDisposable
         if (_lm is { Leaving: false }) LaunchMotionHover(current.Position.X, current.Position.Y);
         if (_edge?.id == e.Pointer.PointerId) { e.Handled = true; return; }
         if (CgpActive) CgpHover(current.Position.X, current.Position.Y);
-        if (CpPointerMove(e) || CgpPointerMove(e)) return;
+        if (CtpPointerMove(e) || CpPointerMove(e) || CgpPointerMove(e)) return;
         if (SpPointerMove(e)) return;
         if (_settingsGesture.Owns(e.Pointer.PointerId))
         {
@@ -1558,7 +1559,7 @@ public sealed partial class WallStage : IDisposable
             e.Handled = true;
             return;
         }
-        if (CpPointerUp(e) || CgpPointerUp(e)) return;
+        if (CtpPointerUp(e) || CpPointerUp(e) || CgpPointerUp(e)) return;
         if (LsPointerUp(e)) return;
         if (SpPointerUp(e)) return;
         if (_edge is { } edge && edge.id == e.Pointer.PointerId)
@@ -1611,6 +1612,7 @@ public sealed partial class WallStage : IDisposable
         _pagePointer.Cancel(e.Pointer.PointerId);
         SpPointerUp(e, canceled: true);
         LsPointerUp(e, canceled: true);
+        CtpPointerUp(e);
         CpPointerUp(e, canceled: true);
         CgpPointerUp(e, canceled: true);
         SettingsPointerCancel(e.Pointer.PointerId);

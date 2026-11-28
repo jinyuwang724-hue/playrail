@@ -25,7 +25,15 @@ public sealed partial class WallStage
     // ---------------- 几何（首页的 1920×1200 设计单位） ----------------
     private const float CpTop = 150, CpBottom = 1186, CpLeftX = 44, CpLeftW = 562, CpListX = 636, CpListW = 1240;
     private const float CpRowH = 112, CpRowSubH = 140, CpRowSliderH = 160, CpSep = 4, CpGap = 36;
-    private static readonly Color CpAccentInk = Color.FromArgb(255, 0x7A, 0x4C, 0xFF);
+    private static Color CpAccentInk => CocoonPalette.Current.Ink;
+    private static Color CpAccentDeep => CocoonPalette.Current.Deep;
+    private static Color CpKnobStart => CocoonPalette.Current.KnobStart;
+    private static Color CpKnobEnd => CocoonPalette.Current.KnobEnd;
+    private static Color CpPillStart => CocoonPalette.Current.PillStart;
+    private static Color CpPillEnd => CocoonPalette.Current.PillEnd;
+    private static Color CpPillBadge => CocoonPalette.Current.PillBadge;
+    private static Color CpSelectionTint => CocoonPalette.Current.SelectionTint;
+    private static Color CpSelectionBorder => CocoonPalette.Current.SelectionBorder;
 
     private sealed class CpView
     {
@@ -72,8 +80,10 @@ public sealed partial class WallStage
 
     // ---------------- 行的分类 / 种类 ----------------
 
+    private static bool CpIsSwatchGrid(PerfRow r) => r.EditId == "cocoon-swatches";
+    private static bool CpIsColorPickerEntry(PerfRow r) => r.EditId == "cocoon-picker";
     private static bool CpIsToggle(PerfRow r) => r.Choices is { Length: 2 } c && c[0] == "关" && c[1] == "开";
-    private static bool CpIsPick(PerfRow r) => r.Choices is { Length: > 0 } && !CpIsToggle(r) || r.Options is { Length: > 0 };
+    private static bool CpIsPick(PerfRow r) => !CpIsSwatchGrid(r) && (r.Choices is { Length: > 0 } && !CpIsToggle(r) || r.Options is { Length: > 0 });
     private static string[]? CpOpts(PerfRow r) => r.Options ?? r.Choices;
     private static bool CpIsSlider(PerfRow r) => r.Numeric && r.Maximum > r.Minimum;
     private static bool CpFocusable(PerfRow r) => !r.Section && !r.Skip;
@@ -259,7 +269,7 @@ public sealed partial class WallStage
         int cat = Math.Clamp(CpCatIndex(rows, cats), 0, cats.Count - 1);
         CpPaintHead(v);
         // 左列：底图（所有分类 + 读数卡）只在内容变了时重画；选中的那张白卡单独一层，换分类时弹簧滑过去（连按跟手、不跳）
-        string leftKey = $"{CpTitle}|{string.Join(",", cats.Select(c => c.Name))}|{CpPanelKey(cats[cat].Name)}";
+        string leftKey = $"{CpTitle}|{string.Join(",", cats.Select(c => c.Name))}|{CpPanelKey(cats[cat].Name)}|{CocoonThemeStamp}";
         if (leftKey != v.LeftKey) { v.LeftKey = leftKey; CpPaintLeft(v, cats, cat); }
         CpPaintSel(v, cats, cat);
         // 换了分类：照 Cocoon，右列立刻换成新分类的内容、回到顶上（不延后、不做过渡）。
@@ -282,7 +292,7 @@ public sealed partial class WallStage
     private string CpListKey(List<PerfRow> rows, List<int> vis)
     {
         var sb = new System.Text.StringBuilder();
-        sb.Append(_cpDrop).Append('|').Append(CpTitle).Append('|');
+        sb.Append(_cpDrop).Append('|').Append(CpTitle).Append('|').Append(CocoonThemeStamp).Append('|');
         foreach (int i in vis)
         {
             var r = rows[i];
@@ -394,7 +404,7 @@ public sealed partial class WallStage
     {
         if (sel < 0 || sel >= cats.Count || v.Slot <= 0) { v.Sel.IsVisible = false; return; }
         float slot = v.Slot, pad = 30, w = CpLeftW + pad * 2, h = slot + pad * 2, R = CsRaster;
-        string key = $"{string.Join(",", cats.Select(c => c.Name))}|{slot}|{R}";
+        string key = $"{string.Join(",", cats.Select(c => c.Name))}|{slot}|{R}|{CocoonThemeStamp}";
         if (key != v.SelKey)
         {
             v.SelKey = key;
@@ -439,7 +449,8 @@ public sealed partial class WallStage
         v.SelOn = sel;
     }
 
-    private static float CpBaseH(PerfRow r, string? sub) => CpIsSlider(r) ? CpRowSliderH : sub != null ? CpRowSubH : CpRowH;
+    private static float CpBaseH(PerfRow r, string? sub) =>
+        CpIsSwatchGrid(r) ? CpSwatchRowH : CpIsColorPickerEntry(r) ? CpRowSubH : CpIsSlider(r) ? CpRowSliderH : sub != null ? CpRowSubH : CpRowH;
 
     private const float CpOptH = 88, CpPickW = 400;
 
@@ -475,6 +486,8 @@ public sealed partial class WallStage
 
     private void CpPaintRow(CanvasDrawingSession ds, PerfRow r, int index, float y, float h, string? sub)
     {
+        if (CpIsSwatchGrid(r)) { CpPaintSwatchGalleryRow(ds, r, y); return; }
+        if (CpIsColorPickerEntry(r)) { CpPaintColorPickerEntryRow(ds, r, y, CpBaseH(r, sub)); return; }
         h = CpBaseH(r, sub);   // 展开的下拉：行变高了，但标题和胶囊还在原来的高度里
         float cy = y + h / 2, R = CpListW - 34, tx = 44 + r.Indent * 1.5f;
         using var layer = r.Disabled ? ds.CreateLayer(0.4f) : null;
@@ -542,12 +555,12 @@ public sealed partial class WallStage
             ds.FillRoundedRectangle(x0, cy - 5, x1 - x0, 10, 5, 5, Color.FromArgb(255, 0xDC, 0xDC, 0xE3));
             if (frac > 0)
             {
-                using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, Color.FromArgb(255, 0x73, 0x40, 0xFF)) { StartPoint = new Vector2(x0, 0), EndPoint = new Vector2(x1, 0) };
+                using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, CpAccentDeep) { StartPoint = new Vector2(x0, 0), EndPoint = new Vector2(x1, 0) };
                 ds.FillRoundedRectangle(x0, cy - 5, (x1 - x0) * frac, 10, 5, 5, br);
             }
             float kx = x0 + (x1 - x0) * frac;
             RsSoftShadow(ds, kx - 24, cy - 24 + 3, 48, 48, 24, 5, 0.3f);
-            using (var kb = new CanvasLinearGradientBrush(ds.Device, Color.FromArgb(255, 0x9A, 0x9C, 0xFF), Color.FromArgb(255, 0x6F, 0x3C, 0xFF)) { StartPoint = new Vector2(kx - 16, cy - 24), EndPoint = new Vector2(kx + 16, cy + 24) })
+            using (var kb = new CanvasLinearGradientBrush(ds.Device, CpKnobStart, CpKnobEnd) { StartPoint = new Vector2(kx - 16, cy - 24), EndPoint = new Vector2(kx + 16, cy + 24) })
                 ds.FillCircle(kx, cy, 24, kb);
             ds.FillRoundedRectangle(px - 16, cy - 4, 32, 8, 4, 4, RmInk);
             ds.FillRoundedRectangle(px - 4, cy - 16, 8, 32, 4, 4, RmInk);
@@ -632,12 +645,18 @@ public sealed partial class WallStage
             var to = new Vector3(CpListX - 16, CpTop - 16 - target, 0);
             if (Reduced) RwJump(v.List, to); else v.List.StartAnimation("Offset", RwSpring(to));
         }
-        if (_cpTouchMode) return;   // 触摸操作时不显示焦点框
+        if (_cpTouchMode || CtpOpenNow) return;   // 触摸操作或取色板开着时不显示列表焦点框
         bool first = !v.Cur.Shown;
         if (inList && _cpDrop >= 0)
         {
             var (ox, oy, ow, oh) = CpOptRect(hit.Y, _cpDropSel);
             CurToCocoon(v.Cur, CpListX + ox, CpTop + oy - target, ow, oh, 24, move: !first);
+        }
+        else if (inList && CpIsSwatchGrid(rows[f]))
+        {
+            _cpSwatchFocus = Math.Clamp(_cpSwatchFocus, 0, CpSwatchTotal - 1);
+            var (sx, sy, sw, sh) = CpSwatchTileRect(hit.Y, _cpSwatchFocus);
+            CurToCocoon(v.Cur, CpListX + sx, CpTop + sy - target, sw, sh, 24, move: !first);
         }
         else if (inList) CurToCocoon(v.Cur, CpListX, CpTop + hit.Y - target, CpListW, hit.H, 30, move: !first);
         else if (CpZone == 0 && cats.Count > 0) CurToCocoon(v.Cur, CpLeftX, CpTop + cat * v.Slot + 4, CpLeftW, v.Slot - 8, MathF.Min(30, (v.Slot - 8) / 2), move: !first);
@@ -886,6 +905,37 @@ public sealed partial class WallStage
             return true;
         }
         var r = CpRow;
+        if (r != null && !r.Disabled && CpIsSwatchGrid(r))
+        {
+            int cur = Math.Clamp(_cpSwatchFocus, 0, CpSwatchTotal - 1);
+            int col = cur % CpSwatchCols, row = cur / CpSwatchCols;
+            if (dir == Direction.Left)
+            {
+                if (col > 0) { _cpSwatchFocus = cur - 1; CuePan(0.35f); CpRepaint(); return true; }
+                CpLeaveList();
+                return true;
+            }
+            if (dir == Direction.Right)
+            {
+                if (col < CpSwatchCols - 1) { _cpSwatchFocus = cur + 1; CuePan(0.65f); CpRepaint(); return true; }
+                Cue(Sfx.Bump);
+                return true;
+            }
+            if (dir == Direction.Up && row > 0)
+            {
+                _cpSwatchFocus = cur - CpSwatchCols;
+                CuePan(0.5f);
+                CpRepaint();
+                return true;
+            }
+            if (dir == Direction.Down && row < (CpSwatchTotal - 1) / CpSwatchCols)
+            {
+                _cpSwatchFocus = cur + CpSwatchCols;
+                CuePan(0.5f);
+                CpRepaint();
+                return true;
+            }
+        }
         if (!horiz)
         {
             int f = SettingsFocus;
@@ -894,6 +944,13 @@ public sealed partial class WallStage
                 if (rows[i].Section && !_stOpen) break;   // 性能类页面：不跨分类
                 if (!CpFocusable(rows[i])) continue;
                 SettingsFocus = i;
+                if (CpIsSwatchGrid(rows[i]))
+                {
+                    int keepCol = Math.Clamp(_cpSwatchFocus, 0, CpSwatchTotal - 1) % CpSwatchCols;
+                    _cpSwatchFocus = d > 0
+                        ? Math.Clamp(rows[i].Choice, 0, CpSwatchTotal - 1)
+                        : ((CpSwatchTotal - 1) / CpSwatchCols) * CpSwatchCols + keepCol;
+                }
                 if (_stOpen && _stArmed != null) { _stArmed = null; BuildStRows(); }
                 CuePan(0.5f);
                 CpRepaint();
@@ -910,7 +967,7 @@ public sealed partial class WallStage
     }
 
     /// <summary>「− 值 +」步进行：没有范围、也不是选项列表，只能一档一档走。</summary>
-    private static bool CpIsStepper(PerfRow r) => r.Numeric && !CpIsSlider(r) && !CpIsPick(r) && r.Step != null;
+    private static bool CpIsStepper(PerfRow r) => r.Numeric && !CpIsSwatchGrid(r) && !CpIsSlider(r) && !CpIsPick(r) && r.Step != null;
 
     /// <summary>左列 → 右列：焦点落在这一分类的第一行，列表滚回顶上。</summary>
     private void CpEnterList(List<PerfRow> rows, List<(string Name, string? Sub, int First)> cats, int cat)
@@ -954,6 +1011,20 @@ public sealed partial class WallStage
         if (CpZone == 0) { CpEnterList(rows, cats, CpCatIndex(rows, cats)); return true; }
         if (CpRow is not { } r) return true;
         if (r.Disabled) { Cue(Sfx.Bump); return true; }
+        if (CpIsSwatchGrid(r))
+        {
+            int pick = Math.Clamp(_cpSwatchFocus, 0, CpSwatchTotal - 1);
+            bool opensModal = pick >= CocoonPalette.Presets.Length && (_prefs.CocoonTheme == -1 || (_prefs.CocoonCustomStart == "#86a7fd" && _prefs.CocoonCustomEnd == "#8037ff"));
+            if (!opensModal) Cue(Sfx.Positive);
+            r.Select?.Invoke(pick);
+            CpRepaint();
+            return true;
+        }
+        if (CpIsColorPickerEntry(r))
+        {
+            r.Press?.Invoke();
+            return true;
+        }
         if (CpIsPick(r)) { _cpDrop = SettingsFocus; _cpDropSel = Math.Clamp(r.Choice, 0, CpOpts(r)!.Length - 1); Cue(Sfx.MenuIn); CpRepaint(); return true; }
         if (CpIsSlider(r)) { Cue(Sfx.Bump); return true; }
         if (CpIsStepper(r) || r.Numeric) { if (r.Press != null) { Cue(Sfx.Nav); r.Press(); } else Cue(Sfx.Bump); return true; }
@@ -1032,7 +1103,7 @@ public sealed partial class WallStage
                     float lx = x - CpListX;
                     if (ly > hit.Y + hit.H - 90 && lx >= sx0 - 30 && lx <= sx1 + 30) { t.Slider = true; CpSliderTo(r, lx, sx0, sx1); }
                 }
-                if (!t.Slider) CpPressFx(v, hit.Y, hit.H, true);
+                if (!t.Slider && !CpIsSwatchGrid(r)) CpPressFx(v, hit.Y, hit.H, true);
             }
         }
         _cpT = t;
@@ -1156,6 +1227,25 @@ public sealed partial class WallStage
             if (_stOpen) _stZone = 1; else _cpZone = 1;
             if (r.Disabled) { Cue(Sfx.Bump); CpRepaint(); return; }
             float lx = x - CpListX;
+            if (CpIsSwatchGrid(r))
+            {
+                float ly = y - CpTop + v.Scroll;
+                for (int k = 0; k < CpSwatchTotal; k++)
+                {
+                    var (tx, ty, tw, th) = CpSwatchTileRect(hit.Y, k);
+                    if (lx >= tx && lx <= tx + tw && ly >= ty && ly <= ty + th)
+                    {
+                        _cpSwatchFocus = k;
+                        v.Manual = true;
+                        bool opensModal = k >= CocoonPalette.Presets.Length && (_prefs.CocoonTheme == -1 || (_prefs.CocoonCustomStart == "#86a7fd" && _prefs.CocoonCustomEnd == "#8037ff"));
+                        if (!opensModal) Cue(Sfx.Positive);
+                        r.Select?.Invoke(k);
+                        CpRepaint();
+                        return;
+                    }
+                }
+                return;
+            }
             if (CpIsSlider(r))
             {
                 var (smx, sx0, sx1, spx) = CpSliderX(44 + r.Indent * 1.5f, CpListW - 34);

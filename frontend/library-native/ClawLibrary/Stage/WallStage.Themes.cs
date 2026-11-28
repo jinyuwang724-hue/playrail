@@ -2,7 +2,7 @@
 // 换主题 = 整套界面一起换：
 //   Folia     海报墙首页、隐现背景（从封面抽出颜色做的动态背景）、拍立得控制中心、截图页「放映」；
 //   复古卡带   展台首页（第一张封面放大、其余正常大小）、拼盘控制中心、截图页「冲印」；
-//   Cocoon    单行首页、左右侧栏、Cocoon 样式的功能页（以后可能加深色模式）。
+//   Cocoon    单行首页、左右侧栏、Cocoon 样式的功能页（支持渐变主题色预设与自定义取色板）。
 // 设置 › 外观与主题只显示当前主题自己的可改项。
 namespace ClawLibrary.Stage;
 
@@ -42,5 +42,72 @@ public sealed partial class WallStage
                 break;
         }
         Toast($"主题：{UiThemeNames[(int)theme]}");
+    }
+
+    private void ApplyCocoonPreset(int index)
+    {
+        index = Math.Clamp(index, 0, CocoonPalette.Presets.Length - 1);
+        _cpSwatchFocus = index;
+        if (_prefs.CocoonTheme == index) return;
+        SaveUi(_prefs with { CocoonTheme = index });
+        RefreshCocoonThemeVisuals();
+        Toast($"主题色：{CocoonPalette.Presets[index].Name}");
+    }
+
+    private void ApplyCocoonCustom(string startHex, string endHex, int? harmony = null)
+    {
+        _cpSwatchFocus = CocoonPalette.Presets.Length;
+        var next = _prefs with
+        {
+            CocoonTheme = -1,
+            CocoonCustomStart = startHex.ToLowerInvariant(),
+            CocoonCustomEnd = endHex.ToLowerInvariant(),
+            CocoonHarmony = harmony ?? _prefs.CocoonHarmony,
+        };
+        SaveUi(next);
+        RefreshCocoonThemeVisuals();
+    }
+
+    /// <summary>Cocoon 主题色变更后立即刷新所有在场表面、焦点框缓存、侧栏与单行首页。</summary>
+    private void RefreshCocoonThemeVisuals()
+    {
+        CurClearCache();
+        foreach (var cv in _cpViews.Values)
+        {
+            cv.HeadKey = cv.LeftKey = cv.SelKey = cv.ListKey = "";
+            CurRefreshTheme(cv.Cur);
+        }
+        if (_cgp != null)
+        {
+            _cgp.HeadKey = _cgp.LeftKey = _cgp.SelKey = _cgp.PanelLiveKey = _cgp.ListKey = "";
+            _cgp.ModalHeadKey = _cgp.ModalBodyKey = _cgp.ModalListKey = "";
+            CurRefreshTheme(_cgp.Cur);
+            CurRefreshTheme(_cgp.ModalCur);
+        }
+        if (_csh != null)
+        {
+            _csh.HeadKey = _csh.LeftKey = "";
+            if (_csh.FavS != null) CshPaintFavSurf(_csh.FavS, CsRaster);
+            CurRefreshTheme(_csh.Cur);
+            CurRefreshTheme(_csh.VCur);
+            CurRefreshTheme(_csh.MCur);
+            if (CshActive) CshRefresh();
+        }
+        if (_sp != null) SpDispose(instant: true);
+        if (_ls is { Open: true } ls) { LsBuildRows(ls); CurRefreshTheme(ls.Cur); }
+        if (_cs?.Page is { Style: HomeStyle.Row } page && page.Rw is { Disposed: false } rw)
+        {
+            rw.Drawn = "";
+            if (rw.Sharp != null) RwPaintPanels(page);
+            RwPaintRing(rw);
+            RwPaintCursorStatic(page);
+            if (rw.XCur != null) CurRefreshTheme(rw.XCur);
+            foreach (var csCase in page.Cases.Values)
+                if (csCase.Label != null) { csCase.Label.Parent?.Children.Remove(csCase.Label); csCase.Label.Dispose(); csCase.Label = null; }
+            RwMarkRunning(page);
+        }
+        if (_ak != null) AkPaint(_ak);
+        if (_stOpen) Repaint();
+        else if (CpActive) CpPaint();
     }
 }

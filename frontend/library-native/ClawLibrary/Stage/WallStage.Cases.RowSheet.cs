@@ -632,16 +632,16 @@ public sealed partial class WallStage
         if (noY) return;
         using (var cl = new CanvasCommandList(dev))
         {
-            using (var s = cl.CreateDrawingSession()) { s.Transform = ds.Transform; s.FillRoundedRectangle(1656, 112, 126, 70, 35, 35, Color.FromArgb(255, 0x7A, 0x3C, 0xFF)); }
+            using (var s = cl.CreateDrawingSession()) { s.Transform = ds.Transform; s.FillRoundedRectangle(1656, 112, 126, 70, 35, 35, CpPillEnd); }
             using var blur = new GaussianBlurEffect { Source = cl, BlurAmount = 9 * CsRaster, BorderMode = EffectBorderMode.Soft };
             using var op = new OpacityEffect { Source = blur, Opacity = 0.45f };
             var t = ds.Transform; ds.Transform = Matrix3x2.Identity; ds.DrawImage(op); ds.Transform = t;
         }
-        using (var br = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0x8A, 0x7B, 0xFF), Color.FromArgb(255, 0x7A, 0x3C, 0xFF)) { StartPoint = new Vector2(1652, 104), EndPoint = new Vector2(1786, 178) })
+        using (var br = new CanvasLinearGradientBrush(dev, CpPillStart, CpPillEnd) { StartPoint = new Vector2(1652, 104), EndPoint = new Vector2(1786, 178) })
             ds.FillRoundedRectangle(1652, 104, 134, 74, 37, 37, br);
-        ds.FillCircle(1689, 141, 21, Color.FromArgb(255, 0xB9, 0xA9, 0xFF));
+        ds.FillCircle(1689, 141, 21, CpPillBadge);
         using (var f = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
-            ds.DrawText("Y", new Windows.Foundation.Rect(1668, 120, 42, 42), Color.FromArgb(255, 0x7A, 0x4C, 0xFF), f);
+            ds.DrawText("Y", new Windows.Foundation.Rect(1668, 120, 42, 42), CpAccentInk, f);
         if (play)
         {
             // Y ▶：白色实心三角（Cocoon 刮削页右上是「开始」）
@@ -657,7 +657,7 @@ public sealed partial class WallStage
         {
             pb.BeginFigure(1740, 141); pb.AddLine(1747, 148); pb.AddLine(1760, 134); pb.EndFigure(CanvasFigureLoop.Open);
             using var tick = CanvasGeometry.CreatePath(pb);
-            ds.DrawGeometry(tick, Color.FromArgb(255, 0x7A, 0x4C, 0xFF), 5, RwRoundStroke);
+            ds.DrawGeometry(tick, CpAccentInk, 5, RwRoundStroke);
         }
     }
 
@@ -823,11 +823,11 @@ public sealed partial class WallStage
             for (int k = 0; k < opts.Length; k++)
             {
                 float oy = y0 + k * optH;
-                if (row.Multi && k == row.OpenSel) ds.FillRectangle(x0, oy, w, optH, Color.FromArgb(255, 0xEC, 0xE6, 0xFF));
+                if (row.Multi && k == row.OpenSel) ds.FillRectangle(x0, oy, w, optH, CpSelectionTint);
                 if (k > 0) ds.FillRectangle(x0 + 28, oy - 1, w - 56, 2, Color.FromArgb(255, 0xE6, 0xE7, 0xEA));
                 bool sel = !row.Multi && k == cur;
                 using var tf = new CanvasTextFormat { FontFamily = RmFont(opts[k]), FontSize = fontSize, FontWeight = RsWt(opts[k]), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
-                ds.DrawText(opts[k], new Windows.Foundation.Rect(x0 + 30 * fontSize / 36, oy, w - (row.Multi ? 110 : 60), optH), sel ? Color.FromArgb(255, 0x4F, 0x9D, 0xF2) : RmInk, tf);
+                ds.DrawText(opts[k], new Windows.Foundation.Rect(x0 + 30 * fontSize / 36, oy, w - (row.Multi ? 110 : 60), optH), sel ? CocoonPalette.Current.SelectedOption : RmInk, tf);
                 if (row.Multi)
                 {
                     float cx = x0 + w - 52, ccy = oy + optH / 2;
@@ -1404,21 +1404,21 @@ public sealed partial class WallStage
                     ds.DrawText(note, new Windows.Foundation.Rect(1100, 50, 600, 74), err ? RmRed : RsSub, nf);
             // 右上：紫胶囊里 ▶（确认键）+ 白色对勾圆
             RsSoftShadow(ds, 1734, 58, 126, 70, 35, 9, 0.45f);
-            using (var br = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0x8A, 0x7B, 0xFF), Color.FromArgb(255, 0x7A, 0x3C, 0xFF)) { StartPoint = new Vector2(1730, 50), EndPoint = new Vector2(1864, 124) })
+            using (var br = new CanvasLinearGradientBrush(dev, CpPillStart, CpPillEnd) { StartPoint = new Vector2(1730, 50), EndPoint = new Vector2(1864, 124) })
                 ds.FillRoundedRectangle(1730, 50, 134, 74, 37, 37, br);
-            ds.FillCircle(1767, 87, 21, Color.FromArgb(255, 0xB9, 0xA9, 0xFF));
+            ds.FillCircle(1767, 87, 21, CpPillBadge);
             using (var pb = new CanvasPathBuilder(dev))
             {
                 pb.BeginFigure(1760, 77); pb.AddLine(1777, 87); pb.AddLine(1760, 97); pb.EndFigure(CanvasFigureLoop.Closed);
                 using var tri = CanvasGeometry.CreatePath(pb);
-                ds.FillGeometry(tri, Color.FromArgb(255, 0x7A, 0x4C, 0xFF));
+                ds.FillGeometry(tri, CpAccentInk);
             }
             ds.FillCircle(1828, 87, 21, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
             using (var pb = new CanvasPathBuilder(dev))
             {
                 pb.BeginFigure(1818, 87); pb.AddLine(1825, 94); pb.AddLine(1838, 80); pb.EndFigure(CanvasFigureLoop.Open);
                 using var tick = CanvasGeometry.CreatePath(pb);
-                ds.DrawGeometry(tick, Color.FromArgb(255, 0x7A, 0x4C, 0xFF), 5, RwRoundStroke);
+                ds.DrawGeometry(tick, CpAccentInk, 5, RwRoundStroke);
             }
             // 输入框：浅灰，上浅下深
             using (var field = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xF2, 0xF3, 0xF6), Color.FromArgb(255, 0xE1, 0xE2, 0xE8)) { StartPoint = new Vector2(0, RsFieldY), EndPoint = new Vector2(0, RsFieldY + RsFieldH) })

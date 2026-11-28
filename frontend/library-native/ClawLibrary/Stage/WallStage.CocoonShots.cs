@@ -230,18 +230,21 @@ public sealed partial class WallStage
         }
         v.ShadowB = G.C.CreateSurfaceBrush(v.ShadowS);
         float d = 46;
-        v.FavS = G.Surface((int)Math.Ceiling((d + 20) * R), (int)Math.Ceiling((d + 20) * R));
-        using (var ds = CanvasComposition.CreateDrawingSession(v.FavS))
-        {
-            ds.Clear(Colors.Transparent);
-            ds.Transform = Matrix3x2.CreateTranslation(10, 10) * Matrix3x2.CreateScale(R);
-            ds.Antialiasing = CanvasAntialiasing.Antialiased;
-            RsSoftShadow(ds, 0, 2, d, d, d / 2, 4, 0.18f);
-            ds.FillCircle(d / 2, d / 2, d / 2, Color.FromArgb(240, 0xFF, 0xFF, 0xFF));
-            using var star = CshStar(ds.Device, d / 2, d / 2 + 0.5f, 13);
-            ds.FillGeometry(star, CpAccentInk);
-        }
+        v.FavS ??= G.Surface((int)Math.Ceiling((d + 20) * R), (int)Math.Ceiling((d + 20) * R));
+        CshPaintFavSurf(v.FavS, R, d);
         v.FavB = G.C.CreateSurfaceBrush(v.FavS);
+    }
+
+    private void CshPaintFavSurf(CompositionDrawingSurface surf, float R, float d = 46)
+    {
+        using var ds = CanvasComposition.CreateDrawingSession(surf);
+        ds.Clear(Colors.Transparent);
+        ds.Transform = Matrix3x2.CreateTranslation(10, 10) * Matrix3x2.CreateScale(R);
+        ds.Antialiasing = CanvasAntialiasing.Antialiased;
+        RsSoftShadow(ds, 0, 2, d, d, d / 2, 4, 0.18f);
+        ds.FillCircle(d / 2, d / 2, d / 2, Color.FromArgb(240, 0xFF, 0xFF, 0xFF));
+        using var star = CshStar(ds.Device, d / 2, d / 2 + 0.5f, 13);
+        ds.FillGeometry(star, CpAccentInk);
     }
 
     // ---------------- 画 ----------------
@@ -261,7 +264,7 @@ public sealed partial class WallStage
         {
             if (_shFilter != null && _shLoaded) { _shFilter = null; ShRebuild(); return; }
         }
-        string leftKey = $"{_shLoaded}|{_shFilter}|{string.Join(",", _cshItems.Select(i => $"{i.Key}:{i.Name}:{i.Count}"))}";
+        string leftKey = $"{_shLoaded}|{_shFilter}|{CocoonThemeStamp}|{string.Join(",", _cshItems.Select(i => $"{i.Key}:{i.Name}:{i.Count}"))}";
         if (leftKey != v.LeftKey) { v.LeftKey = leftKey; CshPaintLeft(v); }
 
         var flat = _shUnits.Select(u => u.Top).ToList();
@@ -281,8 +284,9 @@ public sealed partial class WallStage
 
     private void CshPaintHead(CshView v)
     {
-        if (v.HeadKey == "相册") return;
-        v.HeadKey = "相册";
+        string hKey = $"相册|{CocoonThemeStamp}";
+        if (v.HeadKey == hKey) return;
+        v.HeadKey = hKey;
         float x0 = 20, y0 = 20, w = 700, h = 120;
         using var ds = CanvasComposition.CreateDrawingSession(CpSurf(ref v.HeadS, v.Head, x0, y0, w, h));
         ds.Clear(Colors.Transparent);
@@ -325,7 +329,7 @@ public sealed partial class WallStage
                     using (var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 36, FontWeight = CpTitleWt, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
                         ds.DrawText(name, new Rect(126, y, CshLeftW - 126 - 110, CshSlot), ink, f);
                     using (var nf = new CanvasTextFormat { FontFamily = RwPoppins, FontSize = 30, FontWeight = new Windows.UI.Text.FontWeight(500), HorizontalAlignment = CanvasHorizontalAlignment.Right, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
-                        ds.DrawText(it.Count.ToString(), new Rect(CshLeftW - 136, y, 100, CshSlot), on ? Color.FromArgb(255, 0xA5, 0x8B, 0xFF) : Color.FromArgb(255, 0x8E, 0x90, 0x98), nf);
+                        ds.DrawText(it.Count.ToString(), new Rect(CshLeftW - 136, y, 100, CshSlot), on ? Color.FromArgb(190, CpAccentInk.R, CpAccentInk.G, CpAccentInk.B) : Color.FromArgb(255, 0x8E, 0x90, 0x98), nf);
                 }
         }
         // 游戏：封面小方块（单独的精灵，图是游戏库自己的封面）

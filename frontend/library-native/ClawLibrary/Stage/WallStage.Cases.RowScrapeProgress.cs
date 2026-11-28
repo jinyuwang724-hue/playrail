@@ -20,7 +20,7 @@ namespace ClawLibrary.Stage;
 public sealed partial class WallStage
 {
     private const int ScSteps = 6;
-    private static readonly Color ScPurple = Color.FromArgb(255, 0x7A, 0x4C, 0xFF);
+    private static Color ScPurple => CpAccentInk;
 
     private RsPage ScProgressPage(ScState s, LibraryItem g) => new()
     {

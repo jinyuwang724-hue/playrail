@@ -42,7 +42,25 @@ public sealed partial class WallStage
     }
 
     private const float CurGlowBlurDp = 6.5f;
-    private static readonly Windows.UI.Color CurGlowColor = RwC1;
+    private static Windows.UI.Color CurGlowColor => CocoonPalette.Current.Glow;
+    private static string CocoonThemeStamp => $"{RwC1.R:X2}{RwC1.G:X2}{RwC1.B:X2}-{RwC2.R:X2}{RwC2.G:X2}{RwC2.B:X2}";
+
+    private void CurClearCache()
+    {
+        foreach (var entry in _spCurCache.Values)
+        {
+            entry.Glow.Dispose();
+            entry.Line.Dispose();
+            entry.Rim.Dispose();
+        }
+        _spCurCache.Clear();
+    }
+
+    private void CurRefreshTheme(CurSet? cs)
+    {
+        if (cs == null || cs.W <= 0 || cs.H <= 0) return;
+        CurPaint(cs, cs.W, cs.H, cs.R);
+    }
 
     /// <summary>括号离容器边的距离：按容器短边取，小按钮 6、大卡片最多 14（11-26 统一：之前侧栏 / 控制中心固定 5.5，括号贴着容器）。</summary>
     private static float CurOutsetFor(float w, float h) => Math.Clamp(0.045f * MathF.Min(w, h), 6f, 14f);
@@ -151,7 +169,7 @@ public sealed partial class WallStage
     {
         cs.W = W; cs.H = H; cs.R = r;
         float R = CsRaster, sw = W + RmCurPad * 2, sh = H + RmCurPad * 2;
-        string key = $"{W:0.#}x{H:0.#}r{r:0.#}";
+        string key = $"{W:0.#}x{H:0.#}r{r:0.#}|{CocoonThemeStamp}";
         if (!_spCurCache.TryGetValue(key, out var c) || c.Raster != R)
         {
             int pw = (int)Math.Ceiling(sw * R), ph = (int)Math.Ceiling(sh * R);

@@ -94,7 +94,7 @@ public sealed partial class WallStage
         float[] s = right
             ? new[] { (W - r) / P, (W + H / 2) / P, (W + H + r) / P }
             : new[] { (2 * W + 2 * H + r) / P % 1f, (2 * W + 1.5f * H) / P, (2 * W + H - r) / P };   // 上、中、下
-        Color Mix(float t) => Color.FromArgb(255, (byte)(RwC1.R + (RwC2.R - RwC1.R) * t), (byte)(RwC1.G + (RwC2.G - RwC1.G) * t), (byte)(RwC1.B + (RwC2.B - RwC1.B) * t));
+        Color Mix(float t) => CocoonPalette.MixFlow(t);
         Color At(float si, float phase) => Mix(0.5f + 0.5f * MathF.Cos(2 * MathF.PI * (si - phase)));
         var grad = G.C.CreateLinearGradientBrush();
         grad.StartPoint = new Vector2(0.5f, 0);

@@ -29,7 +29,8 @@ public sealed partial class WallStage
     /// <summary>Cocoon 设备上 1 dp ≈ 1.75 px（截图反推）；规格里的 dp 数值都乘这个换成我们的设计单位。</summary>
     private const float RwDp = 1.75f;
     private const float RwThick = 0.6f, RwSw = 8 * RwDp * RwThick;
-    private static readonly Color RwC1 = Color.FromArgb(255, 0x86, 0xA7, 0xFD), RwC2 = Color.FromArgb(255, 0x80, 0x37, 0xFF);
+    private static Color RwC1 => CocoonPalette.Current.Start;
+    private static Color RwC2 => CocoonPalette.Current.End;
     private const double RwPeriodMs = 1800;
     private const int RwSteps = 45;
     // 随包字体只在打包运行时能按 ms-appx 加载；不打包的录屏版退回系统字体（只影响自测录屏的字形）
@@ -703,7 +704,7 @@ public sealed partial class WallStage
     private CompositionMaskBrush RwFlowBrush(RwChrome rw, CompositionDrawingSurface maskSurf)
     {
         var grad = G.C.CreateLinearGradientBrush();
-        Color Mix(float t) => Color.FromArgb(255, (byte)(RwC1.R + (RwC2.R - RwC1.R) * t), (byte)(RwC1.G + (RwC2.G - RwC1.G) * t), (byte)(RwC1.B + (RwC2.B - RwC1.B) * t));
+        Color Mix(float t) => CocoonPalette.MixFlow(t);
         for (int i = 0; i <= 8; i++)
         {
             float x = i / 8f, t = 0.5f + 0.5f * MathF.Cos(MathF.PI * x);

@@ -837,7 +837,7 @@ public sealed partial class WallStage
     {
         bool connected = _pad?.Connected ?? false;
         string modeText = _gpFw == null ? "读取中" : !GpWantDesktop ? "手柄模式" : _gpDesktopHeld ? "桌面模式 · 待生效" : "桌面模式";
-        string key = $"{connected}|{modeText}|{CsRaster}";
+        string key = $"{connected}|{modeText}|{CsRaster}|{CocoonThemeStamp}";
         if (v.LeftKey == key) return;
         v.LeftKey = key;
 
@@ -878,7 +878,7 @@ public sealed partial class WallStage
     {
         int sel = Math.Clamp(_cgpCat, 0, CgpCats.Length - 1);
         float pad = 30, w = CpLeftW + pad * 2, h = CgpSlot + pad * 2, R = CsRaster;
-        string key = $"{R}";
+        string key = $"{R}|{CocoonThemeStamp}";
         if (key != v.SelKey)
         {
             v.SelKey = key;
@@ -1283,7 +1283,7 @@ public sealed partial class WallStage
                 byte a = (byte)Math.Clamp((int)((0.12f + strength * 0.003f) * 255), 0, 180);
                 ds.FillCircle(gx, 146, gr, Color.FromArgb(a, 0x80, 0x37, 0xFF));
                 if (pulse && strength > 0)
-                    ds.DrawCircle(gx, 146, gr + 9f, Color.FromArgb(180, 0x7A, 0x4C, 0xFF), 2.8f);
+                    ds.DrawCircle(gx, 146, gr + 9f, Color.FromArgb(180, CpAccentInk.R, CpAccentInk.G, CpAccentInk.B), 2.8f);
             }
         }
 
@@ -1368,7 +1368,7 @@ public sealed partial class WallStage
     private string CgpComputeListKey(List<CgpRow> rows)
     {
         var sb = new System.Text.StringBuilder();
-        sb.Append(_cgpCat).Append('|').Append(_cgpDrop).Append('|').Append(CsRaster).Append('|');
+        sb.Append(_cgpCat).Append('|').Append(_cgpDrop).Append('|').Append(CsRaster).Append('|').Append(CocoonThemeStamp).Append('|');
         foreach (var r in rows)
         {
             sb.Append(r.Id).Append('\u0001').Append(r.Title).Append('\u0001').Append(r.Sub).Append('\u0001')
@@ -1436,12 +1436,12 @@ public sealed partial class WallStage
             ds.FillRoundedRectangle(x0, scy - 5, x1 - x0, 10, 5, 5, Color.FromArgb(255, 0xDC, 0xDC, 0xE3));
             if (frac > 0)
             {
-                using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, Color.FromArgb(255, 0x73, 0x40, 0xFF)) { StartPoint = new Vector2(x0, 0), EndPoint = new Vector2(x1, 0) };
+                using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, CpAccentDeep) { StartPoint = new Vector2(x0, 0), EndPoint = new Vector2(x1, 0) };
                 ds.FillRoundedRectangle(x0, scy - 5, (x1 - x0) * frac, 10, 5, 5, br);
             }
             float kx = x0 + (x1 - x0) * frac;
             RsSoftShadow(ds, kx - 24, scy - 24 + 3, 48, 48, 24, 5, 0.3f);
-            using (var kb = new CanvasLinearGradientBrush(ds.Device, Color.FromArgb(255, 0x9A, 0x9C, 0xFF), Color.FromArgb(255, 0x6F, 0x3C, 0xFF)) { StartPoint = new Vector2(kx - 16, scy - 24), EndPoint = new Vector2(kx + 16, scy + 24) })
+            using (var kb = new CanvasLinearGradientBrush(ds.Device, CpKnobStart, CpKnobEnd) { StartPoint = new Vector2(kx - 16, scy - 24), EndPoint = new Vector2(kx + 16, scy + 24) })
                 ds.FillCircle(kx, scy, 24, kb);
             ds.FillRoundedRectangle(px - 16, scy - 4, 32, 8, 4, 4, RmInk);
             ds.FillRoundedRectangle(px - 4, scy - 16, 8, 32, 4, 4, RmInk);
@@ -1566,7 +1566,7 @@ public sealed partial class WallStage
                 rx -= 12f;
                 float tw = CpTextW(ds, r.TriggerTag, 24) + 28f, th = 44f;
                 rx -= tw;
-                ds.FillRoundedRectangle(rx, cy - th / 2f, tw, th, th / 2f, th / 2f, Color.FromArgb(255, 0xEC, 0xE6, 0xFF));
+                ds.FillRoundedRectangle(rx, cy - th / 2f, tw, th, th / 2f, th / 2f, CpSelectionTint);
                 using var tgf = new CanvasTextFormat { FontFamily = RmFont(r.TriggerTag), FontSize = 24, FontWeight = RsWt(r.TriggerTag, 500), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
                 ds.DrawText(r.TriggerTag, new Rect(rx, cy - th / 2f, tw, th), CpAccentInk, tgf);
             }
@@ -1581,7 +1581,7 @@ public sealed partial class WallStage
             {
                 float vw = CpTextW(ds, val, 32);
                 float tw = CpTextW(ds, r.TriggerTag, 24) + 28f, th = 44f, tx0 = rx - vw - 16f - tw;
-                ds.FillRoundedRectangle(tx0, cy - th / 2f, tw, th, th / 2f, th / 2f, Color.FromArgb(255, 0xEC, 0xE6, 0xFF));
+                ds.FillRoundedRectangle(tx0, cy - th / 2f, tw, th, th / 2f, th / 2f, CpSelectionTint);
                 using var tgf = new CanvasTextFormat { FontFamily = RmFont(r.TriggerTag), FontSize = 24, FontWeight = RsWt(r.TriggerTag, 500), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
                 ds.DrawText(r.TriggerTag, new Rect(tx0, cy - th / 2f, tw, th), CpAccentInk, tgf);
             }
@@ -1607,14 +1607,14 @@ public sealed partial class WallStage
         if (chord)
         {
             RsSoftShadow(ds, x + 2, y + 5, w - 4, h, r, 6, 0.34f);
-            using var br = new CanvasLinearGradientBrush(ds.Device, Color.FromArgb(255, 0x8F, 0x8B, 0xFF), Color.FromArgb(255, 0x73, 0x40, 0xFF)) { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x, y + h) };
+            using var br = new CanvasLinearGradientBrush(ds.Device, SpOn1, SpOn2) { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x, y + h) };
             ds.FillRoundedRectangle(x, y, w, h, r, r, br);
-            ds.DrawRoundedRectangle(x + 0.75f, y + 0.75f, w - 1.5f, h - 1.5f, r, r, Color.FromArgb(255, 0x69, 0x35, 0xF2), 1.5f);
+            ds.DrawRoundedRectangle(x + 0.75f, y + 0.75f, w - 1.5f, h - 1.5f, r, r, CocoonPalette.Current.ChordBorder, 1.5f);
         }
         else if (current)
         {
             RsSoftShadow(ds, x + 1, y + 3, w - 2, h, r, 4, 0.12f);
-            ds.FillRoundedRectangle(x, y, w, h, r, r, Color.FromArgb(255, 0xEC, 0xE6, 0xFF));
+            ds.FillRoundedRectangle(x, y, w, h, r, r, CpSelectionTint);
             ds.DrawRoundedRectangle(x + 1, y + 1, w - 2, h - 2, r, r, CpAccentInk, 2.5f);
         }
         else
@@ -1914,7 +1914,7 @@ public sealed partial class WallStage
             ? $"当前：{(GpIsSpecial(p.Source) ? GpSpecialSummary(p.Source, p.SteamMapping) : p.Desktop ? GpDesktopSummary(p.Source) : GpKeySummary(p.Source))}"
             : "";
 
-        string key = $"{p.Level}|{title}|{p.Tab}|{p.InTabs}|{showY}|{yAsGear}|{subRight}|{CsRaster}";
+        string key = $"{p.Level}|{title}|{p.Tab}|{p.InTabs}|{showY}|{yAsGear}|{subRight}|{CsRaster}|{CocoonThemeStamp}";
         if (v.ModalHeadKey == key) return;
         v.ModalHeadKey = key;
 
@@ -1959,9 +1959,9 @@ public sealed partial class WallStage
     {
         var dev = ds.Device;
         RsSoftShadow(ds, 1656, 112, 126, 70, 35, 9, 0.42f);
-        using (var br = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0x8A, 0x7B, 0xFF), Color.FromArgb(255, 0x7A, 0x3C, 0xFF)) { StartPoint = new Vector2(1652, 104), EndPoint = new Vector2(1786, 178) })
+        using (var br = new CanvasLinearGradientBrush(dev, CpPillStart, CpPillEnd) { StartPoint = new Vector2(1652, 104), EndPoint = new Vector2(1786, 178) })
             ds.FillRoundedRectangle(1652, 104, 134, 74, 37, 37, br);
-        ds.FillCircle(1689, 141, 21, Color.FromArgb(255, 0xB9, 0xA9, 0xFF));
+        ds.FillCircle(1689, 141, 21, CpPillBadge);
         using (var f = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
             ds.DrawText("Y", new Rect(1668, 120, 42, 42), CpAccentInk, f);
         ds.FillCircle(1750, 141, 21, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
@@ -2045,7 +2045,7 @@ public sealed partial class WallStage
         var cells = GpChooserCells(p.Tab);
         p.Cell = Math.Clamp(p.Cell, 0, Math.Max(0, cells.Length - 1));
         string chordStr = string.Join("+", p.Chord.Select(c => c.Cmd));
-        string key = $"{p.Source}|{p.Desktop}|{p.SteamMapping}|{p.Tab}|{p.Cell}|{p.InTabs}|{_gpArtLoaded}|{chordStr}|{string.Join(",", curCmds)}|{string.Join(",", curCodes)}|{CsRaster}";
+        string key = $"{p.Source}|{p.Desktop}|{p.SteamMapping}|{p.Tab}|{p.Cell}|{p.InTabs}|{_gpArtLoaded}|{chordStr}|{string.Join(",", curCmds)}|{string.Join(",", curCodes)}|{CsRaster}|{CocoonThemeStamp}";
         if (v.ModalBodyKey == key) return;
         v.ModalBodyKey = key;
 
@@ -2125,8 +2125,8 @@ public sealed partial class WallStage
             const string prefix = "当前组合预览：";
             float w1 = CpTextW(ds, prefix, 26), w2 = CpTextW(ds, preview, 28), w3 = CpTextW(ds, hint, 24);
             float pillW = Math.Min(1560f, w1 + w2 + w3 + 96f), pillX = 960f - pillW / 2f, pillY = 932f, pillH = 74f;
-            ds.FillRoundedRectangle(pillX, pillY, pillW, pillH, 37, 37, Color.FromArgb(255, 0xEC, 0xE6, 0xFF));
-            ds.DrawRoundedRectangle(pillX + 0.75f, pillY + 0.75f, pillW - 1.5f, pillH - 1.5f, 37, 37, Color.FromArgb(255, 0xD1, 0xC4, 0xFF), 1.5f);
+            ds.FillRoundedRectangle(pillX, pillY, pillW, pillH, 37, 37, CpSelectionTint);
+            ds.DrawRoundedRectangle(pillX + 0.75f, pillY + 0.75f, pillW - 1.5f, pillH - 1.5f, 37, 37, CpSelectionBorder, 1.5f);
 
             float tx = pillX + 38f;
             using (var f1 = new CanvasTextFormat { FontFamily = RmFont(prefix), FontSize = 26, FontWeight = RsWt(prefix, 500), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })

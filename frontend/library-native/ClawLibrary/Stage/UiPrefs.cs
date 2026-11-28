@@ -41,6 +41,11 @@ public sealed record UiPrefs
     public NowPlayingStyle NowPlaying { get; init; }
     /// <summary>强调色：-1 = 跟随封面，0… = 固定色（UiPrefs.Accents）。</summary>
     public int Accent { get; init; } = -1;
+    /// <summary>Cocoon 渐变主题色：0..7 = CocoonPalette.Presets 预设，-1 = 自定义双色渐变。</summary>
+    public int CocoonTheme { get; init; }
+    public string CocoonCustomStart { get; init; } = "#86a7fd";
+    public string CocoonCustomEnd { get; init; } = "#8037ff";
+    public int CocoonHarmony { get; init; } = 1;
     public bool Sounds { get; init; }
     public int SoundVolume { get; init; } = 40;
     public int SoundTheme { get; init; }
@@ -121,6 +126,10 @@ public sealed record UiPrefs
                     "afterLaunch" when Enum.TryParse<AfterLaunch>(v, out var e) && Enum.IsDefined(e) => p with { AfterLaunch = e },
                     "nowPlaying" when Enum.TryParse<NowPlayingStyle>(v, out var np) && Enum.IsDefined(np) => p with { NowPlaying = np },
                     "accent" when int.TryParse(v, out var i) => p with { Accent = Math.Clamp(i, -1, Accents.Length - 1) },
+                    "cocoonTheme" when int.TryParse(v, out var i) => p with { CocoonTheme = Math.Clamp(i, -1, CocoonPalette.Presets.Length - 1) },
+                    "cocoonStart" when v.Length == 7 && v[0] == '#' && v.Skip(1).All(Uri.IsHexDigit) => p with { CocoonCustomStart = v.ToLowerInvariant() },
+                    "cocoonEnd" when v.Length == 7 && v[0] == '#' && v.Skip(1).All(Uri.IsHexDigit) => p with { CocoonCustomEnd = v.ToLowerInvariant() },
+                    "cocoonHarmony" when int.TryParse(v, out var i) => p with { CocoonHarmony = Math.Clamp(i, 0, 3) },
                     "sounds" when bool.TryParse(v, out var b) => p with { Sounds = b },
                     "soundVolume" when int.TryParse(v, out var i) => p with { SoundVolume = Math.Clamp(i, 0, 100) },
                     "soundTheme" when int.TryParse(v, out var i) => p with { SoundTheme = Math.Clamp(i, 0, 2) },
@@ -164,7 +173,7 @@ public sealed record UiPrefs
                 $"tabOrder={string.Join(',', TabOrder)}", $"tabsHidden={string.Join(',', TabsHidden)}", $"showHidden={ShowHiddenGames}",
                 $"sourceSteam={SourceSteam}", $"steamInstalledOnly={SteamInstalledOnly}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}", $"nowPlaying={NowPlaying}",
                 $"sourceXbox={SourceXbox}", $"preloadSteam={PreloadSteam}", $"backgroundRun={BackgroundRun}",
-                $"accent={Accent}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
+                $"accent={Accent}", $"cocoonTheme={CocoonTheme}", $"cocoonStart={CocoonCustomStart}", $"cocoonEnd={CocoonCustomEnd}", $"cocoonHarmony={CocoonHarmony}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
                 $"soundTheme={SoundTheme}", $"musicEnabled={MusicEnabled}", $"musicVolume={MusicVolume}", $"musicTrack={MusicTrack}", $"musicLoop={MusicLoop}",
                 $"lightsOn={LightsOn}", $"posterTint={PosterTint}", $"posterTintCustom={PosterTintCustom}", $"posterTintColor={PosterTintColor}", $"posterTintIntensity={PosterTintIntensity}", $"oobe={Oobe}", $"lang={Lang}", $"homeStyle={Home}", $"insertSound={InsertSound}",
             });

@@ -10,7 +10,8 @@ public sealed partial class WallStage
 {
     /// <summary>控制中心此刻用浅色皮（从左侧栏进的页面）。</summary>
     private bool _ccLight;
-    private static readonly Color LtInk = Color.FromArgb(255, 0x1E, 0x1E, 0x24), LtAccent = Color.FromArgb(255, 0x73, 0x40, 0xFF);
+    private static readonly Color LtInk = Color.FromArgb(255, 0x1E, 0x1E, 0x24);
+    private static Color LtAccent => CocoonPalette.Current.Deep;
     private SpriteVisual? _ccLightBg;
 
     /// <summary>浅色底：盖在动态背景上面、页面下面。</summary>
