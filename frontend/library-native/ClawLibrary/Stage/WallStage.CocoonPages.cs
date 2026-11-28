@@ -205,8 +205,8 @@ public sealed partial class WallStage
         root.Size = new Vector2(CsW, CsH);
         var g = G.C.CreateLinearGradientBrush();
         g.StartPoint = new Vector2(0, 0); g.EndPoint = new Vector2(0, 1);
-        g.ColorStops.Add(G.C.CreateColorGradientStop(0, Color.FromArgb(255, 0xEF, 0xEF, 0xF4)));
-        g.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(255, 0xE2, 0xE3, 0xEA)));
+        g.ColorStops.Add(CkStop(0, Color.FromArgb(255, 0xEF, 0xEF, 0xF4)));
+        g.ColorStops.Add(CkStop(1, Color.FromArgb(255, 0xE2, 0xE3, 0xEA)));
         var bg = G.Sprite(g, relative: false);
         bg.Size = new Vector2(CsW, CsH);
         var box = G.Container(relative: false);
@@ -223,9 +223,9 @@ public sealed partial class WallStage
             var fg = G.C.CreateLinearGradientBrush();
             fg.StartPoint = new Vector2(0, 0); fg.EndPoint = new Vector2(0, 1);
             var top = Color.FromArgb(255, 0xEF, 0xEF, 0xF4);
-            fg.ColorStops.Add(G.C.CreateColorGradientStop(0, top));
-            fg.ColorStops.Add(G.C.CreateColorGradientStop(0.35f, Color.FromArgb(235, top.R, top.G, top.B)));
-            fg.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(0, top.R, top.G, top.B)));
+            fg.ColorStops.Add(CkStop(0, top));
+            fg.ColorStops.Add(CkStop(0.35f, Color.FromArgb(235, top.R, top.G, top.B)));
+            fg.ColorStops.Add(CkStop(1, Color.FromArgb(0, top.R, top.G, top.B)));
             var fade = G.Sprite(fg, relative: false);
             fade.Size = new Vector2(CsW - (CpListX - 40), CpTop);
             fade.Offset = new Vector3(CpListX - 40, 0, 0);
@@ -523,8 +523,8 @@ public sealed partial class WallStage
             }
             else
             {
-                ds.FillRoundedRectangle(x, ty, 120, 76, 38, 38, Color.FromArgb(255, 0xE4, 0xE5, 0xE9));
-                ds.DrawRoundedRectangle(x + 2, ty + 2, 116, 72, 36, 36, Color.FromArgb(255, 0x9A, 0x9C, 0xA3), 4);
+                ds.FillRoundedRectangle(x, ty, 120, 76, 38, 38, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xE9)));
+                ds.DrawRoundedRectangle(x + 2, ty + 2, 116, 72, 36, 36, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)), 4);
             }
             RsSoftShadow(ds, (on ? x + 82 : x + 38) - 27, cy - 27 + 3, 54, 54, 27, 4, 0.22f);
             ds.FillCircle(on ? x + 82 : x + 38, cy, 27, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
@@ -552,7 +552,7 @@ public sealed partial class WallStage
             using (var vf = new CanvasTextFormat { FontFamily = RmFont(r.Value), FontSize = 30, FontWeight = RsWt(r.Value, 500), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
                 ds.DrawText(r.Value, new Windows.Foundation.Rect(tx, cy - 24, mx - tx - 20, 48), RsSub, vf);
             ds.FillRoundedRectangle(mx - 16, cy - 4, 32, 8, 4, 4, RmInk);
-            ds.FillRoundedRectangle(x0, cy - 5, x1 - x0, 10, 5, 5, Color.FromArgb(255, 0xDC, 0xDC, 0xE3));
+            ds.FillRoundedRectangle(x0, cy - 5, x1 - x0, 10, 5, 5, Ck(Color.FromArgb(255, 0xDC, 0xDC, 0xE3)));
             if (frac > 0)
             {
                 using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, CpAccentDeep) { StartPoint = new Vector2(x0, 0), EndPoint = new Vector2(x1, 0) };
@@ -569,7 +569,7 @@ public sealed partial class WallStage
         {
             // 一档一档切的数值（排序位置、备份…）：Cocoon「Rows per Page」那种灰胶囊「−  值  +」，←→ 切
             var (px0, pw) = CpStepperX(ds, r.Value, R);
-            ds.FillRoundedRectangle(px0, cy - 38, pw, 76, 38, 38, Color.FromArgb(255, 0xE6, 0xE7, 0xEC));
+            ds.FillRoundedRectangle(px0, cy - 38, pw, 76, 38, 38, Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEC)));
             ds.FillRoundedRectangle(px0 + 30, cy - 4, 28, 8, 4, 4, RmInk);
             ds.FillRoundedRectangle(px0 + pw - 58, cy - 4, 28, 8, 4, 4, RmInk);
             ds.FillRoundedRectangle(px0 + pw - 48, cy - 14, 8, 28, 4, 4, RmInk);
@@ -731,7 +731,7 @@ public sealed partial class WallStage
         var t = ds.Transform;
         ds.Transform = Matrix3x2.CreateScale(k, k, new Vector2(cx, cy)) * t;
         var dev = ds.Device;
-        var paper = Color.FromArgb(255, 0xFA, 0xFA, 0xFA);
+        var paper = Ck(Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
         switch (cat)
         {
             case "CPU": case "显卡":

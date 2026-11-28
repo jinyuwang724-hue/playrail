@@ -124,8 +124,8 @@ public sealed partial class WallStage
         var root = Box();
         var g = G.C.CreateLinearGradientBrush();
         g.StartPoint = new Vector2(0, 0); g.EndPoint = new Vector2(0, 1);
-        g.ColorStops.Add(G.C.CreateColorGradientStop(0, Color.FromArgb(255, 0xEF, 0xEF, 0xF4)));
-        g.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(255, 0xE2, 0xE3, 0xEA)));
+        g.ColorStops.Add(CkStop(0, Color.FromArgb(255, 0xEF, 0xEF, 0xF4)));
+        g.ColorStops.Add(CkStop(1, Color.FromArgb(255, 0xE2, 0xE3, 0xEA)));
         var bg = G.Sprite(g, relative: false);
         bg.Size = new Vector2(CsW, CsH);
 
@@ -144,9 +144,9 @@ public sealed partial class WallStage
             var fg = G.C.CreateLinearGradientBrush();
             fg.StartPoint = new Vector2(0, 0); fg.EndPoint = new Vector2(0, 1);
             var top = Color.FromArgb(255, 0xEF, 0xEF, 0xF4);
-            fg.ColorStops.Add(G.C.CreateColorGradientStop(0, top));
-            fg.ColorStops.Add(G.C.CreateColorGradientStop(0.35f, Color.FromArgb(235, top.R, top.G, top.B)));
-            fg.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(0, top.R, top.G, top.B)));
+            fg.ColorStops.Add(CkStop(0, top));
+            fg.ColorStops.Add(CkStop(0.35f, Color.FromArgb(235, top.R, top.G, top.B)));
+            fg.ColorStops.Add(CkStop(1, Color.FromArgb(0, top.R, top.G, top.B)));
             var fade = G.Sprite(fg, relative: false);
             fade.Size = new Vector2(CsW - (CpListX - 40), CpTop);
             fade.Offset = new Vector3(CpListX - 40, 0, 0);
@@ -164,14 +164,14 @@ public sealed partial class WallStage
         // 底部一段由透明到半黑的渐变，胶囊和缩略条压在图上也看得清（跟着它们一起藏）
         var sg = G.C.CreateLinearGradientBrush();
         sg.StartPoint = new Vector2(0, 0); sg.EndPoint = new Vector2(0, 1);
-        sg.ColorStops.Add(G.C.CreateColorGradientStop(0, Color.FromArgb(0, 0, 0, 0)));
-        sg.ColorStops.Add(G.C.CreateColorGradientStop(0.45f, Color.FromArgb(90, 0, 0, 0)));
-        sg.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(175, 0, 0, 0)));
+        sg.ColorStops.Add(CkStop(0, Color.FromArgb(0, 0, 0, 0)));
+        sg.ColorStops.Add(CkStop(0.45f, Color.FromArgb(90, 0, 0, 0)));
+        sg.ColorStops.Add(CkStop(1, Color.FromArgb(175, 0, 0, 0)));
         var vShade = G.Sprite(sg, relative: false);
         vShade.Size = new Vector2(CsW, CsH - (CshPillY - 200));
         vShade.Offset = new Vector3(0, CshPillY - 200, 0);
         var vPill = Sp();
-        var vIcon = G.Sprite(G.Solid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
+        var vIcon = G.Sprite(CkSolid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
         foreach (var x in new Visual[] { vBlack, vImg, vShade, vStrip, vPill, vIcon }) viewer.Children.InsertAtTop(x);
         var vCur = CurNew(viewer);
 
@@ -180,7 +180,7 @@ public sealed partial class WallStage
         menu.IsVisible = false;
         var mScrim = G.Sprite(G.Solid(RmScrim), relative: false);
         mScrim.Size = new Vector2(CsW, CsH);
-        var mImg = G.Sprite(G.Solid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
+        var mImg = G.Sprite(CkSolid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
         var mName = Sp();
         var mCard = Sp();
         foreach (var x in new Visual[] { mScrim, mImg, mName, mCard }) menu.Children.InsertAtTop(x);
@@ -192,7 +192,7 @@ public sealed partial class WallStage
         var dScrim = G.Sprite(G.Solid(RmScrim), relative: false);
         dScrim.Size = new Vector2(CsW, CsH);
         var dCard = Sp();
-        var dImg = G.Sprite(G.Solid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
+        var dImg = G.Sprite(CkSolid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
         foreach (var x in new Visual[] { dScrim, dCard, dImg }) dlg.Children.InsertAtTop(x);
 
         var head = Sp();
@@ -329,7 +329,7 @@ public sealed partial class WallStage
                     using (var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 36, FontWeight = CpTitleWt, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
                         ds.DrawText(name, new Rect(126, y, CshLeftW - 126 - 110, CshSlot), ink, f);
                     using (var nf = new CanvasTextFormat { FontFamily = RwPoppins, FontSize = 30, FontWeight = new Windows.UI.Text.FontWeight(500), HorizontalAlignment = CanvasHorizontalAlignment.Right, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
-                        ds.DrawText(it.Count.ToString(), new Rect(CshLeftW - 136, y, 100, CshSlot), on ? Color.FromArgb(190, CpAccentInk.R, CpAccentInk.G, CpAccentInk.B) : Color.FromArgb(255, 0x8E, 0x90, 0x98), nf);
+                        ds.DrawText(it.Count.ToString(), new Rect(CshLeftW - 136, y, 100, CshSlot), on ? Color.FromArgb(190, CpAccentInk.R, CpAccentInk.G, CpAccentInk.B) : Ck(Color.FromArgb(255, 0x8E, 0x90, 0x98)), nf);
                 }
         }
         // 游戏：封面小方块（单独的精灵，图是游戏库自己的封面）
@@ -338,7 +338,7 @@ public sealed partial class WallStage
         {
             var it = _cshItems[i];
             if (it.Key is null or "fav" or "other") continue;
-            var sp = G.Sprite(G.Solid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
+            var sp = G.Sprite(CkSolid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
             LoadedImageSurface? r = null;
             if (_lib.ById.TryGetValue(it.Key, out var item) && RqArt(item) is { } art && (r = Images.Acquire(art, (int)Math.Ceiling(s * R), (int)Math.Ceiling(s * 1.5f * R))) != null)
             {
@@ -426,7 +426,7 @@ public sealed partial class WallStage
                     ds.Clear(Colors.Transparent);
                     ds.Transform = Matrix3x2.CreateScale(R);
                     using var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 30, FontWeight = new Windows.UI.Text.FontWeight(500), VerticalAlignment = CanvasVerticalAlignment.Top, WordWrapping = CanvasWordWrapping.NoWrap };
-                    ds.DrawText(text, new Rect(6, 4, 790, CshDateH), Color.FromArgb(255, 0x7D, 0x80, 0x8A), f);
+                    ds.DrawText(text, new Rect(6, 4, 790, CshDateH), Ck(Color.FromArgb(255, 0x7D, 0x80, 0x8A)), f);
                 }
                 var ds2 = G.Sprite(G.C.CreateSurfaceBrush(surf), relative: false);
                 ds2.Size = new Vector2(800, CshDateH);
@@ -442,7 +442,7 @@ public sealed partial class WallStage
             var sh = G.Sprite(v.ShadowB!, relative: false);
             sh.Size = new Vector2(W + 80, H + 80);
             sh.Offset = new Vector3(-40, -40, 0);
-            var img = G.Sprite(G.Solid(Color.FromArgb(255, 0xDE, 0xDF, 0xE5)), relative: false);
+            var img = G.Sprite(CkSolid(Color.FromArgb(255, 0xDE, 0xDF, 0xE5)), relative: false);
             img.Size = new Vector2(W, H);
             var rr = G.C.CreateRoundedRectangleGeometry();
             rr.Size = new Vector2(W, H);
@@ -487,7 +487,7 @@ public sealed partial class WallStage
             {
                 Images.Release(t.Ref);
                 t.Ref = null;
-                t.Img.Brush = G.Solid(Color.FromArgb(255, 0xDE, 0xDF, 0xE5));
+                t.Img.Brush = CkSolid(Color.FromArgb(255, 0xDE, 0xDF, 0xE5));
             }
         }
     }
@@ -502,7 +502,7 @@ public sealed partial class WallStage
         ds.Clear(Colors.Transparent);
         ds.Transform = Matrix3x2.CreateScale(CsRaster);
         using var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 34, HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
-        ds.DrawText(text, new Rect(0, 0, CpListW, CpBottom - CpTop), Color.FromArgb(255, 0x7D, 0x80, 0x8A), f);
+        ds.DrawText(text, new Rect(0, 0, CpListW, CpBottom - CpTop), Ck(Color.FromArgb(255, 0x7D, 0x80, 0x8A)), f);
     }
 
     /// <summary>滚到焦点露出来，焦点框过去（左列 = 选中的那一行，网格 = 焦点那张）。手指拖过之后先不自动滚。</summary>
@@ -784,11 +784,11 @@ public sealed partial class WallStage
         ds.Transform = Matrix3x2.CreateTranslation(pad - x, pad - y) * Matrix3x2.CreateScale(CsRaster);
         ds.Antialiasing = CanvasAntialiasing.Antialiased;
         RsSoftShadow(ds, x, y + 14, w, h, 30, 24, 0.35f);
-        ds.FillRoundedRectangle(x, y, w, h, 30, 30, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
+        ds.FillRoundedRectangle(x, y, w, h, 30, 30, Ck(Color.FromArgb(255, 0xFA, 0xFA, 0xFA)));
         for (int i = 0; i < labels.Length; i++)
         {
             float ry = y + i * CshMenuRowH, cy = ry + CshMenuRowH / 2;
-            if (i > 0) ds.FillRectangle(x, ry - 1.5f, w, 3, Color.FromArgb(255, 0xEC, 0xEE, 0xF2));
+            if (i > 0) ds.FillRectangle(x, ry - 1.5f, w, 3, Ck(Color.FromArgb(255, 0xEC, 0xEE, 0xF2)));
             bool danger = i == labels.Length - 1;
             CshMenuIcon(ds, i, x + 66, cy, danger);
             using (var f = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 40, FontWeight = CpTitleWt, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
@@ -797,7 +797,7 @@ public sealed partial class WallStage
             {
                 // RB 圆章：网格和大图里按 RB 直接收藏
                 float bx = x + w - 92, bw = 56, bh = 42;
-                ds.FillRoundedRectangle(bx, cy - bh / 2, bw, bh, 12, 12, Color.FromArgb(255, 0x8E, 0x90, 0x98));
+                ds.FillRoundedRectangle(bx, cy - bh / 2, bw, bh, 12, 12, Ck(Color.FromArgb(255, 0x8E, 0x90, 0x98)));
                 using var bf = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 21, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
                 ds.DrawText("RB", new Rect(bx, cy - bh / 2, bw, bh), Color.FromArgb(255, 0xF2, 0xF2, 0xF4), bf);
             }
@@ -908,7 +908,7 @@ public sealed partial class WallStage
         }
         Images.Release(v.DRef);
         v.DRef = Images.Acquire(c.Path, (int)Math.Ceiling(560 * R), (int)Math.Ceiling(315 * R));
-        v.DImg.Brush = G.Solid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0));
+        v.DImg.Brush = CkSolid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0));
         if (v.DRef != null) { var b = G.C.CreateSurfaceBrush(v.DRef); b.Stretch = CompositionStretch.UniformToFill; v.DImg.Brush = b; }
         v.DImg.Size = new Vector2(560, 315);
         v.DImg.Offset = new Vector3(x0 + (CshDlgW - 560) / 2, y0 + 148, 0);

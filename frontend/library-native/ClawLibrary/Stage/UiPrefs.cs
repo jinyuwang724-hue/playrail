@@ -46,6 +46,8 @@ public sealed record UiPrefs
     public string CocoonCustomStart { get; init; } = "#86a7fd";
     public string CocoonCustomEnd { get; init; } = "#8037ff";
     public int CocoonHarmony { get; init; } = 1;
+    /// <summary>Cocoon 暗色模式（深灰，不是纯黑）。</summary>
+    public bool CocoonDark { get; init; }
     public bool Sounds { get; init; }
     public int SoundVolume { get; init; } = 40;
     public int SoundTheme { get; init; }
@@ -129,6 +131,7 @@ public sealed record UiPrefs
                     "cocoonTheme" when int.TryParse(v, out var i) => p with { CocoonTheme = Math.Clamp(i, -1, CocoonPalette.Presets.Length - 1) },
                     "cocoonStart" when v.Length == 7 && v[0] == '#' && v.Skip(1).All(Uri.IsHexDigit) => p with { CocoonCustomStart = v.ToLowerInvariant() },
                     "cocoonEnd" when v.Length == 7 && v[0] == '#' && v.Skip(1).All(Uri.IsHexDigit) => p with { CocoonCustomEnd = v.ToLowerInvariant() },
+                    "cocoonDark" when bool.TryParse(v, out var b) => p with { CocoonDark = b },
                     "cocoonHarmony" when int.TryParse(v, out var i) => p with { CocoonHarmony = Math.Clamp(i, 0, 3) },
                     "sounds" when bool.TryParse(v, out var b) => p with { Sounds = b },
                     "soundVolume" when int.TryParse(v, out var i) => p with { SoundVolume = Math.Clamp(i, 0, 100) },
@@ -173,7 +176,7 @@ public sealed record UiPrefs
                 $"tabOrder={string.Join(',', TabOrder)}", $"tabsHidden={string.Join(',', TabsHidden)}", $"showHidden={ShowHiddenGames}",
                 $"sourceSteam={SourceSteam}", $"steamInstalledOnly={SteamInstalledOnly}", $"sourceShortcuts={SourceShortcuts}", $"afterLaunch={AfterLaunch}", $"nowPlaying={NowPlaying}",
                 $"sourceXbox={SourceXbox}", $"preloadSteam={PreloadSteam}", $"backgroundRun={BackgroundRun}",
-                $"accent={Accent}", $"cocoonTheme={CocoonTheme}", $"cocoonStart={CocoonCustomStart}", $"cocoonEnd={CocoonCustomEnd}", $"cocoonHarmony={CocoonHarmony}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
+                $"accent={Accent}", $"cocoonTheme={CocoonTheme}", $"cocoonStart={CocoonCustomStart}", $"cocoonEnd={CocoonCustomEnd}", $"cocoonHarmony={CocoonHarmony}", $"cocoonDark={CocoonDark}", $"sounds={Sounds}", $"soundVolume={SoundVolume}", $"folders={string.Join('|', Folders)}", $"fseSteam={FseSteam}", $"navHaptics={NavHaptics}", $"libraryCover={LibraryCover}", $"shotsStyle={ShotsStyle}",
                 $"soundTheme={SoundTheme}", $"musicEnabled={MusicEnabled}", $"musicVolume={MusicVolume}", $"musicTrack={MusicTrack}", $"musicLoop={MusicLoop}",
                 $"lightsOn={LightsOn}", $"posterTint={PosterTint}", $"posterTintCustom={PosterTintCustom}", $"posterTintColor={PosterTintColor}", $"posterTintIntensity={PosterTintIntensity}", $"oobe={Oobe}", $"lang={Lang}", $"homeStyle={Home}", $"insertSound={InsertSound}",
             });

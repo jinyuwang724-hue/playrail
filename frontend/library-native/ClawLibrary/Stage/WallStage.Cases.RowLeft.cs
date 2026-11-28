@@ -24,7 +24,8 @@ public sealed partial class WallStage
 {
     private const float LsW = 672, LsRad = 30;
     private static readonly Color LsScrim = Color.FromArgb(140, 24, 24, 28);
-    private static readonly Color LsSep = Color.FromArgb(255, 0xE6, 0xE7, 0xEA), LsGrey = Color.FromArgb(255, 0x8E, 0x90, 0x98);
+    private static Color LsSep => Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEA));
+    private static Color LsGrey => Ck(Color.FromArgb(255, 0x8E, 0x90, 0x98));
 
     private static readonly (string Id, string Label)[] LsMain =
     {
@@ -306,8 +307,8 @@ public sealed partial class WallStage
             ds.Clear(Colors.Transparent);
             ds.Transform = Matrix3x2.CreateTranslation(LsCardPad, LsCardPad) * Matrix3x2.CreateScale(R);
             RsSoftShadow(ds, 0, 6, LsCardW, LsCardH, LsCardR, 12, 0.12f);
-            ds.FillRoundedRectangle(0, 0, LsCardW, LsCardH, LsCardR, LsCardR, Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
-            ds.DrawRoundedRectangle(0.5f, 0.5f, LsCardW - 1, LsCardH - 1, LsCardR, LsCardR, Color.FromArgb(255, 0xE8, 0xE9, 0xEC), 1);
+            ds.FillRoundedRectangle(0, 0, LsCardW, LsCardH, LsCardR, LsCardR, Ck(Color.FromArgb(255, 0xFF, 0xFF, 0xFF)));
+            ds.DrawRoundedRectangle(0.5f, 0.5f, LsCardW - 1, LsCardH - 1, LsCardR, LsCardR, Ck(Color.FromArgb(255, 0xE8, 0xE9, 0xEC)), 1);
         }
         ls.Card = G.Sprite(G.C.CreateSurfaceBrush(ls.CardSurf), relative: false);
         ls.Card.Size = new Vector2(w, h);

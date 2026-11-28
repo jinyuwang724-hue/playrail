@@ -552,7 +552,7 @@ public sealed partial class WallStage
         ds.DrawGeometry(geo, br, 3.5f, RwRoundStroke);
     }
 
-    private void RwDrawRight(CanvasDrawingSession ds, RwChrome rw, float shift, string clock, string ampm)
+    private void RwDrawRight(CanvasDrawingSession ds, RwChrome rw, float shift, string clock, string ampm, Color? ink = null)
     {
         var dev = ds.Device;
         var t0 = ds.Transform;
@@ -621,8 +621,8 @@ public sealed partial class WallStage
         using var l2 = new CanvasTextLayout(dev, ampm, f2, 1000, 100);
         // 按墨迹定位（截图实测：数字底 93，「上午」底 96）；LineMetrics 在裁剪发布里取不到
         var d1 = l1.DrawBounds; var d2 = l2.DrawBounds;
-        ds.DrawTextLayout(l1, 1683.5f - (float)d1.X, 93 - (float)(d1.Y + d1.Height), RwInk);
-        ds.DrawTextLayout(l2, 1683.5f + (float)d1.Width + 16.5f - (float)d2.X, 96 - (float)(d2.Y + d2.Height), RwInk);
+        ds.DrawTextLayout(l1, 1683.5f - (float)d1.X, 93 - (float)(d1.Y + d1.Height), ink ?? RwInk);
+        ds.DrawTextLayout(l2, 1683.5f + (float)d1.Width + 16.5f - (float)d2.X, 96 - (float)(d2.Y + d2.Height), ink ?? RwInk);
         ds.Transform = t0;
     }
 

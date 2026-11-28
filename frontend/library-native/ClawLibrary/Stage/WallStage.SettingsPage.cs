@@ -696,6 +696,7 @@ public sealed partial class WallStage
                 break;
             case UiTheme.Cocoon:
             {
+                _stRows.Add(StToggle("暗色模式", _prefs.CocoonDark, SetCocoonDark, false));
                 // 11-28 jinyu：一排颜色珠就是预设，「自定义」单独一个容器；不写说明文字
                 _stRows.Add(new PerfRow { Section = true, Title = "主题色" });
                 var swatchNames = CocoonPalette.Presets.Select(p => p.Name).ToArray();

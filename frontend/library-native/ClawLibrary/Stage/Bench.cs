@@ -514,6 +514,9 @@ public static class Bench
         try
         {
             await Task.Delay(1800);
+            // --dark：录屏自测期间临时开 Cocoon 暗色模式，跑完恢复
+            bool darkProbe = Program.Args.Contains("--dark"), darkWas = s.ProbeDark(darkProbe ? true : null);
+            try {
             switch (state)
             {
                 case "expand": s.Activate(); break;
@@ -653,6 +656,7 @@ public static class Bench
                     break;
                 }
             }
+            } finally { if (darkProbe) s.ProbeDark(darkWas); }
             Log.Info($"state {state} reached");
         }
         catch (Exception ex) { Log.Error("state", ex); }

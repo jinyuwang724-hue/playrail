@@ -43,7 +43,7 @@ public sealed partial class WallStage
         using (var tf = new CanvasTextFormat { FontFamily = RmFont(text), FontSize = 32, FontWeight = RsWt(text, 500), HorizontalAlignment = CanvasHorizontalAlignment.Right, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis })
             ds.DrawText(text, new Windows.Foundation.Rect(x0 - 200, 100, w + 200, 46), s.Done ? ScPurple : RmInk, tf);
         float y = 160, h = 10;
-        ds.FillRoundedRectangle(x0, y, w, h, h / 2, h / 2, Color.FromArgb(255, 0xE2, 0xE3, 0xE7));
+        ds.FillRoundedRectangle(x0, y, w, h, h / 2, h / 2, Ck(Color.FromArgb(255, 0xE2, 0xE3, 0xE7)));
         float f = Math.Clamp(s.Step / (float)ScSteps, 0.04f, 1f);
         using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, RwC2) { StartPoint = new Vector2(x0, y), EndPoint = new Vector2(x0 + w, y) };
         ds.FillRoundedRectangle(x0, y, w * f, h, h / 2, h / 2, br);
@@ -58,7 +58,7 @@ public sealed partial class WallStage
         using (var banner = CanvasGeometry.CreateRoundedRectangle(dev, x, by, w, bh, br, br))
         {
             RsSoftShadow(ds, x, by + 8, w, bh, br, 14, 0.18f);
-            using (var ph = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xEC, 0xED, 0xF1), Color.FromArgb(255, 0xD6, 0xD7, 0xDE)) { StartPoint = new Vector2(x, by), EndPoint = new Vector2(x + w, by + bh) })
+            using (var ph = new CanvasLinearGradientBrush(dev, Ck(Color.FromArgb(255, 0xEC, 0xED, 0xF1)), Ck(Color.FromArgb(255, 0xD6, 0xD7, 0xDE))) { StartPoint = new Vector2(x, by), EndPoint = new Vector2(x + w, by + bh) })
                 ds.FillGeometry(banner, ph);
             using (ds.CreateLayer(1, banner))
             {
@@ -76,7 +76,7 @@ public sealed partial class WallStage
             var cover = AgBitmapOf(s.ArtUrl.GetValueOrDefault("p")) ?? AgBitmapOf(RqArt(g));
             RsSoftShadow(ds, cx, cy + 8, cw, ch, cw * RwRound, 12, 0.35f);
             using var cr = CanvasGeometry.CreateRoundedRectangle(dev, cx, cy, cw, ch, cw * RwRound, cw * RwRound);
-            ds.FillGeometry(cr, Color.FromArgb(255, 0xC8, 0xC9, 0xD0));
+            ds.FillGeometry(cr, Ck(Color.FromArgb(255, 0xC8, 0xC9, 0xD0)));
             if (cover != null) using (ds.CreateLayer(1, cr)) ScDrawImage(ds, cover, cx, cy, cw, ch, contain: false);
         }
         // ---- 资料卡 ----
@@ -103,7 +103,7 @@ public sealed partial class WallStage
         {
             float tw = kind switch { "p" => 70, "header" => 222, _ => 250 };
             using var slot = CanvasGeometry.CreateRoundedRectangle(dev, tx, ty, tw, th, 16, 16);
-            ds.FillGeometry(slot, Color.FromArgb(255, 0xE6, 0xE7, 0xEB));
+            ds.FillGeometry(slot, Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEB)));
             bool has = s.ArtUrl.TryGetValue(kind, out var url);
             if (has && AgBitmapOf(url) is { } bmp) using (ds.CreateLayer(1, slot)) ScDrawImage(ds, bmp, tx, ty, tw, th, contain: kind == "logo");
             string label = has ? name : s.Done ? $"{name} · 没找到" : name;
@@ -128,7 +128,7 @@ public sealed partial class WallStage
     {
         RsSoftShadow(ds, x, y + 5, w, h, 36, 6, 0.16f);
         ds.FillRoundedRectangle(x, y, w, h, 36, 36, RsGroup);
-        using var edge = new CanvasLinearGradientBrush(ds.Device, Color.FromArgb(255, 0xE8, 0xE9, 0xEC), Color.FromArgb(255, 0xBC, 0xBD, 0xC1)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) };
+        using var edge = new CanvasLinearGradientBrush(ds.Device, Ck(Color.FromArgb(255, 0xE8, 0xE9, 0xEC)), Ck(Color.FromArgb(255, 0xBC, 0xBD, 0xC1))) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) };
         ds.DrawRoundedRectangle(x + 0.75f, y + 0.75f, w - 1.5f, h - 1.5f, 36, 36, edge, 1.5f);
     }
 

@@ -48,7 +48,8 @@ public sealed partial class WallStage
     private static readonly string[] RmLabels = { "启动", "编辑", "游戏配置", "打开本地文件", "移除" };
     private static float RmCardH => RmLabels.Length * RmRowH + (RmLabels.Length - 1) * RmSep;
     private static float RmCardY => (CsH - RmCardH) / 2;
-    private static readonly Color RmInk = Color.FromArgb(255, 0x1E, 0x1E, 0x24), RmRed = Color.FromArgb(255, 0xF2, 0x4B, 0x5A);
+    private static Color RmInk => Ck(Color.FromArgb(255, 0x1E, 0x1E, 0x24));
+    private static Color RmRed => Color.FromArgb(255, 0xF2, 0x4B, 0x5A);
 
     private bool RmOpen => _rm is { Closing: false };
 
@@ -368,11 +369,11 @@ public sealed partial class WallStage
                 ds.DrawImage(op);
                 ds.Transform = Matrix3x2.CreateScale(R);
             }
-            ds.FillRoundedRectangle(pad, pad, RmCardW, RmCardH, RmCardR, RmCardR, Color.FromArgb(255, 0xF7, 0xF8, 0xFA));
+            ds.FillRoundedRectangle(pad, pad, RmCardW, RmCardH, RmCardR, RmCardR, Ck(Color.FromArgb(255, 0xF7, 0xF8, 0xFA)));
             for (int i = 0; i < RmLabels.Length; i++)
             {
                 float y = pad + i * (RmRowH + RmSep);
-                if (i > 0) ds.FillRectangle(pad, y - RmSep, RmCardW, RmSep, Color.FromArgb(255, 0xE6, 0xE8, 0xEC));
+                if (i > 0) ds.FillRectangle(pad, y - RmSep, RmCardW, RmSep, Ck(Color.FromArgb(255, 0xE6, 0xE8, 0xEC)));
                 bool danger = i == RmLabels.Length - 1;
                 string label = danger && rm.Armed ? "再按一次确认移除" : RmLabels[i];
                 RmIcon(ds, i, pad + 62, y + RmRowH / 2);
@@ -389,7 +390,7 @@ public sealed partial class WallStage
     /// <summary>行尾的手柄键提示：灰色圆底白字（Cocoon 的 Y / R1 小圆章）。</summary>
     private static void RmBadge(CanvasDrawingSession ds, float cx, float cy, string text)
     {
-        ds.FillCircle(cx, cy, 21, Color.FromArgb(255, 0x8E, 0x90, 0x98));
+        ds.FillCircle(cx, cy, 21, Ck(Color.FromArgb(255, 0x8E, 0x90, 0x98)));
         using var f = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
         ds.DrawText(text, new Windows.Foundation.Rect(cx - 21, cy - 21, 42, 42), Color.FromArgb(255, 0xF2, 0xF2, 0xF4), f);
     }

@@ -313,7 +313,7 @@ public sealed partial class WallStage
             b.Stretch = CompositionStretch.UniformToFill;
             v.Brush = b;
         }
-        else v.Brush = G.Solid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0));
+        else v.Brush = CkSolid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0));
         v.Size = new Vector2(RqCoverW, RqCoverH);
         v.Offset = new Vector3(x, y, 0);
         var rr = G.C.CreateRoundedRectangleGeometry();
@@ -366,8 +366,8 @@ public sealed partial class WallStage
 
     private static void RqHeaderPill(CanvasDrawingSession ds, float x, float y)
     {
-        ds.FillRoundedRectangle(x, y, 134, 74, 37, 37, Color.FromArgb(255, 0xE2, 0xE3, 0xE7));
-        ds.FillCircle(x + 36, y + 37, 21, Color.FromArgb(255, 0x9A, 0x9C, 0xA3));
+        ds.FillRoundedRectangle(x, y, 134, 74, 37, 37, Ck(Color.FromArgb(255, 0xE2, 0xE3, 0xE7)));
+        ds.FillCircle(x + 36, y + 37, 21, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)));
         using (var f = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
             ds.DrawText("B", new Windows.Foundation.Rect(x + 15, y + 16, 42, 42), Color.FromArgb(255, 0xF2, 0xF2, 0xF4), f);
         using var pb = new CanvasPathBuilder(ds.Device);
@@ -411,8 +411,8 @@ public sealed partial class WallStage
         else
         {
             RsSoftShadow(ds, x, y + 5, w, h, r, 9, 0.16f);
-            ds.FillRoundedRectangle(x, y, w, h, r, r, Color.FromArgb(255, 0xFC, 0xFC, 0xFD));
-            ds.DrawRoundedRectangle(x + 0.5f, y + 0.5f, w - 1, h - 1, r, r, Color.FromArgb(255, 0xEA, 0xEB, 0xEE), 1);
+            ds.FillRoundedRectangle(x, y, w, h, r, r, Ck(Color.FromArgb(255, 0xFC, 0xFC, 0xFD)));
+            ds.DrawRoundedRectangle(x + 0.5f, y + 0.5f, w - 1, h - 1, r, r, Ck(Color.FromArgb(255, 0xEA, 0xEB, 0xEE)), 1);
         }
         var ink = green ? Color.FromArgb(255, 0xFF, 0xFF, 0xFF) : RmInk;
         using var tf = new CanvasTextFormat { FontFamily = RmFont(label), FontSize = 42, FontWeight = RsWt(label), WordWrapping = CanvasWordWrapping.NoWrap };
@@ -431,7 +431,7 @@ public sealed partial class WallStage
         }
         else
         {
-            ds.FillCircle(bx + 22, cy, 22, green ? Color.FromArgb(90, 0xFF, 0xFF, 0xFF) : Color.FromArgb(255, 0x9A, 0x9C, 0xA3));
+            ds.FillCircle(bx + 22, cy, 22, green ? Color.FromArgb(90, 0xFF, 0xFF, 0xFF) : Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)));
             using var kf = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
             ds.DrawText(key, new Windows.Foundation.Rect(bx, cy - 22, 44, 44), green ? cb : Color.FromArgb(255, 0xF2, 0xF2, 0xF4), kf);
         }
@@ -519,8 +519,8 @@ public sealed partial class WallStage
         {
             ds.Transform = Matrix3x2.CreateTranslation(pad, pad) * ds.Transform;
             RsSoftShadow(ds, 0, 8, w, h, 36, 16, 0.25f);
-            ds.FillRoundedRectangle(0, 0, w, h, 36, 36, Color.FromArgb(240, 0xFA, 0xFA, 0xFA));
-            ds.DrawRoundedRectangle(0.5f, 0.5f, w - 1, h - 1, 36, 36, Color.FromArgb(255, 0xE6, 0xE7, 0xEA), 1);
+            ds.FillRoundedRectangle(0, 0, w, h, 36, 36, Ck(Color.FromArgb(240, 0xFA, 0xFA, 0xFA)));
+            ds.DrawRoundedRectangle(0.5f, 0.5f, w - 1, h - 1, 36, 36, Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEA)), 1);
             using var tf = new CanvasTextFormat { FontFamily = RmFont(item.Title), FontSize = 36, FontWeight = RsWt(item.Title), WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
             ds.DrawText(item.Title, new Windows.Foundation.Rect(110, 18, w - 130, 50), RmInk, tf);
             using var sf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 32, FontWeight = new Windows.UI.Text.FontWeight(500), WordWrapping = CanvasWordWrapping.NoWrap };
@@ -528,7 +528,7 @@ public sealed partial class WallStage
         });
         root.Children.InsertAtTop(card);
         LoadedImageSurface? iconSurf = null;
-        var icon = G.Sprite(G.Solid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
+        var icon = G.Sprite(CkSolid(Color.FromArgb(255, 0xD8, 0xD9, 0xE0)), relative: false);
         if (RqArt(item) is { } art)
         {
             iconSurf = Images.AcquireReuse(art, (int)Math.Ceiling(64 * R), (int)Math.Ceiling(96 * R));

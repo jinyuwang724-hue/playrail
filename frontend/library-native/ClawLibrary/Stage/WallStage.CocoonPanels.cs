@@ -15,7 +15,8 @@ namespace ClawLibrary.Stage;
 
 public sealed partial class WallStage
 {
-    private static readonly Color CpTile = Color.FromArgb(255, 0xF0, 0xF0, 0xF5), CpTrack = Color.FromArgb(255, 0xE4, 0xE4, 0xEC);
+    private static Color CpTile => Ck(Color.FromArgb(255, 0xF0, 0xF0, 0xF5));
+    private static Color CpTrack => Ck(Color.FromArgb(255, 0xE4, 0xE4, 0xEC));
 
     /// <summary>读数卡里画什么：按页面和当前分类（性能页：选中风扇时下面换成风扇曲线）。</summary>
     private void CpPanel(CanvasDrawingSession ds, float x, float y, float w, float h, string cat)
@@ -40,7 +41,7 @@ public sealed partial class WallStage
         RsSoftShadow(ds, x + 4, y + 12, w - 8, h, r, 14, 0.20f);
         RsSoftShadow(ds, x, y + 2, w, h, r, 3, 0.10f);
         using var card = CanvasGeometry.CreateRoundedRectangle(dev, x, y, w, h, r, r);
-        using (var fill = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xFD, 0xFD, 0xFE), Color.FromArgb(255, 0xF0, 0xF1, 0xF4)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) })
+        using (var fill = new CanvasLinearGradientBrush(dev, Ck(Color.FromArgb(255, 0xFD, 0xFD, 0xFE)), Ck(Color.FromArgb(255, 0xF0, 0xF1, 0xF4))) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) })
             ds.FillGeometry(card, fill);
         using (ds.CreateLayer(1, card))
         {
@@ -49,12 +50,12 @@ public sealed partial class WallStage
             if (seps != null)
                 foreach (var sy in seps)
                 {
-                    ds.FillRectangle(x, sy, w, 2.5f, Color.FromArgb(255, 0xE1, 0xE2, 0xE7));
-                    ds.FillRectangle(x, sy + 2.5f, w, 1.5f, Color.FromArgb(255, 0xFF, 0xFF, 0xFF));
+                    ds.FillRectangle(x, sy, w, 2.5f, Ck(Color.FromArgb(255, 0xE1, 0xE2, 0xE7)));
+                    ds.FillRectangle(x, sy + 2.5f, w, 1.5f, Ck(Color.FromArgb(255, 0xFF, 0xFF, 0xFF)));
                 }
-            ds.DrawLine(x + r * 0.6f, y + 1.5f, x + w - r * 0.6f, y + 1.5f, Color.FromArgb(255, 0xFF, 0xFF, 0xFF), 2);
+            ds.DrawLine(x + r * 0.6f, y + 1.5f, x + w - r * 0.6f, y + 1.5f, Ck(Color.FromArgb(255, 0xFF, 0xFF, 0xFF)), 2);
         }
-        using var edge = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xF4, 0xF4, 0xF7), Color.FromArgb(255, 0xC4, 0xC5, 0xCC)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) };
+        using var edge = new CanvasLinearGradientBrush(dev, Ck(Color.FromArgb(255, 0xF4, 0xF4, 0xF7)), Ck(Color.FromArgb(255, 0xC4, 0xC5, 0xCC))) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) };
         ds.DrawRoundedRectangle(x + 0.75f, y + 0.75f, w - 1.5f, h - 1.5f, r, r, edge, 1.5f);
     }
 
@@ -76,7 +77,7 @@ public sealed partial class WallStage
         if (frac > 0.005f)
         {
             using var arc = Arc(sweep * frac);
-            if (dim) ds.DrawGeometry(arc, Color.FromArgb(255, 0xB4, 0xB6, 0xBE), stroke, RwRoundStroke);
+            if (dim) ds.DrawGeometry(arc, Ck(Color.FromArgb(255, 0xB4, 0xB6, 0xBE)), stroke, RwRoundStroke);
             else
             {
                 using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, RwC2) { StartPoint = new Vector2(cx - r, cy + r), EndPoint = new Vector2(cx + r, cy - r) };
@@ -172,7 +173,7 @@ public sealed partial class WallStage
             int cnt = 0;
             for (int j = a; j < end; j++) if (j >= 0 && j < hist.Length) { val += hist[j]; cnt++; }
             float bx = x + i * (bw + gap);
-            ds.FillRoundedRectangle(bx, y, bw, h, bw / 2, bw / 2, Color.FromArgb(255, 0xE6, 0xE6, 0xEE));
+            ds.FillRoundedRectangle(bx, y, bw, h, bw / 2, bw / 2, Ck(Color.FromArgb(255, 0xE6, 0xE6, 0xEE)));
             if (cnt == 0) continue;
             float bh = Math.Max(bw, (float)(val / cnt / max) * h);
             using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, RwC2) { StartPoint = new Vector2(0, y + h - bh), EndPoint = new Vector2(0, y + h) };

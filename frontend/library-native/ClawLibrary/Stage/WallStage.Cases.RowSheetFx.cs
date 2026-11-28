@@ -102,7 +102,7 @@ public sealed partial class WallStage
         double ms = RwPeriodMs;
         for (int i = 0; i < 3; i++)
         {
-            var stop = G.C.CreateColorGradientStop(i / 2f, At(s[i], 0));
+            var stop = CkStop(i / 2f, At(s[i], 0));
             grad.ColorStops.Add(stop);
             if (Reduced) continue;
             var a = G.C.CreateColorKeyFrameAnimation();
@@ -173,17 +173,17 @@ public sealed partial class WallStage
     private static void RsPaintPillExpanded(CanvasDrawingSession ds, bool canDown, bool canUp)
     {
         var dev = ds.Device;
-        ds.FillRoundedRectangle(0, 0, RsPillW, RsPillH, RsPillH / 2, RsPillH / 2, Color.FromArgb(255, 0xE4, 0xE5, 0xE9));
+        ds.FillRoundedRectangle(0, 0, RsPillW, RsPillH, RsPillH / 2, RsPillH / 2, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xE9)));
         float iw = (RsPillW - 18) / 2, ih = RsPillH - 14;
         for (int s = 0; s < 2; s++)
         {
             bool on = s == 0 ? canDown : canUp;
             float x = 6 + s * (iw + 6), y = 7;
-            ds.FillRoundedRectangle(x, y, iw, ih, ih / 2, ih / 2, Color.FromArgb(255, 0xCC, 0xCD, 0xD2));
-            var ink = on ? Color.FromArgb(255, 0x1E, 0x1E, 0x24) : Color.FromArgb(255, 0xA8, 0xAA, 0xB0);
+            ds.FillRoundedRectangle(x, y, iw, ih, ih / 2, ih / 2, Ck(Color.FromArgb(255, 0xCC, 0xCD, 0xD2)));
+            var ink = on ? Ck(Color.FromArgb(255, 0x1E, 0x1E, 0x24)) : Ck(Color.FromArgb(255, 0xA8, 0xAA, 0xB0));
             // 十字键：整个十字淡灰，要按的那一臂（↓ 按钮是左、↑ 按钮是右）深色并带小三角，提示按十字键的左 / 右
             float dx = x + 34, dy = y + ih / 2;
-            var faint = Color.FromArgb(255, 0xA8, 0xAA, 0xB0);
+            var faint = Ck(Color.FromArgb(255, 0xA8, 0xAA, 0xB0));
             ds.FillRoundedRectangle(dx - 16, dy - 6, 32, 12, 3, 3, faint);
             ds.FillRoundedRectangle(dx - 6, dy - 16, 12, 32, 3, 3, faint);
             float side = s == 0 ? -1 : 1;
@@ -234,8 +234,8 @@ public sealed partial class WallStage
         }
         var off = Layer(ds =>
         {
-            ds.FillRoundedRectangle(0, 0, w, h, h / 2, h / 2, Color.FromArgb(255, 0xE4, 0xE5, 0xE9));
-            ds.DrawRoundedRectangle(2, 2, w - 4, h - 4, h / 2 - 2, h / 2 - 2, Color.FromArgb(255, 0x9A, 0x9C, 0xA3), 4);
+            ds.FillRoundedRectangle(0, 0, w, h, h / 2, h / 2, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xE9)));
+            ds.DrawRoundedRectangle(2, 2, w - 4, h - 4, h / 2 - 2, h / 2 - 2, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)), 4);
         }, w, h);
         var on = Layer(ds =>
         {

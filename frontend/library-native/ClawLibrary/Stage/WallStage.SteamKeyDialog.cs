@@ -42,7 +42,7 @@ public sealed partial class WallStage
     private readonly List<TextBox> _akBoxes = new();
 
     private const float AkW = 920, AkCardPad = 40, AkFieldH = 104, AkLinkH = 84, AkLabelH = 44;
-    private static readonly Color AkFieldBg = Color.FromArgb(255, 0xE6, 0xE7, 0xEC);
+    private static Color AkFieldBg => Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEC));
 
     private string AkText(int i) => i < _akBoxes.Count ? _akBoxes[i].Text.Trim() : "";
     private string? AkCheck(AkState ak, int i) => ak.Spec.Fields[i].Check(AkText(i));
@@ -210,9 +210,9 @@ public sealed partial class WallStage
                 ds.DrawTextLayout(lay, 60, y + 4, RsSub);
             // 网址胶囊：灰底、左边 Y 圆章、紫色网址 + 右边外链箭头（Y 或点它打开网页）
             float ly = ak.LinkY, lx = 37, lw = AkW - 74;
-            ds.FillRoundedRectangle(lx, ly, lw, AkLinkH, AkLinkH / 2, AkLinkH / 2, Color.FromArgb(255, 0xEE, 0xEF, 0xF3));
+            ds.FillRoundedRectangle(lx, ly, lw, AkLinkH, AkLinkH / 2, AkLinkH / 2, Ck(Color.FromArgb(255, 0xEE, 0xEF, 0xF3)));
             float cy = ly + AkLinkH / 2;
-            ds.FillCircle(lx + 50, cy, 22, Color.FromArgb(255, 0x9A, 0x9C, 0xA3));
+            ds.FillCircle(lx + 50, cy, 22, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)));
             using (var kf = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })
                 ds.DrawText("Y", new Windows.Foundation.Rect(lx + 28, cy - 22, 44, 44), Color.FromArgb(255, 0xF2, 0xF2, 0xF4), kf);
             string url = spec.Url.Replace("https://", "");
@@ -235,7 +235,7 @@ public sealed partial class WallStage
                         ds.DrawText(spec.Fields[i].Label, new Windows.Foundation.Rect(60, fy - AkLabelH, AkW - 120, AkLabelH - 4), RmInk, lf);
                 ds.FillRoundedRectangle(37, fy, AkW - 74, AkFieldH, AkFieldH / 2, AkFieldH / 2, AkFieldBg);
                 if (err == null) ds.DrawRoundedRectangle(38.5f, fy + 1.5f, AkW - 77, AkFieldH - 3, AkFieldH / 2, AkFieldH / 2, CpAccentInk, 3);
-                else if (n > 1 && i == ak.Focus) ds.DrawRoundedRectangle(38.5f, fy + 1.5f, AkW - 77, AkFieldH - 3, AkFieldH / 2, AkFieldH / 2, Color.FromArgb(255, 0xB4, 0xB6, 0xBE), 3);
+                else if (n > 1 && i == ak.Focus) ds.DrawRoundedRectangle(38.5f, fy + 1.5f, AkW - 77, AkFieldH - 3, AkFieldH / 2, AkFieldH / 2, Ck(Color.FromArgb(255, 0xB4, 0xB6, 0xBE)), 3);
                 using var cf = new CanvasTextFormat { FontFamily = RwCjk, FontSize = 30, FontWeight = new Windows.UI.Text.FontWeight(500), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
                 ds.DrawText(err ?? "格式正确", new Windows.Foundation.Rect(0, fy + AkFieldH + 8, AkW, 44), err == null ? CpAccentInk : RsSub, cf);
             }
@@ -259,7 +259,7 @@ public sealed partial class WallStage
             int idx = _akBoxes.Count;
             var box = new TextBox
             {
-                MinHeight = 0, MinWidth = 0, BorderThickness = new Thickness(0), RequestedTheme = ElementTheme.Light,
+                MinHeight = 0, MinWidth = 0, BorderThickness = new Thickness(0), RequestedTheme = CocoonPalette.Dark ? ElementTheme.Dark : ElementTheme.Light,
                 IsSpellCheckEnabled = false, IsTextPredictionEnabled = false, MaxLength = 64,
                 VerticalContentAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed,
                 FontFamily = new FontFamily(TextKit.XamlUi),
@@ -269,7 +269,7 @@ public sealed partial class WallStage
                 "TextControlBorderBrush", "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused", "TextControlBorderBrushDisabled" }) box.Resources[key] = clear;
             var ink = new SolidColorBrush(RmInk);
             foreach (var key in new[] { "TextControlForeground", "TextControlForegroundPointerOver", "TextControlForegroundFocused" }) box.Resources[key] = ink;
-            var ph = new SolidColorBrush(Color.FromArgb(255, 0x8E, 0x90, 0x98));
+            var ph = new SolidColorBrush(Ck(Color.FromArgb(255, 0x8E, 0x90, 0x98)));
             foreach (var key in new[] { "TextControlPlaceholderForeground", "TextControlPlaceholderForegroundPointerOver", "TextControlPlaceholderForegroundFocused" }) box.Resources[key] = ph;
             box.Foreground = ink;
             box.Background = clear;

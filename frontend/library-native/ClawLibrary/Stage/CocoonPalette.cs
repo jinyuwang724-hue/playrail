@@ -90,25 +90,63 @@ public static class CocoonPalette
     /// <summary>按偏好设置同步当前全局 Cocoon 主题色。</summary>
     public static void ApplyFromPrefs(UiPrefs prefs)
     {
-        if (prefs.CocoonTheme == 0)
-        {
-            Current = DefaultTheme;
-            return;
-        }
-        if (prefs.CocoonTheme > 0 && prefs.CocoonTheme < Presets.Length)
+        Dark = prefs.CocoonDark;
+        CocoonThemeColors t;
+        if (prefs.CocoonTheme == 0) t = DefaultTheme;
+        else if (prefs.CocoonTheme > 0 && prefs.CocoonTheme < Presets.Length)
         {
             var p = Presets[prefs.CocoonTheme];
-            Current = DeriveTheme(p.Start, p.End);
-            return;
+            t = DeriveTheme(p.Start, p.End);
         }
-        var c1 = ParseHex(prefs.CocoonCustomStart, Presets[0].Start);
-        var c2 = ParseHex(prefs.CocoonCustomEnd, Presets[0].End);
-        Current = ColorsEqual(c1, Presets[0].Start) && ColorsEqual(c2, Presets[0].End)
-            ? DefaultTheme
-            : DeriveTheme(c1, c2);
+        else
+        {
+            var c1 = ParseHex(prefs.CocoonCustomStart, Presets[0].Start);
+            var c2 = ParseHex(prefs.CocoonCustomEnd, Presets[0].End);
+            t = ColorsEqual(c1, Presets[0].Start) && ColorsEqual(c2, Presets[0].End) ? DefaultTheme : DeriveTheme(c1, c2);
+        }
+        Current = Dark ? ToDark(t) : t;
     }
 
-    public static void SetPreview(CocoonThemeColors preview) => Current = preview;
+    public static void SetPreview(CocoonThemeColors preview) => Current = Dark ? ToDark(preview) : preview;
+
+    // ---------------- 暗色模式 ----------------
+
+    /// <summary>暗色模式开着（UiPrefs.CocoonDark）。</summary>
+    public static bool Dark { get; private set; }
+
+    /// <summary>几乎无彩的颜色（页面、卡片、字、图标灰）才参与明暗换算。</summary>
+    public static bool IsNeutral(Color c) => SrgbToOklch(Color.FromArgb(255, c.R, c.G, c.B)).C <= 0.04f;
+
+    /// <summary>
+    /// 浅色模式下写死的中性色 → 暗色模式里的对应色（不是纯黑）：
+    ///   浅底 L ≥ 0.86 → 0.16–0.31（越亮的面越「浮」：页面 #EFEFF4 ≈ 0.26、卡片 #FDFDFE ≈ 0.30）；
+    ///   中灰 0.55–0.86 → 0.36–0.66；深字 L < 0.55 → 0.66–0.96。色相和那一点点彩度保留，透明度不变。
+    /// </summary>
+    public static Color Ck(Color c)
+    {
+        if (!Dark) return c;
+        var (l, ch, h) = SrgbToOklch(Color.FromArgb(255, c.R, c.G, c.B));
+        if (ch > 0.04f) return c;
+        float d = l >= 0.86f ? 0.31f - (1f - l)
+                : l >= 0.55f ? 0.36f + (0.86f - l) * 0.968f
+                : MathF.Min(0.96f, 0.66f + (0.55f - l) * 0.95f);
+        var o = OklchToSrgb(d, ch, h);
+        return Color.FromArgb(c.A, o.R, o.G, o.B);
+    }
+
+    /// <summary>暗底上的主题色：墨色和下拉已选色提亮到能在深灰卡上读清，选中底色 / 描边换成深的带色灰。</summary>
+    public static CocoonThemeColors ToDark(CocoonThemeColors t)
+    {
+        static Color Lift(Color c, float minL) { var (l, ch, h) = SrgbToOklch(c); return l >= minL ? c : OklchToSrgb(minL, ch, h); }
+        var (_, sc, sh) = SrgbToOklch(t.Ink);
+        return t with
+        {
+            Ink = Lift(t.Ink, 0.74f),
+            SelectedOption = Lift(t.SelectedOption, 0.74f),
+            SelectionTint = OklchToSrgb(0.35f, MathF.Min(sc * 0.35f, 0.07f), sh),
+            SelectionBorder = OklchToSrgb(0.47f, MathF.Min(sc * 0.5f, 0.10f), sh),
+        };
+    }
 
     public static (Color Start, Color End) ActivePair(UiPrefs prefs)
     {

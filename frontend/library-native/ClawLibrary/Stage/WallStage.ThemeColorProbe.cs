@@ -46,6 +46,14 @@ public sealed partial class WallStage
             for (int k = 0; k < 6; k++) { CtpMove(Direction.Right); await Task.Delay(60); }
             await Still("picker2");
             CtpClose(commit: false); await Task.Delay(500);
+            // 暗色模式：切过去录设置页和取色板，再切回原样
+            bool wasDark = _prefs.CocoonDark;
+            SetCocoonDark(true); await Task.Delay(600);
+            await Still("dark-page");
+            CtpOpen(); await Task.Delay(700);
+            await Still("dark-picker");
+            CtpClose(commit: false); await Task.Delay(500);
+            SetCocoonDark(wasDark); await Task.Delay(400);
             for (int i = 0; i < 4 && !LsOpenNow; i++) { if (!_ccOpen) break; Back(); await Task.Delay(500); }
             if (LsOpenNow) { PadView(); await Task.Delay(500); }
         }

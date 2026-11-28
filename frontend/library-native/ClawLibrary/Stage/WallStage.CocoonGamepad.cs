@@ -166,8 +166,8 @@ public sealed partial class WallStage
         var g = G.C.CreateLinearGradientBrush();
         g.StartPoint = new Vector2(0, 0);
         g.EndPoint = new Vector2(0, 1);
-        g.ColorStops.Add(G.C.CreateColorGradientStop(0, Color.FromArgb(255, 0xEF, 0xEF, 0xF4)));
-        g.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(255, 0xE2, 0xE3, 0xEA)));
+        g.ColorStops.Add(CkStop(0, Color.FromArgb(255, 0xEF, 0xEF, 0xF4)));
+        g.ColorStops.Add(CkStop(1, Color.FromArgb(255, 0xE2, 0xE3, 0xEA)));
         var bg = G.Sprite(g, relative: false);
         bg.Size = new Vector2(CsW, CsH);
 
@@ -189,9 +189,9 @@ public sealed partial class WallStage
             var fg = G.C.CreateLinearGradientBrush();
             fg.StartPoint = new Vector2(0, 0); fg.EndPoint = new Vector2(0, 1);
             var topCol = Color.FromArgb(255, 0xEF, 0xEF, 0xF4);
-            fg.ColorStops.Add(G.C.CreateColorGradientStop(0, topCol));
-            fg.ColorStops.Add(G.C.CreateColorGradientStop(0.35f, Color.FromArgb(235, topCol.R, topCol.G, topCol.B)));
-            fg.ColorStops.Add(G.C.CreateColorGradientStop(1, Color.FromArgb(0, topCol.R, topCol.G, topCol.B)));
+            fg.ColorStops.Add(CkStop(0, topCol));
+            fg.ColorStops.Add(CkStop(0.35f, Color.FromArgb(235, topCol.R, topCol.G, topCol.B)));
+            fg.ColorStops.Add(CkStop(1, Color.FromArgb(0, topCol.R, topCol.G, topCol.B)));
             var fade = G.Sprite(fg, relative: false);
             fade.Size = new Vector2(CsW - (CpListX - 40), CpTop);
             fade.Offset = new Vector3(CpListX - 40, 0, 0);
@@ -928,7 +928,7 @@ public sealed partial class WallStage
 
     private static void CgpDrawCatIcon(CanvasDrawingSession ds, string kind, float cx, float cy, Color ink)
     {
-        var paper = Color.FromArgb(255, 0xFA, 0xFA, 0xFA);
+        var paper = Ck(Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
         switch (kind)
         {
             case "pad":
@@ -1023,7 +1023,7 @@ public sealed partial class WallStage
             {
                 float tw = CpTextW(ds, tag, 20) + 28;
                 float tx = CgpWellW - 16 - tw, ty = 14;
-                ds.FillRoundedRectangle(tx, ty, tw, 36, 18, 18, Color.FromArgb(255, 0xE4, 0xE5, 0xEC));
+                ds.FillRoundedRectangle(tx, ty, tw, 36, 18, 18, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xEC)));
                 using var tf = new CanvasTextFormat { FontFamily = RmFont(tag), FontSize = 20, FontWeight = RsWt(tag, 500), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
                 ds.DrawText(tag, new Rect(tx, ty, tw, 36), RsSub, tf);
             }
@@ -1045,7 +1045,7 @@ public sealed partial class WallStage
     {
         const float r = 74f;
         ds.FillCircle(cx, cy, r, Colors.White);
-        ds.DrawCircle(cx, cy, r, Color.FromArgb(255, 0xD5, 0xD6, 0xDF), 3f);
+        ds.DrawCircle(cx, cy, r, Ck(Color.FromArgb(255, 0xD5, 0xD6, 0xDF)), 3f);
 
         float outR = Math.Clamp(r * outer / 100f, 16f, r);
         using (var dash = new CanvasStrokeStyle { CustomDashStyle = new[] { 2.4f, 2f }, StartCap = CanvasCapStyle.Round, EndCap = CanvasCapStyle.Round })
@@ -1198,14 +1198,14 @@ public sealed partial class WallStage
         var prev = ds.Transform;
         ds.Transform = Matrix3x2.CreateScale(vs) * Matrix3x2.CreateTranslation(vox, voy) * prev;
 
-        var stroke = Color.FromArgb(255, 0x5F, 0x61, 0x68);
-        var neutralBtn = Color.FromArgb(255, 0xF0, 0xF1, 0xF5);
-        var shoulderNeutral = Color.FromArgb(255, 0xE4, 0xE5, 0xEC);
+        var stroke = Ck(Color.FromArgb(255, 0x5F, 0x61, 0x68));
+        var neutralBtn = Ck(Color.FromArgb(255, 0xF0, 0xF1, 0xF5));
+        var shoulderNeutral = Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xEC));
         using var padGrad = new CanvasLinearGradientBrush(ds.Device, RwC1, RwC2) { StartPoint = new Vector2(0, 0), EndPoint = new Vector2(460, 215) };
 
         if (backFace)
         {
-            ds.FillRoundedRectangle(28, 18, 404, 174, 54, 54, Colors.White);
+            ds.FillRoundedRectangle(28, 18, 404, 174, 54, 54, Ck(Colors.White));
             ds.DrawRoundedRectangle(28, 18, 404, 174, 54, 54, stroke, 3.5f);
 
             using (var pb = new CanvasPathBuilder(ds.Device))
@@ -1222,14 +1222,14 @@ public sealed partial class WallStage
                 ds.DrawGeometry(grips, stroke, 3f, RwRoundStroke);
             }
 
-            var vent = Color.FromArgb(255, 0xDF, 0xE1, 0xE8);
+            var vent = Ck(Color.FromArgb(255, 0xDF, 0xE1, 0xE8));
             foreach (float vy in new[] { 52f, 70f, 88f })
             {
                 ds.FillRoundedRectangle(130, vy, 66, 10, 5, 5, vent);
                 ds.FillRoundedRectangle(264, vy, 66, 10, 5, 5, vent);
             }
-            ds.FillCircle(230, 96, 22, Color.FromArgb(255, 0xEC, 0xED, 0xF2));
-            ds.DrawCircle(230, 96, 22, Color.FromArgb(255, 0xC4, 0xC5, 0xCC), 2f);
+            ds.FillCircle(230, 96, 22, Ck(Color.FromArgb(255, 0xEC, 0xED, 0xF2)));
+            ds.DrawCircle(230, 96, 22, Ck(Color.FromArgb(255, 0xC4, 0xC5, 0xCC)), 2f);
 
             foreach (var (mk, mx) in new[] { ("M1", 86f), ("M2", 346f) })
             {
@@ -1271,7 +1271,7 @@ public sealed partial class WallStage
         }
 
         // 掌机主体外壳
-        ds.FillRoundedRectangle(24, 24, 412, 168, 52, 52, Colors.White);
+        ds.FillRoundedRectangle(24, 24, 412, 168, 52, 52, Ck(Colors.White));
         ds.DrawRoundedRectangle(24, 24, 412, 168, 52, 52, stroke, 3.2f);
 
         // 震动握把高光与扩散环
@@ -1288,8 +1288,8 @@ public sealed partial class WallStage
         }
 
         // 中央 16:10 屏幕
-        ds.FillRoundedRectangle(122, 36, 216, 138, 12, 12, Color.FromArgb(255, 0xF2, 0xF3, 0xF8));
-        ds.DrawRoundedRectangle(122, 36, 216, 138, 12, 12, Color.FromArgb(255, 0xC4, 0xC5, 0xCC), 2f);
+        ds.FillRoundedRectangle(122, 36, 216, 138, 12, 12, Ck(Color.FromArgb(255, 0xF2, 0xF3, 0xF8)));
+        ds.DrawRoundedRectangle(122, 36, 216, 138, 12, 12, Ck(Color.FromArgb(255, 0xC4, 0xC5, 0xCC)), 2f);
 
         // 左摇杆
         bool lsOn = Hi("LStick") || Hi("LS") || stickArrow.StartsWith("LStick");
@@ -1298,18 +1298,18 @@ public sealed partial class WallStage
         ds.FillCircle(68, 76, 13, lsOn ? Color.FromArgb(230, 0xFA, 0xFA, 0xFA) : Color.FromArgb(64, 0x5F, 0x61, 0x68));
 
         // 十字键（支持单臂高亮）
-        ds.FillRoundedRectangle(92 - 18, 124 - 6, 36, 12, 3, 3, Color.FromArgb(255, 0xE6, 0xE7, 0xEE));
-        ds.FillRoundedRectangle(92 - 6, 124 - 18, 12, 36, 3, 3, Color.FromArgb(255, 0xE6, 0xE7, 0xEE));
+        ds.FillRoundedRectangle(92 - 18, 124 - 6, 36, 12, 3, 3, Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEE)));
+        ds.FillRoundedRectangle(92 - 6, 124 - 18, 12, 36, 3, 3, Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEE)));
         ds.DrawRoundedRectangle(92 - 18, 124 - 6, 36, 12, 3, 3, stroke, 2f);
         ds.DrawRoundedRectangle(92 - 6, 124 - 18, 12, 36, 3, 3, stroke, 2f);
-        ds.FillRectangle(92 - 5, 124 - 5, 10, 10, Color.FromArgb(255, 0xE6, 0xE7, 0xEE));
+        ds.FillRectangle(92 - 5, 124 - 5, 10, 10, Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEE)));
         if (Hi("Up")) ds.FillRoundedRectangle(92 - 5.5f, 124 - 17.5f, 11, 13, 2.5f, 2.5f, RwC2);
         if (Hi("Down")) ds.FillRoundedRectangle(92 - 5.5f, 124 + 4.5f, 11, 13, 2.5f, 2.5f, RwC2);
         if (Hi("Left")) ds.FillRoundedRectangle(92 - 17.5f, 124 - 5.5f, 13, 11, 2.5f, 2.5f, RwC2);
         if (Hi("Right")) ds.FillRoundedRectangle(92 + 4.5f, 124 - 5.5f, 13, 11, 2.5f, 2.5f, RwC2);
 
         // 功能小键（View / QS / Menu / Claw）
-        var smallOff = Color.FromArgb(255, 0xD8, 0xD9, 0xE2);
+        var smallOff = Ck(Color.FromArgb(255, 0xD8, 0xD9, 0xE2));
         ds.FillRoundedRectangle(104, 48, 9, 15, 4.5f, 4.5f, Hi("Back") ? RwC2 : smallOff);
         ds.FillRoundedRectangle(104, 69, 9, 15, 4.5f, 4.5f, Hi("QS") ? RwC2 : smallOff);
         ds.FillRoundedRectangle(347, 48, 9, 15, 4.5f, 4.5f, Hi("Start") ? RwC2 : smallOff);
@@ -1433,7 +1433,7 @@ public sealed partial class WallStage
             using (var vf = new CanvasTextFormat { FontFamily = RmFont(r.Value), FontSize = 30, FontWeight = RsWt(r.Value, 500), VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
                 ds.DrawText(r.Value, new Rect(tx, scy - 24, mx - tx - 20, 48), RsSub, vf);
             ds.FillRoundedRectangle(mx - 16, scy - 4, 32, 8, 4, 4, RmInk);
-            ds.FillRoundedRectangle(x0, scy - 5, x1 - x0, 10, 5, 5, Color.FromArgb(255, 0xDC, 0xDC, 0xE3));
+            ds.FillRoundedRectangle(x0, scy - 5, x1 - x0, 10, 5, 5, Ck(Color.FromArgb(255, 0xDC, 0xDC, 0xE3)));
             if (frac > 0)
             {
                 using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, CpAccentDeep) { StartPoint = new Vector2(x0, 0), EndPoint = new Vector2(x1, 0) };
@@ -1474,8 +1474,8 @@ public sealed partial class WallStage
                 }
                 else
                 {
-                    ds.FillRoundedRectangle(x, ty, 120, 76, 38, 38, Color.FromArgb(255, 0xE4, 0xE5, 0xE9));
-                    ds.DrawRoundedRectangle(x + 2, ty + 2, 116, 72, 36, 36, Color.FromArgb(255, 0x9A, 0x9C, 0xA3), 4);
+                    ds.FillRoundedRectangle(x, ty, 120, 76, 38, 38, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xE9)));
+                    ds.DrawRoundedRectangle(x + 2, ty + 2, 116, 72, 36, 36, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)), 4);
                 }
                 RsSoftShadow(ds, (on ? x + 82 : x + 38) - 27, cy - 27 + 3, 54, 54, 27, 4, 0.22f);
                 ds.FillCircle(on ? x + 82 : x + 38, cy, 27, Color.FromArgb(255, 0xFA, 0xFA, 0xFA));
@@ -1498,7 +1498,7 @@ public sealed partial class WallStage
             case CgpRowKind.Stepper:
             {
                 var (px0, pw) = CpStepperX(ds, r.Value, R);
-                ds.FillRoundedRectangle(px0, cy - 38, pw, 76, 38, 38, Color.FromArgb(255, 0xE6, 0xE7, 0xEC));
+                ds.FillRoundedRectangle(px0, cy - 38, pw, 76, 38, 38, Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEC)));
                 ds.FillRoundedRectangle(px0 + 30, cy - 4, 28, 8, 4, 4, RmInk);
                 ds.FillRoundedRectangle(px0 + pw - 58, cy - 4, 28, 8, 4, 4, RmInk);
                 ds.FillRoundedRectangle(px0 + pw - 48, cy - 14, 8, 28, 4, 4, RmInk);
@@ -1533,7 +1533,7 @@ public sealed partial class WallStage
             using var br = new CanvasLinearGradientBrush(ds.Device, RwC1, RwC2) { StartPoint = new Vector2(bx, by), EndPoint = new Vector2(bx + bw, by + bh) };
             ds.FillRoundedRectangle(bx, by, bw, bh, 26, 26, br);
         }
-        else ds.FillRoundedRectangle(bx, by, bw, bh, 26, 26, Color.FromArgb(255, 0xE6, 0xE7, 0xEC));
+        else ds.FillRoundedRectangle(bx, by, bw, bh, 26, 26, Ck(Color.FromArgb(255, 0xE6, 0xE7, 0xEC)));
 
         using (var bf = new CanvasTextFormat { FontFamily = RmFont(r.KeyBadge), FontSize = 24, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap })
             ds.DrawText(r.KeyBadge, new Rect(bx, by, bw, bh), changed ? Color.FromArgb(255, 0xFA, 0xFA, 0xFA) : RmInk, bf);
@@ -1558,7 +1558,7 @@ public sealed partial class WallStage
                 {
                     rx -= 30f;
                     using var pf = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 26, HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
-                    ds.DrawText("+", new Rect(rx, cy - 26, 30, 52), Color.FromArgb(255, 0x8E, 0x90, 0x98), pf);
+                    ds.DrawText("+", new Rect(rx, cy - 26, 30, 52), Ck(Color.FromArgb(255, 0x8E, 0x90, 0x98)), pf);
                 }
             }
             if (!string.IsNullOrEmpty(r.TriggerTag))
@@ -1574,7 +1574,7 @@ public sealed partial class WallStage
         else
         {
             string val = r.Value;
-            var col = changed ? RmInk : Color.FromArgb(255, 0x8E, 0x90, 0x98);
+            var col = changed ? RmInk : Ck(Color.FromArgb(255, 0x8E, 0x90, 0x98));
             using var vf = new CanvasTextFormat { FontFamily = RmFont(val), FontSize = 32, FontWeight = RsWt(val, 500), HorizontalAlignment = CanvasHorizontalAlignment.Right, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap, TrimmingGranularity = CanvasTextTrimmingGranularity.Character, TrimmingSign = CanvasTrimmingSign.Ellipsis };
             ds.DrawText(val, new Rect(rx - 520, y, 520, h), col, vf);
             if (!string.IsNullOrEmpty(r.TriggerTag))
@@ -1620,10 +1620,10 @@ public sealed partial class WallStage
         else
         {
             RsSoftShadow(ds, x + 1, y + 4, w - 2, h, r, 4, 0.11f);
-            using var fill = new CanvasLinearGradientBrush(ds.Device, Color.FromArgb(255, 0xFD, 0xFD, 0xFE), Color.FromArgb(255, 0xEF, 0xF0, 0xF5)) { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x, y + h) };
+            using var fill = new CanvasLinearGradientBrush(ds.Device, Ck(Color.FromArgb(255, 0xFD, 0xFD, 0xFE)), Ck(Color.FromArgb(255, 0xEF, 0xF0, 0xF5))) { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x, y + h) };
             ds.FillRoundedRectangle(x, y, w, h, r, r, fill);
-            ds.DrawLine(x + r * 0.7f, y + 1.5f, x + w - r * 0.7f, y + 1.5f, Colors.White, 1.5f);
-            using var edge = new CanvasLinearGradientBrush(ds.Device, Color.FromArgb(255, 0xF6, 0xF6, 0xF9), Color.FromArgb(255, 0xBE, 0xBF, 0xC8)) { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x, y + h) };
+            ds.DrawLine(x + r * 0.7f, y + 1.5f, x + w - r * 0.7f, y + 1.5f, Ck(Colors.White), 1.5f);
+            using var edge = new CanvasLinearGradientBrush(ds.Device, Ck(Color.FromArgb(255, 0xF6, 0xF6, 0xF9)), Ck(Color.FromArgb(255, 0xBE, 0xBF, 0xC8))) { StartPoint = new Vector2(x, y), EndPoint = new Vector2(x, y + h) };
             ds.DrawRoundedRectangle(x + 0.75f, y + 0.75f, w - 1.5f, h - 1.5f, r, r, edge, 1.5f);
         }
 
@@ -1932,7 +1932,7 @@ public sealed partial class WallStage
 
         if (p.Level == GpSubLevel.Chooser)
         {
-            ds.FillRoundedRectangle(CgpTabBarX, CgpTabBarY, CgpTabBarW, CgpTabBarH, 39, 39, Color.FromArgb(255, 0xEA, 0xEC, 0xEF));
+            ds.FillRoundedRectangle(CgpTabBarX, CgpTabBarY, CgpTabBarW, CgpTabBarH, 39, 39, Ck(Color.FromArgb(255, 0xEA, 0xEC, 0xEF)));
             CgpDrawShoulderBadge(ds, CgpTabBarX + 10, CgpTabBarY + 15, 64, 48, "LB");
             for (int i = 0; i < GpChooserTabs.Length; i++)
             {
@@ -1941,7 +1941,7 @@ public sealed partial class WallStage
                 if (on)
                 {
                     RsSoftShadow(ds, (float)tr.X, (float)tr.Y + 3, (float)tr.Width, (float)tr.Height, 31, 5, 0.13f);
-                    ds.FillRoundedRectangle(tr, 31, 31, Colors.White);
+                    ds.FillRoundedRectangle(tr, 31, 31, Ck(Colors.White));
                 }
                 using var tabF = new CanvasTextFormat { FontFamily = RmFont(GpChooserTabs[i]), FontSize = 27, FontWeight = RsWt(GpChooserTabs[i], 500), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center, WordWrapping = CanvasWordWrapping.NoWrap };
                 ds.DrawText(GpChooserTabs[i], tr, on ? CpAccentInk : RsSub, tabF);
@@ -1975,7 +1975,7 @@ public sealed partial class WallStage
 
     private static void CgpDrawShoulderBadge(CanvasDrawingSession ds, float x, float y, float w, float h, string text)
     {
-        ds.FillRoundedRectangle(x, y, w, h, h / 2, h / 2, Color.FromArgb(255, 0xD8, 0xDA, 0xE0));
+        ds.FillRoundedRectangle(x, y, w, h, h / 2, h / 2, Ck(Color.FromArgb(255, 0xD8, 0xDA, 0xE0)));
         using var f = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 21, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center };
         ds.DrawText(text, new Rect(x, y, w, h), RsSub, f);
     }
@@ -2083,8 +2083,8 @@ public sealed partial class WallStage
 
         // 凹槽浅灰托盘底（手柄 / 鼠标 / 键盘 / 数字键盘）
         float trayH = p.Tab == 2 ? 684f : 846f;
-        ds.FillRoundedRectangle(152, 214, 1616, trayH, 36, 36, Color.FromArgb(255, 0xF0, 0xF1, 0xF6));
-        ds.DrawRoundedRectangle(152.75f, 214.75f, 1614.5f, trayH - 1.5f, 36, 36, Color.FromArgb(255, 0xE2, 0xE3, 0xEA), 1.5f);
+        ds.FillRoundedRectangle(152, 214, 1616, trayH, 36, 36, Ck(Color.FromArgb(255, 0xF0, 0xF1, 0xF6)));
+        ds.DrawRoundedRectangle(152.75f, 214.75f, 1614.5f, trayH - 1.5f, 36, 36, Ck(Color.FromArgb(255, 0xE2, 0xE3, 0xEA)), 1.5f);
 
         if (p.Tab == 0)
         {
@@ -2151,12 +2151,12 @@ public sealed partial class WallStage
     private static void CgpDrawMouseDiagram(CanvasDrawingSession ds, float cx, float cy, string focusCmd)
     {
         float w = 236f, h = 368f, left = cx - w / 2f, top = cy - h / 2f, split = top + 148f;
-        var stroke = Color.FromArgb(255, 0x5F, 0x61, 0x68);
+        var stroke = Ck(Color.FromArgb(255, 0x5F, 0x61, 0x68));
         using var padGrad = new CanvasLinearGradientBrush(ds.Device, RwC1, RwC2) { StartPoint = new Vector2(left, top), EndPoint = new Vector2(left + w, top + h) };
 
         // 鼠标主体陶瓷壳
         using var body = CanvasGeometry.CreateRoundedRectangle(ds.Device, left, top, w, h, 112, 124);
-        ds.FillGeometry(body, Colors.White);
+        ds.FillGeometry(body, Ck(Colors.White));
 
         using (ds.CreateLayer(1, body))
         {
@@ -2170,13 +2170,13 @@ public sealed partial class WallStage
         // 滚轮与侧键
         bool wheelHi = focusCmd is "mouse:Middle" or "wheel:Up" or "wheel:Down" or "wheel:Left" or "wheel:Right";
         if (wheelHi) ds.FillRoundedRectangle(cx - 12, top + 38, 24, 68, 12, 12, padGrad);
-        else ds.FillRoundedRectangle(cx - 12, top + 38, 24, 68, 12, 12, Color.FromArgb(255, 0xE4, 0xE5, 0xEC));
+        else ds.FillRoundedRectangle(cx - 12, top + 38, 24, 68, 12, 12, Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xEC)));
         ds.DrawRoundedRectangle(cx - 12, top + 38, 24, 68, 12, 12, wheelHi ? CpAccentInk : stroke, 2.8f);
 
         bool fwdHi = focusCmd == "mouse:Forward", backHi = focusCmd == "mouse:Back";
-        ds.FillRoundedRectangle(left - 8, cy - 28, 14, 48, 6, 6, fwdHi ? RwC2 : Color.FromArgb(255, 0xE4, 0xE5, 0xEC));
+        ds.FillRoundedRectangle(left - 8, cy - 28, 14, 48, 6, 6, fwdHi ? RwC2 : Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xEC)));
         ds.DrawRoundedRectangle(left - 8, cy - 28, 14, 48, 6, 6, fwdHi ? CpAccentInk : stroke, 2.4f);
-        ds.FillRoundedRectangle(left - 8, cy + 32, 14, 48, 6, 6, backHi ? RwC2 : Color.FromArgb(255, 0xE4, 0xE5, 0xEC));
+        ds.FillRoundedRectangle(left - 8, cy + 32, 14, 48, 6, 6, backHi ? RwC2 : Ck(Color.FromArgb(255, 0xE4, 0xE5, 0xEC)));
         ds.DrawRoundedRectangle(left - 8, cy + 32, 14, 48, 6, 6, backHi ? CpAccentInk : stroke, 2.4f);
 
         var anchors = new Dictionary<string, Vector2>

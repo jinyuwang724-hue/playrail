@@ -313,7 +313,7 @@ public sealed partial class WallStage
             ds.Clear(Colors.Transparent);
             ds.Transform = Matrix3x2.CreateTranslation(pad - RsX, pad - RsY) * Matrix3x2.CreateScale(R);
             RsSoftShadow(ds, RsX, RsY + 12, RsW, RsH, RsR, 22, 0.35f);
-            using var bg = new CanvasLinearGradientBrush(dev, Color.FromArgb(255, 0xF8, 0xF8, 0xFB), Color.FromArgb(255, 0xEC, 0xED, 0xF3))
+            using var bg = new CanvasLinearGradientBrush(dev, Ck(Color.FromArgb(255, 0xF8, 0xF8, 0xFB)), Ck(Color.FromArgb(255, 0xEC, 0xED, 0xF3)))
             {
                 StartPoint = new Vector2(0, RsY),
                 EndPoint = new Vector2(0, RsY + RsH),
@@ -623,7 +623,7 @@ public sealed partial class WallStage
 
     private static void VerifyCocoonColorScience()
     {
-        var ceramic = Color.FromArgb(255, 0xFD, 0xFD, 0xFE);
+        var ceramic = Ck(Color.FromArgb(255, 0xFD, 0xFD, 0xFE));
         // 1. 默认预设零偏差还原
         var def = CocoonPalette.Presets[0];
         if (def.Start.R != 0x86 || def.Start.G != 0xA7 || def.Start.B != 0xFD || def.End.R != 0x80 || def.End.G != 0x37 || def.End.B != 0xFF)
