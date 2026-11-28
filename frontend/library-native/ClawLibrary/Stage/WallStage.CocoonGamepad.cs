@@ -1616,6 +1616,7 @@ public sealed partial class WallStage
             ds.FillRoundedRectangle(x, y, w, h, r, r, CpSelectionTint);
             ds.DrawRoundedRectangle(x + 1, y + 1, w - 2, h - 2, r, r, CpAccentInk, 2.5f);
         }
+        else if (CocoonPalette.Dark) DkRaised(ds, x, y, w, h, r);   // 亮色是白面键帽 + 上高光 + 下深边，暗色同样是凸起的键帽
         else
         {
             RsSoftShadow(ds, x + 1, y + 4, w - 2, h, r, 4, 0.11f);

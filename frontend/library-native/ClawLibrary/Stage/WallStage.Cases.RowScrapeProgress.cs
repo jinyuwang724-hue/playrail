@@ -126,6 +126,7 @@ public sealed partial class WallStage
     /// <summary>浅色分组卡片（和列表的分组卡片同一套描边、投影）。</summary>
     private void ScCard(CanvasDrawingSession ds, float x, float y, float w, float h)
     {
+        if (CocoonPalette.Dark) { DkCard(ds, x, y, w, h, 36, null); return; }
         RsSoftShadow(ds, x, y + 5, w, h, 36, 6, 0.16f);
         ds.FillRoundedRectangle(x, y, w, h, 36, 36, RsGroup);
         using var edge = new CanvasLinearGradientBrush(ds.Device, Ck(Color.FromArgb(255, 0xE8, 0xE9, 0xEC)), Ck(Color.FromArgb(255, 0xBC, 0xBD, 0xC1))) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) };

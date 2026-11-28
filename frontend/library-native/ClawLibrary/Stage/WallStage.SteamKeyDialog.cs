@@ -211,7 +211,7 @@ public sealed partial class WallStage
                 ds.DrawTextLayout(lay, 60, y + 4, RsSub);
             // 网址胶囊：灰底、左边 Y 圆章、紫色网址 + 右边外链箭头（Y 或点它打开网页）
             float ly = ak.LinkY, lx = 37, lw = AkW - 74;
-            if (CocoonPalette.Dark) DkRaised(ds, lx, ly, lw, AkLinkH, AkLinkH / 2); else ds.FillRoundedRectangle(lx, ly, lw, AkLinkH, AkLinkH / 2, AkLinkH / 2, Color.FromArgb(255, 0xEE, 0xEF, 0xF3));
+            if (CocoonPalette.Dark) DkWell(ds, lx, ly, lw, AkLinkH, AkLinkH / 2); else ds.FillRoundedRectangle(lx, ly, lw, AkLinkH, AkLinkH / 2, AkLinkH / 2, Color.FromArgb(255, 0xEE, 0xEF, 0xF3));
             float cy = ly + AkLinkH / 2;
             ds.FillCircle(lx + 50, cy, 22, Ck(Color.FromArgb(255, 0x9A, 0x9C, 0xA3)));
             using (var kf = new CanvasTextFormat { FontFamily = RwPoppinsB, FontSize = 22, FontWeight = new Windows.UI.Text.FontWeight(700), HorizontalAlignment = CanvasHorizontalAlignment.Center, VerticalAlignment = CanvasVerticalAlignment.Center })

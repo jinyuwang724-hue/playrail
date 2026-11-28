@@ -787,7 +787,7 @@ public sealed partial class WallStage
     private void RsPaintPickPill(CanvasDrawingSession ds, float px, float py, float pw, float ph, string val, bool open, float fontSize, bool text = true)
     {
         float cy = py + ph / 2, k = ph / 84;
-        if (CocoonPalette.Dark) DkWell(ds, px, py, pw, ph, ph / 2);   // 暗色：下拉胶囊是凹进卡片里的槽
+        if (CocoonPalette.Dark) DkRaised(ds, px, py, pw, ph, ph / 2);   // 亮色是带投影的白胶囊（凸起），暗色同样凸起
         else
         {
             RsSoftShadow(ds, px, py + 3 * k, pw, ph, ph / 2, 6 * k, 0.14f);
