@@ -123,7 +123,7 @@ public sealed partial class WallStage
             try { _agent ??= new AgentClient(); await _agent.Call("magpie_auto_start"); }
             catch (Exception ex) { Log.Warn($"magpie auto start: {ex.Message}"); }
         });
-        StartLaunchMotion(item, _lmTile);
+        if (!(_cs?.Page is { Style: HomeStyle.Row })) StartLaunchMotion(item, _lmTile);   // Cocoon 主题（单行）不放启动画面
         _lmTile = null;
         // 「隐藏游戏库」：等启动画面交接给游戏再收（见 LaunchForegroundChanged）；画面没开起来才按老办法 1.5 秒后收
         if (_prefs.AfterLaunch == AfterLaunch.Hide && _lm == null) After(1500, HideAfterLaunch);

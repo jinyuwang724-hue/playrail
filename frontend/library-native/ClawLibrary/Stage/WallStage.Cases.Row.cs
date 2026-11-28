@@ -61,6 +61,9 @@ public sealed partial class WallStage
         public int Phase = -1;
         /// <summary>焦点在左上面板上时是第几个页签图标；-1 = 焦点在封面上。</summary>
         public int PanelFocus = -1;
+        /// <summary>焦点在正在玩的卡右上角的 ✕ 上（↑ 从卡上过去，11-28 jinyu）；它自己的圆形焦点框。</summary>
+        public bool XFocus;
+        public CurSet? XCur;
         /// <summary>这一页卡片的尺寸（首页 280×420，Steam / 本地网格更小）：焦点框按它画。</summary>
         public float CardW = RwW, CardH = RwH;
         public BatteryState Bat;
@@ -825,6 +828,7 @@ public sealed partial class WallStage
     private void RwPanelEnter(CsPage p)
     {
         if (p.Rw is not { } rw) return;
+        if (rw.XFocus) RwXFocus(p, false, quiet: true);
         rw.PanelFocus = Math.Max(0, Array.IndexOf(RwTabs, p.Tab));
         CuePan(-0.6f);
         RwCursorShow(p, false);
@@ -869,6 +873,13 @@ public sealed partial class WallStage
             return;
         }
         int s = p.Sel, j = s;
+        if (rw.XFocus)
+        {
+            RwXFocus(p, false);
+            if (dir == Direction.Down) { Cue(Sfx.Back); return; }
+            if (dir == Direction.Up) { RwPanelEnter(p); return; }
+        }
+        else if (dir == Direction.Up && s < n && RunningGame(p.Items[s].Id) != null && p.Cases.ContainsKey(s)) { CuePan(0.4f); RwXFocus(p, true); return; }
         if (p.Tab == 0)
         {
             if (dir == Direction.Up) { RwPanelEnter(p); return; }
@@ -903,6 +914,7 @@ public sealed partial class WallStage
             CsGoTab(tab);
             return;
         }
+        if (rw.XFocus) { if (!RwQuitFocused()) Cue(Sfx.Bump); return; }   // ✕：退出游戏小窗
         if (p.Sel >= p.Items.Count) { Cue(Sfx.Bump); return; }
         var g = p.Items[p.Sel];
         if (RunningGame(g.Id) is { } running) { ResumeGame(running); return; }

@@ -84,7 +84,12 @@ public sealed partial class WallStage
 
     // ---------------- 正在跑的卡：淡紫 + 红色 ✕ 角标 ----------------
 
-    /// <summary>给这一页的卡标上「正在玩」（Label 当淡紫罩层、Caption 当角标；单行样式不用这两个）。</summary>
+    /// <summary>
+    /// 给这一页的卡标上「正在玩」（11-28 jinyu：Cocoon 主题不再用启动画面和「正在游戏」整屏面板，回到游戏库时卡片自己告诉你在玩）：
+    ///   卡片后面一圈主题色渐变的光晕，1.8 秒一呼一吸；左下角一颗小深色胶囊，里面三根白色竖条错开着跳（像在播放）；
+    ///   右上角红色 ✕ 角标——↑ 从卡上移过去（自己的圆形焦点框），A 或手柄 X 弹「退出游戏」。封面本身不盖任何颜色。
+    /// Label = 光晕、Playing = 竖条、Caption = ✕（单行样式不用这几个字段原来的用途）。
+    /// </summary>
     private void RwMarkRunning(CsPage p)
     {
         if (p.Style != HomeStyle.Row) return;
@@ -94,21 +99,88 @@ public sealed partial class WallStage
             if (!run)
             {
                 if (c.Label != null) { c.Label.Parent?.Children.Remove(c.Label); c.Label.Dispose(); c.Label = null; }
+                if (c.Playing != null) { c.Root.Children.Remove(c.Playing); c.Playing.Dispose(); c.Playing = null; }
                 if (c.Caption != null) { c.Root.Children.Remove(c.Caption); c.Caption.Dispose(); c.Caption = null; }
+                if (p.Rw is { XFocus: true } && c.Index == p.Sel) RwXFocus(p, false, quiet: true);
                 continue;
             }
             float w = c.Size.X, h = c.Size.Y;
             if (c.Label == null)
             {
-                var tint = G.Sprite(G.Solid(Color.FromArgb(150, 0xA5, 0x96, 0xFF)), relative: false);
-                tint.Size = new Vector2(w, h);
+                // 光晕：比卡大一圈的圆角矩形，主题色渐变，高斯模糊；放在卡的最底下
+                float pad = 70, r = w * RwRound;
+                var surf = CsDraw(w + pad * 2, h + pad * 2, ds =>
+                {
+                    using var cl = new CanvasCommandList(ds.Device);
+                    using (var s = cl.CreateDrawingSession())
+                    {
+                        s.Transform = ds.Transform;
+                        using var br = new CanvasLinearGradientBrush(s.Device, RwC1, RwC2) { StartPoint = new Vector2(pad, pad), EndPoint = new Vector2(pad + w, pad + h) };
+                        s.FillRoundedRectangle(pad - 14, pad - 14, w + 28, h + 28, r + 14, r + 14, br);
+                    }
+                    using var blur = new Microsoft.Graphics.Canvas.Effects.GaussianBlurEffect { Source = cl, BlurAmount = 26 * CsRaster, BorderMode = Microsoft.Graphics.Canvas.Effects.EffectBorderMode.Soft };
+                    var t = ds.Transform; ds.Transform = Matrix3x2.Identity; ds.DrawImage(blur); ds.Transform = t;
+                });
+                var glow = G.Sprite(G.C.CreateSurfaceBrush(surf), relative: false);
+                glow.Size = new Vector2(w + pad * 2, h + pad * 2);
+                glow.Offset = new Vector3(-pad, -pad, 0);
+                c.Root.Children.InsertAtBottom(glow);
+                c.Label = glow;
+                if (Reduced) glow.Opacity = 0.8f;
+                else
+                {
+                    var breath = G.C.CreateScalarKeyFrameAnimation();
+                    breath.InsertKeyFrame(0, 0.35f);
+                    breath.InsertKeyFrame(0.5f, 1f, G.Ease(new Bezier(0.45f, 0f, 0.55f, 1f)));
+                    breath.InsertKeyFrame(1, 0.35f, G.Ease(new Bezier(0.45f, 0f, 0.55f, 1f)));
+                    breath.Duration = TimeSpan.FromMilliseconds(1800);
+                    breath.IterationBehavior = AnimationIterationBehavior.Forever;
+                    glow.StartAnimation("Opacity", breath);
+                }
+            }
+            if (c.Playing == null)
+            {
+                // 三根跳动的小竖条：深色半透明胶囊里，竖条从底边往上伸缩，各自的节奏错开
+                float pw = 74, ph = 48;
+                var box = G.Container(relative: false);
+                box.Size = new Vector2(pw, ph);
+                box.Offset = new Vector3(18, h - 18 - ph, 0);
+                var bg = G.Sprite(G.Solid(Color.FromArgb(150, 0x14, 0x14, 0x1E)), relative: false);
+                bg.Size = new Vector2(pw, ph);
                 var rr = G.C.CreateRoundedRectangleGeometry();
-                rr.Size = new Vector2(w, h);
-                rr.CornerRadius = new Vector2(w * RwRound);
-                tint.Clip = G.C.CreateGeometricClip(rr);
-                (c.Art.Parent ?? c.Root).Children.InsertAbove(tint, c.Art);   // 封面可能包在一层裁切容器里
-                c.Label = tint;
-                if (!Reduced) { tint.Opacity = 0; tint.StartAnimation("Opacity", CsS(1, 200, Bezier.EaseOut)); }
+                rr.Size = new Vector2(pw, ph);
+                rr.CornerRadius = new Vector2(ph / 2, ph / 2);
+                bg.Clip = G.C.CreateGeometricClip(rr);
+                box.Children.InsertAtTop(bg);
+                float bw = 7, bh = 24;
+                float[] dur = { 820, 1040, 920 }, start = { 0.45f, 0.9f, 0.6f };
+                for (int k = 0; k < 3; k++)
+                {
+                    var bar = G.Sprite(G.Solid(Color.FromArgb(255, 0xFA, 0xFA, 0xFA)), relative: false);
+                    bar.Size = new Vector2(bw, bh);
+                    bar.Offset = new Vector3(pw / 2 - 1.5f * bw - 6 + k * (bw + 6), ph / 2 - bh / 2, 0);
+                    bar.CenterPoint = new Vector3(bw / 2, bh, 0);
+                    var br = G.C.CreateRoundedRectangleGeometry();
+                    br.Size = new Vector2(bw, bh);
+                    br.CornerRadius = new Vector2(bw / 2, bw / 2);
+                    bar.Clip = G.C.CreateGeometricClip(br);
+                    if (Reduced) bar.Scale = new Vector3(1, start[k], 1);
+                    else
+                    {
+                        var a = G.C.CreateVector3KeyFrameAnimation();
+                        a.InsertKeyFrame(0, new Vector3(1, start[k], 1));
+                        a.InsertKeyFrame(0.3f, new Vector3(1, 1f, 1));
+                        a.InsertKeyFrame(0.6f, new Vector3(1, 0.3f, 1));
+                        a.InsertKeyFrame(1, new Vector3(1, start[k], 1));
+                        a.Duration = TimeSpan.FromMilliseconds(dur[k]);
+                        a.IterationBehavior = AnimationIterationBehavior.Forever;
+                        bar.StartAnimation("Scale", a);
+                    }
+                    box.Children.InsertAtTop(bar);
+                }
+                c.Root.Children.InsertAtTop(box);
+                c.Playing = box;
+                if (!Reduced) { box.Opacity = 0; box.StartAnimation("Opacity", CsS(1, 240, Bezier.EaseOut)); }
             }
             if (c.Caption == null)
             {
@@ -136,6 +208,34 @@ public sealed partial class WallStage
                 }
             }
         }
+    }
+
+    /// <summary>✕ 角标在卡片所在层里的圆（卡片放大 1.15 时跟着放大）。</summary>
+    private static (float X, float Y, float R) RwXCircle(CsCase c, bool big)
+    {
+        float k = big ? RwFocus : 1, w = c.Size.X, h = c.Size.Y;
+        var center = new Vector2(w / 2, h / 2);
+        var local = new Vector2(w + 8, -7);
+        var at = new Vector2(c.Offset.X, c.Offset.Y) + center + (local - center) * k;
+        return (at.X, at.Y, 28 * k);
+    }
+
+    /// <summary>焦点到 / 离开 ✕：卡片焦点框藏起来，✕ 外面套一个圆形的焦点框（同一套括号几何）。</summary>
+    private void RwXFocus(CsPage p, bool on, bool quiet = false)
+    {
+        if (p.Rw is not { } rw || rw.XFocus == on) return;
+        rw.XFocus = on;
+        if (on && !p.Cases.ContainsKey(p.Sel)) { rw.XFocus = false; return; }
+        if (rw.XCur == null && rw.Glow.Parent is ContainerVisual host) rw.XCur = CurNew(host);
+        RwCursorShow(p, !on);
+        if (rw.XCur is not { } xc) return;
+        if (on && p.Cases.TryGetValue(p.Sel, out var c))
+        {
+            var (x, y, r) = RwXCircle(c, true);
+            CurToCocoon(xc, x - r, y - r, 2 * r, 2 * r, r, move: false);
+            CurShow(xc, true, 140);
+        }
+        else if (xc.Shown) CurShow(xc, false, quiet ? 1 : 100);
     }
 
     /// <summary>游戏库回到前台、有游戏在跑（单行样式）：不弹整屏面板，焦点落到正在跑的那张卡上。</summary>

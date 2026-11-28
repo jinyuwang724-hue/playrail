@@ -64,6 +64,8 @@ public sealed partial class WallStage
         public Vector2 Size;
         public SpriteVisual? Label;   // 展架：分组标签
         public SpriteVisual? Caption;   // 网格：标题和上次游玩
+        /// <summary>单行：正在玩的卡左下角的「正在播放」三根跳动的小竖条。</summary>
+        public ContainerVisual? Playing;
         /// <summary>「大图」横卡：盖在横版封面上的竖封面（展开 / 收回途中交叉淡化用）。</summary>
         public SpriteVisual? Alt;
         public LoadedImageSurface? AltSurface;

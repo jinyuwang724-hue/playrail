@@ -108,6 +108,13 @@ public sealed partial class WallStage
     {
         if (_csInsert != null) return;
         Cue(Sfx.Activate);
+        if (_cs?.Page is { Style: HomeStyle.Row } && !_csDemo)
+        {
+            // 11-28 jinyu：Cocoon 主题不再用插卡和启动画面，卡片按下去弹一下，正在游戏的标记等会话起来自己出现
+            if (!Reduced) { source.StopAnimation("Scale"); source.Scale = new Vector3(RwFocus * 0.92f, RwFocus * 0.92f, 1); source.StartAnimation("Scale", RwSpring(new Vector3(RwFocus, RwFocus, 1), 900)); }
+            LaunchOrInstall(g);
+            return;
+        }
         if (!_csDemo && (_game != null || !g.Installed || Reduced))
         {
             _lmFromRect = CsScreenRect(rect);
