@@ -696,11 +696,10 @@ public sealed partial class WallStage
                 break;
             case UiTheme.Cocoon:
             {
+                // 11-28 jinyu：一排颜色珠就是预设，「自定义」单独一个容器；不写说明文字
                 _stRows.Add(new PerfRow { Section = true, Title = "主题色" });
-                var swatchNames = CocoonPalette.Presets.Select(p => p.Name).Append("自定义配色").ToArray();
-                int curIdx = _prefs.CocoonTheme >= 0 && _prefs.CocoonTheme < CocoonPalette.Presets.Length
-                    ? _prefs.CocoonTheme
-                    : CocoonPalette.Presets.Length;
+                var swatchNames = CocoonPalette.Presets.Select(p => p.Name).ToArray();
+                int curIdx = _prefs.CocoonTheme >= 0 && _prefs.CocoonTheme < CocoonPalette.Presets.Length ? _prefs.CocoonTheme : -1;
                 _stRows.Add(new PerfRow
                 {
                     EditId = "cocoon-swatches",
@@ -711,32 +710,11 @@ public sealed partial class WallStage
                     Numeric = true,
                     Changed = _prefs.CocoonTheme != 0,
                     Reset = () => ApplyCocoonPreset(0),
-                    Select = i =>
-                    {
-                        if (i >= 0 && i < CocoonPalette.Presets.Length) ApplyCocoonPreset(i);
-                        else if (_prefs.CocoonTheme == -1 || (_prefs.CocoonCustomStart == "#86a7fd" && _prefs.CocoonCustomEnd == "#8037ff")) CtpOpen();
-                        else ApplyCocoonCustom(_prefs.CocoonCustomStart, _prefs.CocoonCustomEnd);
-                    },
-                    Step = d =>
-                    {
-                        int next = Math.Clamp(curIdx + d, 0, swatchNames.Length - 1);
-                        if (next < CocoonPalette.Presets.Length) ApplyCocoonPreset(next);
-                        else ApplyCocoonCustom(_prefs.CocoonCustomStart, _prefs.CocoonCustomEnd);
-                    },
-                    Press = CtpOpen,
+                    Select = i => { if (i >= 0 && i < CocoonPalette.Presets.Length) ApplyCocoonPreset(i); },
+                    Step = d => ApplyCocoonPreset(Math.Clamp(Math.Max(curIdx, 0) + d, 0, swatchNames.Length - 1)),
                 });
-                var (c1, c2) = CocoonPalette.ActivePair(_prefs);
-                _stRows.Add(new PerfRow { Section = true, Title = "自定义取色" });
-                _stRows.Add(new PerfRow
-                {
-                    EditId = "cocoon-picker",
-                    Sub = true,
-                    Title = "主题色取色板",
-                    Value = $"{CocoonPalette.ToHex(c1)} → {CocoonPalette.ToHex(c2)}",
-                    Changed = _prefs.CocoonTheme == -1,
-                    Reset = () => ApplyCocoonPreset(0),
-                    Press = CtpOpen,
-                });
+                _stRows.Add(new PerfRow { Section = true, Title = "自定义" });
+                _stRows.Add(new PerfRow { EditId = "cocoon-picker", Sub = true, Title = "自定义", Press = CtpOpen });
                 break;
             }
         }

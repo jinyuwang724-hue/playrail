@@ -450,7 +450,7 @@ public sealed partial class WallStage
     }
 
     private static float CpBaseH(PerfRow r, string? sub) =>
-        CpIsSwatchGrid(r) ? CpSwatchRowH : CpIsColorPickerEntry(r) ? CpRowSubH : CpIsSlider(r) ? CpRowSliderH : sub != null ? CpRowSubH : CpRowH;
+        CpIsSwatchGrid(r) ? CpSwatchRowH : CpIsColorPickerEntry(r) ? CpRowH : CpIsSlider(r) ? CpRowSliderH : sub != null ? CpRowSubH : CpRowH;
 
     private const float CpOptH = 88, CpPickW = 400;
 
@@ -656,7 +656,7 @@ public sealed partial class WallStage
         {
             _cpSwatchFocus = Math.Clamp(_cpSwatchFocus, 0, CpSwatchTotal - 1);
             var (sx, sy, sw, sh) = CpSwatchTileRect(hit.Y, _cpSwatchFocus);
-            CurToCocoon(v.Cur, CpListX + sx, CpTop + sy - target, sw, sh, 24, move: !first);
+            CurToCocoon(v.Cur, CpListX + sx, CpTop + sy - target, sw, sh, 30, move: !first);
         }
         else if (inList) CurToCocoon(v.Cur, CpListX, CpTop + hit.Y - target, CpListW, hit.H, 30, move: !first);
         else if (CpZone == 0 && cats.Count > 0) CurToCocoon(v.Cur, CpLeftX, CpTop + cat * v.Slot + 4, CpLeftW, v.Slot - 8, MathF.Min(30, (v.Slot - 8) / 2), move: !first);
@@ -1014,8 +1014,7 @@ public sealed partial class WallStage
         if (CpIsSwatchGrid(r))
         {
             int pick = Math.Clamp(_cpSwatchFocus, 0, CpSwatchTotal - 1);
-            bool opensModal = pick >= CocoonPalette.Presets.Length && (_prefs.CocoonTheme == -1 || (_prefs.CocoonCustomStart == "#86a7fd" && _prefs.CocoonCustomEnd == "#8037ff"));
-            if (!opensModal) Cue(Sfx.Positive);
+            Cue(Sfx.Positive);
             r.Select?.Invoke(pick);
             CpRepaint();
             return true;
@@ -1237,8 +1236,7 @@ public sealed partial class WallStage
                     {
                         _cpSwatchFocus = k;
                         v.Manual = true;
-                        bool opensModal = k >= CocoonPalette.Presets.Length && (_prefs.CocoonTheme == -1 || (_prefs.CocoonCustomStart == "#86a7fd" && _prefs.CocoonCustomEnd == "#8037ff"));
-                        if (!opensModal) Cue(Sfx.Positive);
+                        Cue(Sfx.Positive);
                         r.Select?.Invoke(k);
                         CpRepaint();
                         return;

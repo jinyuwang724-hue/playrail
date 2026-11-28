@@ -51,12 +51,10 @@ public sealed partial class WallStage
         if (_prefs.CocoonTheme == index) return;
         SaveUi(_prefs with { CocoonTheme = index });
         RefreshCocoonThemeVisuals();
-        Toast($"主题色：{CocoonPalette.Presets[index].Name}");
     }
 
     private void ApplyCocoonCustom(string startHex, string endHex, int? harmony = null)
     {
-        _cpSwatchFocus = CocoonPalette.Presets.Length;
         var next = _prefs with
         {
             CocoonTheme = -1,
