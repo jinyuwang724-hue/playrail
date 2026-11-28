@@ -575,6 +575,7 @@ public static class Bench
                 case "recplay": await s.RecPlayAsync(); break;
                 case "recaccent": await s.RecAccentAsync(); break;
                 case "recdarkmenu": await s.RecDarkMenuAsync(); break;
+                case "recdarkfade": await s.RecDarkFadeAsync(); break;
                 case "recthemes": await s.RecThemesAsync(); break;
                 case "gstest": s.DemoGameSessionProbe(); break;
                 case "npattach": s.DemoAttachRunningGame(); break;

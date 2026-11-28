@@ -8,6 +8,9 @@ using System.Numerics;
 using Microsoft.Graphics.Canvas;
 using Microsoft.Graphics.Canvas.Brushes;
 using Microsoft.Graphics.Canvas.Geometry;
+using Microsoft.Graphics.Canvas.UI.Composition;
+using System.Threading.Tasks;
+using ClawLibrary.Engine;
 using Microsoft.UI.Composition;
 using Windows.UI;
 
@@ -48,11 +51,17 @@ public sealed partial class WallStage
     internal bool ProbeDark(bool? on)
     {
         bool was = _prefs.CocoonDark;
-        if (on is bool v) SetCocoonDark(v);
+        if (on is bool v) ApplyCocoonDark(v);   // 自测：直接换，不走淡变（进程可能马上被收掉）
         return was;
     }
 
     private void SetCocoonDark(bool on)
+    {
+        if (_prefs.CocoonDark == on) return;
+        CkCrossfade(() => ApplyCocoonDark(on));
+    }
+
+    private void ApplyCocoonDark(bool on)
     {
         if (_prefs.CocoonDark == on) return;
         SaveUi(_prefs with { CocoonDark = on });
@@ -196,5 +205,83 @@ public sealed partial class WallStage
         using (var fill = new CanvasLinearGradientBrush(dev, DkRgb(0x3B3C43), DkRgb(0x2E2F35)) { StartPoint = new Vector2(0, y), EndPoint = new Vector2(0, y + h) })
             ds.FillGeometry(g, fill);
         DkEdge(ds, x, y, w, h, r, 70);
+    }
+
+    // ---------------- 明暗切换动画 ----------------
+    // 11-28 jinyu：亮 / 暗切换要有颜色过渡。页面大多是 Win2D 画好的位图，重画是一下子换掉的，
+    // 所以先抓一帧窗口当前的样子（Windows.Graphics.Capture，清单里有无边框截取权限），盖在最上面，
+    // 底下换成新配色，再把这一帧在 480 ms 里淡掉——看到的就是旧配色平滑过渡到新配色。抓不到就直接换。
+
+    private bool _ckFading;
+
+    private async void CkCrossfade(Action apply)
+    {
+        if (Reduced || _ckFading) { apply(); return; }
+        _ckFading = true;
+        CanvasBitmap? shot = null;
+        try { shot = await CkGrabWindow(); }
+        catch (Exception ex) { Log.Warn($"theme crossfade grab: {ex.Message}"); }
+        if (shot == null) { apply(); _ckFading = false; return; }
+        CompositionDrawingSurface? surf = null;
+        SpriteVisual? veil = null;
+        try
+        {
+            var sz = shot.SizeInPixels;
+            surf = G.Surface((int)sz.Width, (int)sz.Height);
+            using (var ds = CanvasComposition.CreateDrawingSession(surf)) { ds.Clear(Microsoft.UI.Colors.Transparent); ds.DrawImage(shot); }
+            var brush = G.C.CreateSurfaceBrush(surf);
+            brush.Stretch = CompositionStretch.Fill;
+            veil = G.C.CreateSpriteVisual();
+            veil.Brush = brush;
+            veil.RelativeSizeAdjustment = Vector2.One;
+            _top.Children.InsertAtTop(veil);
+        }
+        catch (Exception ex) { Log.Warn($"theme crossfade veil: {ex.Message}"); }
+        finally { shot.Dispose(); }
+        apply();
+        if (veil == null) { surf?.Dispose(); _ckFading = false; return; }
+        var a = G.C.CreateScalarKeyFrameAnimation();
+        a.InsertKeyFrame(0, 1);
+        a.InsertKeyFrame(1, 0, G.Ease(new Bezier(0.33f, 0f, 0.2f, 1f)));
+        a.Duration = TimeSpan.FromMilliseconds(480);
+        a.DelayTime = TimeSpan.FromMilliseconds(60);   // 等新配色的重画先落到屏幕上
+        veil.StartAnimation("Opacity", a);
+        var v = veil; var s = surf;
+        After(600, () =>
+        {
+            try { _top.Children.Remove(v); v.Dispose(); s?.Dispose(); } catch (ObjectDisposedException) { }
+            _ckFading = false;
+        });
+    }
+
+    /// <summary>抓本窗口此刻合成出来的一帧（最多等 350 ms）。</summary>
+    private async Task<CanvasBitmap?> CkGrabWindow()
+    {
+        var item = Windows.Graphics.Capture.GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId { Value = HostWindow.AppWindow.Id.Value });
+        if (item == null) return null;
+        var dev = G.Device;
+        var tcs = new TaskCompletionSource<CanvasBitmap?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pool = Windows.Graphics.Capture.Direct3D11CaptureFramePool.CreateFreeThreaded(dev, Windows.Graphics.DirectX.DirectXPixelFormat.B8G8R8A8UIntNormalized, 1, item.Size);
+        var session = pool.CreateCaptureSession(item);
+        try { session.IsCursorCaptureEnabled = false; } catch { }
+        try { session.IsBorderRequired = false; } catch { }
+        pool.FrameArrived += (p, _) =>
+        {
+            using var f = p.TryGetNextFrame();
+            if (f == null || tcs.Task.IsCompleted) return;
+            try
+            {
+                using var b = CanvasBitmap.CreateFromDirect3D11Surface(dev, f.Surface);
+                var rt = new CanvasRenderTarget(dev, b.SizeInPixels.Width, b.SizeInPixels.Height, 96);
+                using (var ds = rt.CreateDrawingSession()) ds.DrawImage(b);
+                if (!tcs.TrySetResult(rt)) rt.Dispose();
+            }
+            catch (Exception ex) { tcs.TrySetException(ex); }
+        };
+        session.StartCapture();
+        var done = await Task.WhenAny(tcs.Task, Task.Delay(350));
+        try { session.Dispose(); pool.Dispose(); } catch { }
+        if (done != tcs.Task) { tcs.TrySetResult(null); if (tcs.Task.Result is { } late) late.Dispose(); return null; }
+        return await tcs.Task;
     }
 }

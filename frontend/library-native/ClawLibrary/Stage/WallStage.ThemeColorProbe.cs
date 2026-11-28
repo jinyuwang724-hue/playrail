@@ -62,6 +62,38 @@ public sealed partial class WallStage
         Log.Info("recaccent done");
     }
 
+    /// <summary>暗色进页面 / 明暗切换的逐帧（--state=recdarkfade --dark）：侧栏进性能页录一段，再在页面上切到亮色、切回暗色各录一段。帧存 recdfade-*。</summary>
+    internal async Task RecDarkFadeAsync()
+    {
+        await Task.Delay(2500);
+        string dir = Path.Combine(App.CacheDir, "rec");
+        async Task Rec(string name, Action act, int ms)
+        {
+            var r = new FrameRecorder();
+            if (!r.Start(HostWindow)) { act(); await Task.Delay(ms); return; }
+            long m = System.Diagnostics.Stopwatch.GetTimestamp();
+            await Task.Delay(100);
+            act();
+            await Task.Delay(ms);
+            Log.Info($"recdarkfade {name}: {await r.StopAndSaveAsync(Path.Combine(dir, "dfade-" + name), m)} frames");
+        }
+        bool was = _prefs.CocoonDark;
+        try
+        {
+            PadView(); await Task.Delay(900);
+            if (!LsOpenNow) throw new InvalidOperationException("panel not open");
+            for (int i = 0; i < 7; i++) { Move(Direction.Up); await Task.Delay(110); }
+            await Rec("enter", () => { if (LsOpenNow) Activate(); }, 1600);
+            await Rec("tolight", () => SetCocoonDark(false), 1100);
+            await Rec("todark", () => SetCocoonDark(true), 1100);
+            for (int i = 0; i < 4 && !LsOpenNow; i++) { if (!_ccOpen) break; Back(); await Task.Delay(500); }
+            if (LsOpenNow) { PadView(); await Task.Delay(500); }
+        }
+        catch (Exception ex) { Log.Error("recdarkfade", ex); }
+        ApplyCocoonDark(was);
+        Log.Info("recdarkfade done");
+    }
+
     /// <summary>暗色组件静帧（--state=recdarkmenu）：首页 Y 菜单、编辑页、编辑页里的下拉；只在确认焦点在「编辑」上时才按 A（第 0 行是启动），全程不改设置。帧存 recdmenu-*。</summary>
     internal async Task RecDarkMenuAsync()
     {
